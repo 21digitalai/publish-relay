@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
+import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import type { ApiKeyCapability } from './api-key.js';
 import type { ApiKeyPrincipal, ApiKeyService } from './api-key.service.js';
 
@@ -29,18 +30,9 @@ export function registerApiKeyRoutes(application: FastifyInstance, service: ApiK
   application.get('/api/v1/account', async (request, reply) => {
     const principal = await authorizeApiKeyRequest(request, service);
     if (!principal)
-      return reply.code(401).send({
-        success: false,
-        error: {
-          code: 'authentication_required',
-          message: 'Authentication required',
-          requestId: request.id,
-        },
-      });
-    return {
-      success: true,
-      data: principal,
-      meta: { requestId: request.id },
-    };
+      return reply
+        .code(401)
+        .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+    return successEnvelope(principal, request.id);
   });
 }

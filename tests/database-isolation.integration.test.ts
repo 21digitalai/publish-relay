@@ -37,6 +37,32 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('PostgreSQL tenant isolation', () => {
+  it('updates the registered workspace profile in place without creating a duplicate', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000041';
+    const userId = '00000000-0000-4000-8000-000000000042';
+    await database.exec(`
+      INSERT INTO users (id, email, password_hash) VALUES ('${userId}', 'profile@example.test', 'redacted-hash');
+      INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Initial', 'initial');
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${workspaceId}', '${userId}', 'owner');
+      RESET app.workspace_id;
+      SET ROLE publish_relay_app;
+    `);
+    const store = createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase);
+
+    await expect(
+      store.updateWorkspace(workspaceId, userId, {
+        name: 'Atlas Studio',
+        slug: 'atlas-studio',
+      }),
+    ).resolves.toEqual({ id: workspaceId, name: 'Atlas Studio', slug: 'atlas-studio' });
+    await database.exec(`RESET ROLE;`);
+    const result = await database.query<{ count: number; name: string; slug: string }>(
+      'SELECT count(*)::int AS count, max(name) AS name, max(slug) AS slug FROM workspaces',
+    );
+    expect(result.rows[0]).toEqual({ count: 1, name: 'Atlas Studio', slug: 'atlas-studio' });
+  });
+
   it('bootstraps login through the user default workspace before forced RLS membership access', async () => {
     const workspaceId = '00000000-0000-4000-8000-000000000031';
     const userId = '00000000-0000-4000-8000-000000000032';

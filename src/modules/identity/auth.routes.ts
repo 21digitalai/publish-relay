@@ -1,0 +1,97 @@
+import cookie from '@fastify/cookie';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+
+import type { AuthIdentity, AuthService } from './auth.service.js';
+import { sessionCookieOptions, verifyCsrfToken } from './session.js';
+
+const SESSION_COOKIE = 'publish_relay_session';
+const CSRF_COOKIE = 'publish_relay_csrf';
+const credentialsSchema = z.object({ email: z.email(), password: z.string().min(12) });
+const registrationSchema = credentialsSchema.extend({
+  workspaceName: z.string().trim().min(1).max(100),
+});
+
+function parseSessionCookie(
+  value: string | undefined,
+): { workspaceId: string; token: string } | null {
+  if (!value) return null;
+  const separator = value.indexOf('.');
+  if (separator < 1) return null;
+  return { workspaceId: value.slice(0, separator), token: value.slice(separator + 1) };
+}
+
+async function authenticateRequest(
+  request: FastifyRequest,
+  auth: AuthService,
+): Promise<AuthIdentity | null> {
+  const session = parseSessionCookie(request.cookies[SESSION_COOKIE]);
+  return session ? auth.authenticate(session.workspaceId, session.token) : null;
+}
+
+export function registerAuthRoutes(application: FastifyInstance, auth: AuthService): void {
+  application.register(cookie);
+
+  application.post('/api/auth/register', async (request, reply) => {
+    const input = registrationSchema.safeParse(request.body);
+    if (!input.success)
+      return reply.code(400).send({ data: null, error: 'Invalid registration details' });
+    const identity = await auth.register(
+      input.data.email,
+      input.data.password,
+      input.data.workspaceName,
+    );
+    return reply.code(201).send({ data: identity, error: null });
+  });
+
+  application.post('/api/auth/login', async (request, reply) => {
+    const input = credentialsSchema.safeParse(request.body);
+    if (!input.success) return reply.code(400).send({ data: null, error: 'Invalid login details' });
+    const session = await auth.login(input.data.email, input.data.password);
+    if (!session) return reply.code(401).send({ data: null, error: 'Invalid email or password' });
+    reply.setCookie(
+      SESSION_COOKIE,
+      `${session.workspaceId}.${session.token}`,
+      sessionCookieOptions(application.initialConfig.https !== undefined),
+    );
+    reply.setCookie(CSRF_COOKIE, session.csrfToken, {
+      sameSite: 'lax',
+      secure: application.initialConfig.https !== undefined,
+      path: '/',
+    });
+    return {
+      data: { userId: session.userId, workspaceId: session.workspaceId, role: session.role },
+      error: null,
+    };
+  });
+
+  application.post('/api/auth/logout', async (request, reply) => {
+    const session = parseSessionCookie(request.cookies[SESSION_COOKIE]);
+    if (!session) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (
+      !verifyCsrfToken(
+        request.cookies[CSRF_COOKIE],
+        request.headers['x-csrf-token'] as string | undefined,
+      )
+    )
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    await auth.logout(session.workspaceId, session.token);
+    reply.clearCookie(SESSION_COOKIE, { path: '/' }).clearCookie(CSRF_COOKIE, { path: '/' });
+    return { data: { loggedOut: true }, error: null };
+  });
+
+  application.get('/api/auth/session', async (request, reply) => {
+    const identity = await authenticateRequest(request, auth);
+    return identity
+      ? { data: identity, error: null }
+      : reply.code(401).send({ data: null, error: 'Authentication required' });
+  });
+
+  application.get('/app', async (request, reply) => {
+    const identity = await authenticateRequest(request, auth);
+    if (!identity) return reply.code(401).type('text/html').send('Authentication required');
+    return reply
+      .type('text/html')
+      .send('<!doctype html><html><body><main id="app">Publish Relay</main></body></html>');
+  });
+}

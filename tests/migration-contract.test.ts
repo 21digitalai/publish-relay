@@ -18,8 +18,8 @@ describe('identity tenancy migration contract', () => {
 
   it('is readable by the production Drizzle migration runner', () => {
     const migrations = readMigrationFiles({ migrationsFolder: 'migrations' });
-    expect(migrations).toHaveLength(1);
-    expect(migrations[0]?.sql.length).toBeGreaterThan(0);
+    expect(migrations.length).toBeGreaterThanOrEqual(2);
+    expect(migrations.every((migration) => migration.sql.length > 0)).toBe(true);
   });
 
   it('never stores raw API key or session secrets', async () => {

@@ -6,13 +6,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 import { findApiKeyByPrefix, revokeApiKey } from '../src/modules/identity/api-key.repository.js';
+import { createPostgresAuthStore } from '../src/modules/identity/auth.repository.js';
 
-const migrationUrl = new URL('../migrations/0000_identity_tenancy.sql', import.meta.url);
+const migrationUrls = [
+  new URL('../migrations/0000_identity_tenancy.sql', import.meta.url),
+  new URL('../migrations/0001_solid_spiral.sql', import.meta.url),
+];
 let database: PGlite;
 
 beforeEach(async () => {
   database = new PGlite();
-  await database.exec(await readFile(migrationUrl, 'utf8'));
+  for (const migrationUrl of migrationUrls)
+    await database.exec(await readFile(migrationUrl, 'utf8'));
   await database.exec(`
     CREATE ROLE publish_relay_app NOLOGIN;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
@@ -23,6 +28,28 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('PostgreSQL tenant isolation', () => {
+  it('bootstraps login through the user default workspace before forced RLS membership access', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000031';
+    const userId = '00000000-0000-4000-8000-000000000032';
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Login Workspace', 'login-workspace');
+      INSERT INTO users (id, email, password_hash, default_workspace_id)
+        VALUES ('${userId}', 'login@example.test', 'redacted-hash', '${workspaceId}');
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${workspaceId}', '${userId}', 'owner');
+      RESET app.workspace_id;
+      SET ROLE publish_relay_app;
+    `);
+    const store = createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase);
+
+    await expect(store.findLogin('login@example.test')).resolves.toEqual({
+      userId,
+      passwordHash: 'redacted-hash',
+      workspaceId,
+      role: 'owner',
+    });
+  });
+
   it('migrates an empty database and denies cross-workspace reads and writes', async () => {
     const workspaceA = '00000000-0000-4000-8000-000000000001';
     const workspaceB = '00000000-0000-4000-8000-000000000002';

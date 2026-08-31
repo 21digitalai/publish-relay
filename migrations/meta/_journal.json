@@ -8,6 +8,13 @@
       "when": 1788185249060,
       "tag": "0000_identity_tenancy",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788186592470,
+      "tag": "0001_solid_spiral",
+      "breakpoints": true
     }
   ]
 }

@@ -20,24 +20,27 @@ const timestamps = {
 export const membershipRole = pgEnum('membership_role', ['owner', 'admin', 'editor', 'viewer']);
 export const actorType = pgEnum('audit_actor_type', ['user', 'api_key', 'system']);
 
-export const users = pgTable(
-  'users',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    email: text('email').notNull(),
-    passwordHash: text('password_hash').notNull(),
-    isDisabled: boolean('is_disabled').notNull().default(false),
-    ...timestamps,
-  },
-  (table) => [uniqueIndex('users_email_lower_unique').on(sql`lower(${table.email})`)],
-);
-
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   ...timestamps,
 });
+
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    defaultWorkspaceId: uuid('default_workspace_id').references(() => workspaces.id, {
+      onDelete: 'restrict',
+    }),
+    isDisabled: boolean('is_disabled').notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('users_email_lower_unique').on(sql`lower(${table.email})`)],
+);
 
 export const memberships = pgTable(
   'memberships',

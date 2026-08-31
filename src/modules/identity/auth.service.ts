@@ -1,6 +1,6 @@
 import { createOpaqueToken, hashOpaqueToken } from './session.js';
 import { hashPassword, verifyPassword } from './password.js';
-import type { MembershipRole } from './authorization.js';
+import { requireWorkspaceAction, type MembershipRole } from './authorization.js';
 
 export interface AuthIdentity {
   userId: string;
@@ -26,6 +26,11 @@ export interface AuthStore {
     tokenHash: string,
   ) => Promise<(AuthIdentity & { expiresAt: Date; revokedAt: Date | null }) | null>;
   findCurrentRole: (userId: string, workspaceId: string) => Promise<MembershipRole | null>;
+  updateWorkspace: (
+    workspaceId: string,
+    userId: string,
+    input: { name: string; slug: string },
+  ) => Promise<{ id: string; name: string; slug: string }>;
 }
 
 export interface SessionResult extends AuthIdentity {
@@ -84,6 +89,17 @@ export class AuthService {
 
   async logout(workspaceId: string, token: string): Promise<void> {
     await this.store.revokeSession(workspaceId, hashOpaqueToken(token));
+  }
+
+  async updateWorkspace(
+    identity: AuthIdentity,
+    input: { name: string; slug: string },
+  ): Promise<{ id: string; name: string; slug: string }> {
+    requireWorkspaceAction(identity.role, 'workspace:manage');
+    return this.store.updateWorkspace(identity.workspaceId, identity.userId, {
+      name: input.name.trim(),
+      slug: input.slug.trim().toLowerCase(),
+    });
   }
 
   async authenticate(

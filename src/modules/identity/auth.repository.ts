@@ -132,5 +132,16 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
         return row?.role ?? null;
       });
     },
+    async updateWorkspace(workspaceId, userId, input) {
+      return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
+        const [workspace] = await transaction
+          .update(workspaces)
+          .set({ name: input.name, slug: input.slug, updatedAt: new Date() })
+          .where(eq(workspaces.id, workspaceId))
+          .returning({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug });
+        if (!workspace) throw new Error('Workspace was not found');
+        return workspace;
+      });
+    },
   };
 }

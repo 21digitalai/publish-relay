@@ -14,6 +14,15 @@ const registrationSchema = credentialsSchema.extend({
   displayName: z.string().trim().min(1).max(100),
   workspaceName: z.string().trim().min(1).max(100),
 });
+const workspaceProfileSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  slug: z
+    .string()
+    .trim()
+    .min(2)
+    .max(80)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i),
+});
 
 function parseSessionCookie(
   value: string | undefined,
@@ -126,6 +135,23 @@ export function registerAuthRoutes(
     return identity
       ? { data: identity, error: null }
       : reply.code(401).send({ data: null, error: 'Authentication required' });
+  });
+
+  application.patch('/api/workspaces/current', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'workspace:manage');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (
+      !verifyCsrfToken(
+        request.cookies[CSRF_COOKIE],
+        request.headers['x-csrf-token'] as string | undefined,
+      )
+    )
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const input = workspaceProfileSchema.safeParse(request.body);
+    if (!input.success)
+      return reply.code(400).send({ data: null, error: 'Invalid workspace profile' });
+    const workspace = await auth.updateWorkspace(identity, input.data);
+    return { data: workspace, error: null };
   });
 
   const publicShell = (_request: FastifyRequest, reply: FastifyReply) =>

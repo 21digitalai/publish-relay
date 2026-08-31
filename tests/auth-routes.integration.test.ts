@@ -18,6 +18,7 @@ function createStore(): AuthStore {
     revokeSession: vi.fn(),
     findSession: vi.fn(),
     findCurrentRole: vi.fn(),
+    updateWorkspace: vi.fn(),
   };
 }
 
@@ -133,6 +134,41 @@ describe('authentication HTTP boundary', () => {
     });
     expect(response.cookies).toHaveLength(2);
     expect(response.cookies.every((cookie) => cookie.secure)).toBe(true);
+  });
+
+  it('updates the registered workspace in place with owner authorization and CSRF', async () => {
+    const store = createStore();
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.updateWorkspace).mockResolvedValue({
+      id: 'w1',
+      name: 'Atlas Studio',
+      slug: 'atlas-studio',
+    });
+    const response = await createTestApplication(store).inject({
+      method: 'PATCH',
+      url: '/api/workspaces/current',
+      headers: {
+        cookie: 'publish_relay_session=w1.token; publish_relay_csrf=csrf-token',
+        'x-csrf-token': 'csrf-token',
+      },
+      payload: { name: ' Atlas Studio ', slug: 'ATLAS-STUDIO' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      data: { id: 'w1', name: 'Atlas Studio', slug: 'atlas-studio' },
+      error: null,
+    });
+    expect(store.updateWorkspace).toHaveBeenCalledWith('w1', 'u1', {
+      name: 'Atlas Studio',
+      slug: 'atlas-studio',
+    });
   });
 
   it('returns the same honest recovery-unavailable state without account enumeration', async () => {

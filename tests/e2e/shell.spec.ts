@@ -37,10 +37,10 @@ test('renders the honest recovery unavailable state', async ({ page }) => {
 });
 
 test('registers, persists the first workspace update, and reloads the protected onboarding route', async ({
+  browser,
   page,
 }, testInfo) => {
   const suffix = Math.random().toString(36).slice(2);
-  const workspaceSlug = `atlas-publishing-${suffix}`;
   await page.goto('/register');
   await page.getByLabel('Name', { exact: true }).fill('Relay Owner');
   await page.getByLabel('Workspace name').fill(`Atlas Studio ${suffix}`);
@@ -49,6 +49,27 @@ test('registers, persists the first workspace update, and reloads the protected 
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL(/\/onboarding\/workspace$/);
   await page.getByLabel('Workspace name').fill('Atlas Publishing');
+  const collisionContext = await browser.newContext();
+  const collisionResponse = await collisionContext.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Collision Owner',
+      email: `collision-${suffix}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: `Atlas Publishing ${suffix}`,
+    },
+  });
+  expect(collisionResponse.ok()).toBe(true);
+  const collisionWorkspaceResponse = await collisionContext.request.get('/api/workspaces/current');
+  expect(collisionWorkspaceResponse.ok()).toBe(true);
+  const collisionWorkspace = (await collisionWorkspaceResponse.json()) as {
+    data: { slug: string };
+  };
+  const conflictingSlug = collisionWorkspace.data.slug;
+  const workspaceSlug = `${conflictingSlug}-owner`;
+  await collisionContext.close();
+  await page.getByLabel('Workspace URL').fill(conflictingSlug);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('alert')).toContainText('Workspace URL is already in use');
   await page.getByLabel('Workspace URL').fill(workspaceSlug);
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();

@@ -33,6 +33,18 @@ function parseSessionCookie(
   return { workspaceId: value.slice(0, separator), token: value.slice(separator + 1) };
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  if ('code' in error && error.code === '23505') return true;
+  if (
+    'message' in error &&
+    typeof error.message === 'string' &&
+    /duplicate key|unique constraint/i.test(error.message)
+  )
+    return true;
+  return 'cause' in error && isUniqueViolation(error.cause);
+}
+
 async function authenticateRequest(
   request: FastifyRequest,
   auth: AuthService,
@@ -150,8 +162,14 @@ export function registerAuthRoutes(
     const input = workspaceProfileSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Invalid workspace profile' });
-    const workspace = await auth.updateWorkspace(identity, input.data);
-    return { data: workspace, error: null };
+    try {
+      const workspace = await auth.updateWorkspace(identity, input.data);
+      return { data: workspace, error: null };
+    } catch (error) {
+      if (isUniqueViolation(error))
+        return reply.code(409).send({ data: null, error: 'Workspace URL is already in use' });
+      throw error;
+    }
   });
 
   application.get('/api/workspaces/current', async (request, reply) => {

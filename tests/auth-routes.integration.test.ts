@@ -199,6 +199,30 @@ describe('authentication HTTP boundary', () => {
     });
   });
 
+  it('maps a workspace slug conflict to a recoverable boundary error', async () => {
+    const store = createStore();
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.updateWorkspace).mockRejectedValue({ code: '23505' });
+    const response = await createTestApplication(store).inject({
+      method: 'PATCH',
+      url: '/api/workspaces/current',
+      headers: {
+        cookie: 'publish_relay_session=w1.token; publish_relay_csrf=csrf-token',
+        'x-csrf-token': 'csrf-token',
+      },
+      payload: { name: 'Atlas', slug: 'already-used' },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ data: null, error: 'Workspace URL is already in use' });
+  });
+
   it('returns the same honest recovery-unavailable state without account enumeration', async () => {
     const application = createTestApplication(createStore());
     const known = await application.inject({

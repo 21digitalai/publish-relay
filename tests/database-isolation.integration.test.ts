@@ -11,6 +11,7 @@ import { createPostgresAuthStore } from '../src/modules/identity/auth.repository
 const migrationUrls = [
   new URL('../migrations/0000_identity_tenancy.sql', import.meta.url),
   new URL('../migrations/0001_solid_spiral.sql', import.meta.url),
+  new URL('../migrations/0002_busy_mantis.sql', import.meta.url),
 ];
 let database: PGlite;
 

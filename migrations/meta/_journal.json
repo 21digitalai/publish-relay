@@ -15,6 +15,13 @@
       "when": 1788186592470,
       "tag": "0001_solid_spiral",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788187891258,
+      "tag": "0002_busy_mantis",
+      "breakpoints": true
     }
   ]
 }

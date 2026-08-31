@@ -24,3 +24,10 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - Browser session and API-key bearer material is never persisted. Store SHA-256 hashes; API keys expose only a public `pr_` prefix beside the hash. Revocation and expiry are checked before authorization.
 - Browser session cookies carry the workspace UUID beside an opaque token so forced tenant RLS can be established before the hashed session lookup. Login rotates prior sessions, protected requests reload the live membership role, and state-changing browser routes require a matching double-submit CSRF token.
 - Audit events are append-only and accept allowlisted, redacted metadata only. Secrets and content bodies do not belong in audit or application logs.
+
+## Provider credentials and OAuth
+
+- Provider secrets use AES-256-GCM envelope encryption: a random data key encrypts each record and a versioned master key wraps only that data key. Rotation uses optimistic record versions and never rewrites plaintext.
+- Credential, provider connection/account, and OAuth transaction rows are workspace-scoped tenant tables with forced RLS. Repository calls run inside `withTenantTransaction` and repeat the workspace predicate.
+- OAuth state is persisted only as a hash, expires quickly, and is atomically consumed once. Provider adapters receive access tokens only in memory and return allowlisted account discovery DTOs.
+- Revocation is idempotent. Reconnect flows update the canonical connection rather than treating credentials copied from another scheduler as portable authorization.

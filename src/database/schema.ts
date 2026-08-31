@@ -1,5 +1,7 @@
 import {
   boolean,
+  customType,
+  integer,
   index,
   jsonb,
   pgEnum,
@@ -16,6 +18,12 @@ const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 };
+
+const bytea = customType<{ data: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+});
 
 export const membershipRole = pgEnum('membership_role', ['owner', 'admin', 'editor', 'viewer']);
 export const actorType = pgEnum('audit_actor_type', ['user', 'api_key', 'system']);
@@ -141,4 +149,84 @@ export const outboxEvents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('outbox_available_idx').on(table.availableAt)],
+);
+
+export const credentials = pgTable(
+  'credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    keyVersion: text('key_version').notNull(),
+    wrappedKey: bytea('wrapped_key').notNull(),
+    wrappedKeyNonce: bytea('wrapped_key_nonce').notNull(),
+    wrappedKeyTag: bytea('wrapped_key_tag').notNull(),
+    ciphertext: bytea('ciphertext').notNull(),
+    nonce: bytea('nonce').notNull(),
+    tag: bytea('tag').notNull(),
+    version: integer('version').notNull().default(1),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [index('credentials_workspace_idx').on(table.workspaceId)],
+);
+
+export const providerConnections = pgTable(
+  'provider_connections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    credentialId: uuid('credential_id')
+      .notNull()
+      .references(() => credentials.id, { onDelete: 'restrict' }),
+    status: text('status').notNull().default('active'),
+    ...timestamps,
+  },
+  (table) => [index('provider_connections_workspace_idx').on(table.workspaceId)],
+);
+
+export const providerAccounts = pgTable(
+  'provider_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    connectionId: uuid('connection_id')
+      .notNull()
+      .references(() => providerConnections.id, { onDelete: 'cascade' }),
+    providerAccountId: text('provider_account_id').notNull(),
+    displayName: text('display_name').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('provider_accounts_connection_external_unique').on(
+      table.connectionId,
+      table.providerAccountId,
+    ),
+    index('provider_accounts_workspace_idx').on(table.workspaceId),
+  ],
+);
+
+export const oauthTransactions = pgTable(
+  'oauth_transactions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    stateHash: text('state_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [index('oauth_transactions_workspace_idx').on(table.workspaceId)],
 );

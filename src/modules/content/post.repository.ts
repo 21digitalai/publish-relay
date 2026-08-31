@@ -1,13 +1,49 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { postRevisions, posts, publicationJobs, revisionMedia } from '../../database/schema.js';
+import {
+  mediaObjects,
+  postRevisions,
+  posts,
+  providerAccounts,
+  publicationJobs,
+  revisionMedia,
+} from '../../database/schema.js';
 
 export interface PostRevisionInput {
   content: Record<string, unknown>;
   mediaIds: readonly string[];
   providerAccountIds: readonly string[];
   scheduledAt: Date;
+}
+
+async function validateTargetOwnership(
+  database: NodePgDatabase,
+  input: Pick<PostRevisionInput, 'mediaIds' | 'providerAccountIds'> & { workspaceId: string },
+): Promise<void> {
+  const accounts = await database
+    .select({ id: providerAccounts.id })
+    .from(providerAccounts)
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, input.workspaceId),
+        inArray(providerAccounts.id, input.providerAccountIds),
+      ),
+    );
+  if (accounts.length !== input.providerAccountIds.length)
+    throw new Error('One or more provider accounts do not belong to the workspace');
+  if (input.mediaIds.length === 0) return;
+  const media = await database
+    .select({ id: mediaObjects.id })
+    .from(mediaObjects)
+    .where(
+      and(
+        eq(mediaObjects.workspaceId, input.workspaceId),
+        inArray(mediaObjects.id, input.mediaIds),
+      ),
+    );
+  if (media.length !== input.mediaIds.length)
+    throw new Error('One or more media objects do not belong to the workspace');
 }
 
 async function createRevisionTargets(
@@ -53,6 +89,7 @@ export async function createPostIntent(
   database: NodePgDatabase,
   input: PostRevisionInput & { workspaceId: string; userId: string },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[] }> {
+  await validateTargetOwnership(database, input);
   const rows = await database
     .insert(posts)
     .values({ workspaceId: input.workspaceId, createdByUserId: input.userId })
@@ -71,6 +108,7 @@ export async function revisePostIntent(
   database: NodePgDatabase,
   input: PostRevisionInput & { workspaceId: string; postId: string; now: Date },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
+  await validateTargetOwnership(database, input);
   const existing = await database
     .select({ revisionNumber: postRevisions.revisionNumber })
     .from(postRevisions)

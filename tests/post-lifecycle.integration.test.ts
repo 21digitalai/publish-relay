@@ -181,6 +181,44 @@ describe('post revision lifecycle', () => {
     expect(jobs.rows.map((row) => row.revision_number)).toEqual([1, 1, 2, 2]);
   });
 
+  it('rejects foreign workspace account and media targets atomically before persistence', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const otherWorkspaceId = '00000000-0000-4000-8000-000000000220';
+    const otherAccountId = '00000000-0000-4000-8000-000000000221';
+    const otherMediaId = '00000000-0000-4000-8000-000000000222';
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug) VALUES ('${otherWorkspaceId}', 'Foreign Workspace', 'foreign-workspace');
+      SELECT set_config('app.workspace_id', '${otherWorkspaceId}', false);
+      INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+        VALUES ('00000000-0000-4000-8000-000000000223', '${otherWorkspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+        VALUES ('00000000-0000-4000-8000-000000000224', '${otherWorkspaceId}', 'fake', '00000000-0000-4000-8000-000000000223');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
+        VALUES ('${otherAccountId}', '${otherWorkspaceId}', '00000000-0000-4000-8000-000000000224', 'foreign', 'Foreign');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${otherMediaId}', '${otherWorkspaceId}', 'foreign/media', 'hash', 'image/png', 4, 'ready');
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+    `);
+    const baseInput = {
+      workspaceId,
+      userId,
+      content: { type: 'text', text: 'Invalid targets' },
+      scheduledAt: new Date('2026-09-01T10:00:00Z'),
+    };
+    await expect(
+      createPost(db, { ...baseInput, mediaIds: [], providerAccountIds: [otherAccountId] }),
+    ).rejects.toThrow('provider accounts do not belong');
+    await expect(
+      createPost(db, { ...baseInput, mediaIds: [otherMediaId], providerAccountIds: [accountOne] }),
+    ).rejects.toThrow('media objects do not belong');
+    const counts = await database.query<{ posts: number; revisions: number; jobs: number }>(`
+      SELECT (SELECT count(*)::int FROM posts) AS posts,
+             (SELECT count(*)::int FROM post_revisions) AS revisions,
+             (SELECT count(*)::int FROM publication_jobs) AS jobs
+    `);
+    expect(counts.rows[0]).toEqual({ posts: 0, revisions: 0, jobs: 0 });
+  });
+
   it('rejects duplicate account targets before persistence', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     await expect(

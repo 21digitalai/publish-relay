@@ -87,6 +87,26 @@ describe('X provider adapter', () => {
     });
   });
 
+  it('rejects media counts above the evidence-backed X post limit', async () => {
+    const { client, createPost } = createClient();
+    const adapter = new XProviderAdapter(client);
+    await expect(
+      adapter.stage(
+        'account-1',
+        {
+          kind: 'text',
+          text: 'Too many attachments',
+          media: Array.from({ length: 5 }, (_, index) => ({
+            id: `media-${String(index + 1)}`,
+            mimeType: 'image/png',
+          })),
+        },
+        'too-many-media',
+      ),
+    ).rejects.toThrow('at most 4 media attachments');
+    expect(createPost).not.toHaveBeenCalled();
+  });
+
   it('looks up known posts and preserves unknown outcomes for reconciliation', async () => {
     const { client, getPost } = createClient();
     const adapter = new XProviderAdapter(client);

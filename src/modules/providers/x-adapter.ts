@@ -15,6 +15,8 @@ export interface XApiError {
   outcomeUnknown?: boolean;
 }
 
+const X_MAX_MEDIA_PER_POST = 4;
+
 export interface XClient {
   connect(authorizationCode: string): Promise<{ credential: string }>;
   currentAccount(credential: string): Promise<{ id: string; name: string; username: string }>;
@@ -69,6 +71,8 @@ export class XProviderAdapter implements ProviderAdapter {
     if (!accountId) return Promise.reject(new Error('X account is required'));
     if (content.kind === 'article')
       return Promise.reject(new Error('X article publishing capability is not verified'));
+    if (content.media.length > X_MAX_MEDIA_PER_POST)
+      return Promise.reject(new Error('X posts support at most 4 media attachments'));
     if (!content.text.trim() && content.media.length === 0)
       return Promise.reject(new Error('X content must include text or media'));
     return Promise.resolve();

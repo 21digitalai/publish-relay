@@ -254,8 +254,18 @@ describe('credential and OAuth persistence', () => {
     );
     expect(persisted.rows[0]?.state_hash).toBe(hashOauthState('request-token'));
     expect(JSON.stringify(persisted.rows[0])).not.toContain('request-secret');
+    await expect(
+      completeXOauthConnection(db, keys, client, {
+        workspaceId,
+        userId: '00000000-0000-4000-8000-000000000103',
+        requestToken: 'request-token',
+        verifier: 'verifier',
+        requestId: 'x-connect-wrong-user',
+      }),
+    ).resolves.toBeNull();
     const connected = await completeXOauthConnection(db, keys, client, {
       workspaceId,
+      userId,
       requestToken: 'request-token',
       verifier: 'verifier',
       requestId: 'x-connect',
@@ -266,6 +276,7 @@ describe('credential and OAuth persistence', () => {
     await expect(
       completeXOauthConnection(db, keys, client, {
         workspaceId,
+        userId,
         requestToken: 'request-token',
         verifier: 'verifier',
         requestId: 'x-connect-retry',

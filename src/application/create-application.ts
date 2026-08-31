@@ -14,6 +14,9 @@ import { registerAuthRoutes } from '../modules/identity/auth.routes.js';
 import type { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
 import { registerPostRoutes } from '../modules/content/post.routes.js';
+import type { MasterKeyProvider } from '../modules/credentials/envelope.js';
+import type { XHttpClient } from '../modules/providers/x-http-client.js';
+import { registerXOauthRoutes } from '../modules/providers/x-oauth.routes.js';
 
 export function createApplication(
   config: RuntimeConfig,
@@ -21,6 +24,7 @@ export function createApplication(
   apiKeys?: ApiKeyService,
   uiRootOverride?: string,
   database?: NodePgDatabase,
+  xOauth?: { keys: MasterKeyProvider; client: XHttpClient; callbackUrl: string },
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
@@ -57,6 +61,7 @@ export function createApplication(
       );
     }
   }
+  if (auth && database && xOauth) registerXOauthRoutes(application, { auth, database, ...xOauth });
 
   return application;
 }

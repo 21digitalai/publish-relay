@@ -7,8 +7,8 @@ import type { SessionResult } from './auth.service.js';
 import { requireWorkspaceAction, type WorkspaceAction } from './authorization.js';
 import { sessionCookieOptions, verifyCsrfToken } from './session.js';
 
-const SESSION_COOKIE = 'publish_relay_session';
-const CSRF_COOKIE = 'publish_relay_csrf';
+export const SESSION_COOKIE = 'publish_relay_session';
+export const CSRF_COOKIE = 'publish_relay_csrf';
 const credentialsSchema = z.object({ email: z.email(), password: z.string().min(12) });
 const registrationSchema = credentialsSchema.extend({
   displayName: z.string().trim().min(1).max(100),
@@ -45,7 +45,7 @@ function isUniqueViolation(error: unknown): boolean {
   return 'cause' in error && isUniqueViolation(error.cause);
 }
 
-async function authenticateRequest(
+export async function authenticateRequest(
   request: FastifyRequest,
   auth: AuthService,
 ): Promise<AuthIdentity | null> {

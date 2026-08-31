@@ -59,6 +59,7 @@ export async function completeXOauthConnection(
   client: XHttpClient,
   input: {
     workspaceId: string;
+    userId: string;
     requestToken: string;
     verifier: string;
     requestId: string;
@@ -77,6 +78,7 @@ export async function completeXOauthConnection(
         input.workspaceId,
         hashOauthState(input.requestToken),
         input.now ?? new Date(),
+        input.userId,
       );
       if (transactionRecord?.provider !== 'x') return null;
       const credential = await getActiveCredential(

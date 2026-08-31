@@ -62,6 +62,7 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - X does not currently have a proven provider-side idempotency header in this product. The scheduler remains the idempotency owner; ambiguous POST transport failures become reconciliation-required rather than blind retries.
 - X connection uses the OAuth 1.0a request-token, authorization redirect, verifier callback, and access-token exchange. Request-token secrets must use the encrypted, one-time transaction lifecycle before this flow is exposed by HTTP routes. Revocation and native article publishing remain fail-closed until their provider endpoints and account capabilities are verified. Pre-uploaded media IDs are mapped exactly; media upload lifecycle and limits remain separate evidence-gated work.
 - The X OAuth service hashes the request token as callback correlation, encrypts its request-token secret in the provider-neutral OAuth transaction credential, atomically consumes and deletes that one-time secret before exchange, then stores the resulting user credential through the canonical reconnect lifecycle.
+- The web boundary exposes authenticated `POST /api/oauth/x` initiation with session CSRF protection and `GET /api/oauth/x/callback` completion. Both derive workspace and user authority from the live session; callback completion consumes only a transaction initiated by that same user. The callback URL is derived from `PUBLISH_RELAY_PUBLIC_ORIGIN`, never request input.
 
 ## Content and media persistence
 

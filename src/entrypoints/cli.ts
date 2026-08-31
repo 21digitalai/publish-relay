@@ -1,0 +1,327 @@
+#!/usr/bin/env node
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+interface Profile {
+  baseUrl: string;
+  workspaceId?: string;
+  workspaceLabel?: string;
+  apiKeyEnv?: string;
+  timeoutMs?: number;
+}
+
+const EXIT = {
+  usage: 2,
+  auth: 3,
+  authorization: 4,
+  validation: 5,
+  conflict: 6,
+  rate: 7,
+  transient: 8,
+  terminal: 9,
+  timeout: 10,
+} as const;
+const MUTATIONS = new Set([
+  'media:create',
+  'posts:create',
+  'posts:update',
+  'schedules:create',
+  'schedules:edit',
+  'schedules:cancel',
+  'publishes:submit',
+  'publishes:retry',
+]);
+const ROUTES: Record<string, { method: string; path: string; body?: boolean }> = {
+  'account:current': { method: 'GET', path: '/api/v1/account' },
+  'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
+  'destinations:show': { method: 'GET', path: '/api/v1/destinations/:id' },
+  'media:create': { method: 'POST', path: '/api/v1/media', body: true },
+  'media:show': { method: 'GET', path: '/api/v1/media/:id' },
+  'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
+  'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
+  'posts:update': { method: 'PATCH', path: '/api/v1/posts/:id', body: true },
+  'schedules:create': { method: 'POST', path: '/api/v1/schedules', body: true },
+  'schedules:list': { method: 'GET', path: '/api/v1/schedules' },
+  'schedules:show': { method: 'GET', path: '/api/v1/schedules/:id' },
+  'schedules:edit': { method: 'PATCH', path: '/api/v1/schedules/:id', body: true },
+  'schedules:cancel': { method: 'POST', path: '/api/v1/schedules/:id/cancel', body: true },
+  'publishes:submit': { method: 'POST', path: '/api/v1/publication-jobs', body: true },
+  'publishes:show': { method: 'GET', path: '/api/v1/jobs/:id' },
+  'publishes:poll': { method: 'GET', path: '/api/v1/jobs/:id' },
+  'publishes:retry': { method: 'POST', path: '/api/v1/jobs/:id/retry', body: true },
+  'audit:list': { method: 'GET', path: '/api/v1/audit-events' },
+  health: { method: 'GET', path: '/health/live' },
+};
+
+class CliError extends Error {
+  public constructor(
+    public readonly exitCode: number,
+    message: string,
+    public readonly data?: Json,
+  ) {
+    super(message);
+  }
+}
+
+function parseArgs(argv: string[]): {
+  command: string;
+  id?: string;
+  flags: Record<string, string | true>;
+} {
+  const positional: string[] = [];
+  const flags: Record<string, string | true> = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === undefined) continue;
+    if (!value.startsWith('--')) positional.push(value);
+    else {
+      const name = value.slice(2);
+      if (/(api.?key|secret|token|password)/i.test(name))
+        throw new CliError(EXIT.usage, `--${name} is forbidden; load secrets from the environment`);
+      const next = argv[index + 1];
+      if (!next || next.startsWith('--')) flags[name] = true;
+      else {
+        flags[name] = next;
+        index += 1;
+      }
+    }
+  }
+  if (positional[0] === 'version') return { command: 'version', flags };
+  if (positional[0] === 'health') return { command: 'health', flags };
+  if (!positional[0] || !positional[1])
+    throw new CliError(EXIT.usage, 'Expected a noun and action');
+  const id = positional[2];
+  return { command: `${positional[0]}:${positional[1]}`, ...(id ? { id } : {}), flags };
+}
+
+function rejectSecrets(value: unknown, path = 'profile'): void {
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    if (/(secret|token|password|api.?key(?!Env))/i.test(key))
+      throw new CliError(EXIT.usage, `${path}.${key} may not contain secret material`);
+    rejectSecrets(child, `${path}.${key}`);
+  }
+}
+
+async function loadEnvironment(path: string | true | undefined): Promise<Record<string, string>> {
+  if (!path || path === true) return {};
+  const result: Record<string, string> = {};
+  for (const line of (await readFile(path, 'utf8')).split(/\r?\n/)) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+    if (!match) continue;
+    const name = match[1];
+    const value = match[2];
+    if (name !== undefined && value !== undefined)
+      result[name] = value.replace(/^(['"])(.*)\1$/, '$2');
+  }
+  return result;
+}
+
+async function loadProfile(path: string | true | undefined): Promise<Profile> {
+  if (!path || path === true) return { baseUrl: process.env.PUBLISH_RELAY_BASE_URL ?? '' };
+  const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+  rejectSecrets(parsed);
+  if (!parsed || typeof parsed !== 'object')
+    throw new CliError(EXIT.usage, 'Profile must be a JSON object');
+  return parsed as Profile;
+}
+
+function mapExit(status: number, code?: string): number {
+  if (status === 401) return EXIT.auth;
+  if (status === 403 || code === 'workspace_mismatch') return EXIT.authorization;
+  if (status === 400 || status === 404 || status === 422) return EXIT.validation;
+  if (status === 409) return EXIT.conflict;
+  if (status === 429) return EXIT.rate;
+  if (status >= 500) return EXIT.transient;
+  return EXIT.terminal;
+}
+
+async function request(
+  profile: Profile,
+  key: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<{ status: number; body: Json }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, profile.timeoutMs ?? 30_000);
+  try {
+    const headers = new Headers(init.headers);
+    headers.set('authorization', `Bearer ${key}`);
+    headers.set('accept', 'application/json');
+    const response = await fetch(new URL(path, profile.baseUrl), {
+      ...init,
+      signal: controller.signal,
+      headers,
+    });
+    const body = (await response.json()) as Json;
+    return { status: response.status, body };
+  } catch (error) {
+    throw new CliError(
+      EXIT.transient,
+      error instanceof Error ? error.message : 'Network request failed',
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function errorCode(body: Json): string | undefined {
+  if (!body || Array.isArray(body) || typeof body !== 'object') return undefined;
+  const error = body.error;
+  return error &&
+    !Array.isArray(error) &&
+    typeof error === 'object' &&
+    typeof error.code === 'string'
+    ? error.code
+    : undefined;
+}
+
+async function requireWorkspace(profile: Profile, key: string, expected: string): Promise<void> {
+  const response = await request(profile, key, '/api/v1/account');
+  if (response.status >= 400)
+    throw new CliError(
+      mapExit(response.status, errorCode(response.body)),
+      'Workspace preflight failed',
+      response.body,
+    );
+  const envelope = response.body as { data?: { workspaceId?: string; workspaceLabel?: string } };
+  if (envelope.data?.workspaceId !== expected && envelope.data?.workspaceLabel !== expected)
+    throw new CliError(
+      EXIT.authorization,
+      'Authenticated workspace does not match required workspace',
+      {
+        success: false,
+        error: {
+          code: 'workspace_mismatch',
+          message: 'Authenticated workspace does not match required workspace',
+        },
+      },
+    );
+}
+
+async function readBody(path: string | true | undefined): Promise<string | undefined> {
+  if (!path || path === true) return undefined;
+  const text = await readFile(path, 'utf8');
+  JSON.parse(text);
+  return text;
+}
+
+function jobState(body: Json): string | undefined {
+  if (!body || Array.isArray(body) || typeof body !== 'object') return undefined;
+  const data = body.data;
+  return data && !Array.isArray(data) && typeof data === 'object' && typeof data.state === 'string'
+    ? data.state
+    : undefined;
+}
+
+async function pollJob(
+  profile: Profile,
+  key: string,
+  path: string,
+  jobId: string,
+  flags: Record<string, string | true>,
+): Promise<Json> {
+  const timeoutMs = Number(flags['poll-timeout-ms'] ?? 60_000);
+  const intervalMs = Number(flags['poll-interval-ms'] ?? 1_000);
+  if (
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs < 1 ||
+    !Number.isFinite(intervalMs) ||
+    intervalMs < 1
+  )
+    throw new CliError(EXIT.usage, 'Polling timeout and interval must be positive numbers');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const response = await request(profile, key, path);
+    if (response.status >= 400)
+      throw new CliError(
+        mapExit(response.status, errorCode(response.body)),
+        'Polling failed',
+        response.body,
+      );
+    const state = jobState(response.body);
+    if (state && !['queued', 'claimed', 'dispatching', 'accepted_pending'].includes(state))
+      return response.body;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(intervalMs, Math.max(1, deadline - Date.now()))),
+    );
+  }
+  throw new CliError(EXIT.timeout, 'Polling timed out; the publication job remains durable', {
+    success: false,
+    error: {
+      code: 'poll_timeout',
+      message: 'Polling timed out; the publication job remains durable',
+    },
+    jobId,
+    links: { job: path },
+  });
+}
+
+async function run(): Promise<Json> {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.command === 'version') return { success: true, data: { version: '1.0.0' } };
+  const route = ROUTES[parsed.command];
+  if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
+  const env = await loadEnvironment(parsed.flags['env-file']);
+  const profile = await loadProfile(parsed.flags['profile-file']);
+  const baseUrlFlag = parsed.flags['base-url'];
+  profile.baseUrl =
+    typeof baseUrlFlag === 'string'
+      ? baseUrlFlag
+      : profile.baseUrl.length > 0
+        ? profile.baseUrl
+        : (env.PUBLISH_RELAY_BASE_URL ?? '');
+  if (!profile.baseUrl) throw new CliError(EXIT.usage, 'A base URL is required');
+  const keyName = profile.apiKeyEnv ?? 'PUBLISH_RELAY_API_KEY';
+  const key = env[keyName] ?? process.env[keyName];
+  if (!key) throw new CliError(EXIT.usage, `API key environment variable ${keyName} is missing`);
+  const expected = String(
+    parsed.flags['require-workspace'] ?? profile.workspaceId ?? profile.workspaceLabel ?? '',
+  );
+  if (MUTATIONS.has(parsed.command)) {
+    if (!expected) throw new CliError(EXIT.usage, 'Mutations require an expected workspace');
+    await requireWorkspace(profile, key, expected);
+  }
+  if (route.path.includes(':id') && !parsed.id)
+    throw new CliError(EXIT.usage, 'A resource ID is required');
+  const path = route.path.replace(':id', encodeURIComponent(parsed.id ?? ''));
+  if (parsed.command === 'publishes:poll' && parsed.id)
+    return pollJob(profile, key, path, parsed.id, parsed.flags);
+  const body = await readBody(parsed.flags['body-file']);
+  if (route.body && !body) throw new CliError(EXIT.usage, 'This command requires --body-file');
+  const idempotencyKey = parsed.flags['idempotency-key'];
+  if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')
+    throw new CliError(EXIT.usage, 'Mutations require --idempotency-key');
+  const response = await request(profile, key, path, {
+    method: route.method,
+    ...(body ? { body } : {}),
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      ...(typeof idempotencyKey === 'string' ? { 'idempotency-key': idempotencyKey } : {}),
+    },
+  });
+  if (response.status >= 400)
+    throw new CliError(
+      mapExit(response.status, errorCode(response.body)),
+      'Request failed',
+      response.body,
+    );
+  return response.body;
+}
+
+try {
+  process.stdout.write(`${JSON.stringify(await run())}\n`);
+} catch (error) {
+  const cliError =
+    error instanceof CliError
+      ? error
+      : new CliError(EXIT.usage, error instanceof Error ? error.message : 'Invalid input');
+  process.stdout.write(
+    `${JSON.stringify(cliError.data ?? { success: false, error: { code: 'cli_error', message: cliError.message } })}\n`,
+  );
+  process.stderr.write(`${basename(process.argv[1] ?? 'publish-relay')}: ${cliError.message}\n`);
+  process.exitCode = cliError.exitCode;
+}

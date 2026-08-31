@@ -20,6 +20,8 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 
 ## Agent API v1 contract
 
+- The dependency-light Node 24 CLI lives at `src/entrypoints/cli.ts`. It owns only named HTTP command mapping, secret-free profile/env loading, mutation workspace preflight, stable HTTP-to-exit mapping, compact JSON output, and bounded publication-job polling; it has no raw URL or database/provider passthrough.
+
 - Shared success/error envelope builders and the signed keyset cursor codec live in `src/modules/api/contract.ts`; routes must use these canonical boundaries rather than hand-building response shapes or cursor parsing.
 - Runtime Zod response schemas from that module are also the OpenAPI JSON Schema source; do not maintain a second handwritten schema for the same envelope.
 - Collection cursors are versioned HMAC-SHA256 tokens bound to normalized filters and expiry. Malformed, tampered, expired, or filter-mismatched cursors fail closed and must map to HTTP 400 without restarting pagination.

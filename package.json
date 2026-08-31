@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "publish-relay": "dist/entrypoints/cli.js"
+  },
   "engines": {
     "node": ">=24"
   },
@@ -15,6 +18,7 @@
     "build": "tsc -p tsconfig.build.json && vite build",
     "start:web": "node dist/entrypoints/web.js",
     "start:worker": "node dist/entrypoints/worker.js",
+    "cli": "tsx src/entrypoints/cli.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

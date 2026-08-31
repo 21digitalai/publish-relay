@@ -1,0 +1,154 @@
+import { createServer } from 'node:http';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const servers: ReturnType<typeof createServer>[] = [];
+
+afterEach(async () =>
+  Promise.all(
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve) =>
+          server.close(() => {
+            resolve();
+          }),
+        ),
+    ),
+  ),
+);
+
+async function fixture(status: number, body: unknown, workspace = 'workspace-one') {
+  const server = createServer((request, response) => {
+    const payload =
+      request.url === '/api/v1/account'
+        ? { success: true, data: { workspaceId: workspace }, meta: { requestId: 'preflight' } }
+        : body;
+    response.writeHead(request.url === '/api/v1/account' ? 200 : status, {
+      'content-type': 'application/json',
+    });
+    response.end(JSON.stringify(payload));
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing server address');
+  return `http://127.0.0.1:${String(address.port)}`;
+}
+
+async function cli(args: string[], env: Record<string, string> = {}) {
+  return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/entrypoints/cli.ts', ...args], {
+      cwd: process.cwd(),
+      env: { ...process.env, ...env },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (value) => {
+      stdout += String(value);
+    });
+    child.stderr.on('data', (value) => {
+      stderr += String(value);
+    });
+    child.on('close', (code) => {
+      resolve({ code: code ?? -1, stdout, stderr });
+    });
+  });
+}
+
+describe('Publish Relay CLI', () => {
+  it.each([
+    [401, 3],
+    [403, 4],
+    [400, 5],
+    [422, 5],
+    [409, 6],
+    [429, 7],
+    [500, 8],
+    [424, 9],
+  ])('maps HTTP %i to stable exit %i while preserving the envelope', async (status, exit) => {
+    const body = {
+      success: false,
+      error: { code: `error_${String(status)}`, message: 'safe', requestId: 'request-1' },
+    };
+    const baseUrl = await fixture(status, body);
+    const result = await cli(['posts', 'show', 'post-1', '--base-url', baseUrl], {
+      PUBLISH_RELAY_API_KEY: 'test-key',
+    });
+    expect(result.code).toBe(exit);
+    expect(JSON.parse(result.stdout)).toEqual(body);
+    expect(result.stdout).not.toContain('test-key');
+  });
+
+  it('preflights workspace before a mutation and sends body plus idempotency key', async () => {
+    const baseUrl = await fixture(201, {
+      success: true,
+      data: { id: 'post-1' },
+      meta: { requestId: 'request-2' },
+    });
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-cli-'));
+    const bodyFile = join(directory, 'body.json');
+    await writeFile(bodyFile, '{"content":{"type":"text","text":"hello"}}');
+    const result = await cli(
+      [
+        'posts',
+        'create',
+        '--base-url',
+        baseUrl,
+        '--require-workspace',
+        'workspace-one',
+        '--idempotency-key',
+        'idem-1',
+        '--body-file',
+        bodyFile,
+      ],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ success: true, data: { id: 'post-1' } });
+  });
+
+  it('rejects secret-bearing profile fields before making a request', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-cli-profile-'));
+    const profile = join(directory, 'profile.json');
+    await writeFile(profile, '{"baseUrl":"https://example.invalid","apiKey":"secret"}');
+    const result = await cli(['health', '--profile-file', profile]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('may not contain secret material');
+  });
+
+  it('rejects secret-bearing command-line flags', async () => {
+    const result = await cli(['health', '--api-key', 'secret']);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('load secrets from the environment');
+  });
+
+  it('returns exit 10 and the durable job ID when bounded polling times out', async () => {
+    const baseUrl = await fixture(200, {
+      success: true,
+      data: { id: 'job-1', state: 'dispatching' },
+      meta: { requestId: 'request-3' },
+    });
+    const result = await cli(
+      [
+        'publishes',
+        'poll',
+        'job-1',
+        '--base-url',
+        baseUrl,
+        '--poll-timeout-ms',
+        '20',
+        '--poll-interval-ms',
+        '5',
+      ],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(10);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      jobId: 'job-1',
+      links: { job: '/api/v1/jobs/job-1' },
+    });
+  });
+});

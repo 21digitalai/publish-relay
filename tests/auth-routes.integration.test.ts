@@ -177,9 +177,20 @@ describe('authentication HTTP boundary', () => {
       url: '/app',
       headers: { cookie: 'publish_relay_session=w2.token' },
     });
-    expect(response.statusCode).toBe(401);
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe('/login');
     expect(store.findSession).toHaveBeenCalledWith('w2', expect.any(String));
     expect(store.findCurrentRole).not.toHaveBeenCalled();
+  });
+
+  it('redirects protected deep links before returning shell data', async () => {
+    const application = createTestApplication(createStore());
+    for (const url of ['/app', '/onboarding/workspace', '/w/atlas/queue']) {
+      const response = await application.inject({ method: 'GET', url });
+      expect(response.statusCode).toBe(302);
+      expect(response.headers.location).toBe('/login');
+      expect(response.body).not.toContain('Publish Relay');
+    }
   });
 
   it('denies a session when live membership lookup no longer authorizes it', async () => {
@@ -197,6 +208,7 @@ describe('authentication HTTP boundary', () => {
       url: '/app',
       headers: { cookie: 'publish_relay_session=w1.token' },
     });
-    expect(response.statusCode).toBe(401);
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe('/login');
   });
 });

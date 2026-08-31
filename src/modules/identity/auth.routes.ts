@@ -128,11 +128,14 @@ export function registerAuthRoutes(
       : reply.code(401).send({ data: null, error: 'Authentication required' });
   });
 
-  application.get('/app', async (request, reply) => {
+  const protectedShell = async (request: FastifyRequest, reply: FastifyReply) => {
     const identity = await authorizeRequest(request, auth, 'content:read');
-    if (!identity) return reply.code(401).type('text/html').send('Authentication required');
+    if (!identity) return reply.redirect('/login');
     return reply
       .type('text/html')
       .send('<!doctype html><html><body><main id="app">Publish Relay</main></body></html>');
-  });
+  };
+  application.get('/app', protectedShell);
+  application.get('/onboarding/*', protectedShell);
+  application.get('/w/*', protectedShell);
 }

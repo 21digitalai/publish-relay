@@ -9,6 +9,7 @@ import {
   claimReconciliationJobs,
   cancelPendingJob,
   finishDispatchAttempt,
+  extendOwnedLease,
   recoverExpiredDispatches,
   requestOperatorRetry,
   resolveReconciliation,
@@ -72,6 +73,19 @@ describe('scheduler repository', () => {
       state: 'leased',
       attemptNumber: 1,
     });
+    expect(
+      await extendOwnedLease(db, {
+        workspaceId,
+        jobId,
+        workerId: 'wrong-worker',
+        now,
+        leaseMs: 60_000,
+      }),
+    ).toBe(false);
+    const owner = first.length === 1 ? 'worker-a' : 'worker-b';
+    expect(
+      await extendOwnedLease(db, { workspaceId, jobId, workerId: owner, now, leaseMs: 60_000 }),
+    ).toBe(true);
   });
 
   it('marks an expired dispatch for reconciliation instead of reclaiming it', async () => {
@@ -172,6 +186,7 @@ describe('scheduler repository', () => {
       `SELECT reason FROM publication_job_events WHERE job_id = '${jobId}' ORDER BY created_at`,
     );
     expect(result.rows.map((row) => row.reason)).toEqual([
+      'worker_claim',
       'worker_dispatch',
       'attempt_transient',
       'operator_retry',
@@ -247,5 +262,34 @@ describe('scheduler repository', () => {
              state FROM publication_jobs WHERE id = '${jobId}'
     `);
     expect(result.rows[0]).toEqual({ attempts: 1, state: 'published' });
+  });
+
+  it('makes accepted-pending jobs eligible for reconciliation', async () => {
+    const now = new Date('2026-08-31T16:00:00Z');
+    await claimDueJobs(db, { workerId: 'publisher', now, leaseMs: 30_000, limit: 1 });
+    const attempt = await startDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      workerId: 'publisher',
+      fingerprint: 'accepted-request',
+      now,
+    });
+    if (!attempt) throw new Error('Expected dispatch attempt');
+    await finishDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      attemptId: attempt.attemptId,
+      outcome: 'accepted_pending',
+      reconciliationKey: 'provider-job',
+      now,
+    });
+    expect(
+      await claimReconciliationJobs(db, {
+        workerId: 'reconciler',
+        now,
+        leaseMs: 30_000,
+        limit: 1,
+      }),
+    ).toEqual([jobId]);
   });
 });

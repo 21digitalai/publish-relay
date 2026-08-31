@@ -8,6 +8,7 @@
 - Provider adapters behind one explicit interface.
 - Durable scheduled jobs with atomic claim/lease, idempotency, bounded retry/backoff, cancellation, reconciliation, and audit history.
 - Scheduler persistence lives in `src/modules/scheduler`: claims use one `FOR UPDATE SKIP LOCKED` update, expired dispatch leases are marked reconciliation-required, and retry timing uses bounded full jitter. Stable publication idempotency derives only from job, immutable revision, and provider account identity.
+- Cross-workspace worker claims require the dedicated database worker role documented by deployment; all subsequent workspace-specific scheduler mutations establish `app.workspace_id` through `withTenantTransaction` before forced-RLS access.
 - Secrets referenced through approved runtime/Vault mechanisms; never stored in plaintext project docs or logs.
 
 - The application has one repository and build with separate `web` and `worker` process entrypoints.

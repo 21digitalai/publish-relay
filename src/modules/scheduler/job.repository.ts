@@ -7,6 +7,7 @@ import {
   publicationJobEvents,
   publicationJobs,
 } from '../../database/schema.js';
+import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
 export interface ClaimedJob extends Record<string, unknown> {
   id: string;
@@ -51,7 +52,7 @@ export async function claimDueJobs(
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
   const result = await database.execute<ClaimedJob>(sql`
     WITH candidates AS (
-      SELECT id
+      SELECT id, state AS from_state
       FROM publication_jobs
       WHERE (
         (state = 'scheduled' AND scheduled_at <= ${input.now}) OR
@@ -62,14 +63,19 @@ export async function claimDueJobs(
       FOR UPDATE SKIP LOCKED
       LIMIT ${input.limit}
     )
-    UPDATE publication_jobs AS job
-    SET state = 'leased', lease_owner = ${input.workerId}, lease_expires_at = ${leaseExpiresAt},
-        attempt_number = job.attempt_number + 1, updated_at = ${input.now}
-    FROM candidates
-    WHERE job.id = candidates.id
-    RETURNING job.id, job.workspace_id AS "workspaceId", job.revision_id AS "revisionId",
-      job.provider_account_id AS "providerAccountId", job.state, job.attempt_number AS "attemptNumber",
-      job.lease_owner AS "leaseOwner", job.lease_expires_at AS "leaseExpiresAt"
+    , claimed AS (
+      UPDATE publication_jobs AS job
+      SET state = 'leased', lease_owner = ${input.workerId}, lease_expires_at = ${leaseExpiresAt},
+          attempt_number = job.attempt_number + 1, updated_at = ${input.now}
+      FROM candidates WHERE job.id = candidates.id
+      RETURNING job.*, candidates.from_state
+    ), events AS (
+      INSERT INTO publication_job_events (workspace_id, job_id, from_state, to_state, reason)
+      SELECT workspace_id, id, from_state, 'leased', 'worker_claim' FROM claimed
+    )
+    SELECT id, workspace_id AS "workspaceId", revision_id AS "revisionId",
+      provider_account_id AS "providerAccountId", state, attempt_number AS "attemptNumber",
+      lease_owner AS "leaseOwner", lease_expires_at AS "leaseExpiresAt" FROM claimed
   `);
   return resultRows(result);
 }
@@ -116,53 +122,57 @@ export async function startDispatchAttempt(
   database: NodePgDatabase,
   input: { workspaceId: string; jobId: string; workerId: string; fingerprint: string; now: Date },
 ): Promise<{ attemptId: string; attemptNumber: number; idempotencyKey: string } | null> {
-  return database.transaction(async (transaction) => {
-    const jobs = await transaction
-      .update(publicationJobs)
-      .set({ state: 'dispatching', updatedAt: input.now })
-      .where(
-        and(
-          eq(publicationJobs.workspaceId, input.workspaceId),
-          eq(publicationJobs.id, input.jobId),
-          eq(publicationJobs.state, 'leased'),
-          eq(publicationJobs.leaseOwner, input.workerId),
-          gt(publicationJobs.leaseExpiresAt, input.now),
-        ),
-      )
-      .returning({
-        revisionId: publicationJobs.revisionId,
-        providerAccountId: publicationJobs.providerAccountId,
-        attemptNumber: publicationJobs.attemptNumber,
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const jobs = await transaction
+        .update(publicationJobs)
+        .set({ state: 'dispatching', updatedAt: input.now })
+        .where(
+          and(
+            eq(publicationJobs.workspaceId, input.workspaceId),
+            eq(publicationJobs.id, input.jobId),
+            eq(publicationJobs.state, 'leased'),
+            eq(publicationJobs.leaseOwner, input.workerId),
+            gt(publicationJobs.leaseExpiresAt, input.now),
+          ),
+        )
+        .returning({
+          revisionId: publicationJobs.revisionId,
+          providerAccountId: publicationJobs.providerAccountId,
+          attemptNumber: publicationJobs.attemptNumber,
+        });
+      const job = jobs[0];
+      if (!job) return null;
+      const idempotencyKey = deriveJobIdempotencyKey({
+        jobId: input.jobId,
+        revisionId: job.revisionId,
+        providerAccountId: job.providerAccountId,
       });
-    const job = jobs[0];
-    if (!job) return null;
-    const idempotencyKey = deriveJobIdempotencyKey({
-      jobId: input.jobId,
-      revisionId: job.revisionId,
-      providerAccountId: job.providerAccountId,
-    });
-    const attempts = await transaction
-      .insert(publicationAttempts)
-      .values({
+      const attempts = await transaction
+        .insert(publicationAttempts)
+        .values({
+          workspaceId: input.workspaceId,
+          jobId: input.jobId,
+          attemptNumber: job.attemptNumber,
+          idempotencyKey,
+          requestFingerprint: input.fingerprint,
+          startedAt: input.now,
+        })
+        .returning({ id: publicationAttempts.id });
+      await transaction.insert(publicationJobEvents).values({
         workspaceId: input.workspaceId,
         jobId: input.jobId,
-        attemptNumber: job.attemptNumber,
-        idempotencyKey,
-        requestFingerprint: input.fingerprint,
-        startedAt: input.now,
-      })
-      .returning({ id: publicationAttempts.id });
-    await transaction.insert(publicationJobEvents).values({
-      workspaceId: input.workspaceId,
-      jobId: input.jobId,
-      fromState: 'leased',
-      toState: 'dispatching',
-      reason: 'worker_dispatch',
-    });
-    const attempt = attempts[0];
-    if (!attempt) throw new Error('Attempt write returned no record');
-    return { attemptId: attempt.id, attemptNumber: job.attemptNumber, idempotencyKey };
-  });
+        fromState: 'leased',
+        toState: 'dispatching',
+        reason: 'worker_dispatch',
+      });
+      const attempt = attempts[0];
+      if (!attempt) throw new Error('Attempt write returned no record');
+      return { attemptId: attempt.id, attemptNumber: job.attemptNumber, idempotencyKey };
+    },
+  );
 }
 
 function outcomeState(
@@ -190,89 +200,98 @@ export async function finishDispatchAttempt(
     redactedError?: string;
   },
 ): Promise<boolean> {
-  return database.transaction(async (transaction) => {
-    const attempts = await transaction
-      .update(publicationAttempts)
-      .set({
-        finishedAt: input.now,
-        outcome: input.outcome,
-        retryAt: input.retryAt,
-        providerRequestId: input.providerRequestId,
-        externalPostId: input.externalPostId,
-        reconciliationKey: input.reconciliationKey,
-        redactedError: input.redactedError,
-      })
-      .where(
-        and(
-          eq(publicationAttempts.workspaceId, input.workspaceId),
-          eq(publicationAttempts.id, input.attemptId),
-          eq(publicationAttempts.jobId, input.jobId),
-          sql`${publicationAttempts.finishedAt} IS NULL`,
-        ),
-      )
-      .returning({ id: publicationAttempts.id });
-    if (attempts.length === 0) return false;
-    const toState = outcomeState(input.outcome, input.retryAt);
-    const jobs = await transaction
-      .update(publicationJobs)
-      .set({
-        state: toState,
-        nextAttemptAt: toState === 'retry_wait' ? input.retryAt : null,
-        reconciliationRequired: input.outcome === 'unknown',
-        leaseOwner: null,
-        leaseExpiresAt: null,
-        updatedAt: input.now,
-      })
-      .where(
-        and(
-          eq(publicationJobs.workspaceId, input.workspaceId),
-          eq(publicationJobs.id, input.jobId),
-          eq(publicationJobs.state, 'dispatching'),
-        ),
-      )
-      .returning({ id: publicationJobs.id });
-    if (jobs.length === 0)
-      throw new Error('Dispatching job was not available for attempt completion');
-    await transaction.insert(publicationJobEvents).values({
-      workspaceId: input.workspaceId,
-      jobId: input.jobId,
-      fromState: 'dispatching',
-      toState,
-      reason: `attempt_${input.outcome}`,
-      metadata: { attemptId: input.attemptId },
-    });
-    return true;
-  });
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const attempts = await transaction
+        .update(publicationAttempts)
+        .set({
+          finishedAt: input.now,
+          outcome: input.outcome,
+          retryAt: input.retryAt,
+          providerRequestId: input.providerRequestId,
+          externalPostId: input.externalPostId,
+          reconciliationKey: input.reconciliationKey,
+          redactedError: input.redactedError,
+        })
+        .where(
+          and(
+            eq(publicationAttempts.workspaceId, input.workspaceId),
+            eq(publicationAttempts.id, input.attemptId),
+            eq(publicationAttempts.jobId, input.jobId),
+            sql`${publicationAttempts.finishedAt} IS NULL`,
+          ),
+        )
+        .returning({ id: publicationAttempts.id });
+      if (attempts.length === 0) return false;
+      const toState = outcomeState(input.outcome, input.retryAt);
+      const jobs = await transaction
+        .update(publicationJobs)
+        .set({
+          state: toState,
+          nextAttemptAt: toState === 'retry_wait' ? input.retryAt : null,
+          reconciliationRequired:
+            input.outcome === 'unknown' || input.outcome === 'accepted_pending',
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          updatedAt: input.now,
+        })
+        .where(
+          and(
+            eq(publicationJobs.workspaceId, input.workspaceId),
+            eq(publicationJobs.id, input.jobId),
+            eq(publicationJobs.state, 'dispatching'),
+          ),
+        )
+        .returning({ id: publicationJobs.id });
+      if (jobs.length === 0)
+        throw new Error('Dispatching job was not available for attempt completion');
+      await transaction.insert(publicationJobEvents).values({
+        workspaceId: input.workspaceId,
+        jobId: input.jobId,
+        fromState: 'dispatching',
+        toState,
+        reason: `attempt_${input.outcome}`,
+        metadata: { attemptId: input.attemptId },
+      });
+      return true;
+    },
+  );
 }
 
 export async function requestOperatorRetry(
   database: NodePgDatabase,
   input: { workspaceId: string; jobId: string; actorId: string; now: Date },
 ): Promise<'scheduled' | 'conflict'> {
-  return database.transaction(async (transaction) => {
-    const jobs = await transaction
-      .update(publicationJobs)
-      .set({ state: 'retry_wait', nextAttemptAt: input.now, updatedAt: input.now })
-      .where(
-        and(
-          eq(publicationJobs.workspaceId, input.workspaceId),
-          eq(publicationJobs.id, input.jobId),
-          eq(publicationJobs.state, 'failed'),
-          eq(publicationJobs.reconciliationRequired, false),
-        ),
-      )
-      .returning({ id: publicationJobs.id });
-    if (jobs.length === 0) return 'conflict';
-    await transaction.insert(publicationJobEvents).values({
-      workspaceId: input.workspaceId,
-      jobId: input.jobId,
-      fromState: 'failed',
-      toState: 'retry_wait',
-      reason: 'operator_retry',
-      metadata: { actorId: input.actorId },
-    });
-    return 'scheduled';
-  });
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const jobs = await transaction
+        .update(publicationJobs)
+        .set({ state: 'retry_wait', nextAttemptAt: input.now, updatedAt: input.now })
+        .where(
+          and(
+            eq(publicationJobs.workspaceId, input.workspaceId),
+            eq(publicationJobs.id, input.jobId),
+            eq(publicationJobs.state, 'failed'),
+            eq(publicationJobs.reconciliationRequired, false),
+          ),
+        )
+        .returning({ id: publicationJobs.id });
+      if (jobs.length === 0) return 'conflict';
+      await transaction.insert(publicationJobEvents).values({
+        workspaceId: input.workspaceId,
+        jobId: input.jobId,
+        fromState: 'failed',
+        toState: 'retry_wait',
+        reason: 'operator_retry',
+        metadata: { actorId: input.actorId },
+      });
+      return 'scheduled';
+    },
+  );
 }
 
 export async function resolveReconciliation(
@@ -288,8 +307,13 @@ export async function resolveReconciliation(
 ): Promise<boolean> {
   if (input.outcome === 'retry_wait' && !input.retryAt)
     throw new Error('retryAt is required for a reconciliation retry');
-  return database.transaction(async (transaction) => {
-    const result = await transaction.execute<{ fromState: 'dispatching' | 'accepted_pending' }>(sql`
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const result = await transaction.execute<{
+        fromState: 'dispatching' | 'accepted_pending';
+      }>(sql`
       WITH candidate AS (
         SELECT id, state FROM publication_jobs
         WHERE workspace_id = ${input.workspaceId} AND id = ${input.jobId}
@@ -304,25 +328,29 @@ export async function resolveReconciliation(
       FROM candidate WHERE job.id = candidate.id
       RETURNING candidate.state AS "fromState"
     `);
-    const job = resultRows(result)[0];
-    if (!job) return false;
-    await transaction.insert(publicationJobEvents).values({
-      workspaceId: input.workspaceId,
-      jobId: input.jobId,
-      fromState: job.fromState,
-      toState: input.outcome,
-      reason: 'reconciliation_resolved',
-    });
-    return true;
-  });
+      const job = resultRows(result)[0];
+      if (!job) return false;
+      await transaction.insert(publicationJobEvents).values({
+        workspaceId: input.workspaceId,
+        jobId: input.jobId,
+        fromState: job.fromState,
+        toState: input.outcome,
+        reason: 'reconciliation_resolved',
+      });
+      return true;
+    },
+  );
 }
 
 export async function cancelPendingJob(
   database: NodePgDatabase,
   input: { workspaceId: string; jobId: string; actorId: string; now: Date },
 ): Promise<boolean> {
-  return database.transaction(async (transaction) => {
-    const result = await transaction.execute<{ fromState: 'scheduled' | 'retry_wait' }>(sql`
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const result = await transaction.execute<{ fromState: 'scheduled' | 'retry_wait' }>(sql`
       WITH candidate AS (
         SELECT id, state FROM publication_jobs
         WHERE workspace_id = ${input.workspaceId} AND id = ${input.jobId}
@@ -335,16 +363,46 @@ export async function cancelPendingJob(
       WHERE job.id = candidate.id
       RETURNING candidate.state AS "fromState"
     `);
-    const job = resultRows(result)[0];
-    if (!job) return false;
-    await transaction.insert(publicationJobEvents).values({
-      workspaceId: input.workspaceId,
-      jobId: input.jobId,
-      fromState: job.fromState,
-      toState: 'cancelled',
-      reason: 'operator_cancel',
-      metadata: { actorId: input.actorId },
-    });
-    return true;
-  });
+      const job = resultRows(result)[0];
+      if (!job) return false;
+      await transaction.insert(publicationJobEvents).values({
+        workspaceId: input.workspaceId,
+        jobId: input.jobId,
+        fromState: job.fromState,
+        toState: 'cancelled',
+        reason: 'operator_cancel',
+        metadata: { actorId: input.actorId },
+      });
+      return true;
+    },
+  );
+}
+
+export async function extendOwnedLease(
+  database: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; workerId: string; now: Date; leaseMs: number },
+): Promise<boolean> {
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const rows = await transaction
+        .update(publicationJobs)
+        .set({
+          leaseExpiresAt: new Date(input.now.getTime() + input.leaseMs),
+          updatedAt: input.now,
+        })
+        .where(
+          and(
+            eq(publicationJobs.workspaceId, input.workspaceId),
+            eq(publicationJobs.id, input.jobId),
+            eq(publicationJobs.leaseOwner, input.workerId),
+            sql`${publicationJobs.state} IN ('leased', 'dispatching', 'accepted_pending')`,
+            gt(publicationJobs.leaseExpiresAt, input.now),
+          ),
+        )
+        .returning({ id: publicationJobs.id });
+      return rows.length === 1;
+    },
+  );
 }

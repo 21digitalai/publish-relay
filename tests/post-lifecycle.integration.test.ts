@@ -422,7 +422,8 @@ describe('X media staging', () => {
     const source: XMediaSource = {
       load: () => Promise.resolve({ bytes, mimeType: 'image/png' }),
     };
-    let shouldInterrupt = true;
+    const interruptedSegments = new Set<number>();
+    let shouldInterruptFinalize = true;
     let isFinalized = false;
     const client: XMediaUploadClient = {
       init: () => {
@@ -432,14 +433,18 @@ describe('X media staging', () => {
       append: (_mediaId, segment) => {
         if (isFinalized) return Promise.reject(new Error('APPEND after FINALIZE'));
         calls.push(`APPEND:${String(segment)}`);
-        if (segment === 1 && shouldInterrupt) {
-          shouldInterrupt = false;
-          return Promise.reject(new Error('interrupted upload'));
+        if (!interruptedSegments.has(segment)) {
+          interruptedSegments.add(segment);
+          return Promise.reject(new Error(`interrupted segment ${String(segment)}`));
         }
         return Promise.resolve();
       },
       finalize: () => {
         calls.push('FINALIZE');
+        if (shouldInterruptFinalize) {
+          shouldInterruptFinalize = false;
+          return Promise.reject(new Error('interrupted before finalize'));
+        }
         isFinalized = true;
         return Promise.resolve({ state: 'pending' as const });
       },
@@ -452,7 +457,11 @@ describe('X media staging', () => {
     const input = { workspaceId, jobId, mediaId, idempotencyKey: 'job-media-1' };
     const db = drizzle(database) as unknown as NodePgDatabase;
 
-    await expect(stageXMedia(db, source, client, input)).rejects.toThrow('interrupted upload');
+    await expect(stageXMedia(db, source, client, input)).rejects.toThrow('interrupted segment 0');
+    await expect(stageXMedia(db, source, client, input)).rejects.toThrow('interrupted segment 1');
+    await expect(stageXMedia(db, source, client, input)).rejects.toThrow(
+      'interrupted before finalize',
+    );
     await expect(stageXMedia(db, source, client, input)).resolves.toEqual({
       mediaId: 'x-media-1',
       state: 'pending',
@@ -461,7 +470,16 @@ describe('X media staging', () => {
       mediaId: 'x-media-1',
       state: 'pending',
     });
-    expect(calls).toEqual(['INIT', 'APPEND:0', 'APPEND:1', 'APPEND:1', 'FINALIZE', 'STATUS']);
+    expect(calls).toEqual([
+      'INIT',
+      'APPEND:0',
+      'APPEND:0',
+      'APPEND:1',
+      'APPEND:1',
+      'FINALIZE',
+      'FINALIZE',
+      'STATUS',
+    ]);
     const artifacts = await database.query<{
       count: number;
       upload_phase: string;

@@ -1,5 +1,6 @@
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,12 +12,14 @@ import type { AuthService } from '../modules/identity/auth.service.js';
 import { registerAuthRoutes } from '../modules/identity/auth.routes.js';
 import type { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
+import { registerPostRoutes } from '../modules/content/post.routes.js';
 
 export function createApplication(
   config: RuntimeConfig,
   auth?: AuthService,
   apiKeys?: ApiKeyService,
   uiRootOverride?: string,
+  database?: NodePgDatabase,
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
@@ -32,18 +35,17 @@ export function createApplication(
       secureCookies: config.NODE_ENV === 'production',
       shellHtml,
     });
-  if (apiKeys)
-    registerApiKeyRoutes(
-      application,
-      apiKeys,
-      new ApiRateLimiter({
-        workspace: 600,
-        key: 300,
-        mutationWorkspace: 120,
-        mutationKey: 60,
-        windowMs: 60_000,
-      }),
-    );
+  if (apiKeys) {
+    const rateLimiter = new ApiRateLimiter({
+      workspace: 600,
+      key: 300,
+      mutationWorkspace: 120,
+      mutationKey: 60,
+      windowMs: 60_000,
+    });
+    registerApiKeyRoutes(application, apiKeys, rateLimiter);
+    if (database) registerPostRoutes(application, database, apiKeys, rateLimiter);
+  }
 
   return application;
 }

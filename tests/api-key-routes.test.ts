@@ -19,6 +19,7 @@ describe('API key HTTP boundary', () => {
     const authenticate = vi.fn().mockResolvedValue({
       id: 'key-1',
       workspaceId: 'workspace-1',
+      createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
       capabilities: ['schedules:read'],
@@ -38,6 +39,7 @@ describe('API key HTTP boundary', () => {
     expect(authenticate).toHaveBeenCalledWith('workspace-1', 'pr_public.secret');
     const body = response.json<{ data: Record<string, unknown> }>();
     expect(body.data).not.toHaveProperty('secretHash');
+    expect(body.data).not.toHaveProperty('createdByUserId');
   });
 
   it('rejects missing workspace preflight before authentication', async () => {

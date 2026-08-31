@@ -26,6 +26,7 @@ export function createPostgresApiKeyStore(database: NodePgDatabase): ApiKeyStore
             .returning({
               id: apiKeys.id,
               workspaceId: apiKeys.workspaceId,
+              createdByUserId: apiKeys.createdByUserId,
               prefix: apiKeys.prefix,
               capabilities: apiKeys.capabilities,
               expiresAt: apiKeys.expiresAt,
@@ -59,6 +60,7 @@ export function createPostgresApiKeyStore(database: NodePgDatabase): ApiKeyStore
           .select({
             id: apiKeys.id,
             workspaceId: apiKeys.workspaceId,
+            createdByUserId: apiKeys.createdByUserId,
             workspaceLabel: workspaces.name,
             prefix: apiKeys.prefix,
             secretHash: apiKeys.secretHash,

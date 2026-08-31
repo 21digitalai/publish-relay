@@ -13,6 +13,7 @@ import {
 export interface ApiKeyPrincipal {
   id: string;
   workspaceId: string;
+  createdByUserId: string;
   workspaceLabel: string;
   prefix: string;
   capabilities: ApiKeyCapability[];

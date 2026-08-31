@@ -49,6 +49,16 @@ export function registerApiKeyRoutes(
           .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
       }
     }
-    return successEnvelope(principal, request.id);
+    return successEnvelope(
+      {
+        id: principal.id,
+        workspaceId: principal.workspaceId,
+        workspaceLabel: principal.workspaceLabel,
+        prefix: principal.prefix,
+        capabilities: principal.capabilities,
+        expiresAt: principal.expiresAt,
+      },
+      request.id,
+    );
   });
 }

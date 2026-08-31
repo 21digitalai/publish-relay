@@ -25,6 +25,7 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - Collection cursors are versioned HMAC-SHA256 tokens bound to normalized filters and expiry. Malformed, tampered, expired, or filter-mismatched cursors fail closed and must map to HTTP 400 without restarting pagination.
 - API admission uses the shared `ApiRateLimiter` with separate workspace and API-key buckets; mutation buckets are independently stricter, and rejected calls expose only bounded retry timing rather than tenant activity.
 - Mutation request fingerprints use canonical JSON with sorted object keys while preserving array order; all mutation routes must validate a bounded `Idempotency-Key` before invoking the transactional replay store.
+- `POST /api/v1/posts` is the canonical provider-neutral scheduling mutation. It requires `schedules:write`, mutation-rate admission, and `Idempotency-Key`; the API-key creator is the durable user attribution while the key remains the audit/idempotency principal. Its allowlisted response exposes only post/revision identity plus direct post and job links.
 
 ## Persistence and tenant context
 

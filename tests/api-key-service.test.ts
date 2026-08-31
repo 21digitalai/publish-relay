@@ -30,6 +30,7 @@ describe('API key service', () => {
       Promise.resolve({
         id: 'key-1',
         workspaceId: input.workspaceId,
+        createdByUserId: input.createdByUserId,
         workspaceLabel: 'Atlas',
         prefix: input.prefix,
         capabilities: input.capabilities,
@@ -55,6 +56,7 @@ describe('API key service', () => {
     findByPrefix.mockResolvedValue({
       id: 'key-1',
       workspaceId: 'workspace-1',
+      createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
       secretHash: hashApiKeySecret('secret'),
@@ -71,6 +73,7 @@ describe('API key service', () => {
     expect(principal).toEqual({
       id: 'key-1',
       workspaceId: 'workspace-1',
+      createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
       capabilities: ['audit:read'],
@@ -84,6 +87,7 @@ describe('API key service', () => {
     findByPrefix.mockResolvedValue({
       id: 'key-1',
       workspaceId: 'workspace-1',
+      createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
       secretHash: hashApiKeySecret('secret'),
@@ -103,6 +107,7 @@ describe('API key service', () => {
     findByPrefix.mockResolvedValue({
       id: 'key-1',
       workspaceId: 'workspace-1',
+      createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
       secretHash: hashApiKeySecret('secret'),
@@ -122,6 +127,7 @@ describe('API key service', () => {
     const principal: ApiKeyPrincipal = {
       id: 'key-1',
       workspaceId: 'workspace-1',
+      createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
       capabilities: ['schedules:read'],

@@ -16,6 +16,8 @@ const application = createApplication(
   config,
   new AuthService(createPostgresAuthStore(database)),
   new ApiKeyService(createPostgresApiKeyStore(database)),
+  undefined,
+  database,
 );
 application.addHook('onClose', async () => pool.end());
 

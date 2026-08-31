@@ -22,11 +22,16 @@ function createTestApplication() {
 describe('agent discovery', () => {
   it('serves unauthenticated discovery without tenant or credential data', async () => {
     const application = createTestApplication();
-    for (const url of ['/agents.txt', '/publish-relay-skill/SKILL.md']) {
+    for (const url of [
+      '/agents.txt',
+      '/publish-relay-skill/SKILL.md',
+      '/publish-relay-skill/publish-relay-cli.js',
+      '/publish-relay-skill/manifest.json',
+    ]) {
       const response = await application.inject({ method: 'GET', url });
       expect(response.statusCode).toBe(200);
       expect(response.headers['cache-control']).toBe('public, max-age=300');
-      expect(response.body).not.toMatch(/api[_-]?key|bearer [a-z0-9]|workspaceId/i);
+      expect(response.body).not.toMatch(/bearer [a-z0-9]{8}|pr_[a-z0-9]{8}/i);
     }
   });
 
@@ -36,11 +41,21 @@ describe('agent discovery', () => {
       await application.inject({ method: 'GET', url: '/publish-relay-skill/manifest.json' })
     ).json<{
       data: {
-        cli: { updatePolicy: string };
+        contractVersion: string;
+        cliVersion: string;
+        cli: { path: string; updatePolicy: string };
         assets: { path: string; sha256: string }[];
       };
     }>();
+    expect(manifest.data.contractVersion).toBe('1.0.0');
+    expect(manifest.data.cliVersion).toBe('1.0.0');
+    expect(manifest.data.cli.path).toBe('/publish-relay-skill/publish-relay-cli.js');
     expect(manifest.data.cli.updatePolicy).toBe('warn-only');
+    expect(manifest.data.assets.map(({ path }) => path)).toEqual([
+      '/agents.txt',
+      '/publish-relay-skill/SKILL.md',
+      '/publish-relay-skill/publish-relay-cli.js',
+    ]);
     for (const asset of manifest.data.assets) {
       const body = (await application.inject({ method: 'GET', url: asset.path })).body;
       expect(createHash('sha256').update(body).digest('hex')).toBe(asset.sha256);

@@ -68,8 +68,8 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 
 ## Agent discovery
 
-- `/agents.txt`, `/publish-relay-skill/SKILL.md`, and `/publish-relay-skill/manifest.json` are public, tenant-neutral discovery assets. They must never contain credentials, account data, runtime configuration, or live IDs.
-- The manifest versions the discovery contract, checksums the exact served assets, and advertises CLI updates as warn-only. Agents read the skill and API contract before use; the product never self-updates an installed client.
+- `/agents.txt`, `/publish-relay-skill/SKILL.md`, `/publish-relay-skill/publish-relay-cli.js`, and `/publish-relay-skill/manifest.json` are public, tenant-neutral discovery assets. They must never contain credentials, account data, runtime configuration, or live IDs.
+- The manifest carries distinct discovery-contract and CLI versions, checksums the exact served agents, skill, and CLI bytes, and advertises CLI updates as warn-only. All four routes use the same explicit public cache policy. Agents read the skill and API contract before use; the product never self-updates an installed client.
 
 ## Content and media persistence
 

@@ -15,7 +15,7 @@
     "dev:web": "tsx watch src/entrypoints/web.ts",
     "dev:worker": "tsx watch src/entrypoints/worker.ts",
     "dev:ui": "vite",
-    "build": "tsc -p tsconfig.build.json && vite build",
+    "build": "tsc -p tsconfig.build.json && prettier --ignore-path /dev/null --write dist/entrypoints/cli.js && cmp src/modules/api/assets/publish-relay-cli.js dist/entrypoints/cli.js && mkdir -p dist/modules/api/assets && cp src/modules/api/assets/publish-relay-cli.js dist/modules/api/assets/publish-relay-cli.js && vite build",
     "start:web": "node dist/entrypoints/web.js",
     "start:worker": "node dist/entrypoints/worker.js",
     "cli": "tsx src/entrypoints/cli.ts",

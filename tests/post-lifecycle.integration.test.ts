@@ -316,8 +316,24 @@ describe('provider staging cleanup', () => {
     const staging = new FakeProviderStagingStorage();
     staging.references.add('provider-ok');
     staging.references.add('provider-retry');
+    await expect(cleanupJobStaging(db, staging, { workspaceId, jobId })).resolves.toBe(0);
+    await database.exec(`UPDATE publication_jobs SET state = 'dispatching' WHERE id = '${jobId}'`);
+    await expect(cleanupJobStaging(db, staging, { workspaceId, jobId })).resolves.toBe(0);
+    expect(staging.references.size).toBe(2);
+    await database.exec(`UPDATE publication_jobs SET state = 'published' WHERE id = '${jobId}'`);
     await expect(cleanupJobStaging(db, staging, { workspaceId, jobId })).resolves.toBe(2);
     expect(staging.references.size).toBe(0);
+    for (const state of ['failed', 'cancelled', 'superseded'] as const) {
+      const reference = `provider-${state}`;
+      await database.exec(`
+        UPDATE publication_jobs SET state = '${state}' WHERE id = '${jobId}';
+        INSERT INTO provider_staging_artifacts (workspace_id, job_id, media_id, provider_reference, expires_at)
+        VALUES ('${workspaceId}', '${jobId}', '${media.mediaId}', '${reference}', '2026-08-31T12:00:00Z');
+      `);
+      staging.references.add(reference);
+      await expect(cleanupJobStaging(db, staging, { workspaceId, jobId })).resolves.toBe(1);
+      expect(staging.references.has(reference)).toBe(false);
+    }
     await database.exec(`
       UPDATE provider_staging_artifacts SET deleted_at = NULL
       WHERE provider_reference = 'provider-retry'

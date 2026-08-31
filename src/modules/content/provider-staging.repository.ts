@@ -1,7 +1,9 @@
-import { and, eq, isNull, lt } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { providerStagingArtifacts } from '../../database/schema.js';
+import { providerStagingArtifacts, publicationJobs } from '../../database/schema.js';
+
+const TERMINAL_JOB_STATES = ['published', 'failed', 'cancelled', 'superseded'] as const;
 
 export async function listJobStagingArtifacts(
   database: NodePgDatabase,
@@ -14,11 +16,19 @@ export async function listJobStagingArtifacts(
       providerReference: providerStagingArtifacts.providerReference,
     })
     .from(providerStagingArtifacts)
+    .innerJoin(
+      publicationJobs,
+      and(
+        eq(publicationJobs.workspaceId, providerStagingArtifacts.workspaceId),
+        eq(publicationJobs.id, providerStagingArtifacts.jobId),
+      ),
+    )
     .where(
       and(
         eq(providerStagingArtifacts.workspaceId, workspaceId),
         eq(providerStagingArtifacts.jobId, jobId),
         isNull(providerStagingArtifacts.deletedAt),
+        inArray(publicationJobs.state, TERMINAL_JOB_STATES),
       ),
     );
 }

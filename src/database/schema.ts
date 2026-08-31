@@ -40,6 +40,16 @@ export const publicationJobState = pgEnum('publication_job_state', [
   'cancelled',
   'superseded',
 ]);
+export const publicationAttemptOutcome = pgEnum('publication_attempt_outcome', [
+  'published',
+  'accepted_pending',
+  'unknown',
+  'auth',
+  'rate_limit',
+  'validation',
+  'transient',
+  'permanent',
+]);
 
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -355,6 +365,11 @@ export const publicationJobs = pgTable(
     providerAccountId: uuid('provider_account_id').notNull(),
     state: publicationJobState('state').notNull().default('scheduled'),
     scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+    leaseOwner: text('lease_owner'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    attemptNumber: integer('attempt_number').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    reconciliationRequired: boolean('reconciliation_required').notNull().default(false),
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
     ...timestamps,
   },
@@ -366,6 +381,7 @@ export const publicationJobs = pgTable(
       table.scheduledAt,
     ),
     index('publication_jobs_post_idx').on(table.postId),
+    index('publication_jobs_lease_expiry_idx').on(table.workspaceId, table.leaseExpiresAt),
     foreignKey({
       columns: [table.workspaceId, table.postId],
       foreignColumns: [posts.workspaceId, posts.id],
@@ -381,6 +397,66 @@ export const publicationJobs = pgTable(
       foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
       name: 'publication_jobs_workspace_provider_account_fk',
     }).onDelete('restrict'),
+  ],
+);
+
+export const publicationAttempts = pgTable(
+  'publication_attempts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    jobId: uuid('job_id').notNull(),
+    attemptNumber: integer('attempt_number').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    outcome: publicationAttemptOutcome('outcome'),
+    providerRequestId: text('provider_request_id'),
+    externalPostId: text('external_post_id'),
+    reconciliationKey: text('reconciliation_key'),
+    retryAt: timestamp('retry_at', { withTimezone: true }),
+    redactedError: text('redacted_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('publication_attempts_job_number_unique').on(table.jobId, table.attemptNumber),
+    uniqueIndex('publication_attempts_idempotency_unique').on(
+      table.workspaceId,
+      table.idempotencyKey,
+    ),
+    index('publication_attempts_reconciliation_idx').on(table.workspaceId, table.reconciliationKey),
+    foreignKey({
+      columns: [table.workspaceId, table.jobId],
+      foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
+      name: 'publication_attempts_workspace_job_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
+export const publicationJobEvents = pgTable(
+  'publication_job_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    jobId: uuid('job_id').notNull(),
+    fromState: publicationJobState('from_state'),
+    toState: publicationJobState('to_state').notNull(),
+    reason: text('reason').notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('publication_job_events_job_created_idx').on(table.jobId, table.createdAt),
+    foreignKey({
+      columns: [table.workspaceId, table.jobId],
+      foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
+      name: 'publication_job_events_workspace_job_fk',
+    }).onDelete('cascade'),
   ],
 );
 

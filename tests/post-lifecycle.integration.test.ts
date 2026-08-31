@@ -22,6 +22,7 @@ const migrations = [
   '0004_easy_doctor_spectrum.sql',
   '0005_round_thunderball.sql',
   '0006_enforce_content_workspace_foreign_keys.sql',
+  '0007_add_scheduler_attempt_ledger.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

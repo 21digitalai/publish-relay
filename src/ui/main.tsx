@@ -135,6 +135,136 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   );
 }
 
+function OnboardingPage() {
+  const [step, setStep] = useState(1);
+  const [workspaceName, setWorkspaceName] = useState('Atlas Studio');
+  const titles = ['Name your workspace', 'Connect your first account', 'Schedule your first post'];
+  return (
+    <main className="onboarding-page">
+      <header className="onboarding-header">
+        <a className="brand-lockup" href="/login">
+          <span className="brand-signal" /> Publish Relay
+        </a>
+        <span>Step {step} of 3</span>
+      </header>
+      <div className="onboarding-layout">
+        <ol className="step-list" aria-label="Onboarding progress">
+          {titles.map((title, index) => (
+            <li
+              className={index + 1 === step ? 'active' : index + 1 < step ? 'complete' : ''}
+              key={title}
+            >
+              <span>{index + 1 < step ? '✓' : index + 1}</span>
+              <div>
+                <strong>{title}</strong>
+                <small>
+                  {index === 0
+                    ? 'Set the shared context'
+                    : index === 1
+                      ? 'Choose where to publish'
+                      : 'See the workflow end to end'}
+                </small>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <section className="onboarding-panel" aria-labelledby="onboarding-title">
+          <p className="eyebrow">Workspace setup</p>
+          <h1 id="onboarding-title">{titles[step - 1]}</h1>
+          {step === 1 && (
+            <>
+              <p>Workspaces keep accounts, schedules, and team access together.</p>
+              <label className="field-label">
+                Workspace name
+                <input
+                  className="text-input"
+                  value={workspaceName}
+                  onChange={(event) => {
+                    setWorkspaceName(event.target.value);
+                  }}
+                />
+              </label>
+              <p className="field-hint">You can change this later in workspace settings.</p>
+            </>
+          )}
+          {step === 2 && (
+            <>
+              <p>
+                Connect securely through the provider. Publish Relay never asks you to paste account
+                tokens.
+              </p>
+              <button className="provider-connect-card">
+                <Mark provider="X" />
+                <span>
+                  <strong>Connect X</strong>
+                  <small>Posts and media · secure redirect</small>
+                </span>
+                <span aria-hidden="true">→</span>
+              </button>
+              <button className="provider-connect-card">
+                <Mark provider="Instagram" />
+                <span>
+                  <strong>Connect Instagram</strong>
+                  <small>Available after X setup</small>
+                </span>
+                <span className="coming-soon">Soon</span>
+              </button>
+            </>
+          )}
+          {step === 3 && (
+            <>
+              <p>
+                Your workspace is ready. Create a scheduled post now or enter an empty workspace and
+                explore.
+              </p>
+              <div className="onboarding-receipt">
+                <span>✓</span>
+                <div>
+                  <strong>{workspaceName || 'Your workspace'} is ready</strong>
+                  <small>Timezone: Europe/Sofia (EEST)</small>
+                </div>
+              </div>
+            </>
+          )}
+          <div className="onboarding-actions">
+            {step > 1 && (
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  setStep((value) => value - 1);
+                }}
+              >
+                Back
+              </button>
+            )}
+            <span />
+            {step === 2 && (
+              <button
+                className="text-button"
+                onClick={() => {
+                  setStep(3);
+                }}
+              >
+                Skip for now
+              </button>
+            )}
+            <button
+              className="primary-button"
+              onClick={() => {
+                if (step < 3) setStep((value) => value + 1);
+                else window.location.href = '/w/atlas/accounts';
+              }}
+              disabled={step === 1 && !workspaceName.trim()}
+            >
+              {step === 3 ? 'Open workspace' : 'Continue'}
+            </button>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
 function Rail({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <aside className={`app-rail ${open ? 'open' : ''}`} aria-label="Primary navigation">
@@ -247,6 +377,7 @@ function AccountsPage() {
     [query, health],
   );
   const groups = ['X', 'Instagram'] as const;
+  const previewState = new URLSearchParams(window.location.search).get('state');
   return (
     <div className="workspace-app">
       <a className="skip-link" href="#main-content">
@@ -326,35 +457,57 @@ function AccountsPage() {
               </select>
             </label>
           </div>
-          {groups.map((provider) => {
-            const rows = visible.filter((account) => account.provider === provider);
-            if (!rows.length) return null;
-            return (
-              <section className="provider-group" key={provider}>
-                <header>
-                  <div>
-                    <Mark provider={provider} />
+          {previewState === 'loading' && (
+            <div className="account-skeletons" aria-label="Loading accounts">
+              <div />
+              <div />
+              <div />
+            </div>
+          )}
+          {previewState === 'error' && (
+            <div className="accounts-error" role="alert">
+              <h2>Accounts could not be loaded</h2>
+              <p>The connection service did not respond. Your schedules are unchanged.</p>
+              <button className="secondary-button">Try again</button>
+            </div>
+          )}
+          {previewState === 'empty' && (
+            <div className="filter-empty">
+              <h2>Connect your first account</h2>
+              <p>Add a provider account to start scheduling from this workspace.</p>
+              <button className="primary-button">Connect account</button>
+            </div>
+          )}
+          {!previewState &&
+            groups.map((provider) => {
+              const rows = visible.filter((account) => account.provider === provider);
+              if (!rows.length) return null;
+              return (
+                <section className="provider-group" key={provider}>
+                  <header>
                     <div>
-                      <h2>{provider}</h2>
-                      <span>
-                        {rows.length} {rows.length === 1 ? 'account' : 'accounts'}
-                      </span>
+                      <Mark provider={provider} />
+                      <div>
+                        <h2>{provider}</h2>
+                        <span>
+                          {rows.length} {rows.length === 1 ? 'account' : 'accounts'}
+                        </span>
+                      </div>
                     </div>
+                    <button className="text-button">＋ Connect another</button>
+                  </header>
+                  <div className="account-list">
+                    {rows.map((account) => (
+                      <AccountRow
+                        account={account}
+                        key={account.id}
+                        onDisconnect={setDisconnecting}
+                      />
+                    ))}
                   </div>
-                  <button className="text-button">＋ Connect another</button>
-                </header>
-                <div className="account-list">
-                  {rows.map((account) => (
-                    <AccountRow
-                      account={account}
-                      key={account.id}
-                      onDisconnect={setDisconnecting}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
+                </section>
+              );
+            })}
           {!visible.length && (
             <div className="filter-empty">
               <h2>No accounts match these filters</h2>
@@ -425,6 +578,7 @@ export function App() {
   const path = window.location.pathname;
   if (path === '/register') return <AuthPage mode="register" />;
   if (path === '/login' || path === '/') return <AuthPage mode="login" />;
+  if (path.startsWith('/onboarding/')) return <OnboardingPage />;
   return <AccountsPage />;
 }
 

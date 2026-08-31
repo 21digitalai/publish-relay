@@ -219,6 +219,182 @@ select:focus-visible {
   border-radius: 8px;
   color: #ffd5da;
 }
+.onboarding-page {
+  min-height: 100vh;
+  padding: 24px 32px;
+  background:
+    radial-gradient(circle at 64% 30%, rgba(169, 139, 255, 0.09), transparent 32%), var(--canvas);
+}
+.onboarding-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+}
+.onboarding-layout {
+  max-width: 920px;
+  margin: 96px auto 0;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 64px;
+}
+.step-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.step-list li {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  min-height: 76px;
+  color: var(--faint);
+}
+.step-list li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 38px;
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+}
+.step-list li > span {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-weight: 650;
+}
+.step-list li div {
+  display: flex;
+  flex-direction: column;
+  padding-top: 5px;
+}
+.step-list li small {
+  margin-top: 2px;
+}
+.step-list li.active {
+  color: var(--text);
+}
+.step-list li.active > span {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(169, 139, 255, 0.12);
+}
+.step-list li.complete > span {
+  color: var(--brand-ink);
+  background: var(--brand);
+  border-color: var(--brand);
+}
+.onboarding-panel {
+  min-height: 430px;
+  padding: 32px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.onboarding-panel h1 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  line-height: 38px;
+}
+.onboarding-panel > p:not(.eyebrow):not(.field-hint) {
+  color: var(--muted);
+  margin-bottom: 24px;
+}
+.provider-connect-card {
+  width: 100%;
+  min-height: 72px;
+  margin-top: 12px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.provider-connect-card > span:nth-child(2) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+.provider-connect-card small {
+  color: var(--faint);
+}
+.coming-soon {
+  padding: 4px 7px;
+  color: var(--muted);
+  background: var(--surface-3);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.onboarding-receipt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(77, 215, 168, 0.08);
+  border: 1px solid rgba(77, 215, 168, 0.3);
+  border-radius: 8px;
+}
+.onboarding-receipt > span {
+  color: var(--success);
+  font-size: 20px;
+}
+.onboarding-receipt div {
+  display: flex;
+  flex-direction: column;
+}
+.onboarding-receipt small {
+  color: var(--muted);
+}
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 40px;
+}
+.onboarding-actions > span {
+  flex: 1;
+}
+.account-skeletons {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.account-skeletons div {
+  height: 76px;
+  background: linear-gradient(90deg, var(--surface-1), var(--surface-2), var(--surface-1));
+  background-size: 200% 100%;
+  animation: pulse 1.4s ease-out infinite;
+}
+.accounts-error {
+  padding: 24px;
+  background: rgba(255, 107, 122, 0.06);
+  border: 1px solid rgba(255, 107, 122, 0.35);
+  border-radius: 12px;
+}
+.accounts-error h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+.accounts-error p {
+  color: var(--muted);
+}
+@keyframes pulse {
+  to {
+    background-position: -200% 0;
+  }
+}
 .workspace-app {
   min-height: 100vh;
 }
@@ -609,6 +785,51 @@ select:focus-visible {
   margin-top: 24px;
 }
 @media (max-width: 767px) {
+  .onboarding-page {
+    padding: 12px;
+  }
+  .onboarding-header {
+    height: 48px;
+  }
+  .onboarding-layout {
+    margin: 36px 0 0;
+    display: block;
+  }
+  .step-list {
+    display: flex;
+    margin-bottom: 24px;
+  }
+  .step-list li {
+    flex: 1;
+    min-height: 40px;
+  }
+  .step-list li div {
+    display: none;
+  }
+  .step-list li:not(:last-child)::after {
+    left: 40px;
+    top: 15px;
+    width: calc(100% - 48px);
+    height: 1px;
+  }
+  .onboarding-panel {
+    min-height: 0;
+    padding: 24px 20px;
+  }
+  .onboarding-panel h1 {
+    font-size: 26px;
+    line-height: 32px;
+  }
+  .onboarding-actions {
+    margin-top: 32px;
+    flex-wrap: wrap;
+  }
+  .onboarding-actions .primary-button {
+    min-height: 48px;
+  }
+  .onboarding-actions .secondary-button {
+    min-height: 48px;
+  }
   .auth-page {
     padding: 12px;
   }

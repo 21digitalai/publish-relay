@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 export function App() {
   return (
-    <main>
+    <main className="app-shell">
       <h1>Publish Relay</h1>
       <p>Scheduling infrastructure is ready.</p>
     </main>

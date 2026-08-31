@@ -9,4 +9,3 @@
 - Native/raw controls are unacceptable where domain-aware account selectors, date/time pickers, calendars, status controls, or recovery flows materially improve usability.
 
 Designer must inspect the available design-reference markdown files and produce the concrete palette, typography, spacing, components, motion tokens, responsive behavior, and accessibility rules before UI implementation.
-

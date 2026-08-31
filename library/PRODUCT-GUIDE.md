@@ -26,4 +26,3 @@ Users can register, connect multiple social accounts, schedule content through t
 - Analytics warehouse.
 - AI content generation inside Publish Relay.
 - Enterprise organization/role complexity beyond the minimum sound tenant model.
-

@@ -25,25 +25,25 @@ Principles:
 
 ### Color
 
-| Token | Value | Use |
-|---|---:|---|
-| `canvas` | `#0B0C10` | app background |
-| `surface-1` | `#11131A` | rail and panels |
-| `surface-2` | `#181B24` | controls and selected rows |
-| `surface-3` | `#222632` | menus and pressed surfaces |
-| `border` | `#2C3140` | dividers and outlines |
-| `border-strong` | `#41485C` | emphasized boundaries |
-| `text` | `#F4F6FA` | primary text |
-| `text-muted` | `#A7ADBD` | secondary text |
-| `text-faint` | `#747C90` | metadata and placeholders |
-| `brand` | `#A3FF4F` | primary scheduling action |
-| `brand-pressed` | `#8BE53D` | pressed action |
-| `brand-ink` | `#132007` | text on brand |
-| `focus` | `#A98BFF` | focus ring and selection |
-| `info` | `#63B3FF` | scheduled/info |
-| `success` | `#4DD7A8` | published/connected |
-| `warning` | `#FFC857` | retrying/attention |
-| `danger` | `#FF6B7A` | failed/destructive |
+| Token           |     Value | Use                        |
+| --------------- | --------: | -------------------------- |
+| `canvas`        | `#0B0C10` | app background             |
+| `surface-1`     | `#11131A` | rail and panels            |
+| `surface-2`     | `#181B24` | controls and selected rows |
+| `surface-3`     | `#222632` | menus and pressed surfaces |
+| `border`        | `#2C3140` | dividers and outlines      |
+| `border-strong` | `#41485C` | emphasized boundaries      |
+| `text`          | `#F4F6FA` | primary text               |
+| `text-muted`    | `#A7ADBD` | secondary text             |
+| `text-faint`    | `#747C90` | metadata and placeholders  |
+| `brand`         | `#A3FF4F` | primary scheduling action  |
+| `brand-pressed` | `#8BE53D` | pressed action             |
+| `brand-ink`     | `#132007` | text on brand              |
+| `focus`         | `#A98BFF` | focus ring and selection   |
+| `info`          | `#63B3FF` | scheduled/info             |
+| `success`       | `#4DD7A8` | published/connected        |
+| `warning`       | `#FFC857` | retrying/attention         |
+| `danger`        | `#FF6B7A` | failed/destructive         |
 
 Normal text must meet 4.5:1 contrast and large text/UI boundaries 3:1. Semantic color never carries meaning alone.
 

@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -6,19 +7,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 import {
-  consumeOauthTransaction,
   createCredential,
   revokeCredential,
   rotateCredential,
 } from '../src/modules/credentials/credential.repository.js';
-import { randomBytes } from 'node:crypto';
 import type {
   EncryptedCredential,
   MasterKeyProvider,
 } from '../src/modules/credentials/envelope.js';
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
 import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
-import { hashOauthState, issueOauthTransaction } from '../src/modules/credentials/oauth.service.js';
+import {
+  cleanupExpiredOauthTransactions,
+  consumeOauthCallback,
+  hashOauthState,
+  issueOauthTransaction,
+} from '../src/modules/credentials/oauth.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -108,22 +112,54 @@ describe('credential and OAuth persistence', () => {
     expect(persisted.rows[0]?.state_hash).toBe(hashOauthState(issued.state));
     expect(JSON.stringify(persisted.rows[0])).not.toContain(issued.state);
     const attempts = await Promise.all([
-      withTenantTransaction(db, { workspaceId }, (tx) =>
-        consumeOauthTransaction(tx, workspaceId, hashOauthState(issued.state), new Date()),
-      ),
-      withTenantTransaction(db, { workspaceId }, (tx) =>
-        consumeOauthTransaction(tx, workspaceId, hashOauthState(issued.state), new Date()),
-      ),
+      consumeOauthCallback(db, keys, { workspaceId, state: issued.state }),
+      consumeOauthCallback(db, keys, { workspaceId, state: issued.state }),
     ]);
     const first = attempts.find(Boolean);
     expect(first?.provider).toBe('fake');
     expect(first?.redirectUri).toBe('https://app.example.test/oauth/callback');
+    expect(
+      createHash('sha256')
+        .update(first?.codeVerifier ?? '')
+        .digest('base64url'),
+    ).toBe(issued.codeChallenge);
     expect(attempts.filter(Boolean)).toHaveLength(1);
+    const secretCounts = await database.query<{ credentials: number; transactions: number }>(
+      `select
+        (select count(*)::int from credentials) as credentials,
+        (select count(*)::int from oauth_transactions) as transactions`,
+    );
+    expect(secretCounts.rows[0]).toEqual({ credentials: 0, transactions: 0 });
     const adapter = new FakeProviderConnectionAdapter([
       { providerAccountId: 'one', displayName: 'One' },
       { providerAccountId: 'two', displayName: 'Two' },
     ]);
     await expect(adapter.discoverAccounts('never-persisted-token')).resolves.toHaveLength(2);
+  });
+
+  it('removes abandoned OAuth transactions and their encrypted verifiers after expiry', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(randomBytes(32)),
+    };
+    const now = new Date('2026-08-31T12:00:00.000Z');
+    await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'fake',
+      redirectUri: 'https://app.example.test/oauth/callback',
+      now,
+    });
+    await expect(
+      cleanupExpiredOauthTransactions(db, workspaceId, new Date(now.getTime() + 11 * 60 * 1000)),
+    ).resolves.toBe(1);
+    const counts = await database.query<{ credentials: number; transactions: number }>(
+      `select
+        (select count(*)::int from credentials) as credentials,
+        (select count(*)::int from oauth_transactions) as transactions`,
+    );
+    expect(counts.rows[0]).toEqual({ credentials: 0, transactions: 0 });
   });
 
   it('rechecks membership and reconnects the canonical provider connection', async () => {

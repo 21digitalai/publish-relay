@@ -2,8 +2,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import { createCredential, createOauthTransaction } from './credential.repository.js';
-import { encryptCredential, type MasterKeyProvider } from './envelope.js';
+import {
+  consumeOauthTransaction,
+  createCredential,
+  createOauthTransaction,
+  deleteConsumedOauthSecret,
+  deleteExpiredOauthSecrets,
+  getActiveCredential,
+} from './credential.repository.js';
+import { decryptCredential, encryptCredential, type MasterKeyProvider } from './envelope.js';
 import { assertActiveMembership } from './provider-connection.repository.js';
 
 const OAUTH_TTL_MS = 10 * 60 * 1000;
@@ -48,4 +55,63 @@ export async function issueOauthTransaction(
 
 export function hashOauthState(state: string): string {
   return sha256(state);
+}
+
+export async function consumeOauthCallback(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  input: { workspaceId: string; state: string; now?: Date },
+): Promise<{
+  userId: string;
+  provider: string;
+  redirectUri: string;
+  codeVerifier: string;
+} | null> {
+  const now = input.now ?? new Date();
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const consumed = await consumeOauthTransaction(
+        transaction,
+        input.workspaceId,
+        hashOauthState(input.state),
+        now,
+      );
+      if (!consumed) return null;
+      const credential = await getActiveCredential(
+        transaction,
+        input.workspaceId,
+        consumed.pkceCredentialId,
+      );
+      if (!credential) throw new Error('OAuth PKCE credential is unavailable');
+      const verifier = await decryptCredential(credential, keys);
+      try {
+        await deleteConsumedOauthSecret(
+          transaction,
+          input.workspaceId,
+          consumed.id,
+          consumed.pkceCredentialId,
+        );
+        return {
+          userId: consumed.userId,
+          provider: consumed.provider,
+          redirectUri: consumed.redirectUri,
+          codeVerifier: verifier.toString('utf8'),
+        };
+      } finally {
+        verifier.fill(0);
+      }
+    },
+  );
+}
+
+export async function cleanupExpiredOauthTransactions(
+  database: NodePgDatabase,
+  workspaceId: string,
+  now = new Date(),
+): Promise<number> {
+  return withTenantTransaction(database, { workspaceId }, (transaction) =>
+    deleteExpiredOauthSecrets(transaction, workspaceId, now),
+  );
 }

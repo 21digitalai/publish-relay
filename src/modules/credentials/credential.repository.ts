@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { credentials, oauthTransactions } from '../../database/schema.js';
@@ -76,6 +76,81 @@ export async function revokeCredential(
     )
     .returning({ id: credentials.id });
   return rows.length === 1;
+}
+
+export async function getActiveCredential(
+  database: NodePgDatabase,
+  workspaceId: string,
+  id: string,
+): Promise<StoredCredential | null> {
+  const rows = await database
+    .select(credentialProjection)
+    .from(credentials)
+    .where(
+      and(
+        eq(credentials.workspaceId, workspaceId),
+        eq(credentials.id, id),
+        isNull(credentials.revokedAt),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function deleteConsumedOauthSecret(
+  database: NodePgDatabase,
+  workspaceId: string,
+  oauthTransactionId: string,
+  credentialId: string,
+): Promise<void> {
+  await database
+    .delete(oauthTransactions)
+    .where(
+      and(
+        eq(oauthTransactions.workspaceId, workspaceId),
+        eq(oauthTransactions.id, oauthTransactionId),
+      ),
+    );
+  await database
+    .delete(credentials)
+    .where(and(eq(credentials.workspaceId, workspaceId), eq(credentials.id, credentialId)));
+}
+
+export async function deleteExpiredOauthSecrets(
+  database: NodePgDatabase,
+  workspaceId: string,
+  now: Date,
+): Promise<number> {
+  const expired = await database
+    .select({ id: oauthTransactions.id, credentialId: oauthTransactions.pkceCredentialId })
+    .from(oauthTransactions)
+    .where(
+      and(
+        eq(oauthTransactions.workspaceId, workspaceId),
+        isNull(oauthTransactions.consumedAt),
+        lt(oauthTransactions.expiresAt, now),
+      ),
+    );
+  if (expired.length === 0) return 0;
+  await database.delete(oauthTransactions).where(
+    and(
+      eq(oauthTransactions.workspaceId, workspaceId),
+      inArray(
+        oauthTransactions.id,
+        expired.map((row) => row.id),
+      ),
+    ),
+  );
+  await database.delete(credentials).where(
+    and(
+      eq(credentials.workspaceId, workspaceId),
+      inArray(
+        credentials.id,
+        expired.map((row) => row.credentialId),
+      ),
+    ),
+  );
+  return expired.length;
 }
 
 export async function consumeOauthTransaction(

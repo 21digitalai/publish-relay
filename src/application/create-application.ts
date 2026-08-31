@@ -1,4 +1,7 @@
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import type { RuntimeConfig } from '../config/runtime-config.js';
 import { registerApiDocumentationRoute } from '../modules/api/openapi.js';
@@ -14,12 +17,19 @@ export function createApplication(
   apiKeys?: ApiKeyService,
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
+  const uiRoot = fileURLToPath(new URL('../ui/', import.meta.url));
+  const shellHtml = readFileSync(new URL('../ui/index.html', import.meta.url), 'utf8');
+
+  application.register(fastifyStatic, { root: uiRoot, wildcard: false });
 
   application.get('/health/live', () => ({ data: { status: 'ok' }, error: null }));
   application.get('/api', () => ({ data: { name: 'Publish Relay' }, error: null }));
   registerApiDocumentationRoute(application);
   if (auth)
-    registerAuthRoutes(application, auth, { secureCookies: config.NODE_ENV === 'production' });
+    registerAuthRoutes(application, auth, {
+      secureCookies: config.NODE_ENV === 'production',
+      shellHtml,
+    });
   if (apiKeys)
     registerApiKeyRoutes(
       application,

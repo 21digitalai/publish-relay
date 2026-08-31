@@ -193,6 +193,37 @@ describe('authentication HTTP boundary', () => {
     }
   });
 
+  it('serves the built application shell on public authentication routes', async () => {
+    const application = createTestApplication(createStore());
+    for (const url of ['/login', '/register', '/forgot-password']) {
+      const response = await application.inject({ method: 'GET', url });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('text/html');
+      expect(response.body).toContain('<div id="root"></div>');
+      expect(response.body).toContain('/main.tsx');
+    }
+  });
+
+  it('serves the same application shell after a protected deep link is authorized', async () => {
+    const store = createStore();
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    const response = await createTestApplication(store).inject({
+      method: 'GET',
+      url: '/w/atlas/queue',
+      headers: { cookie: 'publish_relay_session=w1.token' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('<div id="root"></div>');
+    expect(response.body).toContain('/main.tsx');
+  });
+
   it('denies a session when live membership lookup no longer authorizes it', async () => {
     const store = createStore();
     vi.mocked(store.findSession).mockResolvedValue({

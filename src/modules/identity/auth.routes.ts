@@ -63,7 +63,7 @@ function setSessionCookies(
 export function registerAuthRoutes(
   application: FastifyInstance,
   auth: AuthService,
-  options: { secureCookies: boolean },
+  options: { secureCookies: boolean; shellHtml: string },
 ): void {
   application.register(cookie);
 
@@ -128,12 +128,16 @@ export function registerAuthRoutes(
       : reply.code(401).send({ data: null, error: 'Authentication required' });
   });
 
+  const publicShell = (_request: FastifyRequest, reply: FastifyReply) =>
+    reply.type('text/html').send(options.shellHtml);
+  application.get('/login', publicShell);
+  application.get('/register', publicShell);
+  application.get('/forgot-password', publicShell);
+
   const protectedShell = async (request: FastifyRequest, reply: FastifyReply) => {
     const identity = await authorizeRequest(request, auth, 'content:read');
     if (!identity) return reply.redirect('/login');
-    return reply
-      .type('text/html')
-      .send('<!doctype html><html><body><main id="app">Publish Relay</main></body></html>');
+    return reply.type('text/html').send(options.shellHtml);
   };
   application.get('/app', protectedShell);
   application.get('/onboarding/*', protectedShell);

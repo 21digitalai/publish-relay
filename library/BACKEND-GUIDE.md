@@ -26,6 +26,7 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - API admission uses the shared `ApiRateLimiter` with separate workspace and API-key buckets; mutation buckets are independently stricter, and rejected calls expose only bounded retry timing rather than tenant activity.
 - Mutation request fingerprints use canonical JSON with sorted object keys while preserving array order; all mutation routes must validate a bounded `Idempotency-Key` before invoking the transactional replay store.
 - `POST /api/v1/posts` is the canonical provider-neutral scheduling mutation. It requires `schedules:write`, mutation-rate admission, and `Idempotency-Key`; the API-key creator is the durable user attribution while the key remains the audit/idempotency principal. Its allowlisted response exposes only post/revision identity plus direct post and job links.
+- Post mutation runtime and OpenAPI schemas share `src/modules/content/post.contract.ts`; the HTTP boundary and generated document must consume that contract rather than maintaining parallel request or response shapes.
 
 ## Persistence and tenant context
 

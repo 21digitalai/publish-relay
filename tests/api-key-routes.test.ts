@@ -13,6 +13,28 @@ describe('API key HTTP boundary', () => {
     const response = await application.inject({ method: 'GET', url: '/api/v1/openapi.json' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ openapi: '3.1.0' });
+    const document = response.json<{
+      paths: Record<
+        string,
+        {
+          post?: {
+            operationId: string;
+            parameters: { name: string; required: boolean }[];
+            responses: Record<string, unknown>;
+          };
+        }
+      >;
+    }>();
+    const createPost = document.paths['/api/v1/posts']?.post;
+    expect(createPost?.operationId).toBe('createPost');
+    expect(createPost?.parameters).toContainEqual({
+      name: 'Idempotency-Key',
+      in: 'header',
+      required: true,
+      schema: { type: 'string', minLength: 8, maxLength: 200 },
+    });
+    expect(createPost?.responses).toHaveProperty('201');
+    expect(createPost?.responses).toHaveProperty('409');
   });
 
   it('returns the redacted account identity after expected-workspace preflight', async () => {

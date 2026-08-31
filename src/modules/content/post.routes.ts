@@ -8,14 +8,8 @@ import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.
 import type { ApiRateLimiter } from '../api/rate-limit.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
+import { createPostRequestSchema } from './post.contract.js';
 import { createPostInTransaction } from './post.service.js';
-
-const createPostSchema = z.object({
-  content: z.record(z.string(), z.unknown()),
-  mediaIds: z.array(z.uuid()).max(10).default([]),
-  providerAccountIds: z.array(z.uuid()).min(1).max(50),
-  scheduledAt: z.iso.datetime(),
-});
 
 function resourceLinks(result: { postId: string; revisionId: string; jobIds: string[] }) {
   return {
@@ -50,7 +44,7 @@ export function registerPostRoutes(
           .code(429)
           .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
       }
-      const body = createPostSchema.parse(request.body);
+      const body = createPostRequestSchema.parse(request.body);
       const suppliedIdempotencyKey = request.headers['idempotency-key'];
       const idempotencyKey = validateIdempotencyKey(
         typeof suppliedIdempotencyKey === 'string' ? suppliedIdempotencyKey : undefined,

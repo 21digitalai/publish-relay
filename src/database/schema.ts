@@ -131,7 +131,39 @@ export const apiKeys = pgTable(
   },
   (table) => [
     uniqueIndex('api_keys_prefix_unique').on(table.prefix),
+    uniqueIndex('api_keys_workspace_id_unique').on(table.workspaceId, table.id),
     index('api_keys_workspace_idx').on(table.workspaceId),
+  ],
+);
+
+export const apiMutationResults = pgTable(
+  'api_mutation_results',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    apiKeyId: uuid('api_key_id').notNull(),
+    operation: text('operation').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    statusCode: integer('status_code').notNull(),
+    responseBody: jsonb('response_body').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('api_mutation_results_scope_unique').on(
+      table.workspaceId,
+      table.apiKeyId,
+      table.operation,
+      table.idempotencyKey,
+    ),
+    index('api_mutation_results_workspace_created_idx').on(table.workspaceId, table.createdAt),
+    foreignKey({
+      columns: [table.workspaceId, table.apiKeyId],
+      foreignColumns: [apiKeys.workspaceId, apiKeys.id],
+      name: 'api_mutation_results_workspace_api_key_fk',
+    }).onDelete('cascade'),
   ],
 );
 

@@ -71,6 +71,27 @@
       "when": 1788199699195,
       "tag": "0009_generalize_oauth_transaction_secret",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788201266657,
+      "tag": "0010_flashy_nextwave",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788201302152,
+      "tag": "0011_bored_grim_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788201400000,
+      "tag": "0012_enable_api_mutation_result_rls",
+      "breakpoints": true
     }
   ]
 }

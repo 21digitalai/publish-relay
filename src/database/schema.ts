@@ -27,6 +27,18 @@ const bytea = customType<{ data: Buffer }>({
 
 export const membershipRole = pgEnum('membership_role', ['owner', 'admin', 'editor', 'viewer']);
 export const actorType = pgEnum('audit_actor_type', ['user', 'api_key', 'system']);
+export const mediaState = pgEnum('media_state', ['temporary', 'ready', 'deleted']);
+export const publicationJobState = pgEnum('publication_job_state', [
+  'scheduled',
+  'leased',
+  'dispatching',
+  'published',
+  'accepted_pending',
+  'retry_wait',
+  'failed',
+  'cancelled',
+  'superseded',
+]);
 
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -239,4 +251,130 @@ export const oauthTransactions = pgTable(
     ...timestamps,
   },
   (table) => [index('oauth_transactions_workspace_idx').on(table.workspaceId)],
+);
+
+export const mediaObjects = pgTable(
+  'media_objects',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    storageKey: text('storage_key').notNull(),
+    sha256: text('sha256').notNull(),
+    mimeType: text('mime_type').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    state: mediaState('state').notNull().default('temporary'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('media_objects_workspace_storage_unique').on(table.workspaceId, table.storageKey),
+    index('media_objects_workspace_state_idx').on(table.workspaceId, table.state),
+  ],
+);
+
+export const posts = pgTable(
+  'posts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    ...timestamps,
+  },
+  (table) => [index('posts_workspace_updated_idx').on(table.workspaceId, table.updatedAt)],
+);
+
+export const postRevisions = pgTable(
+  'post_revisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => posts.id, { onDelete: 'cascade' }),
+    revisionNumber: integer('revision_number').notNull(),
+    content: jsonb('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('post_revisions_post_number_unique').on(table.postId, table.revisionNumber),
+    index('post_revisions_workspace_idx').on(table.workspaceId),
+  ],
+);
+
+export const revisionMedia = pgTable(
+  'revision_media',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    revisionId: uuid('revision_id')
+      .notNull()
+      .references(() => postRevisions.id, { onDelete: 'cascade' }),
+    mediaId: uuid('media_id')
+      .notNull()
+      .references(() => mediaObjects.id, { onDelete: 'restrict' }),
+    position: integer('position').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.revisionId, table.mediaId] }),
+    uniqueIndex('revision_media_position_unique').on(table.revisionId, table.position),
+    index('revision_media_workspace_idx').on(table.workspaceId),
+  ],
+);
+
+export const publicationJobs = pgTable(
+  'publication_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => posts.id, { onDelete: 'cascade' }),
+    revisionId: uuid('revision_id')
+      .notNull()
+      .references(() => postRevisions.id, { onDelete: 'restrict' }),
+    providerAccountId: uuid('provider_account_id')
+      .notNull()
+      .references(() => providerAccounts.id, { onDelete: 'restrict' }),
+    state: publicationJobState('state').notNull().default('scheduled'),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index('publication_jobs_workspace_due_idx').on(
+      table.workspaceId,
+      table.state,
+      table.scheduledAt,
+    ),
+    index('publication_jobs_post_idx').on(table.postId),
+  ],
+);
+
+export const providerStagingArtifacts = pgTable(
+  'provider_staging_artifacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => publicationJobs.id, { onDelete: 'cascade' }),
+    mediaId: uuid('media_id')
+      .notNull()
+      .references(() => mediaObjects.id, { onDelete: 'restrict' }),
+    providerReference: text('provider_reference').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [index('provider_staging_expiry_idx').on(table.workspaceId, table.expiresAt)],
 );

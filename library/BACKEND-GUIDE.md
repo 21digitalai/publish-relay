@@ -38,3 +38,9 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - Core content is an explicit text, quote, or article union with typed media references. Adapters reject unsupported input; they never silently truncate or transform it.
 - Publishing returns one typed outcome: published, accepted pending, unknown/reconciliation-required, or failed with auth, rate-limit, validation, transient, or permanent classification.
 - Staging is idempotent by caller-supplied key. An unknown publish outcome must be reconciled through lookup rather than retried blindly.
+
+## Content and media persistence
+
+- `posts` owns mutable publication intent while `post_revisions` records immutable, numbered content snapshots. The database rejects revision update and deletion.
+- `revision_media` links ordered workspace media to a revision. `publication_jobs` creates one independent account target per revision, and `provider_staging_artifacts` records temporary provider-side resources that require deterministic cleanup.
+- Every content/media table is workspace-scoped with explicit repository predicates and forced RLS. Media identity records a storage key plus byte-derived SHA-256, MIME type, and byte size; application services must not trust client metadata for those fields.

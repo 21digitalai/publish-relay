@@ -15,6 +15,12 @@ export interface XHttpClientOptions {
   now?: () => number;
 }
 
+export interface XRequestToken {
+  requestToken: string;
+  requestTokenSecret: string;
+  authorizationUrl: string;
+}
+
 function encode(value: string): string {
   return encodeURIComponent(value).replace(
     /[!'()*]/g,
@@ -74,6 +80,45 @@ export class XHttpClient implements XClient {
     return Promise.reject(
       new Error('X OAuth 1.0a connection requires the request-token callback lifecycle'),
     );
+  }
+
+  public async beginConnection(callbackUrl: string): Promise<XRequestToken> {
+    if (!callbackUrl) throw new Error('X OAuth callback URL is required');
+    const body = await this.callOauthToken(
+      'https://api.x.com/oauth/request_token',
+      { oauth_callback: callbackUrl },
+      '',
+    );
+    if (body.get('oauth_callback_confirmed') !== 'true')
+      throw new Error('X did not confirm the OAuth callback');
+    const requestToken = body.get('oauth_token');
+    const requestTokenSecret = body.get('oauth_token_secret');
+    if (!requestToken || !requestTokenSecret)
+      throw new Error('X request-token response is incomplete');
+    return {
+      requestToken,
+      requestTokenSecret,
+      authorizationUrl: `https://api.x.com/oauth/authorize?oauth_token=${encodeURIComponent(requestToken)}`,
+    };
+  }
+
+  public async completeConnection(
+    requestToken: string,
+    requestTokenSecret: string,
+    verifier: string,
+  ): Promise<{ credential: string }> {
+    if (!requestToken || !requestTokenSecret || !verifier)
+      throw new Error('X OAuth callback material is incomplete');
+    const body = await this.callOauthToken(
+      'https://api.x.com/oauth/access_token',
+      { oauth_token: requestToken, oauth_verifier: verifier },
+      requestTokenSecret,
+    );
+    const accessToken = body.get('oauth_token');
+    const accessTokenSecret = body.get('oauth_token_secret');
+    if (!accessToken || !accessTokenSecret)
+      throw new Error('X access-token response is incomplete');
+    return { credential: JSON.stringify({ accessToken, accessTokenSecret }) };
   }
 
   public async currentAccount(
@@ -177,15 +222,45 @@ export class XHttpClient implements XClient {
     return (await response.json()) as T;
   }
 
-  private authorization(method: string, urlValue: string, credential: XUserCredential): string {
+  private async callOauthToken(
+    url: string,
+    oauthParameters: Record<string, string>,
+    tokenSecret: string,
+  ): Promise<URLSearchParams> {
+    const authorization = this.authorization(
+      'POST',
+      url,
+      { accessToken: oauthParameters.oauth_token ?? '', accessTokenSecret: tokenSecret },
+      oauthParameters,
+    );
+    let response: Response;
+    try {
+      response = await this.request(url, { method: 'POST', headers: { authorization } });
+    } catch (cause) {
+      throw new XRequestError(503, 'X OAuth request failed', { cause });
+    }
+    if (!response.ok) {
+      const error = await toApiError(response);
+      throw new XRequestError(error.status, error.message);
+    }
+    return new URLSearchParams(await response.text());
+  }
+
+  private authorization(
+    method: string,
+    urlValue: string,
+    credential: XUserCredential,
+    additionalOauth: Record<string, string> = {},
+  ): string {
     const url = new URL(urlValue);
     const oauth: Record<string, string> = {
       oauth_consumer_key: this.options.consumerKey,
       oauth_nonce: this.nonce(),
       oauth_signature_method: 'HMAC-SHA1',
       oauth_timestamp: Math.floor(this.now() / 1000).toString(),
-      oauth_token: credential.accessToken,
       oauth_version: '1.0',
+      ...(credential.accessToken ? { oauth_token: credential.accessToken } : {}),
+      ...additionalOauth,
     };
     const parameters = [...url.searchParams.entries(), ...Object.entries(oauth)]
       .map(([key, value]) => [encode(key), encode(value)] as const)

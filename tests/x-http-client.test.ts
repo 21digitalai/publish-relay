@@ -87,4 +87,44 @@ describe('X OAuth 1.0a HTTP client', () => {
     await expect(client.connect()).rejects.toThrow('request-token callback lifecycle');
     await expect(client.revoke(credential)).rejects.toThrow('revocation endpoint is not verified');
   });
+
+  it('exchanges OAuth 1.0a request and access tokens without putting secrets in URLs', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          'oauth_token=request-token&oauth_token_secret=request-secret&oauth_callback_confirmed=true',
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response('oauth_token=access-token&oauth_token_secret=access-secret'),
+      );
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+      nonce: () => 'nonce',
+      now: () => 1_700_000_000_000,
+    });
+    const started = await client.beginConnection('https://relay.example.test/oauth/x/callback');
+    expect(started).toEqual({
+      requestToken: 'request-token',
+      requestTokenSecret: 'request-secret',
+      authorizationUrl: 'https://api.x.com/oauth/authorize?oauth_token=request-token',
+    });
+    await expect(
+      client.completeConnection(started.requestToken, started.requestTokenSecret, 'verifier'),
+    ).resolves.toEqual({
+      credential: JSON.stringify({
+        accessToken: 'access-token',
+        accessTokenSecret: 'access-secret',
+      }),
+    });
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      'https://api.x.com/oauth/request_token',
+      'https://api.x.com/oauth/access_token',
+    ]);
+    expect(JSON.stringify(request.mock.calls)).not.toContain('request-secret');
+    expect(JSON.stringify(request.mock.calls)).not.toContain('access-secret');
+  });
 });

@@ -291,5 +291,47 @@ describe('scheduler repository', () => {
         limit: 1,
       }),
     ).toEqual([jobId]);
+    expect(
+      await resolveReconciliation(db, {
+        workspaceId,
+        jobId,
+        workerId: 'reconciler',
+        outcome: 'accepted_pending',
+        now,
+      }),
+    ).toBe(true);
+    const pending = await database.query<{ reconciliation_required: boolean; state: string }>(
+      `SELECT reconciliation_required, state FROM publication_jobs WHERE id = '${jobId}'`,
+    );
+    expect(pending.rows[0]).toEqual({ reconciliation_required: true, state: 'accepted_pending' });
+    expect(
+      await claimReconciliationJobs(db, {
+        workerId: 'next-reconciler',
+        now,
+        leaseMs: 30_000,
+        limit: 1,
+      }),
+    ).toEqual([jobId]);
+  });
+
+  it('rejects reconciliation resolution after the owned lease expires', async () => {
+    const claimedAt = new Date('2026-08-31T16:00:00Z');
+    await database.exec(`UPDATE publication_jobs SET state = 'accepted_pending',
+      reconciliation_required = true WHERE id = '${jobId}'`);
+    await claimReconciliationJobs(db, {
+      workerId: 'reconciler',
+      now: claimedAt,
+      leaseMs: 30_000,
+      limit: 1,
+    });
+    expect(
+      await resolveReconciliation(db, {
+        workspaceId,
+        jobId,
+        workerId: 'reconciler',
+        outcome: 'published',
+        now: new Date(claimedAt.getTime() + 30_001),
+      }),
+    ).toBe(false);
   });
 });

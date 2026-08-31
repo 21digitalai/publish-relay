@@ -318,11 +318,13 @@ export async function resolveReconciliation(
         SELECT id, state FROM publication_jobs
         WHERE workspace_id = ${input.workspaceId} AND id = ${input.jobId}
           AND reconciliation_required = true AND lease_owner = ${input.workerId}
+          AND lease_expires_at > ${input.now}
           AND state IN ('dispatching', 'accepted_pending')
         FOR UPDATE
       )
       UPDATE publication_jobs AS job
-      SET state = ${input.outcome}, reconciliation_required = false,
+      SET state = ${input.outcome},
+        reconciliation_required = ${input.outcome === 'accepted_pending'},
         next_attempt_at = ${input.outcome === 'retry_wait' ? input.retryAt : null},
         lease_owner = null, lease_expires_at = null, updated_at = ${input.now}
       FROM candidate WHERE job.id = candidate.id
@@ -330,13 +332,14 @@ export async function resolveReconciliation(
     `);
       const job = resultRows(result)[0];
       if (!job) return false;
-      await transaction.insert(publicationJobEvents).values({
-        workspaceId: input.workspaceId,
-        jobId: input.jobId,
-        fromState: job.fromState,
-        toState: input.outcome,
-        reason: 'reconciliation_resolved',
-      });
+      if (job.fromState !== input.outcome)
+        await transaction.insert(publicationJobEvents).values({
+          workspaceId: input.workspaceId,
+          jobId: input.jobId,
+          fromState: job.fromState,
+          toState: input.outcome,
+          reason: 'reconciliation_resolved',
+        });
       return true;
     },
   );

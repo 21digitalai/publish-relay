@@ -4,5 +4,6 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [react()],
   root: 'src/ui',
+  server: { proxy: { '/api': 'http://127.0.0.1:43199' } },
   build: { outDir: '../../dist/ui', emptyOutDir: true },
 });

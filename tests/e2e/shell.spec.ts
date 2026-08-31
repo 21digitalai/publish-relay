@@ -22,6 +22,24 @@ test('renders the honest recovery unavailable state', async ({ page }) => {
   await expect(page.getByText('We will not claim that an email was sent')).toBeVisible();
 });
 
+test('registers, persists the first workspace update, and reloads the protected onboarding route', async ({
+  page,
+}) => {
+  await page.goto('/register');
+  await page.getByLabel('Name', { exact: true }).fill('Relay Owner');
+  await page.getByLabel('Workspace name').fill('Atlas Studio');
+  await page.getByLabel('Email').fill(`owner-${String(Date.now())}@example.test`);
+  await page.getByLabel('Password').fill('long-password-123!');
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page).toHaveURL(/\/onboarding\/workspace$/);
+  await page.getByLabel('Workspace name').fill('Atlas Publishing');
+  await page.getByLabel('Workspace URL').fill('atlas-publishing');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Name your workspace' })).toBeVisible();
+});
+
 test('filters accounts and opens a named disconnect confirmation', async ({ page }) => {
   await page.goto('/w/atlas/accounts');
   await expect(page.getByRole('heading', { name: 'Connected accounts' })).toBeVisible();

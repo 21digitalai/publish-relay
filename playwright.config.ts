@@ -3,9 +3,16 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests/e2e',
   use: { baseURL: 'http://127.0.0.1:4173' },
-  webServer: {
-    command: 'npm run dev:ui -- --host 127.0.0.1 --port 4173',
-    port: 4173,
-    reuseExistingServer: true,
-  },
+  webServer: [
+    {
+      command: 'npx tsx tests/e2e/server.ts',
+      port: 43199,
+      reuseExistingServer: false,
+    },
+    {
+      command: 'npm run dev:ui -- --host 127.0.0.1 --port 4173',
+      port: 4173,
+      reuseExistingServer: true,
+    },
+  ],
 });

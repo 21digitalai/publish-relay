@@ -29,8 +29,11 @@ const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';
 const apiKeyId = '00000000-0000-4000-8000-000000000803';
 const providerAccountId = '00000000-0000-4000-8000-000000000804';
+const foreignWorkspaceId = '00000000-0000-4000-8000-000000000810';
+const foreignProviderAccountId = '00000000-0000-4000-8000-000000000811';
 let database: PGlite;
 let application: FastifyInstance;
+let apiKeys: ApiKeyService;
 
 function requestPayload(text = 'Scheduled through the API') {
   return {
@@ -60,8 +63,17 @@ beforeEach(async () => {
       VALUES ('${providerAccountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000806', 'one', 'One');
     INSERT INTO api_keys (id, workspace_id, created_by_user_id, label, prefix, secret_hash)
       VALUES ('${apiKeyId}', '${workspaceId}', '${userId}', 'Agent', 'pr_test', 'redacted');
+    INSERT INTO workspaces (id, name, slug) VALUES ('${foreignWorkspaceId}', 'Foreign', 'foreign');
+    SELECT set_config('app.workspace_id', '${foreignWorkspaceId}', false);
+    INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${foreignWorkspaceId}', '${userId}', 'owner');
+    INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+      VALUES ('00000000-0000-4000-8000-000000000812', '${foreignWorkspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+    INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+      VALUES ('00000000-0000-4000-8000-000000000813', '${foreignWorkspaceId}', 'fake', '00000000-0000-4000-8000-000000000812');
+    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
+      VALUES ('${foreignProviderAccountId}', '${foreignWorkspaceId}', '00000000-0000-4000-8000-000000000813', 'foreign', 'Foreign');
   `);
-  const apiKeys = {
+  apiKeys = {
     authenticate: vi.fn().mockResolvedValue({
       id: apiKeyId,
       workspaceId,
@@ -150,6 +162,73 @@ describe('POST /api/v1/posts', () => {
     expect(conflict.json()).toMatchObject({
       success: false,
       error: { code: 'idempotency_conflict' },
+    });
+  });
+
+  it('rejects a foreign-workspace account without creating partial state', async () => {
+    const rejected = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+        'idempotency-key': 'create-post-foreign',
+      },
+      payload: { ...requestPayload(), providerAccountIds: [foreignProviderAccountId] },
+    });
+    expect(rejected.statusCode).toBe(400);
+    const counts = await database.query<{ posts: number; jobs: number }>(
+      `SELECT (SELECT count(*)::int FROM posts WHERE workspace_id = '${workspaceId}') AS posts,
+              (SELECT count(*)::int FROM publication_jobs WHERE workspace_id = '${workspaceId}') AS jobs`,
+    );
+    expect(counts.rows[0]).toEqual({ posts: 0, jobs: 0 });
+  });
+
+  it('rate limits mutation requests before reserving idempotency state', async () => {
+    await application.close();
+    application = Fastify();
+    registerPostRoutes(
+      application,
+      drizzle(database) as unknown as NodePgDatabase,
+      apiKeys,
+      new ApiRateLimiter({
+        workspace: 10,
+        key: 10,
+        mutationWorkspace: 1,
+        mutationKey: 1,
+        windowMs: 60_000,
+      }),
+    );
+    const baseRequest = {
+      method: 'POST' as const,
+      url: '/api/v1/posts',
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+      },
+      payload: requestPayload(),
+    };
+    expect(
+      (
+        await application.inject({
+          ...baseRequest,
+          headers: { ...baseRequest.headers, 'idempotency-key': 'rate-limit-1' },
+        })
+      ).statusCode,
+    ).toBe(201);
+    const limited = await application.inject({
+      ...baseRequest,
+      headers: { ...baseRequest.headers, 'idempotency-key': 'rate-limit-2' },
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers).toMatchObject({
+      'x-ratelimit-limit': '1',
+      'x-ratelimit-remaining': '0',
+      'retry-after': '60',
+    });
+    expect(limited.json()).toMatchObject({
+      success: false,
+      error: { code: 'rate_limit_exceeded' },
     });
   });
 });

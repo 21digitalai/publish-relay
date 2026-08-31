@@ -66,6 +66,11 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - X's current v2 create-post contract allows at most four media IDs per post, so adapter validation rejects larger target payloads before transport. Official media documentation records 5 MB images, 15 MB GIFs, and 512 MB video with `amplify_video`; upload ownership, chunk persistence, processing status, expiry, and cleanup remain a separate lifecycle slice.
 - X's current v2 Articles API documents OAuth 1.0a User Context support for draft creation and publication, but Daily Viber account entitlement and the required DraftJS conversion have not been proven. Article publication therefore remains fail-closed until a separately authorized capability canary and explicit content-conversion contract exist.
 
+## Agent discovery
+
+- `/agents.txt`, `/publish-relay-skill/SKILL.md`, and `/publish-relay-skill/manifest.json` are public, tenant-neutral discovery assets. They must never contain credentials, account data, runtime configuration, or live IDs.
+- The manifest versions the discovery contract, checksums the exact served assets, and advertises CLI updates as warn-only. Agents read the skill and API contract before use; the product never self-updates an installed client.
+
 ## Content and media persistence
 
 - `posts` owns mutable publication intent while `post_revisions` records immutable, numbered content snapshots. The database rejects revision update and deletion.

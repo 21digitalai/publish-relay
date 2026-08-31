@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { RuntimeConfig } from '../config/runtime-config.js';
 import { registerApiDocumentationRoute } from '../modules/api/openapi.js';
+import { registerAgentDiscoveryRoutes } from '../modules/api/agent-discovery.js';
 import { ApiRateLimiter } from '../modules/api/rate-limit.js';
 import { CursorCodec } from '../modules/api/contract.js';
 import type { AuthService } from '../modules/identity/auth.service.js';
@@ -35,6 +36,7 @@ export function createApplication(
   application.get('/health/live', () => ({ data: { status: 'ok' }, error: null }));
   application.get('/api', () => ({ data: { name: 'Publish Relay' }, error: null }));
   registerApiDocumentationRoute(application);
+  registerAgentDiscoveryRoutes(application);
   if (auth)
     registerAuthRoutes(application, auth, {
       secureCookies: config.NODE_ENV === 'production',

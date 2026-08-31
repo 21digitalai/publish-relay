@@ -92,10 +92,11 @@ describe('PostgreSQL tenant isolation', () => {
       (transaction) => findApiKeyByPrefix(transaction, workspaceB, 'pr_repository'),
     );
     expect(hidden).toBeNull();
+    if (!visible) throw new Error('Expected workspace-scoped API key to be visible');
     const revoked = await withTenantTransaction(
       repositoryDatabase,
       { workspaceId: workspaceB },
-      (transaction) => revokeApiKey(transaction, workspaceB, visible!.id, new Date()),
+      (transaction) => revokeApiKey(transaction, workspaceB, visible.id, new Date()),
     );
     expect(revoked).toBe(false);
   });

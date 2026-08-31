@@ -1,11 +1,17 @@
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
+import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { withTenantTransaction } from '../src/database/tenant-transaction.js';
-import { findApiKeyByPrefix, revokeApiKey } from '../src/modules/identity/api-key.repository.js';
+import {
+  createPostgresApiKeyStore,
+  findApiKeyByPrefix,
+  revokeApiKey,
+} from '../src/modules/identity/api-key.repository.js';
+import { ApiKeyService } from '../src/modules/identity/api-key.service.js';
 import { createPostgresAuthStore } from '../src/modules/identity/auth.repository.js';
 
 const migrationUrls = [
@@ -129,5 +135,45 @@ describe('PostgreSQL tenant isolation', () => {
       (transaction) => revokeApiKey(transaction, workspaceB, visible.id, new Date()),
     );
     expect(revoked).toBe(false);
+  });
+
+  it('creates, authenticates, audits, and rejects an expected-workspace mismatch', async () => {
+    const workspaceA = '00000000-0000-4000-8000-000000000041';
+    const workspaceB = '00000000-0000-4000-8000-000000000042';
+    const userId = '00000000-0000-4000-8000-000000000043';
+    await database.exec(`
+      INSERT INTO users (id, email, password_hash) VALUES ('${userId}', 'api-key@example.test', 'redacted-hash');
+      INSERT INTO workspaces (id, name, slug) VALUES
+        ('${workspaceA}', 'API Workspace A', 'api-workspace-a'),
+        ('${workspaceB}', 'API Workspace B', 'api-workspace-b');
+      SET ROLE publish_relay_app;
+    `);
+    const service = new ApiKeyService(
+      createPostgresApiKeyStore(drizzle(database) as unknown as NodePgDatabase),
+    );
+    const created = await service.create({
+      workspaceId: workspaceA,
+      createdByUserId: userId,
+      label: 'Automation',
+      capabilities: ['schedules:read'],
+      requestId: 'request-create',
+    });
+    await expect(service.authenticate(workspaceB, created.token)).resolves.toBeNull();
+    await expect(service.authenticate(workspaceA, created.token)).resolves.toMatchObject({
+      id: created.key.id,
+      workspaceId: workspaceA,
+      workspaceLabel: 'API Workspace A',
+      capabilities: ['schedules:read'],
+    });
+    await withTenantTransaction(
+      drizzle(database) as unknown as NodePgDatabase,
+      { workspaceId: workspaceA },
+      async (transaction) => {
+        const result = await transaction.execute(
+          sql`select count(*)::int as count from audit_events where action = 'api_key.created'`,
+        );
+        expect(result.rows[0]).toMatchObject({ count: 1 });
+      },
+    );
   });
 });

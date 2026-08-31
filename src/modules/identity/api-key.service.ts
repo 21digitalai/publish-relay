@@ -6,6 +6,7 @@ import {
   isApiKeyUsable,
   parseApiKeyCapabilities,
   parseApiKeyToken,
+  hasApiKeyCapability,
   type ApiKeyCapability,
 } from './api-key.js';
 
@@ -32,9 +33,27 @@ export interface ApiKeyStore {
     secretHash: string;
     capabilities: ApiKeyCapability[];
     expiresAt: Date | null;
+    requestId: string;
   }): Promise<ApiKeyPrincipal>;
-  findByPrefix(prefix: string): Promise<ApiKeyRecord | null>;
+  findByPrefix(workspaceId: string, prefix: string): Promise<ApiKeyRecord | null>;
   markUsed(workspaceId: string, keyId: string, usedAt: Date): Promise<void>;
+  recordCapabilityDenied(
+    principal: ApiKeyPrincipal,
+    capability: ApiKeyCapability,
+    requestId: string,
+  ): Promise<void>;
+  revoke(input: {
+    workspaceId: string;
+    keyId: string;
+    revokedByUserId: string;
+    revokedAt: Date;
+    requestId: string;
+  }): Promise<boolean>;
+}
+
+export class ApiKeyAuthorizationError extends Error {
+  public readonly statusCode = 403;
+  public readonly code = 'missing_capability';
 }
 
 function hashesMatch(actual: string, expected: string): boolean {
@@ -54,6 +73,7 @@ export class ApiKeyService {
     label: string;
     capabilities: readonly string[];
     expiresAt?: Date | null;
+    requestId: string;
   }): Promise<{ key: ApiKeyPrincipal; token: string }> {
     const label = input.label.trim();
     if (!label) throw new Error('API key label is required');
@@ -66,14 +86,19 @@ export class ApiKeyService {
       secretHash: material.secretHash,
       capabilities: parseApiKeyCapabilities(input.capabilities),
       expiresAt: input.expiresAt ?? null,
+      requestId: input.requestId,
     });
     return { key, token: material.token };
   }
 
-  public async authenticate(token: string, now = new Date()): Promise<ApiKeyPrincipal | null> {
+  public async authenticate(
+    expectedWorkspaceId: string,
+    token: string,
+    now = new Date(),
+  ): Promise<ApiKeyPrincipal | null> {
     const parsed = parseApiKeyToken(token);
     if (!parsed) return null;
-    const record = await this.store.findByPrefix(parsed.prefix);
+    const record = await this.store.findByPrefix(expectedWorkspaceId, parsed.prefix);
     if (!record || !isApiKeyUsable(record, now)) return null;
     if (!hashesMatch(hashApiKeySecret(parsed.secret), record.secretHash)) return null;
     await this.store.markUsed(record.workspaceId, record.id, now);
@@ -81,5 +106,25 @@ export class ApiKeyService {
     void secretHash;
     void revokedAt;
     return principal;
+  }
+
+  public async requireCapability(
+    principal: ApiKeyPrincipal,
+    capability: ApiKeyCapability,
+    requestId: string,
+  ): Promise<void> {
+    if (hasApiKeyCapability(new Set(principal.capabilities), capability)) return;
+    await this.store.recordCapabilityDenied(principal, capability, requestId);
+    throw new ApiKeyAuthorizationError(`API key is missing capability ${capability}`);
+  }
+
+  public async revoke(input: {
+    workspaceId: string;
+    keyId: string;
+    revokedByUserId: string;
+    requestId: string;
+    revokedAt?: Date;
+  }): Promise<boolean> {
+    return this.store.revoke({ ...input, revokedAt: input.revokedAt ?? new Date() });
   }
 }

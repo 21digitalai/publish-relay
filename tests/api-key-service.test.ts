@@ -1,13 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { hashApiKeySecret } from '../src/modules/identity/api-key.js';
-import { ApiKeyService, type ApiKeyStore } from '../src/modules/identity/api-key.service.js';
+import {
+  ApiKeyService,
+  type ApiKeyPrincipal,
+  type ApiKeyStore,
+} from '../src/modules/identity/api-key.service.js';
 
 function createHarness() {
   const create = vi.fn<ApiKeyStore['create']>();
   const findByPrefix = vi.fn<ApiKeyStore['findByPrefix']>();
   const markUsed = vi.fn<ApiKeyStore['markUsed']>();
-  return { store: { create, findByPrefix, markUsed }, create, findByPrefix, markUsed };
+  const recordCapabilityDenied = vi.fn<ApiKeyStore['recordCapabilityDenied']>();
+  const revoke = vi.fn<ApiKeyStore['revoke']>();
+  return {
+    store: { create, findByPrefix, markUsed, recordCapabilityDenied, revoke },
+    create,
+    findByPrefix,
+    markUsed,
+    recordCapabilityDenied,
+    revoke,
+  };
 }
 
 describe('API key service', () => {
@@ -28,6 +41,7 @@ describe('API key service', () => {
       createdByUserId: 'user-1',
       label: 'Automation',
       capabilities: ['schedules:read'],
+      requestId: 'request-1',
     });
     expect(result.token).toMatch(/^pr_[0-9a-f]{12}\./);
     expect(create).toHaveBeenCalledWith(
@@ -49,7 +63,11 @@ describe('API key service', () => {
       revokedAt: null,
     });
     const now = new Date('2026-08-31T18:00:00Z');
-    const principal = await new ApiKeyService(store).authenticate('pr_public.secret', now);
+    const principal = await new ApiKeyService(store).authenticate(
+      'workspace-1',
+      'pr_public.secret',
+      now,
+    );
     expect(principal).toEqual({
       id: 'key-1',
       workspaceId: 'workspace-1',
@@ -74,8 +92,67 @@ describe('API key service', () => {
       revokedAt: new Date(),
     });
     const service = new ApiKeyService(store);
-    expect(await service.authenticate('invalid')).toBeNull();
-    expect(await service.authenticate('pr_public.wrong')).toBeNull();
+    expect(await service.authenticate('workspace-1', 'invalid')).toBeNull();
+    expect(await service.authenticate('workspace-1', 'pr_public.wrong')).toBeNull();
+    expect(findByPrefix).toHaveBeenCalledWith('workspace-1', 'pr_public');
     expect(markUsed).not.toHaveBeenCalled();
+  });
+
+  it('rejects an expired credential without updating usage', async () => {
+    const { store, findByPrefix, markUsed } = createHarness();
+    findByPrefix.mockResolvedValue({
+      id: 'key-1',
+      workspaceId: 'workspace-1',
+      workspaceLabel: 'Atlas',
+      prefix: 'pr_public',
+      secretHash: hashApiKeySecret('secret'),
+      capabilities: [],
+      expiresAt: new Date('2026-08-31T17:00:00Z'),
+      revokedAt: null,
+    });
+    const service = new ApiKeyService(store);
+    await expect(
+      service.authenticate('workspace-1', 'pr_public.secret', new Date('2026-08-31T18:00:00Z')),
+    ).resolves.toBeNull();
+    expect(markUsed).not.toHaveBeenCalled();
+  });
+
+  it('audits a centralized capability denial without secret material', async () => {
+    const { store, recordCapabilityDenied } = createHarness();
+    const principal: ApiKeyPrincipal = {
+      id: 'key-1',
+      workspaceId: 'workspace-1',
+      workspaceLabel: 'Atlas',
+      prefix: 'pr_public',
+      capabilities: ['schedules:read'],
+      expiresAt: null,
+    };
+    await expect(
+      new ApiKeyService(store).requireCapability(principal, 'schedules:write', 'request-1'),
+    ).rejects.toMatchObject({ statusCode: 403, code: 'missing_capability' });
+    expect(recordCapabilityDenied).toHaveBeenCalledWith(principal, 'schedules:write', 'request-1');
+    expect(JSON.stringify(recordCapabilityDenied.mock.calls)).not.toContain('secret');
+  });
+
+  it('revokes a workspace-scoped key immediately through the store', async () => {
+    const { store, revoke } = createHarness();
+    revoke.mockResolvedValue(true);
+    const revokedAt = new Date('2026-08-31T18:00:00Z');
+    await expect(
+      new ApiKeyService(store).revoke({
+        workspaceId: 'workspace-1',
+        keyId: 'key-1',
+        revokedByUserId: 'user-1',
+        requestId: 'request-2',
+        revokedAt,
+      }),
+    ).resolves.toBe(true);
+    expect(revoke).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      keyId: 'key-1',
+      revokedByUserId: 'user-1',
+      requestId: 'request-2',
+      revokedAt,
+    });
   });
 });

@@ -53,6 +53,31 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   'audit:list': { method: 'GET', path: '/api/v1/audit-events' },
   health: { method: 'GET', path: '/health/live' },
 };
+const SAFE_OUTPUT_KEYS = new Set([
+  'success',
+  'data',
+  'error',
+  'meta',
+  'code',
+  'message',
+  'requestId',
+  'details',
+  'id',
+  'postId',
+  'revisionId',
+  'jobId',
+  'workspaceId',
+  'workspaceLabel',
+  'state',
+  'status',
+  'links',
+  'post',
+  'job',
+  'next',
+  'cursor',
+  'version',
+]);
+const REDACTED = '[REDACTED]';
 
 class CliError extends Error {
   public constructor(
@@ -177,6 +202,17 @@ function errorCode(body: Json): string | undefined {
     typeof error.code === 'string'
     ? error.code
     : undefined;
+}
+
+function redactOutput(value: Json): Json {
+  if (Array.isArray(value)) return value.map(redactOutput);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      SAFE_OUTPUT_KEYS.has(key) ? redactOutput(child) : REDACTED,
+    ]),
+  );
 }
 
 async function requireWorkspace(profile: Profile, key: string, expected: string): Promise<void> {
@@ -313,14 +349,14 @@ async function run(): Promise<Json> {
 }
 
 try {
-  process.stdout.write(`${JSON.stringify(await run())}\n`);
+  process.stdout.write(`${JSON.stringify(redactOutput(await run()))}\n`);
 } catch (error) {
   const cliError =
     error instanceof CliError
       ? error
       : new CliError(EXIT.usage, error instanceof Error ? error.message : 'Invalid input');
   process.stdout.write(
-    `${JSON.stringify(cliError.data ?? { success: false, error: { code: 'cli_error', message: cliError.message } })}\n`,
+    `${JSON.stringify(redactOutput(cliError.data ?? { success: false, error: { code: 'cli_error', message: cliError.message } }))}\n`,
   );
   process.stderr.write(`${basename(process.argv[1] ?? 'publish-relay')}: ${cliError.message}\n`);
   process.exitCode = cliError.exitCode;

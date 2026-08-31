@@ -68,18 +68,65 @@ describe('Publish Relay CLI', () => {
     [429, 7],
     [500, 8],
     [424, 9],
-  ])('maps HTTP %i to stable exit %i while preserving the envelope', async (status, exit) => {
+  ])('maps HTTP %i to stable exit %i while redacting the envelope', async (status, exit) => {
     const body = {
       success: false,
-      error: { code: `error_${String(status)}`, message: 'safe', requestId: 'request-1' },
+      error: {
+        code: `error_${String(status)}`,
+        message: 'safe',
+        requestId: 'request-1',
+        details: { accessToken: 'provider-secret', reason: 'private provider response' },
+      },
     };
     const baseUrl = await fixture(status, body);
     const result = await cli(['posts', 'show', 'post-1', '--base-url', baseUrl], {
       PUBLISH_RELAY_API_KEY: 'test-key',
     });
     expect(result.code).toBe(exit);
-    expect(JSON.parse(result.stdout)).toEqual(body);
+    expect(JSON.parse(result.stdout)).toEqual({
+      success: false,
+      error: {
+        code: `error_${String(status)}`,
+        message: 'safe',
+        requestId: 'request-1',
+        details: { accessToken: '[REDACTED]', reason: '[REDACTED]' },
+      },
+    });
     expect(result.stdout).not.toContain('test-key');
+    expect(result.stdout).not.toContain('provider-secret');
+    expect(result.stdout).not.toContain('private provider response');
+  });
+
+  it('redacts nested success fields while preserving durable IDs and direct links', async () => {
+    const baseUrl = await fixture(200, {
+      success: true,
+      data: {
+        id: 'job-1',
+        state: 'published',
+        providerToken: 'provider-secret',
+        nested: { password: 'credential' },
+        links: { job: '/api/v1/jobs/job-1', post: '/api/v1/posts/post-1' },
+      },
+      meta: { requestId: 'request-success', internalTrace: 'private-trace' },
+    });
+    const result = await cli(['publishes', 'show', 'job-1', '--base-url', baseUrl], {
+      PUBLISH_RELAY_API_KEY: 'test-key',
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      success: true,
+      data: {
+        id: 'job-1',
+        state: 'published',
+        providerToken: '[REDACTED]',
+        nested: '[REDACTED]',
+        links: { job: '/api/v1/jobs/job-1', post: '/api/v1/posts/post-1' },
+      },
+      meta: { requestId: 'request-success', internalTrace: '[REDACTED]' },
+    });
+    expect(result.stdout).not.toContain('provider-secret');
+    expect(result.stdout).not.toContain('credential');
+    expect(result.stdout).not.toContain('private-trace');
   });
 
   it('preflights workspace before a mutation and sends body plus idempotency key', async () => {

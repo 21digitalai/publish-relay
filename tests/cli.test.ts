@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
+import Fastify from 'fastify';
+
+import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js';
+import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
 
 const servers: ReturnType<typeof createServer>[] = [];
 
@@ -22,9 +26,30 @@ afterEach(async () =>
 
 async function fixture(status: number, body: unknown, workspace = 'workspace-one') {
   const server = createServer((request, response) => {
+    if (request.headers['x-publish-relay-workspace'] !== workspace) {
+      response.writeHead(401, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          success: false,
+          error: { code: 'authentication_required', message: 'Workspace header required' },
+        }),
+      );
+      return;
+    }
     const payload =
       request.url === '/api/v1/account'
-        ? { success: true, data: { workspaceId: workspace }, meta: { requestId: 'preflight' } }
+        ? {
+            success: true,
+            data: {
+              id: 'key-1',
+              workspaceId: workspace,
+              workspaceLabel: 'Atlas',
+              prefix: 'pr_public',
+              capabilities: ['schedules:read'],
+              expiresAt: null,
+            },
+            meta: { requestId: 'preflight' },
+          }
         : body;
     response.writeHead(request.url === '/api/v1/account' ? 200 : status, {
       'content-type': 'application/json',
@@ -42,7 +67,7 @@ async function cli(args: string[], env: Record<string, string> = {}) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     const child = spawn(process.execPath, ['--import', 'tsx', 'src/entrypoints/cli.ts', ...args], {
       cwd: process.cwd(),
-      env: { ...process.env, ...env },
+      env: { ...process.env, PUBLISH_RELAY_WORKSPACE: 'workspace-one', ...env },
     });
     let stdout = '';
     let stderr = '';
@@ -59,6 +84,47 @@ async function cli(args: string[], env: Record<string, string> = {}) {
 }
 
 describe('Publish Relay CLI', () => {
+  it('matches the real account API authentication and response contract', async () => {
+    const application = Fastify();
+    registerApiKeyRoutes(application, {
+      authenticate: (workspaceId: string, secret: string) => {
+        expect(workspaceId).toBe('workspace-one');
+        expect(secret).toBe('test-key');
+        return Promise.resolve({
+          id: '00000000-0000-4000-8000-000000000001',
+          workspaceId,
+          createdByUserId: 'user-1',
+          workspaceLabel: 'Atlas',
+          prefix: 'pr_public',
+          capabilities: ['schedules:read'],
+          expiresAt: null,
+        });
+      },
+    } as unknown as ApiKeyService);
+    await application.listen({ host: '127.0.0.1', port: 0 });
+    servers.push(application.server);
+    const address = application.server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+
+    const result = await cli(
+      ['account', 'current', '--base-url', `http://127.0.0.1:${String(address.port)}`],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      success: true,
+      data: {
+        id: '00000000-0000-4000-8000-000000000001',
+        workspaceId: 'workspace-one',
+        workspaceLabel: 'Atlas',
+        prefix: 'pr_public',
+        capabilities: ['schedules:read'],
+        expiresAt: null,
+      },
+    });
+  });
+
   it.each([
     [401, 3],
     [403, 4],
@@ -220,7 +286,11 @@ describe('Publish Relay CLI', () => {
   it('preflights workspace before a mutation and sends body plus idempotency key', async () => {
     const baseUrl = await fixture(201, {
       success: true,
-      data: { id: 'post-1' },
+      data: {
+        id: 'post-1',
+        revisionId: 'revision-1',
+        links: { self: '/api/v1/posts/post-1', jobs: ['/api/v1/jobs/job-1'] },
+      },
       meta: { requestId: 'request-2' },
     });
     const directory = await mkdtemp(join(tmpdir(), 'publish-relay-cli-'));
@@ -242,7 +312,14 @@ describe('Publish Relay CLI', () => {
       { PUBLISH_RELAY_API_KEY: 'test-key' },
     );
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ success: true, data: { id: 'post-1' } });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      success: true,
+      data: {
+        id: 'post-1',
+        revisionId: 'revision-1',
+        links: { self: '/api/v1/posts/post-1', jobs: ['/api/v1/jobs/job-1'] },
+      },
+    });
   });
 
   it('rejects secret-bearing profile fields before making a request', async () => {

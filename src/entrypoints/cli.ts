@@ -79,6 +79,8 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ] as const;
 const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
+  'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
+  'posts:create': new Set([...ENVELOPE_OUTPUT_KEYS, 'self', 'jobs']),
   'posts:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'items',
@@ -96,6 +98,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'jobs',
     'self',
   ]),
+  'posts:update': new Set([...ENVELOPE_OUTPUT_KEYS, 'self', 'jobs']),
   'publishes:show': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'createdAt',
@@ -201,6 +204,7 @@ function mapExit(status: number, code?: string): number {
 async function request(
   profile: Profile,
   key: string,
+  workspace: string | undefined,
   path: string,
   init: RequestInit = {},
 ): Promise<{ status: number; body: Json }> {
@@ -212,6 +216,7 @@ async function request(
     const headers = new Headers(init.headers);
     headers.set('authorization', `Bearer ${key}`);
     headers.set('accept', 'application/json');
+    if (workspace) headers.set('x-publish-relay-workspace', workspace);
     const response = await fetch(new URL(path, profile.baseUrl), {
       ...init,
       signal: controller.signal,
@@ -253,7 +258,7 @@ function redactOutput(value: Json): Json {
 }
 
 async function requireWorkspace(profile: Profile, key: string, expected: string): Promise<void> {
-  const response = await request(profile, key, '/api/v1/account');
+  const response = await request(profile, key, expected, '/api/v1/account');
   if (response.status >= 400)
     throw new CliError(
       mapExit(response.status, errorCode(response.body)),
@@ -293,6 +298,7 @@ function jobState(body: Json): string | undefined {
 async function pollJob(
   profile: Profile,
   key: string,
+  workspace: string,
   path: string,
   jobId: string,
   flags: Record<string, string | true>,
@@ -308,7 +314,7 @@ async function pollJob(
     throw new CliError(EXIT.usage, 'Polling timeout and interval must be positive numbers');
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const response = await request(profile, key, path);
+    const response = await request(profile, key, workspace, path);
     if (response.status >= 400)
       throw new CliError(
         mapExit(response.status, errorCode(response.body)),
@@ -353,8 +359,18 @@ async function run(): Promise<Json> {
   const key = env[keyName] ?? process.env[keyName];
   if (!key) throw new CliError(EXIT.usage, `API key environment variable ${keyName} is missing`);
   const expected = String(
-    parsed.flags['require-workspace'] ?? profile.workspaceId ?? profile.workspaceLabel ?? '',
+    parsed.flags['require-workspace'] ??
+      profile.workspaceId ??
+      profile.workspaceLabel ??
+      env.PUBLISH_RELAY_WORKSPACE ??
+      process.env.PUBLISH_RELAY_WORKSPACE ??
+      '',
   );
+  if (parsed.command !== 'health' && !expected)
+    throw new CliError(
+      EXIT.usage,
+      'Authenticated commands require a workspace in the profile or --require-workspace',
+    );
   if (MUTATIONS.has(parsed.command)) {
     if (!expected) throw new CliError(EXIT.usage, 'Mutations require an expected workspace');
     await requireWorkspace(profile, key, expected);
@@ -363,13 +379,13 @@ async function run(): Promise<Json> {
     throw new CliError(EXIT.usage, 'A resource ID is required');
   const path = route.path.replace(':id', encodeURIComponent(parsed.id ?? ''));
   if (parsed.command === 'publishes:poll' && parsed.id)
-    return pollJob(profile, key, path, parsed.id, parsed.flags);
+    return pollJob(profile, key, expected, path, parsed.id, parsed.flags);
   const body = await readBody(parsed.flags['body-file']);
   if (route.body && !body) throw new CliError(EXIT.usage, 'This command requires --body-file');
   const idempotencyKey = parsed.flags['idempotency-key'];
   if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')
     throw new CliError(EXIT.usage, 'Mutations require --idempotency-key');
-  const response = await request(profile, key, path, {
+  const response = await request(profile, key, expected || undefined, path, {
     method: route.method,
     ...(body ? { body } : {}),
     headers: {

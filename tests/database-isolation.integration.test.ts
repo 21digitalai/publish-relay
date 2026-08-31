@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
+import { findApiKeyByPrefix, revokeApiKey } from '../src/modules/identity/api-key.repository.js';
 
 const migrationUrl = new URL('../migrations/0000_identity_tenancy.sql', import.meta.url);
 let database: PGlite;
@@ -62,5 +67,36 @@ describe('PostgreSQL tenant isolation', () => {
     await expect(database.exec(`UPDATE audit_events SET action = 'tampered'`)).rejects.toThrow(
       /append-only/i,
     );
+  });
+
+  it('enforces explicit workspace scope through the repository and tenant transaction', async () => {
+    const workspaceA = '00000000-0000-4000-8000-000000000021';
+    const workspaceB = '00000000-0000-4000-8000-000000000022';
+    const userId = '00000000-0000-4000-8000-000000000023';
+    await database.exec(`
+      INSERT INTO users (id, email, password_hash) VALUES ('${userId}', 'repository@example.test', 'redacted-hash');
+      INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceA}', 'Repository A', 'repository-a'), ('${workspaceB}', 'Repository B', 'repository-b');
+      INSERT INTO api_keys (workspace_id, created_by_user_id, label, prefix, secret_hash) VALUES ('${workspaceA}', '${userId}', 'A key', 'pr_repository', 'hash-a');
+      SET ROLE publish_relay_app;
+    `);
+    const repositoryDatabase = drizzle(database) as unknown as NodePgDatabase;
+    const visible = await withTenantTransaction(
+      repositoryDatabase,
+      { workspaceId: workspaceA },
+      (transaction) => findApiKeyByPrefix(transaction, workspaceA, 'pr_repository'),
+    );
+    expect(visible?.workspaceId).toBe(workspaceA);
+    const hidden = await withTenantTransaction(
+      repositoryDatabase,
+      { workspaceId: workspaceB },
+      (transaction) => findApiKeyByPrefix(transaction, workspaceB, 'pr_repository'),
+    );
+    expect(hidden).toBeNull();
+    const revoked = await withTenantTransaction(
+      repositoryDatabase,
+      { workspaceId: workspaceB },
+      (transaction) => revokeApiKey(transaction, workspaceB, visible!.id, new Date()),
+    );
+    expect(revoked).toBe(false);
   });
 });

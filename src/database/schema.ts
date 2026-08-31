@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -28,7 +29,7 @@ export const users = pgTable(
     isDisabled: boolean('is_disabled').notNull().default(false),
     ...timestamps,
   },
-  (table) => [uniqueIndex('users_email_lower_unique').on(table.email)],
+  (table) => [uniqueIndex('users_email_lower_unique').on(sql`lower(${table.email})`)],
 );
 
 export const workspaces = pgTable('workspaces', {

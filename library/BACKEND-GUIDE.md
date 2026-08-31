@@ -18,6 +18,11 @@
 
 Concrete architecture, security, persistence, job, and deployment decisions are frozen in `projects/publish-relay/library/decisions.md` ADR-001 through ADR-007.
 
+## Agent API v1 contract
+
+- Shared success/error envelope builders and the signed keyset cursor codec live in `src/modules/api/contract.ts`; routes must use these canonical boundaries rather than hand-building response shapes or cursor parsing.
+- Collection cursors are versioned HMAC-SHA256 tokens bound to normalized filters and expiry. Malformed, tampered, expired, or filter-mismatched cursors fail closed and must map to HTTP 400 without restarting pagination.
+
 ## Persistence and tenant context
 
 - Drizzle schema declarations live in `src/database/schema.ts`; immutable forward migrations live in `migrations/`.

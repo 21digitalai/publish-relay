@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 
 import type { XApiError, XClient } from './x-adapter.js';
+import type { XMediaUploadClient } from './x-media-staging.service.js';
 
 export interface XUserCredential {
   accessToken: string;
@@ -13,6 +14,8 @@ export interface XHttpClientOptions {
   fetch?: typeof fetch;
   nonce?: () => string;
   now?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+  maxMediaStatusPolls?: number;
 }
 
 export interface XRequestToken {
@@ -63,10 +66,25 @@ async function toApiError(response: Response): Promise<XApiError> {
   };
 }
 
-export class XHttpClient implements XClient {
+interface XMediaResponse {
+  media_id_string?: string;
+  expires_after_secs?: number;
+  processing_info?: {
+    state?: 'pending' | 'in_progress' | 'succeeded' | 'failed';
+    check_after_secs?: number;
+  };
+}
+
+const X_MEDIA_UPLOAD_URL = 'https://upload.twitter.com/1.1/media/upload.json';
+const DEFAULT_MEDIA_STATUS_POLLS = 4;
+const MAX_STATUS_DELAY_MS = 30_000;
+
+export class XHttpClient implements XClient, XMediaUploadClient {
   private readonly request: typeof fetch;
   private readonly nonce: () => string;
   private readonly now: () => number;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly maxMediaStatusPolls: number;
 
   public constructor(private readonly options: XHttpClientOptions) {
     if (!options.consumerKey || !options.consumerSecret)
@@ -74,6 +92,12 @@ export class XHttpClient implements XClient {
     this.request = options.fetch ?? fetch;
     this.nonce = options.nonce ?? (() => randomBytes(18).toString('base64url'));
     this.now = options.now ?? Date.now;
+    this.sleep =
+      options.sleep ??
+      ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.maxMediaStatusPolls = options.maxMediaStatusPolls ?? DEFAULT_MEDIA_STATUS_POLLS;
+    if (!Number.isInteger(this.maxMediaStatusPolls) || this.maxMediaStatusPolls < 1)
+      throw new Error('X media status poll limit must be a positive integer');
   }
 
   public connect(): Promise<{ credential: string }> {
@@ -188,6 +212,108 @@ export class XHttpClient implements XClient {
     return this;
   }
 
+  public async init(input: {
+    totalBytes: number;
+    mimeType: string;
+    idempotencyKey: string;
+  }): Promise<{ mediaId: string; expiresAfterSeconds: number }> {
+    void input.idempotencyKey;
+    const response = await this.callMediaForm({
+      command: 'INIT',
+      total_bytes: String(input.totalBytes),
+      media_type: input.mimeType,
+      media_category: mediaCategory(input.mimeType),
+    });
+    if (!response.media_id_string || !response.expires_after_secs)
+      throw new XRequestError(502, 'X media INIT response is incomplete');
+    return {
+      mediaId: response.media_id_string,
+      expiresAfterSeconds: response.expires_after_secs,
+    };
+  }
+
+  public async append(mediaId: string, segmentIndex: number, bytes: Buffer): Promise<void> {
+    const credential = this.requireActiveCredential('uploading media');
+    const authorization = this.authorization('POST', X_MEDIA_UPLOAD_URL, credential);
+    const body = new FormData();
+    body.set('command', 'APPEND');
+    body.set('media_id', mediaId);
+    body.set('segment_index', String(segmentIndex));
+    body.set('media', new Blob([Uint8Array.from(bytes)]));
+    await this.requestMedia(authorization, body, false);
+  }
+
+  public async finalize(mediaId: string): Promise<{ state: 'succeeded' | 'pending' | 'failed' }> {
+    return mediaState(await this.callMediaForm({ command: 'FINALIZE', media_id: mediaId }));
+  }
+
+  public async status(
+    mediaId: string,
+  ): Promise<{ state: 'succeeded' | 'pending' | 'failed' | 'not_finalized' }> {
+    for (let attempt = 0; attempt < this.maxMediaStatusPolls; attempt += 1) {
+      const response = await this.callMediaGet(mediaId);
+      if (!response.processing_info) return { state: 'not_finalized' };
+      const state = mediaState(response);
+      if (state.state !== 'pending' || attempt === this.maxMediaStatusPolls - 1) return state;
+      const seconds = response.processing_info.check_after_secs ?? 0;
+      await this.sleep(Math.min(seconds * 1000, MAX_STATUS_DELAY_MS));
+    }
+    return { state: 'pending' };
+  }
+
+  public discard(mediaId: string): Promise<void> {
+    void mediaId;
+    return Promise.resolve();
+  }
+
+  private requireActiveCredential(action: string): XUserCredential {
+    if (!this.activeCredential) throw new Error(`X credential must be bound before ${action}`);
+    return parseCredential(this.activeCredential);
+  }
+
+  private async callMediaForm(fields: Record<string, string>): Promise<XMediaResponse> {
+    const credential = this.requireActiveCredential('uploading media');
+    const authorization = this.authorization('POST', X_MEDIA_UPLOAD_URL, credential, {}, fields);
+    return this.requestMedia(authorization, new URLSearchParams(fields), true);
+  }
+
+  private async callMediaGet(mediaId: string): Promise<XMediaResponse> {
+    const credential = this.requireActiveCredential('checking media');
+    const url = `${X_MEDIA_UPLOAD_URL}?command=STATUS&media_id=${encodeURIComponent(mediaId)}`;
+    const authorization = this.authorization('GET', url, credential);
+    return this.requestMediaGet(url, authorization);
+  }
+
+  private async requestMedia(
+    authorization: string,
+    body: FormData | URLSearchParams,
+    expectsJson: boolean,
+  ): Promise<XMediaResponse> {
+    let response: Response;
+    try {
+      response = await this.request(X_MEDIA_UPLOAD_URL, {
+        method: 'POST',
+        headers: { authorization },
+        body,
+      });
+    } catch (cause) {
+      throw new XRequestError(503, 'X media upload request failed', { cause });
+    }
+    if (!response.ok) throw await mediaRequestError(response);
+    return expectsJson ? ((await response.json()) as XMediaResponse) : {};
+  }
+
+  private async requestMediaGet(url: string, authorization: string): Promise<XMediaResponse> {
+    let response: Response;
+    try {
+      response = await this.request(url, { method: 'GET', headers: { authorization } });
+    } catch (cause) {
+      throw new XRequestError(503, 'X media status request failed', { cause });
+    }
+    if (!response.ok) throw await mediaRequestError(response);
+    return (await response.json()) as XMediaResponse;
+  }
+
   private async call<T>(
     method: 'GET' | 'POST',
     url: string,
@@ -251,6 +377,7 @@ export class XHttpClient implements XClient {
     urlValue: string,
     credential: XUserCredential,
     additionalOauth: Record<string, string> = {},
+    signatureParameters: Record<string, string> = {},
   ): string {
     const url = new URL(urlValue);
     const oauth: Record<string, string> = {
@@ -262,7 +389,11 @@ export class XHttpClient implements XClient {
       ...(credential.accessToken ? { oauth_token: credential.accessToken } : {}),
       ...additionalOauth,
     };
-    const parameters = [...url.searchParams.entries(), ...Object.entries(oauth)]
+    const parameters = [
+      ...url.searchParams.entries(),
+      ...Object.entries(oauth),
+      ...Object.entries(signatureParameters),
+    ]
       .map(([key, value]) => [encode(key), encode(value)] as const)
       .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
         leftKey === rightKey
@@ -279,6 +410,28 @@ export class XHttpClient implements XClient {
       .map(([key, value]) => `${encode(key)}="${encode(value)}"`)
       .join(', ')}`;
   }
+}
+
+function mediaCategory(mimeType: string): string {
+  if (mimeType === 'image/gif') return 'tweet_gif';
+  if (mimeType.startsWith('video/')) return 'tweet_video';
+  return 'tweet_image';
+}
+
+function mediaState(response: XMediaResponse): { state: 'succeeded' | 'pending' | 'failed' } {
+  const state = response.processing_info?.state;
+  if (!state || state === 'succeeded') return { state: 'succeeded' };
+  if (state === 'failed') return { state: 'failed' };
+  return { state: 'pending' };
+}
+
+async function mediaRequestError(response: Response): Promise<XRequestError> {
+  const error = await toApiError(response);
+  return new XRequestError(error.status, error.message, {
+    ...(error.retryAfterSeconds === undefined
+      ? {}
+      : { retryAfterSeconds: error.retryAfterSeconds }),
+  });
 }
 
 class XRequestError extends Error implements XApiError {

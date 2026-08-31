@@ -152,4 +152,96 @@ describe('X OAuth 1.0a HTTP client', () => {
     expect(JSON.stringify(request.mock.calls)).not.toContain('request-secret');
     expect(JSON.stringify(request.mock.calls)).not.toContain('access-secret');
   });
+
+  it('encodes the X INIT, APPEND, FINALIZE, and bounded STATUS lifecycle', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ media_id_string: 'media-1', expires_after_secs: 3600 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(response({ processing_info: { state: 'pending' } }))
+      .mockResolvedValueOnce(
+        response({ processing_info: { state: 'in_progress', check_after_secs: 2 } }),
+      )
+      .mockResolvedValueOnce(response({ processing_info: { state: 'succeeded' } }));
+    const sleep = vi.fn(() => Promise.resolve());
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+      sleep,
+      maxMediaStatusPolls: 3,
+    }).bindCredential(credential);
+
+    await expect(
+      client.init({ totalBytes: 3, mimeType: 'image/png', idempotencyKey: 'stage-1' }),
+    ).resolves.toEqual({ mediaId: 'media-1', expiresAfterSeconds: 3600 });
+    await expect(client.append('media-1', 0, Buffer.from('abc'))).resolves.toBeUndefined();
+    await expect(client.finalize('media-1')).resolves.toEqual({ state: 'pending' });
+    await expect(client.status('media-1')).resolves.toEqual({ state: 'succeeded' });
+
+    const initBody = request.mock.calls[0]?.[1]?.body as URLSearchParams;
+    expect(Object.fromEntries(initBody.entries())).toEqual({
+      command: 'INIT',
+      total_bytes: '3',
+      media_type: 'image/png',
+      media_category: 'tweet_image',
+    });
+    const appendBody = request.mock.calls[1]?.[1]?.body as FormData;
+    expect(appendBody.get('command')).toBe('APPEND');
+    expect(appendBody.get('media_id')).toBe('media-1');
+    expect(appendBody.get('segment_index')).toBe('0');
+    expect(appendBody.get('media')).toBeInstanceOf(Blob);
+    expect(sleep).toHaveBeenCalledWith(2000);
+    const requestedUrls = request.mock.calls.map(([url]) => {
+      if (typeof url !== 'string') throw new Error('Expected a string request URL');
+      return url;
+    });
+    expect(requestedUrls).toEqual([
+      'https://upload.twitter.com/1.1/media/upload.json',
+      'https://upload.twitter.com/1.1/media/upload.json',
+      'https://upload.twitter.com/1.1/media/upload.json',
+      'https://upload.twitter.com/1.1/media/upload.json?command=STATUS&media_id=media-1',
+      'https://upload.twitter.com/1.1/media/upload.json?command=STATUS&media_id=media-1',
+    ]);
+  });
+
+  it('preserves media rate limits and bounds pending STATUS polling', async () => {
+    const limited = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        response({ errors: [{ message: 'Upload rate limited' }] }, 429, { 'retry-after': '12' }),
+      );
+    const limitedClient = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: limited,
+    }).bindCredential(credential);
+    await expect(
+      limitedClient.init({ totalBytes: 1, mimeType: 'image/gif', idempotencyKey: 'limited' }),
+    ).rejects.toMatchObject({ status: 429, retryAfterSeconds: 12 });
+
+    const pending = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() =>
+        Promise.resolve(response({ processing_info: { state: 'pending' } })),
+      );
+    const boundedClient = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: pending,
+      sleep: () => Promise.resolve(),
+      maxMediaStatusPolls: 2,
+    }).bindCredential(credential);
+    await expect(boundedClient.status('media-2')).resolves.toEqual({ state: 'pending' });
+    expect(pending).toHaveBeenCalledTimes(2);
+
+    const notFinalizedClient = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: () => Promise.resolve(response({ media_id_string: 'media-3' })),
+    }).bindCredential(credential);
+    await expect(notFinalizedClient.status('media-3')).resolves.toEqual({
+      state: 'not_finalized',
+    });
+  });
 });

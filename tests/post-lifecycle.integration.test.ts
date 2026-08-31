@@ -21,6 +21,7 @@ const migrations = [
   '0003_many_marvel_boy.sql',
   '0004_easy_doctor_spectrum.sql',
   '0005_round_thunderball.sql',
+  '0006_enforce_content_workspace_foreign_keys.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';
@@ -86,6 +87,52 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('post revision lifecycle', () => {
+  it('rejects cross-workspace content graph references at the database boundary', async () => {
+    const otherWorkspaceId = '00000000-0000-4000-8000-000000000210';
+    const otherPostId = '00000000-0000-4000-8000-000000000211';
+    const otherRevisionId = '00000000-0000-4000-8000-000000000212';
+    const otherMediaId = '00000000-0000-4000-8000-000000000213';
+    const otherAccountId = '00000000-0000-4000-8000-000000000214';
+    const otherJobId = '00000000-0000-4000-8000-000000000215';
+
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug) VALUES ('${otherWorkspaceId}', 'Other Workspace', 'other-workspace');
+      SELECT set_config('app.workspace_id', '${otherWorkspaceId}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${otherWorkspaceId}', '${userId}', 'owner');
+      INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+        VALUES ('00000000-0000-4000-8000-000000000216', '${otherWorkspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+        VALUES ('00000000-0000-4000-8000-000000000217', '${otherWorkspaceId}', 'fake', '00000000-0000-4000-8000-000000000216');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
+        VALUES ('${otherAccountId}', '${otherWorkspaceId}', '00000000-0000-4000-8000-000000000217', 'other', 'Other');
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${otherPostId}', '${otherWorkspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${otherRevisionId}', '${otherWorkspaceId}', '${otherPostId}', 1, '{"type":"text","text":"Other"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${otherMediaId}', '${otherWorkspaceId}', 'other/media', 'hash', 'image/png', 4, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+        VALUES ('${otherJobId}', '${otherWorkspaceId}', '${otherPostId}', '${otherRevisionId}', '${otherAccountId}', now());
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+    `);
+
+    await expect(
+      database.exec(`INSERT INTO post_revisions (workspace_id, post_id, revision_number, content)
+        VALUES ('${workspaceId}', '${otherPostId}', 2, '{"type":"text","text":"Invalid"}')`),
+    ).rejects.toThrow(/foreign key/i);
+    await expect(
+      database.exec(`INSERT INTO revision_media (workspace_id, revision_id, media_id, position)
+        VALUES ('${workspaceId}', '${otherRevisionId}', '${otherMediaId}', 0)`),
+    ).rejects.toThrow(/foreign key/i);
+    await expect(
+      database.exec(`INSERT INTO publication_jobs (workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+        VALUES ('${workspaceId}', '${otherPostId}', '${otherRevisionId}', '${otherAccountId}', now())`),
+    ).rejects.toThrow(/foreign key/i);
+    await expect(
+      database.exec(`INSERT INTO provider_staging_artifacts (workspace_id, job_id, media_id, provider_reference, expires_at)
+        VALUES ('${workspaceId}', '${otherJobId}', '${otherMediaId}', 'invalid', now())`),
+    ).rejects.toThrow(/foreign key/i);
+  });
+
   it('creates independent targets and supersedes only jobs that have not started dispatch', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const scheduledAt = new Date('2026-09-01T10:00:00.000Z');

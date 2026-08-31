@@ -1,6 +1,7 @@
 import {
   boolean,
   customType,
+  foreignKey,
   integer,
   index,
   jsonb,
@@ -222,6 +223,7 @@ export const providerAccounts = pgTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex('provider_accounts_workspace_id_unique').on(table.workspaceId, table.id),
     uniqueIndex('provider_accounts_connection_external_unique').on(
       table.connectionId,
       table.providerAccountId,
@@ -268,6 +270,7 @@ export const mediaObjects = pgTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex('media_objects_workspace_id_unique').on(table.workspaceId, table.id),
     uniqueIndex('media_objects_workspace_storage_unique').on(table.workspaceId, table.storageKey),
     index('media_objects_workspace_state_idx').on(table.workspaceId, table.state),
   ],
@@ -285,7 +288,10 @@ export const posts = pgTable(
       .references(() => users.id, { onDelete: 'restrict' }),
     ...timestamps,
   },
-  (table) => [index('posts_workspace_updated_idx').on(table.workspaceId, table.updatedAt)],
+  (table) => [
+    uniqueIndex('posts_workspace_id_unique').on(table.workspaceId, table.id),
+    index('posts_workspace_updated_idx').on(table.workspaceId, table.updatedAt),
+  ],
 );
 
 export const postRevisions = pgTable(
@@ -295,16 +301,20 @@ export const postRevisions = pgTable(
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
-    postId: uuid('post_id')
-      .notNull()
-      .references(() => posts.id, { onDelete: 'cascade' }),
+    postId: uuid('post_id').notNull(),
     revisionNumber: integer('revision_number').notNull(),
     content: jsonb('content').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    uniqueIndex('post_revisions_workspace_id_unique').on(table.workspaceId, table.id),
     uniqueIndex('post_revisions_post_number_unique').on(table.postId, table.revisionNumber),
     index('post_revisions_workspace_idx').on(table.workspaceId),
+    foreignKey({
+      columns: [table.workspaceId, table.postId],
+      foreignColumns: [posts.workspaceId, posts.id],
+      name: 'post_revisions_workspace_post_fk',
+    }).onDelete('cascade'),
   ],
 );
 
@@ -312,18 +322,24 @@ export const revisionMedia = pgTable(
   'revision_media',
   {
     workspaceId: uuid('workspace_id').notNull(),
-    revisionId: uuid('revision_id')
-      .notNull()
-      .references(() => postRevisions.id, { onDelete: 'cascade' }),
-    mediaId: uuid('media_id')
-      .notNull()
-      .references(() => mediaObjects.id, { onDelete: 'restrict' }),
+    revisionId: uuid('revision_id').notNull(),
+    mediaId: uuid('media_id').notNull(),
     position: integer('position').notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.revisionId, table.mediaId] }),
     uniqueIndex('revision_media_position_unique').on(table.revisionId, table.position),
     index('revision_media_workspace_idx').on(table.workspaceId),
+    foreignKey({
+      columns: [table.workspaceId, table.revisionId],
+      foreignColumns: [postRevisions.workspaceId, postRevisions.id],
+      name: 'revision_media_workspace_revision_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.mediaId],
+      foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
+      name: 'revision_media_workspace_media_fk',
+    }).onDelete('restrict'),
   ],
 );
 
@@ -334,27 +350,37 @@ export const publicationJobs = pgTable(
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
-    postId: uuid('post_id')
-      .notNull()
-      .references(() => posts.id, { onDelete: 'cascade' }),
-    revisionId: uuid('revision_id')
-      .notNull()
-      .references(() => postRevisions.id, { onDelete: 'restrict' }),
-    providerAccountId: uuid('provider_account_id')
-      .notNull()
-      .references(() => providerAccounts.id, { onDelete: 'restrict' }),
+    postId: uuid('post_id').notNull(),
+    revisionId: uuid('revision_id').notNull(),
+    providerAccountId: uuid('provider_account_id').notNull(),
     state: publicationJobState('state').notNull().default('scheduled'),
     scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
+    uniqueIndex('publication_jobs_workspace_id_unique').on(table.workspaceId, table.id),
     index('publication_jobs_workspace_due_idx').on(
       table.workspaceId,
       table.state,
       table.scheduledAt,
     ),
     index('publication_jobs_post_idx').on(table.postId),
+    foreignKey({
+      columns: [table.workspaceId, table.postId],
+      foreignColumns: [posts.workspaceId, posts.id],
+      name: 'publication_jobs_workspace_post_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.revisionId],
+      foreignColumns: [postRevisions.workspaceId, postRevisions.id],
+      name: 'publication_jobs_workspace_revision_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.providerAccountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'publication_jobs_workspace_provider_account_fk',
+    }).onDelete('restrict'),
   ],
 );
 
@@ -365,16 +391,24 @@ export const providerStagingArtifacts = pgTable(
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
-    jobId: uuid('job_id')
-      .notNull()
-      .references(() => publicationJobs.id, { onDelete: 'cascade' }),
-    mediaId: uuid('media_id')
-      .notNull()
-      .references(() => mediaObjects.id, { onDelete: 'restrict' }),
+    jobId: uuid('job_id').notNull(),
+    mediaId: uuid('media_id').notNull(),
     providerReference: text('provider_reference').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     ...timestamps,
   },
-  (table) => [index('provider_staging_expiry_idx').on(table.workspaceId, table.expiresAt)],
+  (table) => [
+    index('provider_staging_expiry_idx').on(table.workspaceId, table.expiresAt),
+    foreignKey({
+      columns: [table.workspaceId, table.jobId],
+      foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
+      name: 'provider_staging_workspace_job_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.mediaId],
+      foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
+      name: 'provider_staging_workspace_media_fk',
+    }).onDelete('restrict'),
+  ],
 );

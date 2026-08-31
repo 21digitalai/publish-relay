@@ -43,6 +43,13 @@
       "when": 1788190261181,
       "tag": "0005_round_thunderball",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788191979015,
+      "tag": "0006_enforce_content_workspace_foreign_keys",
+      "breakpoints": true
     }
   ]
 }

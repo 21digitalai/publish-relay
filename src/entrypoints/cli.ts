@@ -22,36 +22,14 @@ const EXIT = {
   terminal: 9,
   timeout: 10,
 } as const;
-const MUTATIONS = new Set([
-  'media:create',
-  'posts:create',
-  'posts:update',
-  'schedules:create',
-  'schedules:edit',
-  'schedules:cancel',
-  'publishes:submit',
-  'publishes:retry',
-]);
+const MUTATIONS = new Set(['posts:create']);
 const ROUTES: Record<string, { method: string; path: string; body?: boolean }> = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
-  'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
-  'destinations:show': { method: 'GET', path: '/api/v1/destinations/:id' },
-  'media:create': { method: 'POST', path: '/api/v1/media', body: true },
-  'media:show': { method: 'GET', path: '/api/v1/media/:id' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
   'posts:list': { method: 'GET', path: '/api/v1/posts' },
   'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
-  'posts:update': { method: 'PATCH', path: '/api/v1/posts/:id', body: true },
-  'schedules:create': { method: 'POST', path: '/api/v1/schedules', body: true },
-  'schedules:list': { method: 'GET', path: '/api/v1/schedules' },
-  'schedules:show': { method: 'GET', path: '/api/v1/schedules/:id' },
-  'schedules:edit': { method: 'PATCH', path: '/api/v1/schedules/:id', body: true },
-  'schedules:cancel': { method: 'POST', path: '/api/v1/schedules/:id/cancel', body: true },
-  'publishes:submit': { method: 'POST', path: '/api/v1/publication-jobs', body: true },
   'publishes:show': { method: 'GET', path: '/api/v1/jobs/:id' },
   'publishes:poll': { method: 'GET', path: '/api/v1/jobs/:id' },
-  'publishes:retry': { method: 'POST', path: '/api/v1/jobs/:id/retry', body: true },
-  'audit:list': { method: 'GET', path: '/api/v1/audit-events' },
   health: { method: 'GET', path: '/health/live' },
 };
 const ENVELOPE_OUTPUT_KEYS = [
@@ -98,7 +76,6 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'jobs',
     'self',
   ]),
-  'posts:update': new Set([...ENVELOPE_OUTPUT_KEYS, 'self', 'jobs']),
   'publishes:show': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'createdAt',

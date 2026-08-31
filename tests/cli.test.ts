@@ -129,6 +129,7 @@ describe('Publish Relay CLI', () => {
     [401, 3],
     [403, 4],
     [400, 5],
+    [404, 5],
     [422, 5],
     [409, 6],
     [429, 7],
@@ -335,6 +336,12 @@ describe('Publish Relay CLI', () => {
     const result = await cli(['health', '--api-key', 'secret']);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('load secrets from the environment');
+  });
+
+  it('does not advertise commands without a live API contract', async () => {
+    const result = await cli(['destinations', 'list']);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('Unknown command destinations list');
   });
 
   it('returns exit 10 and the durable job ID when bounded polling times out', async () => {

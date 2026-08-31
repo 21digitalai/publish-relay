@@ -63,10 +63,14 @@ export async function storeMedia(
     if (!ready) throw new Error('Reserved media record was not available for finalization');
     return { mediaId, mimeType, sha256, byteSize: input.bytes.length };
   } catch (error) {
-    await storage.delete(storageKey).catch(() => undefined);
-    await withTenantTransaction(database, input, (transaction) =>
-      markMediaDeleted(transaction, input.workspaceId, mediaId),
-    );
+    try {
+      await storage.delete(storageKey);
+      await withTenantTransaction(database, input, (transaction) =>
+        markMediaDeleted(transaction, input.workspaceId, mediaId),
+      );
+    } catch {
+      // Keep the reservation temporary so reconciliation retains cleanup ownership.
+    }
     throw error;
   }
 }

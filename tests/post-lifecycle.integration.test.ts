@@ -32,6 +32,8 @@ let database: PGlite;
 class FakeMediaStorage implements MediaStorage {
   readonly objects = new Map<string, Buffer>();
   shouldFailPut = false;
+  shouldFailDelete = false;
+  shouldReturnUnexpectedKey = false;
 
   put(input: {
     workspaceId: string;
@@ -43,10 +45,13 @@ class FakeMediaStorage implements MediaStorage {
     const storageKey = `${input.workspaceId}/${input.mediaId}/${hash}`;
     if (this.shouldFailPut) return Promise.reject(new Error('Storage unavailable'));
     this.objects.set(storageKey, input.bytes);
-    return Promise.resolve({ storageKey });
+    return Promise.resolve({
+      storageKey: this.shouldReturnUnexpectedKey ? `${storageKey}-wrong` : storageKey,
+    });
   }
 
   delete(storageKey: string): Promise<void> {
+    if (this.shouldFailDelete) return Promise.reject(new Error('Storage deletion unavailable'));
     this.objects.delete(storageKey);
     return Promise.resolve();
   }
@@ -192,6 +197,51 @@ describe('post revision lifecycle', () => {
 });
 
 describe('media lifecycle', () => {
+  it('rejects empty, unsupported, and oversized media before reserving storage', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    await expect(
+      storeMedia(db, storage, { workspaceId, userId, bytes: Buffer.alloc(0), maxBytes: 1024 }),
+    ).rejects.toThrow('Media content is empty');
+    await expect(
+      storeMedia(db, storage, {
+        workspaceId,
+        userId,
+        bytes: Buffer.from('not-media'),
+        maxBytes: 1024,
+      }),
+    ).rejects.toThrow('Unsupported media content');
+    await expect(
+      storeMedia(db, storage, {
+        workspaceId,
+        userId,
+        bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        maxBytes: 4,
+      }),
+    ).rejects.toThrow('Media exceeds the configured size limit');
+    const count = await database.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM media_objects',
+    );
+    expect(count.rows[0]?.count).toBe(0);
+  });
+
+  it('retains cleanup ownership when compensating storage deletion fails', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    storage.shouldFailDelete = true;
+    storage.shouldReturnUnexpectedKey = true;
+    await expect(
+      storeMedia(db, storage, {
+        workspaceId,
+        userId,
+        bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        maxBytes: 1024,
+      }),
+    ).rejects.toThrow('Storage returned an unexpected key');
+    const states = await database.query<{ state: string }>('SELECT state FROM media_objects');
+    expect(states.rows).toEqual([{ state: 'temporary' }]);
+  });
+
   it('derives metadata from bytes and marks storage failures for cleanup', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const storage = new FakeMediaStorage();

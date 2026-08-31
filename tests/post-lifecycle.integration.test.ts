@@ -8,6 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTemporaryMedia, storeMedia } from '../src/modules/content/media.service.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { createPost, editPost } from '../src/modules/content/post.service.js';
+import {
+  cleanupExpiredStaging,
+  cleanupJobStaging,
+  type ProviderStagingStorage,
+} from '../src/modules/content/provider-staging.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -42,6 +47,17 @@ class FakeMediaStorage implements MediaStorage {
 
   delete(storageKey: string): Promise<void> {
     this.objects.delete(storageKey);
+    return Promise.resolve();
+  }
+}
+
+class FakeProviderStagingStorage implements ProviderStagingStorage {
+  readonly references = new Set<string>();
+  shouldFail = false;
+
+  delete(providerReference: string): Promise<void> {
+    if (this.shouldFail) return Promise.reject(new Error('Provider cleanup unavailable'));
+    this.references.delete(providerReference);
     return Promise.resolve();
   }
 }
@@ -171,5 +187,55 @@ describe('media lifecycle', () => {
       "SELECT state FROM media_objects WHERE id = '00000000-0000-4000-8000-000000000209'",
     );
     expect(row.rows[0]?.state).toBe('deleted');
+  });
+});
+
+describe('provider staging cleanup', () => {
+  it('cleans terminal jobs and leaves failed crash reconciliation retryable', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const mediaStorage = new FakeMediaStorage();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+    const media = await storeMedia(db, mediaStorage, {
+      workspaceId,
+      userId,
+      bytes: png,
+      maxBytes: 100,
+    });
+    const post = await createPost(db, {
+      workspaceId,
+      userId,
+      content: { type: 'text', text: 'Staged post' },
+      mediaIds: [media.mediaId],
+      providerAccountIds: [accountOne],
+      scheduledAt: new Date('2026-09-01T10:00:00Z'),
+    });
+    const jobId = post.jobIds[0];
+    if (!jobId) throw new Error('Expected publication job');
+    await database.exec(`
+      INSERT INTO provider_staging_artifacts (workspace_id, job_id, media_id, provider_reference, expires_at) VALUES
+      ('${workspaceId}', '${jobId}', '${media.mediaId}', 'provider-ok', '2026-08-31T12:00:00Z'),
+      ('${workspaceId}', '${jobId}', '${media.mediaId}', 'provider-retry', '2026-08-31T12:00:00Z')
+    `);
+    const staging = new FakeProviderStagingStorage();
+    staging.references.add('provider-ok');
+    staging.references.add('provider-retry');
+    await expect(cleanupJobStaging(db, staging, { workspaceId, jobId })).resolves.toBe(2);
+    expect(staging.references.size).toBe(0);
+    await database.exec(`
+      UPDATE provider_staging_artifacts SET deleted_at = NULL
+      WHERE provider_reference = 'provider-retry'
+    `);
+    staging.references.add('provider-retry');
+    staging.shouldFail = true;
+    await expect(
+      cleanupExpiredStaging(db, staging, {
+        workspaceId,
+        expiredBefore: new Date('2026-08-31T13:00:00Z'),
+      }),
+    ).rejects.toThrow('Provider cleanup unavailable');
+    const retryable = await database.query<{ deleted_at: Date | null }>(
+      "SELECT deleted_at FROM provider_staging_artifacts WHERE provider_reference = 'provider-retry'",
+    );
+    expect(retryable.rows[0]?.deleted_at).toBeNull();
   });
 });

@@ -13,6 +13,11 @@ import {
   cleanupJobStaging,
   type ProviderStagingStorage,
 } from '../src/modules/content/provider-staging.service.js';
+import {
+  stageXMedia,
+  type XMediaSource,
+  type XMediaUploadClient,
+} from '../src/modules/providers/x-media-staging.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -24,6 +29,7 @@ const migrations = [
   '0006_enforce_content_workspace_foreign_keys.sql',
   '0007_add_scheduler_attempt_ledger.sql',
   '0008_handy_shen.sql',
+  '0014_great_lethal_legion.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';
@@ -349,9 +355,11 @@ describe('provider staging cleanup', () => {
     const jobId = post.jobIds[0];
     if (!jobId) throw new Error('Expected publication job');
     await database.exec(`
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+      VALUES ('00000000-0000-4000-8000-000000000219', '${workspaceId}', 'second/media', 'second-hash', 'image/png', 9, 'ready');
       INSERT INTO provider_staging_artifacts (workspace_id, job_id, media_id, provider_reference, expires_at) VALUES
       ('${workspaceId}', '${jobId}', '${media.mediaId}', 'provider-ok', '2026-08-31T12:00:00Z'),
-      ('${workspaceId}', '${jobId}', '${media.mediaId}', 'provider-retry', '2026-08-31T12:00:00Z')
+      ('${workspaceId}', '${jobId}', '00000000-0000-4000-8000-000000000219', 'provider-retry', '2026-08-31T12:00:00Z')
     `);
     const staging = new FakeProviderStagingStorage();
     staging.references.add('provider-ok');
@@ -390,5 +398,61 @@ describe('provider staging cleanup', () => {
       "SELECT deleted_at FROM provider_staging_artifacts WHERE provider_reference = 'provider-retry'",
     );
     expect(retryable.rows[0]?.deleted_at).toBeNull();
+  });
+});
+
+describe('X media staging', () => {
+  it('persists INIT ownership before chunks and reconciles repeat staging through STATUS', async () => {
+    const postId = '00000000-0000-4000-8000-000000000220';
+    const revisionId = '00000000-0000-4000-8000-000000000221';
+    const mediaId = '00000000-0000-4000-8000-000000000222';
+    const jobId = '00000000-0000-4000-8000-000000000223';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"type":"text","text":"Media"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'media/key', 'hash', 'image/png', 5, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+        VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now());
+    `);
+    const calls: string[] = [];
+    const source: XMediaSource = {
+      load: () => Promise.resolve({ bytes: Buffer.from('image'), mimeType: 'image/png' }),
+    };
+    const client: XMediaUploadClient = {
+      init: () => {
+        calls.push('INIT');
+        return Promise.resolve({ mediaId: 'x-media-1', expiresAfterSeconds: 3600 });
+      },
+      append: () => {
+        calls.push('APPEND');
+        return Promise.resolve();
+      },
+      finalize: () => {
+        calls.push('FINALIZE');
+        return Promise.resolve({ state: 'pending' as const });
+      },
+      status: () => {
+        calls.push('STATUS');
+        return Promise.resolve({ state: 'succeeded' as const });
+      },
+    };
+    const input = { workspaceId, jobId, mediaId, idempotencyKey: 'job-media-1' };
+    const db = drizzle(database) as unknown as NodePgDatabase;
+
+    await expect(stageXMedia(db, source, client, input)).resolves.toEqual({
+      mediaId: 'x-media-1',
+      state: 'pending',
+    });
+    await expect(stageXMedia(db, source, client, input)).resolves.toEqual({
+      mediaId: 'x-media-1',
+      state: 'succeeded',
+    });
+    expect(calls).toEqual(['INIT', 'APPEND', 'FINALIZE', 'STATUS']);
+    const artifacts = await database.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM provider_staging_artifacts',
+    );
+    expect(artifacts.rows[0]?.count).toBe(1);
   });
 });

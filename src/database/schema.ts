@@ -505,6 +505,9 @@ export const providerStagingArtifacts = pgTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex('provider_staging_job_media_unique')
+      .on(table.workspaceId, table.jobId, table.mediaId)
+      .where(sql`${table.deletedAt} is null`),
     index('provider_staging_expiry_idx').on(table.workspaceId, table.expiresAt),
     foreignKey({
       columns: [table.workspaceId, table.jobId],

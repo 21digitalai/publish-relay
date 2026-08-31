@@ -5,6 +5,44 @@ import { providerStagingArtifacts, publicationJobs } from '../../database/schema
 
 const TERMINAL_JOB_STATES = ['published', 'failed', 'cancelled', 'superseded'] as const;
 
+export async function findStagingArtifact(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+  mediaId: string,
+): Promise<{ id: string; providerReference: string; expiresAt: Date } | null> {
+  const rows = await database
+    .select({
+      id: providerStagingArtifacts.id,
+      providerReference: providerStagingArtifacts.providerReference,
+      expiresAt: providerStagingArtifacts.expiresAt,
+    })
+    .from(providerStagingArtifacts)
+    .where(
+      and(
+        eq(providerStagingArtifacts.workspaceId, workspaceId),
+        eq(providerStagingArtifacts.jobId, jobId),
+        eq(providerStagingArtifacts.mediaId, mediaId),
+        isNull(providerStagingArtifacts.deletedAt),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createStagingArtifact(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    jobId: string;
+    mediaId: string;
+    providerReference: string;
+    expiresAt: Date;
+  },
+): Promise<void> {
+  await database.insert(providerStagingArtifacts).values(input).onConflictDoNothing();
+}
+
 export async function listJobStagingArtifacts(
   database: NodePgDatabase,
   workspaceId: string,

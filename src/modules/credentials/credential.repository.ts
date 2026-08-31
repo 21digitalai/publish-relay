@@ -122,7 +122,7 @@ export async function deleteExpiredOauthSecrets(
   now: Date,
 ): Promise<number> {
   const expired = await database
-    .select({ id: oauthTransactions.id, credentialId: oauthTransactions.pkceCredentialId })
+    .select({ id: oauthTransactions.id, credentialId: oauthTransactions.secretCredentialId })
     .from(oauthTransactions)
     .where(
       and(
@@ -162,7 +162,7 @@ export async function consumeOauthTransaction(
   id: string;
   userId: string;
   provider: string;
-  pkceCredentialId: string;
+  secretCredentialId: string;
   redirectUri: string;
 } | null> {
   const rows = await database
@@ -180,7 +180,7 @@ export async function consumeOauthTransaction(
       id: oauthTransactions.id,
       userId: oauthTransactions.userId,
       provider: oauthTransactions.provider,
-      pkceCredentialId: oauthTransactions.pkceCredentialId,
+      secretCredentialId: oauthTransactions.secretCredentialId,
       redirectUri: oauthTransactions.redirectUri,
     });
   return rows[0] ?? null;
@@ -193,7 +193,7 @@ export async function createOauthTransaction(
     userId: string;
     provider: string;
     stateHash: string;
-    pkceCredentialId: string;
+    secretCredentialId: string;
     redirectUri: string;
     expiresAt: Date;
   },

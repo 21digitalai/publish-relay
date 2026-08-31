@@ -40,7 +40,7 @@ export async function issueOauthTransaction(
         userId: input.userId,
         provider: input.provider,
         stateHash: sha256(state),
-        pkceCredentialId: credential.id,
+        secretCredentialId: credential.id,
         redirectUri: input.redirectUri,
         expiresAt,
       });
@@ -82,7 +82,7 @@ export async function consumeOauthCallback(
       const credential = await getActiveCredential(
         transaction,
         input.workspaceId,
-        consumed.pkceCredentialId,
+        consumed.secretCredentialId,
       );
       if (!credential) throw new Error('OAuth PKCE credential is unavailable');
       const verifier = await decryptCredential(credential, keys);
@@ -91,7 +91,7 @@ export async function consumeOauthCallback(
           transaction,
           input.workspaceId,
           consumed.id,
-          consumed.pkceCredentialId,
+          consumed.secretCredentialId,
         );
         return {
           userId: consumed.userId,

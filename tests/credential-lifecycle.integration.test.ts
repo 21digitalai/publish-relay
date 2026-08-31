@@ -30,6 +30,7 @@ const migrations = [
   '0002_busy_mantis.sql',
   '0003_many_marvel_boy.sql',
   '0004_easy_doctor_spectrum.sql',
+  '0009_generalize_oauth_transaction_secret.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

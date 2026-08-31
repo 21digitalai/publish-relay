@@ -1,10 +1,25 @@
 import { expect, test } from '@playwright/test';
 
-test('renders the login surface and reports a safe demo error', async ({ page }) => {
+test('renders the login surface and reports an inline authentication error', async ({ page }) => {
+  await page.route('**/api/auth/login', (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'Invalid email or password' }),
+    }),
+  );
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in to your cockpit' })).toBeVisible();
+  await page.getByLabel('Email').fill('owner@example.test');
+  await page.getByLabel('Password').fill('incorrect-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('alert')).toContainText('Demo mode is active');
+  await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+});
+
+test('renders the honest recovery unavailable state', async ({ page }) => {
+  await page.goto('/forgot-password');
+  await expect(page.getByRole('heading', { name: 'Recovery is not available yet' })).toBeVisible();
+  await expect(page.getByText('We will not claim that an email was sent')).toBeVisible();
 });
 
 test('filters accounts and opens a named disconnect confirmation', async ({ page }) => {

@@ -43,6 +43,11 @@ const accounts: Account[] = [
   },
 ];
 
+function formText(fields: FormData, name: string): string {
+  const value = fields.get(name);
+  return typeof value === 'string' ? value : '';
+}
+
 function Mark({ provider }: { provider: Account['provider'] }) {
   return (
     <span className={`provider-mark ${provider === 'X' ? 'x' : 'instagram'}`} aria-hidden="true">
@@ -53,7 +58,8 @@ function Mark({ provider }: { provider: Account['provider'] }) {
 
 function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   const [showPassword, setShowPassword] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const isRegister = mode === 'register';
   return (
     <main className="auth-page">
@@ -68,22 +74,68 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
         <p className="auth-intro">
           Manage every account, schedule, and recovery path in one focused place.
         </p>
-        {submitted && (
+        {error && (
           <div className="form-summary" role="alert">
-            Demo mode is active. Connect the authentication service to continue.
+            {error}
           </div>
         )}
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            setSubmitted(true);
+            const form = event.currentTarget;
+            void (async () => {
+              setError(null);
+              setIsSubmitting(true);
+              const fields = new FormData(form);
+              const workspaceName = formText(fields, 'workspaceName');
+              const payload = isRegister
+                ? {
+                    displayName: formText(fields, 'displayName'),
+                    email: formText(fields, 'email'),
+                    password: formText(fields, 'password'),
+                    workspaceName,
+                  }
+                : {
+                    email: formText(fields, 'email'),
+                    password: formText(fields, 'password'),
+                  };
+              try {
+                const response = await fetch(
+                  isRegister ? '/api/auth/register' : '/api/auth/login',
+                  {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  },
+                );
+                const result = (await response.json()) as { error: string | null };
+                if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
+                if (isRegister) {
+                  sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
+                  window.location.href = '/onboarding/workspace';
+                } else window.location.href = '/app';
+              } catch (submissionError) {
+                setError(
+                  submissionError instanceof Error
+                    ? submissionError.message
+                    : 'Authentication failed',
+                );
+                setIsSubmitting(false);
+              }
+            })();
           }}
           noValidate
         >
           {isRegister && (
             <label className="field-label">
               Name
-              <input className="text-input" name="name" autoComplete="name" required />
+              <input className="text-input" name="displayName" autoComplete="name" required />
+            </label>
+          )}
+          {isRegister && (
+            <label className="field-label">
+              Workspace name
+              <input className="text-input" name="workspaceName" required />
             </label>
           )}
           <label className="field-label">
@@ -120,8 +172,8 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
               Forgot password?
             </a>
           )}
-          <button className="primary-button" type="submit">
-            {isRegister ? 'Create account' : 'Sign in'}
+          <button className="primary-button" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? 'Working…' : isRegister ? 'Create account' : 'Sign in'}
           </button>
         </form>
         <p className="auth-switch">
@@ -135,9 +187,39 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   );
 }
 
+function ForgotPasswordPage() {
+  return (
+    <main className="auth-page">
+      <section className="auth-panel" aria-labelledby="recovery-title">
+        <a className="brand-lockup" href="/login">
+          <span className="brand-signal" /> Publish Relay
+        </a>
+        <p className="eyebrow">Account recovery</p>
+        <h1 id="recovery-title">Recovery is not available yet</h1>
+        <p className="auth-intro">
+          Contact support for assistance. We will not claim that an email was sent while recovery
+          delivery is unavailable.
+        </p>
+        <a className="primary-button" href="/login">
+          Return to sign in
+        </a>
+      </section>
+    </main>
+  );
+}
+
 function OnboardingPage() {
   const [step, setStep] = useState(1);
-  const [workspaceName, setWorkspaceName] = useState('Atlas Studio');
+  const initialWorkspaceName = sessionStorage.getItem('publish-relay-workspace-name') ?? '';
+  const [workspaceName, setWorkspaceName] = useState(initialWorkspaceName);
+  const [workspaceSlug, setWorkspaceSlug] = useState(
+    initialWorkspaceName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, ''),
+  );
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const titles = ['Name your workspace', 'Connect your first account', 'Schedule your first post'];
   return (
     <main className="onboarding-page">
@@ -185,6 +267,21 @@ function OnboardingPage() {
                 />
               </label>
               <p className="field-hint">You can change this later in workspace settings.</p>
+              <label className="field-label">
+                Workspace URL
+                <input
+                  className="text-input"
+                  value={workspaceSlug}
+                  onChange={(event) => {
+                    setWorkspaceSlug(event.target.value);
+                  }}
+                />
+              </label>
+              {workspaceError && (
+                <div className="form-summary" role="alert">
+                  {workspaceError}
+                </div>
+              )}
             </>
           )}
           {step === 2 && (
@@ -251,12 +348,37 @@ function OnboardingPage() {
             <button
               className="primary-button"
               onClick={() => {
-                if (step < 3) setStep((value) => value + 1);
-                else window.location.href = '/w/atlas/accounts';
+                void (async () => {
+                  if (step === 1) {
+                    setIsSaving(true);
+                    setWorkspaceError(null);
+                    const csrfToken = document.cookie
+                      .split('; ')
+                      .find((entry) => entry.startsWith('publish_relay_csrf='))
+                      ?.split('=')[1];
+                    const response = await fetch('/api/workspaces/current', {
+                      method: 'PATCH',
+                      headers: {
+                        'content-type': 'application/json',
+                        'x-csrf-token': csrfToken ?? '',
+                      },
+                      body: JSON.stringify({ name: workspaceName, slug: workspaceSlug }),
+                    });
+                    const result = (await response.json()) as { error: string | null };
+                    if (!response.ok) {
+                      setWorkspaceError(result.error ?? 'Could not update the workspace');
+                      setIsSaving(false);
+                      return;
+                    }
+                    setIsSaving(false);
+                    setStep(2);
+                  } else if (step < 3) setStep((value) => value + 1);
+                  else window.location.href = '/w/atlas/accounts';
+                })();
               }}
-              disabled={step === 1 && !workspaceName.trim()}
+              disabled={step === 1 && (!workspaceName.trim() || !workspaceSlug.trim() || isSaving)}
             >
-              {step === 3 ? 'Open workspace' : 'Continue'}
+              {isSaving ? 'Saving…' : step === 3 ? 'Open workspace' : 'Continue'}
             </button>
           </div>
         </section>
@@ -578,6 +700,7 @@ export function App() {
   const path = window.location.pathname;
   if (path === '/register') return <AuthPage mode="register" />;
   if (path === '/login' || path === '/') return <AuthPage mode="login" />;
+  if (path === '/forgot-password') return <ForgotPasswordPage />;
   if (path.startsWith('/onboarding/')) return <OnboardingPage />;
   return <AccountsPage />;
 }

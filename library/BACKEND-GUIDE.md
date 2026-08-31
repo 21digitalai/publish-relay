@@ -40,6 +40,9 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - Core content is an explicit text, quote, or article union with typed media references. Adapters reject unsupported input; they never silently truncate or transform it.
 - Publishing returns one typed outcome: published, accepted pending, unknown/reconciliation-required, or failed with auth, rate-limit, validation, transient, or permanent classification.
 - Staging is idempotent by caller-supplied key. An unknown publish outcome must be reconciled through lookup rather than retried blindly.
+- The X transport uses OAuth 1.0a User Context with credentials supplied only after envelope decryption. It signs native `/2/users/me`, `/2/tweets`, and lookup requests, and never logs or persists token material.
+- X does not currently have a proven provider-side idempotency header in this product. The scheduler remains the idempotency owner; ambiguous POST transport failures become reconciliation-required rather than blind retries.
+- X OAuth connection/revocation and native article publishing remain fail-closed until their provider endpoints and account capabilities are verified. Pre-uploaded media IDs are mapped exactly; media upload lifecycle and limits remain separate evidence-gated work.
 
 ## Content and media persistence
 

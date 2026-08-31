@@ -15,3 +15,11 @@
 - Vitest owns unit/integration tests and Playwright owns rendered browser acceptance.
 
 Concrete architecture, security, persistence, job, and deployment decisions are frozen in `projects/publish-relay/library/decisions.md` ADR-001 through ADR-007.
+
+## Persistence and tenant context
+
+- Drizzle schema declarations live in `src/database/schema.ts`; immutable forward migrations live in `migrations/`.
+- Tenant repositories require an explicit `workspaceId` and execute through `withTenantTransaction`, which applies transaction-local `app.workspace_id` before any tenant query.
+- Tenant tables use both repository predicates and forced PostgreSQL RLS policies. Adding a tenant table requires `workspace_id`, indexes appropriate to its access path, and an RLS policy in the same migration.
+- Browser session and API-key bearer material is never persisted. Store SHA-256 hashes; API keys expose only a public `pr_` prefix beside the hash. Revocation and expiry are checked before authorization.
+- Audit events are append-only and accept allowlisted, redacted metadata only. Secrets and content bodies do not belong in audit or application logs.

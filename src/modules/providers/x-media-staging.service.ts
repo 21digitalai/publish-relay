@@ -4,6 +4,7 @@ import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
   createStagingArtifact,
   findStagingArtifact,
+  updateStagingUploadProgress,
 } from '../content/provider-staging.repository.js';
 
 const X_MEDIA_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -50,15 +51,7 @@ export async function stageXMedia(
     findStagingArtifact(transaction, input.workspaceId, input.jobId, input.mediaId),
   );
   if (existing) {
-    const status = await client.status(existing.providerReference);
-    if (status.state === 'failed') throw new Error('X media processing failed');
-    if (status.state === 'succeeded') {
-      return { mediaId: existing.providerReference, state: status.state };
-    }
-    const media = await source.load(input);
-    validateXMedia(media);
-    await appendAndFinalize(client, existing.providerReference, media.bytes);
-    return { mediaId: existing.providerReference, state: 'pending' };
+    return resumeStaging(database, source, client, input, existing);
   }
 
   const media = await source.load(input);
@@ -82,11 +75,33 @@ export async function stageXMedia(
     if (artifact.providerReference !== initialized.mediaId) {
       await client.discard(initialized.mediaId);
     }
+    return resumeStaging(database, source, client, input, artifact);
+  }
+  return appendAndFinalize(database, client, input.workspaceId, artifact, media.bytes);
+}
+
+interface StagingProgress {
+  id: string;
+  providerReference: string;
+  uploadPhase: string;
+  nextSegment: number;
+}
+
+async function resumeStaging(
+  database: NodePgDatabase,
+  source: XMediaSource,
+  client: XMediaUploadClient,
+  input: { workspaceId: string; mediaId: string },
+  artifact: StagingProgress,
+): Promise<{ mediaId: string; state: 'succeeded' | 'pending' }> {
+  if (artifact.uploadPhase === 'finalized') {
     const status = await client.status(artifact.providerReference);
     if (status.state === 'failed') throw new Error('X media processing failed');
     return { mediaId: artifact.providerReference, state: status.state };
   }
-  return appendAndFinalize(client, initialized.mediaId, media.bytes);
+  const media = await source.load(input);
+  validateXMedia(media);
+  return appendAndFinalize(database, client, input.workspaceId, artifact, media.bytes);
 }
 
 function validateXMedia(media: { bytes: Buffer; mimeType: string }): void {
@@ -99,15 +114,46 @@ function validateXMedia(media: { bytes: Buffer; mimeType: string }): void {
 }
 
 async function appendAndFinalize(
+  database: NodePgDatabase,
   client: XMediaUploadClient,
-  mediaId: string,
+  workspaceId: string,
+  artifact: StagingProgress,
   bytes: Buffer,
 ): Promise<{ mediaId: string; state: 'succeeded' | 'pending' }> {
-  for (let offset = 0, segment = 0; offset < bytes.length; offset += X_MEDIA_CHUNK_BYTES) {
-    await client.append(mediaId, segment, bytes.subarray(offset, offset + X_MEDIA_CHUNK_BYTES));
-    segment += 1;
+  let nextSegment = artifact.nextSegment;
+  if (artifact.uploadPhase !== 'appended') {
+    for (
+      let offset = nextSegment * X_MEDIA_CHUNK_BYTES;
+      offset < bytes.length;
+      offset += X_MEDIA_CHUNK_BYTES
+    ) {
+      await client.append(
+        artifact.providerReference,
+        nextSegment,
+        bytes.subarray(offset, offset + X_MEDIA_CHUNK_BYTES),
+      );
+      nextSegment += 1;
+      await persistProgress(database, workspaceId, artifact.id, 'appending', nextSegment);
+    }
+    await persistProgress(database, workspaceId, artifact.id, 'appended', nextSegment);
   }
-  const finalized = await client.finalize(mediaId);
+  const finalized = await client.finalize(artifact.providerReference);
   if (finalized.state === 'failed') throw new Error('X media processing failed');
-  return { mediaId, state: finalized.state };
+  await persistProgress(database, workspaceId, artifact.id, 'finalized', nextSegment);
+  return { mediaId: artifact.providerReference, state: finalized.state };
+}
+
+async function persistProgress(
+  database: NodePgDatabase,
+  workspaceId: string,
+  artifactId: string,
+  uploadPhase: 'appending' | 'appended' | 'finalized',
+  nextSegment: number,
+): Promise<void> {
+  await withTenantTransaction(database, { workspaceId }, (transaction) =>
+    updateStagingUploadProgress(transaction, workspaceId, artifactId, {
+      uploadPhase,
+      nextSegment,
+    }),
+  );
 }

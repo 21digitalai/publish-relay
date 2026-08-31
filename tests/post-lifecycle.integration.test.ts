@@ -30,6 +30,7 @@ const migrations = [
   '0007_add_scheduler_attempt_ledger.sql',
   '0008_handy_shen.sql',
   '0014_great_lethal_legion.sql',
+  '0015_talented_alex_power.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';
@@ -402,7 +403,7 @@ describe('provider staging cleanup', () => {
 });
 
 describe('X media staging', () => {
-  it('persists INIT ownership before chunks and reconciles repeat staging through STATUS', async () => {
+  it('resumes missing chunks and polls STATUS only after FINALIZE', async () => {
     const postId = '00000000-0000-4000-8000-000000000220';
     const revisionId = '00000000-0000-4000-8000-000000000221';
     const mediaId = '00000000-0000-4000-8000-000000000222';
@@ -417,20 +418,29 @@ describe('X media staging', () => {
         VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now());
     `);
     const calls: string[] = [];
+    const bytes = Buffer.alloc(4 * 1024 * 1024 + 1, 1);
     const source: XMediaSource = {
-      load: () => Promise.resolve({ bytes: Buffer.from('image'), mimeType: 'image/png' }),
+      load: () => Promise.resolve({ bytes, mimeType: 'image/png' }),
     };
+    let shouldInterrupt = true;
+    let isFinalized = false;
     const client: XMediaUploadClient = {
       init: () => {
         calls.push('INIT');
         return Promise.resolve({ mediaId: 'x-media-1', expiresAfterSeconds: 3600 });
       },
-      append: () => {
-        calls.push('APPEND');
+      append: (_mediaId, segment) => {
+        if (isFinalized) return Promise.reject(new Error('APPEND after FINALIZE'));
+        calls.push(`APPEND:${String(segment)}`);
+        if (segment === 1 && shouldInterrupt) {
+          shouldInterrupt = false;
+          return Promise.reject(new Error('interrupted upload'));
+        }
         return Promise.resolve();
       },
       finalize: () => {
         calls.push('FINALIZE');
+        isFinalized = true;
         return Promise.resolve({ state: 'pending' as const });
       },
       status: () => {
@@ -442,6 +452,7 @@ describe('X media staging', () => {
     const input = { workspaceId, jobId, mediaId, idempotencyKey: 'job-media-1' };
     const db = drizzle(database) as unknown as NodePgDatabase;
 
+    await expect(stageXMedia(db, source, client, input)).rejects.toThrow('interrupted upload');
     await expect(stageXMedia(db, source, client, input)).resolves.toEqual({
       mediaId: 'x-media-1',
       state: 'pending',
@@ -450,11 +461,18 @@ describe('X media staging', () => {
       mediaId: 'x-media-1',
       state: 'pending',
     });
-    expect(calls).toEqual(['INIT', 'APPEND', 'FINALIZE', 'STATUS', 'APPEND', 'FINALIZE']);
-    const artifacts = await database.query<{ count: number }>(
-      'SELECT count(*)::int AS count FROM provider_staging_artifacts',
+    expect(calls).toEqual(['INIT', 'APPEND:0', 'APPEND:1', 'APPEND:1', 'FINALIZE', 'STATUS']);
+    const artifacts = await database.query<{
+      count: number;
+      upload_phase: string;
+      next_segment: number;
+    }>(
+      `SELECT count(*)::int AS count, max(upload_phase) AS upload_phase,
+        max(next_segment)::int AS next_segment FROM provider_staging_artifacts`,
     );
     expect(artifacts.rows[0]?.count).toBe(1);
+    expect(artifacts.rows[0]?.upload_phase).toBe('finalized');
+    expect(artifacts.rows[0]?.next_segment).toBe(2);
   });
 
   it('rejects unsupported and oversized X media before INIT', async () => {

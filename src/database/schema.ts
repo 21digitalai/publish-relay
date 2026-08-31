@@ -500,6 +500,8 @@ export const providerStagingArtifacts = pgTable(
     jobId: uuid('job_id').notNull(),
     mediaId: uuid('media_id').notNull(),
     providerReference: text('provider_reference').notNull(),
+    uploadPhase: text('upload_phase').notNull().default('initialized'),
+    nextSegment: integer('next_segment').notNull().default(0),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     ...timestamps,

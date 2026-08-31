@@ -10,11 +10,19 @@ export async function findStagingArtifact(
   workspaceId: string,
   jobId: string,
   mediaId: string,
-): Promise<{ id: string; providerReference: string; expiresAt: Date } | null> {
+): Promise<{
+  id: string;
+  providerReference: string;
+  uploadPhase: string;
+  nextSegment: number;
+  expiresAt: Date;
+} | null> {
   const rows = await database
     .select({
       id: providerStagingArtifacts.id,
       providerReference: providerStagingArtifacts.providerReference,
+      uploadPhase: providerStagingArtifacts.uploadPhase,
+      nextSegment: providerStagingArtifacts.nextSegment,
       expiresAt: providerStagingArtifacts.expiresAt,
     })
     .from(providerStagingArtifacts)
@@ -39,13 +47,24 @@ export async function createStagingArtifact(
     providerReference: string;
     expiresAt: Date;
   },
-): Promise<{ isOwner: boolean; providerReference: string }> {
+): Promise<{
+  isOwner: boolean;
+  id: string;
+  providerReference: string;
+  uploadPhase: string;
+  nextSegment: number;
+}> {
   const inserted = await database
     .insert(providerStagingArtifacts)
     .values(input)
     .onConflictDoNothing()
-    .returning({ providerReference: providerStagingArtifacts.providerReference });
-  if (inserted[0]) return { isOwner: true, providerReference: inserted[0].providerReference };
+    .returning({
+      id: providerStagingArtifacts.id,
+      providerReference: providerStagingArtifacts.providerReference,
+      uploadPhase: providerStagingArtifacts.uploadPhase,
+      nextSegment: providerStagingArtifacts.nextSegment,
+    });
+  if (inserted[0]) return { isOwner: true, ...inserted[0] };
   const existing = await findStagingArtifact(
     database,
     input.workspaceId,
@@ -53,7 +72,25 @@ export async function createStagingArtifact(
     input.mediaId,
   );
   if (!existing) throw new Error('X media staging reservation conflict could not be reconciled');
-  return { isOwner: false, providerReference: existing.providerReference };
+  return { isOwner: false, ...existing };
+}
+
+export async function updateStagingUploadProgress(
+  database: NodePgDatabase,
+  workspaceId: string,
+  artifactId: string,
+  progress: { uploadPhase: 'appending' | 'appended' | 'finalized'; nextSegment: number },
+): Promise<void> {
+  await database
+    .update(providerStagingArtifacts)
+    .set({ ...progress, updatedAt: new Date() })
+    .where(
+      and(
+        eq(providerStagingArtifacts.workspaceId, workspaceId),
+        eq(providerStagingArtifacts.id, artifactId),
+        isNull(providerStagingArtifacts.deletedAt),
+      ),
+    );
 }
 
 export async function listJobStagingArtifacts(

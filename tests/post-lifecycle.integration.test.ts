@@ -450,7 +450,9 @@ describe('X media staging', () => {
       },
       status: () => {
         calls.push('STATUS');
-        return Promise.resolve({ state: 'pending' as const });
+        return Promise.resolve({
+          state: isFinalized ? ('pending' as const) : ('not_finalized' as const),
+        });
       },
       discard: () => Promise.resolve(),
     };
@@ -476,7 +478,9 @@ describe('X media staging', () => {
       'APPEND:0',
       'APPEND:1',
       'APPEND:1',
+      'STATUS',
       'FINALIZE',
+      'STATUS',
       'FINALIZE',
       'STATUS',
     ]);
@@ -532,5 +536,111 @@ describe('X media staging', () => {
       ),
     ).rejects.toThrow('exceeds');
     expect(init).not.toHaveBeenCalled();
+  });
+
+  it('reconciles provider success after finalized progress persistence fails', async () => {
+    const postId = '00000000-0000-4000-8000-000000000290';
+    const revisionId = '00000000-0000-4000-8000-000000000291';
+    const mediaId = '00000000-0000-4000-8000-000000000292';
+    const jobId = '00000000-0000-4000-8000-000000000293';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"type":"text","text":"Media"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'media/reconcile', 'hash', 'image/png', 1, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+        VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now());
+      CREATE TEMP SEQUENCE fail_finalized_once;
+      CREATE OR REPLACE FUNCTION fail_first_finalized_update() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.upload_phase = 'finalized' AND nextval('fail_finalized_once') = 1 THEN
+          RAISE EXCEPTION 'simulated finalized persistence failure';
+        END IF;
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER fail_finalized_progress BEFORE UPDATE ON provider_staging_artifacts
+        FOR EACH ROW EXECUTE FUNCTION fail_first_finalized_update();
+    `);
+    let isFinalized = false;
+    const finalize = vi.fn(() => {
+      isFinalized = true;
+      return Promise.resolve({ state: 'pending' as const });
+    });
+    const client: XMediaUploadClient = {
+      init: () => Promise.resolve({ mediaId: 'x-media-reconcile', expiresAfterSeconds: 3600 }),
+      append: () => Promise.resolve(),
+      finalize,
+      status: () =>
+        Promise.resolve({ state: isFinalized ? ('pending' as const) : ('not_finalized' as const) }),
+      discard: () => Promise.resolve(),
+    };
+    const input = { workspaceId, jobId, mediaId, idempotencyKey: 'reconcile' };
+    const db = drizzle(database) as unknown as NodePgDatabase;
+
+    await expect(
+      stageXMedia(
+        db,
+        { load: () => Promise.resolve({ bytes: Buffer.from('x'), mimeType: 'image/png' }) },
+        client,
+        input,
+      ),
+    ).rejects.toThrow('Failed query');
+    await expect(
+      stageXMedia(
+        db,
+        { load: () => Promise.resolve({ bytes: Buffer.from('x'), mimeType: 'image/png' }) },
+        client,
+        input,
+      ),
+    ).resolves.toEqual({ mediaId: 'x-media-reconcile', state: 'pending' });
+    expect(finalize).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes concurrent staging against one canonical artifact', async () => {
+    const postId = '00000000-0000-4000-8000-000000000294';
+    const revisionId = '00000000-0000-4000-8000-000000000295';
+    const mediaId = '00000000-0000-4000-8000-000000000296';
+    const jobId = '00000000-0000-4000-8000-000000000297';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"type":"text","text":"Media"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'media/concurrent', 'hash', 'image/png', 1, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+        VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now());
+    `);
+    let initCount = 0;
+    let isFinalized = false;
+    const append = vi.fn(() => Promise.resolve());
+    const finalize = vi.fn(() => {
+      isFinalized = true;
+      return Promise.resolve({ state: 'succeeded' as const });
+    });
+    const client: XMediaUploadClient = {
+      init: () =>
+        Promise.resolve({ mediaId: `x-media-${String(++initCount)}`, expiresAfterSeconds: 3600 }),
+      append,
+      finalize,
+      status: () =>
+        Promise.resolve({
+          state: isFinalized ? ('succeeded' as const) : ('not_finalized' as const),
+        }),
+      discard: () => Promise.resolve(),
+    };
+    const source = {
+      load: () => Promise.resolve({ bytes: Buffer.from('x'), mimeType: 'image/png' }),
+    };
+    const input = { workspaceId, jobId, mediaId, idempotencyKey: 'concurrent' };
+    const db = drizzle(database) as unknown as NodePgDatabase;
+
+    const results = await Promise.all([
+      stageXMedia(db, source, client, input),
+      stageXMedia(db, source, client, input),
+    ]);
+    expect(results[0].mediaId).toBe(results[1].mediaId);
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledTimes(1);
   });
 });

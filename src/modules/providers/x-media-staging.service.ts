@@ -4,6 +4,7 @@ import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
   createStagingArtifact,
   findStagingArtifact,
+  getStagingArtifactById,
   updateStagingUploadProgress,
 } from '../content/provider-staging.repository.js';
 
@@ -24,7 +25,7 @@ export interface XMediaUploadClient {
   }): Promise<{ mediaId: string; expiresAfterSeconds: number }>;
   append(mediaId: string, segmentIndex: number, bytes: Buffer): Promise<void>;
   finalize(mediaId: string): Promise<{ state: 'succeeded' | 'pending' | 'failed' }>;
-  status(mediaId: string): Promise<{ state: 'succeeded' | 'pending' | 'failed' }>;
+  status(mediaId: string): Promise<{ state: 'succeeded' | 'pending' | 'failed' | 'not_finalized' }>;
   discard(mediaId: string): Promise<void>;
 }
 
@@ -96,7 +97,9 @@ async function resumeStaging(
 ): Promise<{ mediaId: string; state: 'succeeded' | 'pending' }> {
   if (artifact.uploadPhase === 'finalized') {
     const status = await client.status(artifact.providerReference);
-    if (status.state === 'failed') throw new Error('X media processing failed');
+    if (status.state === 'failed' || status.state === 'not_finalized') {
+      throw new Error('X media processing failed');
+    }
     return { mediaId: artifact.providerReference, state: status.state };
   }
   const media = await source.load(input);
@@ -120,27 +123,46 @@ async function appendAndFinalize(
   artifact: StagingProgress,
   bytes: Buffer,
 ): Promise<{ mediaId: string; state: 'succeeded' | 'pending' }> {
-  let nextSegment = artifact.nextSegment;
-  if (artifact.uploadPhase !== 'appended') {
-    for (
-      let offset = nextSegment * X_MEDIA_CHUNK_BYTES;
-      offset < bytes.length;
-      offset += X_MEDIA_CHUNK_BYTES
-    ) {
-      await client.append(
-        artifact.providerReference,
-        nextSegment,
-        bytes.subarray(offset, offset + X_MEDIA_CHUNK_BYTES),
-      );
-      nextSegment += 1;
-      await persistProgress(database, workspaceId, artifact.id, 'appending', nextSegment);
+  return withStagingLock(database, artifact.id, async () => {
+    const current = await withTenantTransaction(database, { workspaceId }, (transaction) =>
+      getStagingArtifactById(transaction, workspaceId, artifact.id),
+    );
+    // The advisory lock serializes provider transitions. Reload through the caller's
+    // identity below because another owner may have advanced the cursor while waiting.
+    const progress = current ?? artifact;
+    let nextSegment = progress.nextSegment;
+    if (progress.uploadPhase !== 'appended' && progress.uploadPhase !== 'finalized') {
+      for (
+        let offset = nextSegment * X_MEDIA_CHUNK_BYTES;
+        offset < bytes.length;
+        offset += X_MEDIA_CHUNK_BYTES
+      ) {
+        await client.append(
+          artifact.providerReference,
+          nextSegment,
+          bytes.subarray(offset, offset + X_MEDIA_CHUNK_BYTES),
+        );
+        nextSegment += 1;
+        await persistProgress(database, workspaceId, artifact.id, 'appending', nextSegment);
+      }
+      await persistProgress(database, workspaceId, artifact.id, 'appended', nextSegment);
     }
-    await persistProgress(database, workspaceId, artifact.id, 'appended', nextSegment);
-  }
-  const finalized = await client.finalize(artifact.providerReference);
-  if (finalized.state === 'failed') throw new Error('X media processing failed');
-  await persistProgress(database, workspaceId, artifact.id, 'finalized', nextSegment);
-  return { mediaId: artifact.providerReference, state: finalized.state };
+    if (progress.uploadPhase === 'finalized') {
+      const status = await client.status(artifact.providerReference);
+      if (status.state === 'failed' || status.state === 'not_finalized') {
+        throw new Error('X media processing failed');
+      }
+      return { mediaId: artifact.providerReference, state: status.state };
+    }
+    const status = await client.status(artifact.providerReference);
+    const finalized =
+      status.state === 'not_finalized' ? await client.finalize(artifact.providerReference) : status;
+    if (finalized.state === 'failed' || finalized.state === 'not_finalized') {
+      throw new Error('X media processing failed');
+    }
+    await persistProgress(database, workspaceId, artifact.id, 'finalized', nextSegment);
+    return { mediaId: artifact.providerReference, state: finalized.state };
+  });
 }
 
 async function persistProgress(
@@ -156,4 +178,49 @@ async function persistProgress(
       nextSegment,
     }),
   );
+}
+
+interface AdvisoryLockClient {
+  query(text: string, values: unknown[]): Promise<unknown>;
+  release(): void;
+}
+
+interface AdvisoryLockPool {
+  connect?: () => Promise<AdvisoryLockClient>;
+}
+
+const localStagingLocks = new Map<string, Promise<void>>();
+
+async function withStagingLock<T>(
+  database: NodePgDatabase,
+  artifactId: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const pool = (database as NodePgDatabase & { $client: AdvisoryLockPool }).$client;
+  if (!pool.connect) return withLocalStagingLock(artifactId, work);
+  const connection = await pool.connect();
+  await connection.query('SELECT pg_advisory_lock(hashtext($1))', [artifactId]);
+  try {
+    return await work();
+  } finally {
+    await connection.query('SELECT pg_advisory_unlock(hashtext($1))', [artifactId]);
+    connection.release();
+  }
+}
+
+async function withLocalStagingLock<T>(artifactId: string, work: () => Promise<T>): Promise<T> {
+  const previous = localStagingLocks.get(artifactId) ?? Promise.resolve();
+  let releaseLock = (): void => undefined;
+  const current = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const queued = previous.then(() => current);
+  localStagingLocks.set(artifactId, queued);
+  await previous;
+  try {
+    return await work();
+  } finally {
+    releaseLock();
+    if (localStagingLocks.get(artifactId) === queued) localStagingLocks.delete(artifactId);
+  }
 }

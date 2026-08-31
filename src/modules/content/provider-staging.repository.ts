@@ -93,6 +93,35 @@ export async function updateStagingUploadProgress(
     );
 }
 
+export async function getStagingArtifactById(
+  database: NodePgDatabase,
+  workspaceId: string,
+  artifactId: string,
+): Promise<{
+  id: string;
+  providerReference: string;
+  uploadPhase: string;
+  nextSegment: number;
+} | null> {
+  const rows = await database
+    .select({
+      id: providerStagingArtifacts.id,
+      providerReference: providerStagingArtifacts.providerReference,
+      uploadPhase: providerStagingArtifacts.uploadPhase,
+      nextSegment: providerStagingArtifacts.nextSegment,
+    })
+    .from(providerStagingArtifacts)
+    .where(
+      and(
+        eq(providerStagingArtifacts.workspaceId, workspaceId),
+        eq(providerStagingArtifacts.id, artifactId),
+        isNull(providerStagingArtifacts.deletedAt),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function listJobStagingArtifacts(
   database: NodePgDatabase,
   workspaceId: string,

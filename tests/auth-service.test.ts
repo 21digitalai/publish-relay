@@ -16,6 +16,22 @@ function createStore(): AuthStore {
 }
 
 describe('AuthService', () => {
+  it('establishes the initial session during atomic account registration', async () => {
+    const store = createStore();
+    vi.mocked(store.register).mockResolvedValue({ userId: 'u1', workspaceId: 'w1', role: 'owner' });
+    const result = await new AuthService(store).register(
+      ' Relay Owner ',
+      'OWNER@EXAMPLE.TEST',
+      'long-password',
+      'Relay',
+    );
+    expect(store.register).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: 'Relay Owner', email: 'owner@example.test' }),
+    );
+    expect(store.createSession).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ userId: 'u1', workspaceId: 'w1', role: 'owner' });
+  });
+
   it('rotates all existing sessions on login to prevent fixation', async () => {
     const store = createStore();
     vi.mocked(store.findLogin).mockResolvedValue({

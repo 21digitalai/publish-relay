@@ -53,6 +53,10 @@ describe('authentication HTTP boundary', () => {
       },
     });
     expect(response.statusCode).toBe(201);
+    expect(response.cookies.map((cookie) => cookie.name)).toEqual([
+      'publish_relay_session',
+      'publish_relay_csrf',
+    ]);
     expect(response.json()).toEqual({
       data: { userId: 'u1', workspaceId: 'w1', role: 'owner' },
       error: null,
@@ -60,6 +64,7 @@ describe('authentication HTTP boundary', () => {
     expect(store.register).toHaveBeenCalledWith(
       expect.objectContaining({ displayName: 'Relay Owner', workspaceName: 'Relay' }),
     );
+    expect(store.createSession).toHaveBeenCalledOnce();
   });
 
   it('rotates login state, protects the shell, and requires CSRF for logout', async () => {

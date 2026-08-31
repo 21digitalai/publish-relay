@@ -45,19 +45,24 @@ export class AuthService {
     email: string,
     password: string,
     workspaceName: string,
-  ): Promise<AuthIdentity> {
-    return this.store.register({
+  ): Promise<SessionResult> {
+    const identity = await this.store.register({
       displayName: displayName.trim(),
       email: email.trim().toLowerCase(),
       passwordHash: await hashPassword(password),
       workspaceName,
     });
+    return this.issueSession(identity, new Date());
   }
 
   async login(email: string, password: string, now = new Date()): Promise<SessionResult | null> {
     const identity = await this.store.findLogin(email.trim().toLowerCase());
     if (!identity || !(await verifyPassword(identity.passwordHash, password))) return null;
     await this.store.revokeSessionsForUser(identity.workspaceId, identity.userId);
+    return this.issueSession(identity, now);
+  }
+
+  private async issueSession(identity: AuthIdentity, now: Date): Promise<SessionResult> {
     const token = createOpaqueToken();
     const csrfToken = createOpaqueToken();
     const expiresAt = new Date(now.getTime() + this.sessionLifetimeMs);

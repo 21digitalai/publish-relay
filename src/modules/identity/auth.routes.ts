@@ -1,8 +1,9 @@
 import cookie from '@fastify/cookie';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import type { AuthIdentity, AuthService } from './auth.service.js';
+import type { SessionResult } from './auth.service.js';
 import { requireWorkspaceAction, type WorkspaceAction } from './authorization.js';
 import { sessionCookieOptions, verifyCsrfToken } from './session.js';
 
@@ -42,6 +43,23 @@ async function authorizeRequest(
   return identity;
 }
 
+function setSessionCookies(
+  reply: FastifyReply,
+  session: SessionResult,
+  secureCookies: boolean,
+): void {
+  reply.setCookie(
+    SESSION_COOKIE,
+    `${session.workspaceId}.${session.token}`,
+    sessionCookieOptions(secureCookies),
+  );
+  reply.setCookie(CSRF_COOKIE, session.csrfToken, {
+    sameSite: 'lax',
+    secure: secureCookies,
+    path: '/',
+  });
+}
+
 export function registerAuthRoutes(
   application: FastifyInstance,
   auth: AuthService,
@@ -53,13 +71,17 @@ export function registerAuthRoutes(
     const input = registrationSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Invalid registration details' });
-    const identity = await auth.register(
+    const session = await auth.register(
       input.data.displayName,
       input.data.email,
       input.data.password,
       input.data.workspaceName,
     );
-    return reply.code(201).send({ data: identity, error: null });
+    setSessionCookies(reply, session, options.secureCookies);
+    return reply.code(201).send({
+      data: { userId: session.userId, workspaceId: session.workspaceId, role: session.role },
+      error: null,
+    });
   });
 
   application.post('/api/auth/login', async (request, reply) => {
@@ -67,16 +89,7 @@ export function registerAuthRoutes(
     if (!input.success) return reply.code(400).send({ data: null, error: 'Invalid login details' });
     const session = await auth.login(input.data.email, input.data.password);
     if (!session) return reply.code(401).send({ data: null, error: 'Invalid email or password' });
-    reply.setCookie(
-      SESSION_COOKIE,
-      `${session.workspaceId}.${session.token}`,
-      sessionCookieOptions(options.secureCookies),
-    );
-    reply.setCookie(CSRF_COOKIE, session.csrfToken, {
-      sameSite: 'lax',
-      secure: options.secureCookies,
-      path: '/',
-    });
+    setSessionCookies(reply, session, options.secureCookies);
     return {
       data: { userId: session.userId, workspaceId: session.workspaceId, role: session.role },
       error: null,

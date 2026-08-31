@@ -12,6 +12,7 @@ const migrationUrls = [
   new URL('../migrations/0000_identity_tenancy.sql', import.meta.url),
   new URL('../migrations/0001_solid_spiral.sql', import.meta.url),
   new URL('../migrations/0002_busy_mantis.sql', import.meta.url),
+  new URL('../migrations/0003_many_marvel_boy.sql', import.meta.url),
 ];
 let database: PGlite;
 

@@ -11,10 +11,20 @@ import {
   revokeCredential,
   rotateCredential,
 } from '../src/modules/credentials/credential.repository.js';
-import type { EncryptedCredential } from '../src/modules/credentials/envelope.js';
+import { randomBytes } from 'node:crypto';
+import type {
+  EncryptedCredential,
+  MasterKeyProvider,
+} from '../src/modules/credentials/envelope.js';
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
+import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
 
-const migrations = ['0000_identity_tenancy.sql', '0001_solid_spiral.sql', '0002_busy_mantis.sql'];
+const migrations = [
+  '0000_identity_tenancy.sql',
+  '0001_solid_spiral.sql',
+  '0002_busy_mantis.sql',
+  '0003_many_marvel_boy.sql',
+];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
 let database: PGlite;
@@ -95,5 +105,53 @@ describe('credential and OAuth persistence', () => {
       { providerAccountId: 'two', displayName: 'Two' },
     ]);
     await expect(adapter.discoverAccounts('never-persisted-token')).resolves.toHaveLength(2);
+  });
+
+  it('rechecks membership and reconnects the canonical provider connection', async () => {
+    const key = randomBytes(32);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    const adapter = new FakeProviderConnectionAdapter([
+      { providerAccountId: 'one', displayName: 'One' },
+      { providerAccountId: 'two', displayName: 'Two' },
+    ]);
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const first = await connectProvider(db, keys, adapter, {
+      workspaceId,
+      userId,
+      provider: 'fake',
+      accessToken: 'first-secret',
+      requestId: 'req-connect',
+    });
+    const second = await connectProvider(db, keys, adapter, {
+      workspaceId,
+      userId,
+      provider: 'fake',
+      accessToken: 'second-secret',
+      requestId: 'req-reconnect',
+    });
+    expect(second.connectionId).toBe(first.connectionId);
+    const connectionCount = await database.query<{ count: number }>(
+      'select count(*)::int as count from provider_connections',
+    );
+    const accountCount = await database.query<{ count: number }>(
+      'select count(*)::int as count from provider_accounts',
+    );
+    const revokedCount = await database.query<{ count: number }>(
+      'select count(*)::int as count from credentials where revoked_at is not null',
+    );
+    const auditRows = await database.query<{ action: string; metadata: { accountCount: number } }>(
+      'select action, metadata from audit_events order by created_at',
+    );
+    expect(connectionCount.rows[0]?.count).toBe(1);
+    expect(accountCount.rows[0]?.count).toBe(2);
+    expect(revokedCount.rows[0]?.count).toBe(1);
+    expect(auditRows.rows.map((row) => row.action)).toEqual([
+      'provider.connected',
+      'provider.reconnected',
+    ]);
+    expect(auditRows.rows[1]?.metadata).toEqual({ provider: 'fake', accountCount: 2 });
   });
 });

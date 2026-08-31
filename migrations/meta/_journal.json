@@ -22,6 +22,13 @@
       "when": 1788187891258,
       "tag": "0002_busy_mantis",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788188263296,
+      "tag": "0003_many_marvel_boy",
+      "breakpoints": true
     }
   ]
 }

@@ -186,7 +186,13 @@ export const providerConnections = pgTable(
     status: text('status').notNull().default('active'),
     ...timestamps,
   },
-  (table) => [index('provider_connections_workspace_idx').on(table.workspaceId)],
+  (table) => [
+    index('provider_connections_workspace_idx').on(table.workspaceId),
+    uniqueIndex('provider_connections_workspace_provider_unique').on(
+      table.workspaceId,
+      table.provider,
+    ),
+  ],
 );
 
 export const providerAccounts = pgTable(

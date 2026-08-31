@@ -10,6 +10,7 @@ import {
   successEnvelope,
   successResponseSchema,
 } from '../src/modules/api/contract.js';
+import { apiV1OpenApiDocument } from '../src/modules/api/openapi.js';
 import { z } from 'zod';
 
 describe('API v1 contract', () => {
@@ -38,6 +39,26 @@ describe('API v1 contract', () => {
     expect(openApiJsonSchema(successSchema)).toMatchObject({
       type: 'object',
       required: ['success', 'data', 'meta'],
+    });
+  });
+
+  it('publishes the API v1 account contract and authentication schemes', () => {
+    expect(apiV1OpenApiDocument()).toMatchObject({
+      openapi: '3.1.0',
+      paths: {
+        '/api/v1/account': {
+          get: {
+            operationId: 'getAccount',
+            responses: { '200': { description: 'Authenticated API key identity' } },
+          },
+        },
+      },
+      components: {
+        securitySchemes: {
+          bearerAuth: { type: 'http', scheme: 'bearer' },
+          workspace: { name: 'X-Publish-Relay-Workspace' },
+        },
+      },
     });
   });
 

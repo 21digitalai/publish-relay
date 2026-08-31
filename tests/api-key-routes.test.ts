@@ -3,8 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js';
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
+import { registerApiDocumentationRoute } from '../src/modules/api/openapi.js';
 
 describe('API key HTTP boundary', () => {
+  it('serves the versioned OpenAPI document', async () => {
+    const application = Fastify();
+    registerApiDocumentationRoute(application);
+    const response = await application.inject({ method: 'GET', url: '/api/v1/openapi.json' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ openapi: '3.1.0' });
+  });
+
   it('returns the redacted account identity after expected-workspace preflight', async () => {
     const authenticate = vi.fn().mockResolvedValue({
       id: 'key-1',

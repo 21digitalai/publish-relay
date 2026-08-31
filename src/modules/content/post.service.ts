@@ -22,10 +22,17 @@ export async function createPost(
   database: NodePgDatabase,
   input: PostIntentInput,
 ): Promise<{ postId: string; revisionId: string; jobIds: string[] }> {
-  validatePostIntent(input);
   return withTenantTransaction(database, input, (transaction) =>
-    createPostIntent(transaction, input),
+    createPostInTransaction(transaction, input),
   );
+}
+
+export async function createPostInTransaction(
+  transaction: NodePgDatabase,
+  input: PostIntentInput,
+): Promise<{ postId: string; revisionId: string; jobIds: string[] }> {
+  validatePostIntent(input);
+  return createPostIntent(transaction, input);
 }
 
 export async function editPost(

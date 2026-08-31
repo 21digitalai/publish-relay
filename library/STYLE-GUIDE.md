@@ -87,11 +87,13 @@ Workspace selection is a searchable popover showing name, role, and active-accou
 Auth uses a centered 440px panel on the canvas with a restrained violet radial glow. No marketing carousel.
 
 - Login: email, password, reveal toggle, forgot password, submit, registration link.
-- Registration: name, email, password, visible requirements, terms acknowledgement.
+- Registration: display name, email, password, first workspace name, visible requirements, terms acknowledgement. Submission atomically creates the user, first workspace, owner membership, and browser session.
 - Errors are inline; server errors also receive a form summary.
 - Loading preserves button dimensions and uses action-specific labels.
-- First run has three steps: workspace, account connection or explicit skip, first scheduled post or empty workspace.
+- First run has three steps: confirm/configure the workspace profile and slug created during registration, account connection or explicit skip, then first scheduled post or empty workspace. It must not create a duplicate workspace.
 - OAuth leaves through a labeled secure redirect and returns to a real success/failure receipt.
+- Fastify serves the built SPA from the same deployable. `/login`, `/register`, and `/forgot-password` are public; `/app`, `/onboarding/*`, and `/w/*` require a valid session and redirect unauthenticated users to `/login` before protected data is returned.
+- Until a recovery-token delivery implementation is accepted, `/forgot-password` renders an honest non-enumerating unavailable/support state. It must not claim an email was sent.
 
 ## Connected accounts
 

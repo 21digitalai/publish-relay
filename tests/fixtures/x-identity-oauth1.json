@@ -1,0 +1,11 @@
+{
+  "endpoint": "GET /2/users/me",
+  "authMode": "OAuth 1.0a User Context",
+  "status": 200,
+  "rateLimit": { "limit": 75, "remaining": 74 },
+  "data": {
+    "id": "2060173132606902276",
+    "name": "The Daily Viber",
+    "username": "TheDailyViber"
+  }
+}

@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { readdir, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 import { createApplication } from '../../src/application/create-application.js';
 import { createPostgresAuthStore } from '../../src/modules/identity/auth.repository.js';
@@ -21,6 +22,8 @@ await database.exec(`
 const application = createApplication(
   { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 43199, WORKER_POLL_INTERVAL_MS: 1000 },
   new AuthService(createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase)),
+  undefined,
+  resolve(process.cwd(), 'dist/ui'),
 );
 application.addHook('onClose', async () => database.close());
 await application.listen({ host: '127.0.0.1', port: 43199 });

@@ -154,6 +154,15 @@ export function registerAuthRoutes(
     return { data: workspace, error: null };
   });
 
+  application.get('/api/workspaces/current', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const workspace = await auth.getWorkspace(identity);
+    return workspace
+      ? { data: workspace, error: null }
+      : reply.code(404).send({ data: null, error: 'Workspace was not found' });
+  });
+
   const publicShell = (_request: FastifyRequest, reply: FastifyReply) =>
     reply.type('text/html').send(options.shellHtml);
   application.get('/login', publicShell);

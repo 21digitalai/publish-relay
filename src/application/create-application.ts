@@ -1,6 +1,7 @@
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { RuntimeConfig } from '../config/runtime-config.js';
@@ -15,10 +16,11 @@ export function createApplication(
   config: RuntimeConfig,
   auth?: AuthService,
   apiKeys?: ApiKeyService,
+  uiRootOverride?: string,
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
-  const uiRoot = fileURLToPath(new URL('../ui/', import.meta.url));
-  const shellHtml = readFileSync(new URL('../ui/index.html', import.meta.url), 'utf8');
+  const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
+  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8');
 
   application.register(fastifyStatic, { root: uiRoot, wildcard: false });
 

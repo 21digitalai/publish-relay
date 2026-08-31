@@ -18,6 +18,7 @@ function createStore(): AuthStore {
     revokeSession: vi.fn(),
     findSession: vi.fn(),
     findCurrentRole: vi.fn(),
+    findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
   };
 }
@@ -168,6 +169,33 @@ describe('authentication HTTP boundary', () => {
     expect(store.updateWorkspace).toHaveBeenCalledWith('w1', 'u1', {
       name: 'Atlas Studio',
       slug: 'atlas-studio',
+    });
+  });
+
+  it('returns the authenticated current workspace as an allowlisted profile', async () => {
+    const store = createStore();
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.findWorkspace).mockResolvedValue({
+      id: 'w1',
+      name: 'Atlas Studio',
+      slug: 'atlas-studio',
+    });
+    const response = await createTestApplication(store).inject({
+      method: 'GET',
+      url: '/api/workspaces/current',
+      headers: { cookie: 'publish_relay_session=w1.token' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      data: { id: 'w1', name: 'Atlas Studio', slug: 'atlas-studio' },
+      error: null,
     });
   });
 

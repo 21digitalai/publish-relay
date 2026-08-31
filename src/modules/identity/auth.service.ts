@@ -26,6 +26,10 @@ export interface AuthStore {
     tokenHash: string,
   ) => Promise<(AuthIdentity & { expiresAt: Date; revokedAt: Date | null }) | null>;
   findCurrentRole: (userId: string, workspaceId: string) => Promise<MembershipRole | null>;
+  findWorkspace: (
+    workspaceId: string,
+    userId: string,
+  ) => Promise<{ id: string; name: string; slug: string } | null>;
   updateWorkspace: (
     workspaceId: string,
     userId: string,
@@ -100,6 +104,12 @@ export class AuthService {
       name: input.name.trim(),
       slug: input.slug.trim().toLowerCase(),
     });
+  }
+
+  async getWorkspace(
+    identity: AuthIdentity,
+  ): Promise<{ id: string; name: string; slug: string } | null> {
+    return this.store.findWorkspace(identity.workspaceId, identity.userId);
   }
 
   async authenticate(

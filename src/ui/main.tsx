@@ -1,4 +1,4 @@
-import { StrictMode, useMemo, useState } from 'react';
+import { StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
@@ -220,6 +220,23 @@ function OnboardingPage() {
   );
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  useEffect(() => {
+    void fetch('/api/workspaces/current')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Could not load the workspace');
+        return response.json() as Promise<{
+          data: { name: string; slug: string };
+          error: null;
+        }>;
+      })
+      .then(({ data }) => {
+        setWorkspaceName(data.name);
+        setWorkspaceSlug(data.slug);
+      })
+      .catch(() => {
+        setWorkspaceError('Could not load the workspace');
+      });
+  }, []);
   const titles = ['Name your workspace', 'Connect your first account', 'Schedule your first post'];
   return (
     <main className="onboarding-page">
@@ -364,16 +381,23 @@ function OnboardingPage() {
                       },
                       body: JSON.stringify({ name: workspaceName, slug: workspaceSlug }),
                     });
-                    const result = (await response.json()) as { error: string | null };
+                    const result = (await response.json()) as {
+                      data: { name: string; slug: string } | null;
+                      error: string | null;
+                    };
                     if (!response.ok) {
                       setWorkspaceError(result.error ?? 'Could not update the workspace');
                       setIsSaving(false);
                       return;
                     }
+                    if (result.data) {
+                      setWorkspaceName(result.data.name);
+                      setWorkspaceSlug(result.data.slug);
+                    }
                     setIsSaving(false);
                     setStep(2);
                   } else if (step < 3) setStep((value) => value + 1);
-                  else window.location.href = '/w/atlas/accounts';
+                  else window.location.href = `/w/${workspaceSlug}/accounts`;
                 })();
               }}
               disabled={step === 1 && (!workspaceName.trim() || !workspaceSlug.trim() || isSaving)}

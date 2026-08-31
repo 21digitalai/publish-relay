@@ -23,6 +23,11 @@ import {
   hashOauthState,
   issueOauthTransaction,
 } from '../src/modules/credentials/oauth.service.js';
+import { XHttpClient } from '../src/modules/providers/x-http-client.js';
+import {
+  beginXOauthConnection,
+  completeXOauthConnection,
+} from '../src/modules/providers/x-oauth.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -209,5 +214,68 @@ describe('credential and OAuth persistence', () => {
       'provider.reconnected',
     ]);
     expect(auditRows.rows[1]?.metadata).toEqual({ provider: 'fake', accountCount: 2 });
+  });
+
+  it('consumes an encrypted X request-token secret once and creates the canonical connection', async () => {
+    const key = randomBytes(32);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    const responses = [
+      new Response(
+        'oauth_token=request-token&oauth_token_secret=request-secret&oauth_callback_confirmed=true',
+      ),
+      new Response('oauth_token=access-token&oauth_token_secret=access-secret'),
+      Response.json({ data: { id: 'x-account', name: 'Daily Viber', username: 'TheDailyViber' } }),
+    ];
+    const client = new XHttpClient({
+      consumerKey: 'consumer-key',
+      consumerSecret: 'consumer-secret',
+      fetch: () => {
+        const response = responses.shift();
+        if (!response) throw new Error('Unexpected X test request');
+        return Promise.resolve(response);
+      },
+      nonce: () => 'nonce',
+      now: () => Date.parse('2026-08-31T12:00:00.000Z'),
+    });
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const begun = await beginXOauthConnection(db, keys, client, {
+      workspaceId,
+      userId,
+      callbackUrl: 'https://app.example.test/oauth/x/callback',
+    });
+    expect(begun.authorizationUrl).toContain('oauth_token=request-token');
+    const persisted = await database.query<{ state_hash: string; ciphertext: Uint8Array }>(
+      `select transaction.state_hash, credential.ciphertext
+       from oauth_transactions transaction
+       join credentials credential on credential.id = transaction.secret_credential_id`,
+    );
+    expect(persisted.rows[0]?.state_hash).toBe(hashOauthState('request-token'));
+    expect(JSON.stringify(persisted.rows[0])).not.toContain('request-secret');
+    const connected = await completeXOauthConnection(db, keys, client, {
+      workspaceId,
+      requestToken: 'request-token',
+      verifier: 'verifier',
+      requestId: 'x-connect',
+    });
+    expect(connected?.accounts).toEqual([
+      { providerAccountId: 'x-account', displayName: 'Daily Viber (@TheDailyViber)' },
+    ]);
+    await expect(
+      completeXOauthConnection(db, keys, client, {
+        workspaceId,
+        requestToken: 'request-token',
+        verifier: 'verifier',
+        requestId: 'x-connect-retry',
+      }),
+    ).resolves.toBeNull();
+    const counts = await database.query<{ transactions: number; active_credentials: number }>(
+      `select
+        (select count(*)::int from oauth_transactions) as transactions,
+        (select count(*)::int from credentials where revoked_at is null) as active_credentials`,
+    );
+    expect(counts.rows[0]).toEqual({ transactions: 0, active_credentials: 1 });
   });
 });

@@ -31,3 +31,10 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - Credential, provider connection/account, and OAuth transaction rows are workspace-scoped tenant tables with forced RLS. Repository calls run inside `withTenantTransaction` and repeat the workspace predicate.
 - OAuth state is persisted only as a hash, expires quickly, and is atomically consumed once. Provider adapters receive access tokens only in memory and return allowlisted account discovery DTOs.
 - Revocation is idempotent. Reconnect flows update the canonical connection rather than treating credentials copied from another scheduler as portable authorization.
+
+## Provider adapter contract
+
+- Provider adapters implement the versioned `ProviderAdapter` contract for connect, discover, validate, stage, publish, lookup, and revoke.
+- Core content is an explicit text, quote, or article union with typed media references. Adapters reject unsupported input; they never silently truncate or transform it.
+- Publishing returns one typed outcome: published, accepted pending, unknown/reconciliation-required, or failed with auth, rate-limit, validation, transient, or permanent classification.
+- Staging is idempotent by caller-supplied key. An unknown publish outcome must be reconciled through lookup rather than retried blindly.

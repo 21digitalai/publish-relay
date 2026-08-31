@@ -39,8 +39,21 @@ export async function createStagingArtifact(
     providerReference: string;
     expiresAt: Date;
   },
-): Promise<void> {
-  await database.insert(providerStagingArtifacts).values(input).onConflictDoNothing();
+): Promise<{ isOwner: boolean; providerReference: string }> {
+  const inserted = await database
+    .insert(providerStagingArtifacts)
+    .values(input)
+    .onConflictDoNothing()
+    .returning({ providerReference: providerStagingArtifacts.providerReference });
+  if (inserted[0]) return { isOwner: true, providerReference: inserted[0].providerReference };
+  const existing = await findStagingArtifact(
+    database,
+    input.workspaceId,
+    input.jobId,
+    input.mediaId,
+  );
+  if (!existing) throw new Error('X media staging reservation conflict could not be reconciled');
+  return { isOwner: false, providerReference: existing.providerReference };
 }
 
 export async function listJobStagingArtifacts(

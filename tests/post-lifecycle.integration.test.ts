@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupTemporaryMedia, storeMedia } from '../src/modules/content/media.service.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
@@ -435,8 +435,9 @@ describe('X media staging', () => {
       },
       status: () => {
         calls.push('STATUS');
-        return Promise.resolve({ state: 'succeeded' as const });
+        return Promise.resolve({ state: 'pending' as const });
       },
+      discard: () => Promise.resolve(),
     };
     const input = { workspaceId, jobId, mediaId, idempotencyKey: 'job-media-1' };
     const db = drizzle(database) as unknown as NodePgDatabase;
@@ -447,12 +448,53 @@ describe('X media staging', () => {
     });
     await expect(stageXMedia(db, source, client, input)).resolves.toEqual({
       mediaId: 'x-media-1',
-      state: 'succeeded',
+      state: 'pending',
     });
-    expect(calls).toEqual(['INIT', 'APPEND', 'FINALIZE', 'STATUS']);
+    expect(calls).toEqual(['INIT', 'APPEND', 'FINALIZE', 'STATUS', 'APPEND', 'FINALIZE']);
     const artifacts = await database.query<{ count: number }>(
       'SELECT count(*)::int AS count FROM provider_staging_artifacts',
     );
     expect(artifacts.rows[0]?.count).toBe(1);
+  });
+
+  it('rejects unsupported and oversized X media before INIT', async () => {
+    const init = vi.fn(() => Promise.resolve({ mediaId: 'unused', expiresAfterSeconds: 1 }));
+    const client: XMediaUploadClient = {
+      init,
+      append: () => Promise.resolve(),
+      finalize: () => Promise.resolve({ state: 'succeeded' }),
+      status: () => Promise.resolve({ state: 'succeeded' }),
+      discard: () => Promise.resolve(),
+    };
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const input = {
+      workspaceId,
+      jobId: '00000000-0000-4000-8000-000000000281',
+      mediaId: '00000000-0000-4000-8000-000000000282',
+      idempotencyKey: 'validation',
+    };
+    await expect(
+      stageXMedia(
+        db,
+        { load: () => Promise.resolve({ bytes: Buffer.from('x'), mimeType: 'text/plain' }) },
+        client,
+        input,
+      ),
+    ).rejects.toThrow('unsupported');
+    await expect(
+      stageXMedia(
+        db,
+        {
+          load: () =>
+            Promise.resolve({
+              bytes: Buffer.alloc(5 * 1024 * 1024 + 1),
+              mimeType: 'image/png',
+            }),
+        },
+        client,
+        input,
+      ),
+    ).rejects.toThrow('exceeds');
+    expect(init).not.toHaveBeenCalled();
   });
 });

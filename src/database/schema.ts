@@ -423,10 +423,7 @@ export const publicationAttempts = pgTable(
   },
   (table) => [
     uniqueIndex('publication_attempts_job_number_unique').on(table.jobId, table.attemptNumber),
-    uniqueIndex('publication_attempts_idempotency_unique').on(
-      table.workspaceId,
-      table.idempotencyKey,
-    ),
+    index('publication_attempts_idempotency_idx').on(table.workspaceId, table.idempotencyKey),
     index('publication_attempts_reconciliation_idx').on(table.workspaceId, table.reconciliationKey),
     foreignKey({
       columns: [table.workspaceId, table.jobId],

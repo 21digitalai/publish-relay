@@ -1,0 +1,2 @@
+DROP INDEX "publication_attempts_idempotency_unique";--> statement-breakpoint
+CREATE INDEX "publication_attempts_idempotency_idx" ON "publication_attempts" USING btree ("workspace_id","idempotency_key");

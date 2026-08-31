@@ -4,7 +4,16 @@ import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { claimDueJobs, recoverExpiredDispatches } from '../src/modules/scheduler/job.repository.js';
+import {
+  claimDueJobs,
+  claimReconciliationJobs,
+  cancelPendingJob,
+  finishDispatchAttempt,
+  recoverExpiredDispatches,
+  requestOperatorRetry,
+  resolveReconciliation,
+  startDispatchAttempt,
+} from '../src/modules/scheduler/job.repository.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -15,6 +24,7 @@ const migrations = [
   '0005_round_thunderball.sql',
   '0006_enforce_content_workspace_foreign_keys.sql',
   '0007_add_scheduler_attempt_ledger.sql',
+  '0008_handy_shen.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';
@@ -80,5 +90,162 @@ describe('scheduler repository', () => {
       `SELECT reconciliation_required FROM publication_jobs WHERE id = '${jobId}'`,
     );
     expect(result.rows[0]?.reconciliation_required).toBe(true);
+  });
+
+  it('starts one owned dispatch attempt and keeps the provider idempotency key stable', async () => {
+    const now = new Date('2026-08-31T16:00:00Z');
+    await claimDueJobs(db, { workerId: 'worker-a', now, leaseMs: 30_000, limit: 1 });
+    const first = await startDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      workerId: 'worker-a',
+      fingerprint: 'fingerprint-one',
+      now,
+    });
+    expect(first).toMatchObject({ attemptNumber: 1 });
+    expect(
+      await startDispatchAttempt(db, {
+        workspaceId,
+        jobId,
+        workerId: 'worker-b',
+        fingerprint: 'fingerprint-stolen',
+        now,
+      }),
+    ).toBeNull();
+
+    await database.exec(`UPDATE publication_jobs SET state = 'retry_wait', next_attempt_at = '${now.toISOString()}',
+      lease_owner = null, lease_expires_at = null WHERE id = '${jobId}'`);
+    await claimDueJobs(db, { workerId: 'worker-b', now, leaseMs: 30_000, limit: 1 });
+    const second = await startDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      workerId: 'worker-b',
+      fingerprint: 'fingerprint-two',
+      now,
+    });
+    expect(second).toMatchObject({ attemptNumber: 2, idempotencyKey: first?.idempotencyKey });
+  });
+
+  it('records retry outcomes once and audits an idempotent operator retry boundary', async () => {
+    const now = new Date('2026-08-31T16:00:00Z');
+    await claimDueJobs(db, { workerId: 'worker-a', now, leaseMs: 30_000, limit: 1 });
+    const attempt = await startDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      workerId: 'worker-a',
+      fingerprint: 'fingerprint',
+      now,
+    });
+    if (!attempt) throw new Error('Expected dispatch attempt');
+    const retryAt = new Date('2026-08-31T16:01:00Z');
+    expect(
+      await finishDispatchAttempt(db, {
+        workspaceId,
+        jobId,
+        attemptId: attempt.attemptId,
+        outcome: 'transient',
+        retryAt,
+        redactedError: 'temporary provider failure',
+        now,
+      }),
+    ).toBe(true);
+    expect(
+      await finishDispatchAttempt(db, {
+        workspaceId,
+        jobId,
+        attemptId: attempt.attemptId,
+        outcome: 'transient',
+        retryAt,
+        now,
+      }),
+    ).toBe(false);
+    await database.exec(
+      `UPDATE publication_jobs SET state = 'failed', next_attempt_at = null WHERE id = '${jobId}'`,
+    );
+    expect(await requestOperatorRetry(db, { workspaceId, jobId, actorId: 'operator', now })).toBe(
+      'scheduled',
+    );
+    expect(await requestOperatorRetry(db, { workspaceId, jobId, actorId: 'operator', now })).toBe(
+      'conflict',
+    );
+    const result = await database.query<{ reason: string }>(
+      `SELECT reason FROM publication_job_events WHERE job_id = '${jobId}' ORDER BY created_at`,
+    );
+    expect(result.rows.map((row) => row.reason)).toEqual([
+      'worker_dispatch',
+      'attempt_transient',
+      'operator_retry',
+    ]);
+  });
+
+  it('allows cancellation only before the dispatch boundary', async () => {
+    const input = {
+      workspaceId,
+      jobId,
+      actorId: 'operator',
+      now: new Date('2026-08-31T16:00:00Z'),
+    };
+    expect(await cancelPendingJob(db, input)).toBe(true);
+    expect(await cancelPendingJob(db, input)).toBe(false);
+  });
+
+  it('reconciles an unknown outcome without creating a blind publish attempt', async () => {
+    const now = new Date('2026-08-31T16:00:00Z');
+    await claimDueJobs(db, { workerId: 'publisher', now, leaseMs: 30_000, limit: 1 });
+    const attempt = await startDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      workerId: 'publisher',
+      fingerprint: 'unknown-request',
+      now,
+    });
+    if (!attempt) throw new Error('Expected dispatch attempt');
+    await finishDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      attemptId: attempt.attemptId,
+      outcome: 'unknown',
+      reconciliationKey: 'provider-lookup-key',
+      now,
+    });
+    expect(
+      await claimDueJobs(db, {
+        workerId: 'publisher',
+        now: new Date(now.getTime() + 60_000),
+        leaseMs: 30_000,
+        limit: 1,
+      }),
+    ).toEqual([]);
+    expect(
+      await claimReconciliationJobs(db, {
+        workerId: 'reconciler',
+        now,
+        leaseMs: 30_000,
+        limit: 1,
+      }),
+    ).toEqual([jobId]);
+    expect(
+      await resolveReconciliation(db, {
+        workspaceId,
+        jobId,
+        workerId: 'reconciler',
+        outcome: 'published',
+        now,
+      }),
+    ).toBe(true);
+    expect(
+      await resolveReconciliation(db, {
+        workspaceId,
+        jobId,
+        workerId: 'reconciler',
+        outcome: 'published',
+        now,
+      }),
+    ).toBe(false);
+    const result = await database.query<{ attempts: number; state: string }>(`
+      SELECT (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS attempts,
+             state FROM publication_jobs WHERE id = '${jobId}'
+    `);
+    expect(result.rows[0]).toEqual({ attempts: 1, state: 'published' });
   });
 });

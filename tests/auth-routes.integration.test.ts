@@ -135,6 +135,27 @@ describe('authentication HTTP boundary', () => {
     expect(response.cookies.every((cookie) => cookie.secure)).toBe(true);
   });
 
+  it('returns the same honest recovery-unavailable state without account enumeration', async () => {
+    const application = createTestApplication(createStore());
+    const known = await application.inject({
+      method: 'POST',
+      url: '/api/auth/forgot-password',
+      payload: { email: 'known@example.test' },
+    });
+    const unknown = await application.inject({
+      method: 'POST',
+      url: '/api/auth/forgot-password',
+      payload: { email: 'unknown@example.test' },
+    });
+    expect(known.statusCode).toBe(503);
+    expect(unknown.statusCode).toBe(503);
+    expect(known.json()).toEqual(unknown.json());
+    expect(known.json()).toMatchObject({
+      data: { status: 'unavailable' },
+      error: null,
+    });
+  });
+
   it('denies a session cookie when its workspace is substituted', async () => {
     const store = createStore();
     vi.mocked(store.findSession).mockImplementation((workspaceId) =>

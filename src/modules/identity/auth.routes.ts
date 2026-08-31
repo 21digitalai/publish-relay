@@ -96,6 +96,16 @@ export function registerAuthRoutes(
     };
   });
 
+  application.post('/api/auth/forgot-password', (_request, reply) =>
+    reply.code(503).send({
+      data: {
+        status: 'unavailable',
+        supportMessage: 'Password recovery is not available yet. Contact support for assistance.',
+      },
+      error: null,
+    }),
+  );
+
   application.post('/api/auth/logout', async (request, reply) => {
     const session = parseSessionCookie(request.cookies[SESSION_COOKIE]);
     if (!session) return reply.code(401).send({ data: null, error: 'Authentication required' });

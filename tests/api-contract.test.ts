@@ -4,9 +4,13 @@ import { describe, expect, it } from 'vitest';
 import {
   CursorCodec,
   errorEnvelope,
+  errorResponseSchema,
   InvalidCursorError,
+  openApiJsonSchema,
   successEnvelope,
+  successResponseSchema,
 } from '../src/modules/api/contract.js';
+import { z } from 'zod';
 
 describe('API v1 contract', () => {
   it('builds stable success and error envelopes with request IDs', () => {
@@ -18,6 +22,22 @@ describe('API v1 contract', () => {
     expect(errorEnvelope('invalid_request', 'Invalid request', 'request-2')).toEqual({
       success: false,
       error: { code: 'invalid_request', message: 'Invalid request', requestId: 'request-2' },
+    });
+  });
+
+  it('uses the runtime schemas as the OpenAPI response source', () => {
+    const successSchema = successResponseSchema(z.object({ id: z.string() }));
+    expect(successSchema.parse(successEnvelope({ id: 'post-1' }, 'request-1'))).toMatchObject({
+      success: true,
+    });
+    expect(
+      errorResponseSchema.parse(errorEnvelope('invalid', 'Invalid', 'request-2')),
+    ).toMatchObject({
+      success: false,
+    });
+    expect(openApiJsonSchema(successSchema)).toMatchObject({
+      type: 'object',
+      required: ['success', 'data', 'meta'],
     });
   });
 

@@ -2,6 +2,29 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 export const requestIdMetaSchema = z.object({ requestId: z.string().min(1) });
+export const errorResponseSchema = z.object({
+  success: z.literal(false),
+  error: z.object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    requestId: z.string().min(1),
+    details: z.unknown().optional(),
+  }),
+});
+
+export function successResponseSchema<T extends z.ZodType>(
+  data: T,
+): z.ZodObject<{
+  success: z.ZodLiteral<true>;
+  data: T;
+  meta: typeof requestIdMetaSchema;
+}> {
+  return z.object({ success: z.literal(true), data, meta: requestIdMetaSchema });
+}
+
+export function openApiJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  return z.toJSONSchema(schema, { target: 'draft-7', unrepresentable: 'any' });
+}
 
 export function successEnvelope<T>(
   data: T,
@@ -91,6 +114,7 @@ export class CursorCodec {
     const suppliedSignature = Buffer.from(encodedSignature, 'base64url');
     const expectedSignature = signature(encodedPayload, this.secret);
     if (
+      suppliedSignature.toString('base64url') !== encodedSignature ||
       suppliedSignature.length !== expectedSignature.length ||
       !timingSafeEqual(suppliedSignature, expectedSignature)
     )

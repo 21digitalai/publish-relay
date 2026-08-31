@@ -21,6 +21,7 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 ## Agent API v1 contract
 
 - Shared success/error envelope builders and the signed keyset cursor codec live in `src/modules/api/contract.ts`; routes must use these canonical boundaries rather than hand-building response shapes or cursor parsing.
+- Runtime Zod response schemas from that module are also the OpenAPI JSON Schema source; do not maintain a second handwritten schema for the same envelope.
 - Collection cursors are versioned HMAC-SHA256 tokens bound to normalized filters and expiry. Malformed, tampered, expired, or filter-mismatched cursors fail closed and must map to HTTP 400 without restarting pagination.
 - API admission uses the shared `ApiRateLimiter` with separate workspace and API-key buckets; mutation buckets are independently stricter, and rejected calls expose only bounded retry timing rather than tenant activity.
 

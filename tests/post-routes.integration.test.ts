@@ -37,6 +37,10 @@ const apiKeyId = '00000000-0000-4000-8000-000000000803';
 const providerAccountId = '00000000-0000-4000-8000-000000000804';
 const foreignWorkspaceId = '00000000-0000-4000-8000-000000000810';
 const foreignProviderAccountId = '00000000-0000-4000-8000-000000000811';
+const foreignPostId = '00000000-0000-4000-8000-000000000814';
+const foreignRevisionId = '00000000-0000-4000-8000-000000000815';
+const foreignJobId = '00000000-0000-4000-8000-000000000816';
+const missingResourceId = '00000000-0000-4000-8000-000000000899';
 let database: PGlite;
 let application: FastifyInstance;
 let apiKeys: ApiKeyService;
@@ -139,6 +143,13 @@ beforeEach(async () => {
       VALUES ('00000000-0000-4000-8000-000000000813', '${foreignWorkspaceId}', 'fake', '00000000-0000-4000-8000-000000000812');
     INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
       VALUES ('${foreignProviderAccountId}', '${foreignWorkspaceId}', '00000000-0000-4000-8000-000000000813', 'foreign', 'Foreign');
+    INSERT INTO posts (id, workspace_id, created_by_user_id)
+      VALUES ('${foreignPostId}', '${foreignWorkspaceId}', '${userId}');
+    INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+      VALUES ('${foreignRevisionId}', '${foreignWorkspaceId}', '${foreignPostId}', 1, '{"type":"text","text":"Foreign tenant secret"}');
+    INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+      VALUES ('${foreignJobId}', '${foreignWorkspaceId}', '${foreignPostId}', '${foreignRevisionId}', '${foreignProviderAccountId}', now());
+    SELECT set_config('app.workspace_id', '${workspaceId}', false);
   `);
   authenticate = vi.fn().mockResolvedValue({
     id: apiKeyId,
@@ -202,7 +213,9 @@ describe('POST /api/v1/posts', () => {
     expect(body.data).not.toHaveProperty('content');
 
     const counts = await database.query<{ posts: number; jobs: number }>(
-      'SELECT (SELECT count(*)::int FROM posts) AS posts, (SELECT count(*)::int FROM publication_jobs) AS jobs',
+      `SELECT
+        (SELECT count(*)::int FROM posts WHERE workspace_id = '${workspaceId}') AS posts,
+        (SELECT count(*)::int FROM publication_jobs WHERE workspace_id = '${workspaceId}') AS jobs`,
     );
     expect(counts.rows[0]).toEqual({ posts: 1, jobs: 1 });
   });
@@ -509,15 +522,15 @@ describe('CLI and direct HTTP parity', () => {
     ],
     [
       'missing resource',
-      `/api/v1/posts/${foreignProviderAccountId}`,
-      ['posts', 'show', foreignProviderAccountId],
+      `/api/v1/posts/${missingResourceId}`,
+      ['posts', 'show', missingResourceId],
       404,
       5,
     ],
     [
       'missing publication job',
-      `/api/v1/jobs/${foreignProviderAccountId}`,
-      ['publishes', 'show', foreignProviderAccountId],
+      `/api/v1/jobs/${missingResourceId}`,
+      ['publishes', 'show', missingResourceId],
       404,
       5,
     ],
@@ -527,6 +540,21 @@ describe('CLI and direct HTTP parity', () => {
     expect(direct.statusCode).toBe(status);
     expect(throughCli.code).toBe(exit);
     expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+  });
+
+  it.each([
+    ['post', `/api/v1/posts/${foreignPostId}`, ['posts', 'show', foreignPostId]],
+    ['publication job', `/api/v1/jobs/${foreignJobId}`, ['publishes', 'show', foreignJobId]],
+  ])('hides a foreign-workspace %s through HTTP and CLI', async (_name, url, command) => {
+    const direct = await application.inject({ method: 'GET', url, headers });
+    const throughCli = await runCli(command);
+
+    expect(direct.statusCode).toBe(404);
+    expect(throughCli.code).toBe(5);
+    expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+    expect(JSON.stringify(direct.json())).not.toContain('Foreign tenant secret');
+    expect(JSON.stringify(throughCli.body)).not.toContain(foreignWorkspaceId);
+    expect(JSON.stringify(throughCli.body)).not.toContain(foreignProviderAccountId);
   });
 
   it('matches capability denial without leaking the key', async () => {

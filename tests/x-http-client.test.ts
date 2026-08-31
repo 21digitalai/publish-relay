@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 
 import { XHttpClient } from '../src/modules/providers/x-http-client.js';
@@ -79,6 +80,30 @@ describe('X OAuth 1.0a HTTP client', () => {
     await expect(limitedClient.currentAccount(credential)).rejects.toMatchObject({
       status: 429,
       retryAfterSeconds: 30,
+    });
+  });
+
+  it('treats the sanitized live X body-level not-found response as missing', async () => {
+    const fixture = JSON.parse(
+      await readFile(new URL('./fixtures/x-lookup-oauth1.json', import.meta.url), 'utf8'),
+    ) as {
+      authMode: string;
+      missing: { status: number; errors: { title: string; type: string; resourceType: string }[] };
+    };
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(response({ errors: fixture.missing.errors }, fixture.missing.status));
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+    }).bindCredential(credential);
+
+    await expect(client.getPost('2094383220275966285')).resolves.toBeNull();
+    expect(fixture.authMode).toBe('OAuth 1.0a User Context');
+    expect(fixture.missing.errors[0]).toMatchObject({
+      title: 'Not Found Error',
+      resourceType: 'tweet',
     });
   });
 

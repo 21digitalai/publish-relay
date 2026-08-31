@@ -1,0 +1,23 @@
+{
+  "authMode": "OAuth 1.0a User Context",
+  "known": {
+    "status": 200,
+    "rateLimit": { "limit": 900, "remaining": 897 },
+    "data": {
+      "id": "2094383220275966284",
+      "authorId": "2060173132606902276",
+      "username": "TheDailyViber"
+    }
+  },
+  "missing": {
+    "status": 200,
+    "rateLimit": { "limit": 900, "remaining": 896 },
+    "errors": [
+      {
+        "title": "Not Found Error",
+        "type": "https://api.x.com/2/problems/resource-not-found",
+        "resourceType": "tweet"
+      }
+    ]
+  }
+}

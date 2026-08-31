@@ -21,7 +21,11 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
       return database.transaction(async (transaction) => {
         const [user] = await transaction
           .insert(users)
-          .values({ email: input.email, passwordHash: input.passwordHash })
+          .values({
+            displayName: input.displayName,
+            email: input.email,
+            passwordHash: input.passwordHash,
+          })
           .returning({ id: users.id });
         const [workspace] = await transaction
           .insert(workspaces)

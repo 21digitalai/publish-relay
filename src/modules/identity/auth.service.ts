@@ -10,6 +10,7 @@ export interface AuthIdentity {
 
 export interface AuthStore {
   register: (input: {
+    displayName: string;
     email: string;
     passwordHash: string;
     workspaceName: string;
@@ -39,8 +40,14 @@ export class AuthService {
     private readonly sessionLifetimeMs = 1000 * 60 * 60 * 24 * 30,
   ) {}
 
-  async register(email: string, password: string, workspaceName: string): Promise<AuthIdentity> {
+  async register(
+    displayName: string,
+    email: string,
+    password: string,
+    workspaceName: string,
+  ): Promise<AuthIdentity> {
     return this.store.register({
+      displayName: displayName.trim(),
       email: email.trim().toLowerCase(),
       passwordHash: await hashPassword(password),
       workspaceName,

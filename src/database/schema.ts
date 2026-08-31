@@ -62,6 +62,7 @@ export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    displayName: text('display_name').notNull(),
     email: text('email').notNull(),
     passwordHash: text('password_hash').notNull(),
     defaultWorkspaceId: uuid('default_workspace_id').references(() => workspaces.id, {

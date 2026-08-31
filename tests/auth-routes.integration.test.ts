@@ -41,16 +41,25 @@ function createProductionApplication(store: AuthStore) {
 
 describe('authentication HTTP boundary', () => {
   it('registers an account and returns only the identity contract', async () => {
-    const response = await createTestApplication(createStore()).inject({
+    const store = createStore();
+    const response = await createTestApplication(store).inject({
       method: 'POST',
       url: '/api/auth/register',
-      payload: { email: 'owner@example.test', password: 'long-password', workspaceName: 'Relay' },
+      payload: {
+        displayName: 'Relay Owner',
+        email: 'owner@example.test',
+        password: 'long-password',
+        workspaceName: 'Relay',
+      },
     });
     expect(response.statusCode).toBe(201);
     expect(response.json()).toEqual({
       data: { userId: 'u1', workspaceId: 'w1', role: 'owner' },
       error: null,
     });
+    expect(store.register).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: 'Relay Owner', workspaceName: 'Relay' }),
+    );
   });
 
   it('rotates login state, protects the shell, and requires CSRF for logout', async () => {

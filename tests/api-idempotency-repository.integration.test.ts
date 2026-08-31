@@ -20,6 +20,7 @@ const migrations = [
   '0010_flashy_nextwave.sql',
   '0011_bored_grim_reaper.sql',
   '0012_enable_api_mutation_result_rls.sql',
+  '0013_illegal_texas_twister.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000701';
 const apiKeyId = '00000000-0000-4000-8000-000000000703';
@@ -34,7 +35,7 @@ beforeEach(async () => {
     );
   await database.exec(`
     INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'API', 'api');
-    INSERT INTO users (id, email, password_hash) VALUES ('00000000-0000-4000-8000-000000000702', 'api@example.test', 'redacted');
+    INSERT INTO users (id, display_name, email, password_hash) VALUES ('00000000-0000-4000-8000-000000000702', 'API Owner', 'api@example.test', 'redacted');
     SELECT set_config('app.workspace_id', '${workspaceId}', false);
     INSERT INTO api_keys (id, workspace_id, created_by_user_id, label, prefix, secret_hash)
       VALUES ('${apiKeyId}', '${workspaceId}', '00000000-0000-4000-8000-000000000702', 'Agent', 'pr_test', 'redacted');

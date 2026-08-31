@@ -1,13 +1,431 @@
-import { StrictMode } from 'react';
+import { StrictMode, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-export function App() {
+import './styles.css';
+
+interface Account {
+  id: string;
+  provider: 'X' | 'Instagram';
+  name: string;
+  handle: string;
+  health: 'Connected' | 'Reconnect required';
+  capabilities: string;
+  lastSync: string;
+}
+
+const accounts: Account[] = [
+  {
+    id: 'x-daily',
+    provider: 'X',
+    name: 'Daily Viber',
+    handle: '@dailyviber',
+    health: 'Connected',
+    capabilities: 'Posts · Media',
+    lastSync: 'Today, 18:42 EEST',
+  },
+  {
+    id: 'x-studio',
+    provider: 'X',
+    name: 'Studio Notes',
+    handle: '@studionotes',
+    health: 'Reconnect required',
+    capabilities: 'Posts',
+    lastSync: 'Aug 29, 11:08 EEST',
+  },
+  {
+    id: 'ig-mira',
+    provider: 'Instagram',
+    name: 'Mira Studio',
+    handle: '@mirastudio',
+    health: 'Connected',
+    capabilities: 'Posts · Reels',
+    lastSync: 'Today, 18:39 EEST',
+  },
+];
+
+function Mark({ provider }: { provider: Account['provider'] }) {
   return (
-    <main className="app-shell">
-      <h1>Publish Relay</h1>
-      <p>Scheduling infrastructure is ready.</p>
+    <span className={`provider-mark ${provider === 'X' ? 'x' : 'instagram'}`} aria-hidden="true">
+      {provider === 'X' ? 'X' : '◎'}
+    </span>
+  );
+}
+
+function AuthPage({ mode }: { mode: 'login' | 'register' }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const isRegister = mode === 'register';
+  return (
+    <main className="auth-page">
+      <section className="auth-panel" aria-labelledby="auth-title">
+        <a className="brand-lockup" href="/login">
+          <span className="brand-signal" /> Publish Relay
+        </a>
+        <p className="eyebrow">{isRegister ? 'Create your workspace' : 'Welcome back'}</p>
+        <h1 id="auth-title">
+          {isRegister ? 'Start scheduling clearly' : 'Sign in to your cockpit'}
+        </h1>
+        <p className="auth-intro">
+          Manage every account, schedule, and recovery path in one focused place.
+        </p>
+        {submitted && (
+          <div className="form-summary" role="alert">
+            Demo mode is active. Connect the authentication service to continue.
+          </div>
+        )}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setSubmitted(true);
+          }}
+          noValidate
+        >
+          {isRegister && (
+            <label className="field-label">
+              Name
+              <input className="text-input" name="name" autoComplete="name" required />
+            </label>
+          )}
+          <label className="field-label">
+            Email
+            <input className="text-input" name="email" type="email" autoComplete="email" required />
+          </label>
+          <label className="field-label">
+            Password
+            <span className="password-field">
+              <input
+                className="text-input"
+                name="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete={isRegister ? 'new-password' : 'current-password'}
+                required
+              />
+              <button
+                className="reveal-password"
+                type="button"
+                onClick={() => {
+                  setShowPassword((value) => !value);
+                }}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </span>
+          </label>
+          {isRegister && (
+            <p className="field-hint">Use at least 12 characters, including a number and symbol.</p>
+          )}
+          {!isRegister && (
+            <a className="forgot-link" href="/forgot-password">
+              Forgot password?
+            </a>
+          )}
+          <button className="primary-button" type="submit">
+            {isRegister ? 'Create account' : 'Sign in'}
+          </button>
+        </form>
+        <p className="auth-switch">
+          {isRegister ? 'Already have an account?' : 'New to Publish Relay?'}{' '}
+          <a href={isRegister ? '/login' : '/register'}>
+            {isRegister ? 'Sign in' : 'Create account'}
+          </a>
+        </p>
+      </section>
     </main>
   );
+}
+
+function Rail({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <aside className={`app-rail ${open ? 'open' : ''}`} aria-label="Primary navigation">
+      <div className="rail-header">
+        <a className="brand-lockup" href="/w/atlas/accounts">
+          <span className="brand-signal" /> Publish Relay
+        </a>
+        <button className="rail-close" onClick={onClose} aria-label="Close navigation">
+          ×
+        </button>
+      </div>
+      <button className="workspace-switcher">
+        <span>
+          <strong>Atlas Studio</strong>
+          <small>Owner · 3 accounts</small>
+        </span>
+        <span aria-hidden="true">⌄</span>
+      </button>
+      <button className="create-post-button">
+        <span aria-hidden="true">＋</span> Create post
+      </button>
+      <nav className="rail-nav">
+        <a href="/w/atlas/queue">
+          ▤ <span>Queue</span>
+        </a>
+        <a href="/w/atlas/calendar">
+          ▦ <span>Calendar</span>
+        </a>
+        <a className="active" href="/w/atlas/accounts" aria-current="page">
+          ◉ <span>Accounts</span>
+        </a>
+        <a href="/w/atlas/settings/workspace">
+          ⚙ <span>Settings</span>
+        </a>
+      </nav>
+      <div className="rail-footer">
+        <div className="connection-health">
+          <span className="health-dot" /> All systems operational
+        </div>
+        <button className="user-menu">
+          <span className="avatar">PA</span>
+          <span>
+            <strong>Plamen</strong>
+            <small>plamen@example.com</small>
+          </span>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function AccountRow({
+  account,
+  onDisconnect,
+}: {
+  account: Account;
+  onDisconnect: (account: Account) => void;
+}) {
+  const needsReconnect = account.health === 'Reconnect required';
+  return (
+    <article className="account-row">
+      <div className="account-identity">
+        <span className="account-avatar">{account.name.slice(0, 2).toUpperCase()}</span>
+        <div>
+          <strong>{account.name}</strong>
+          <span>{account.handle}</span>
+        </div>
+      </div>
+      <div className="account-provider">
+        <Mark provider={account.provider} />
+        <span>{account.provider}</span>
+      </div>
+      <div>
+        <span className={`status-badge ${needsReconnect ? 'warning' : 'success'}`}>
+          <span aria-hidden="true">{needsReconnect ? '!' : '✓'}</span> {account.health}
+        </span>
+      </div>
+      <div className="account-capabilities">
+        <strong>{account.capabilities}</strong>
+        <span>Last sync {account.lastSync}</span>
+      </div>
+      <div className="account-actions">
+        {needsReconnect && <button className="secondary-button reconnect">Reconnect</button>}
+        <button
+          className="icon-button"
+          aria-label={`More actions for ${account.name}`}
+          onClick={() => {
+            onDisconnect(account);
+          }}
+        >
+          •••
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function AccountsPage() {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [health, setHealth] = useState('All health');
+  const [disconnecting, setDisconnecting] = useState<Account | null>(null);
+  const visible = useMemo(
+    () =>
+      accounts.filter(
+        (account) =>
+          `${account.name} ${account.handle}`.toLowerCase().includes(query.toLowerCase()) &&
+          (health === 'All health' || account.health === health),
+      ),
+    [query, health],
+  );
+  const groups = ['X', 'Instagram'] as const;
+  return (
+    <div className="workspace-app">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <Rail
+        open={menuOpen}
+        onClose={() => {
+          setMenuOpen(false);
+        }}
+      />
+      <main className="main-content" id="main-content">
+        <header className="mobile-header">
+          <button
+            className="menu-button"
+            onClick={() => {
+              setMenuOpen(true);
+            }}
+            aria-label="Open navigation"
+          >
+            ☰
+          </button>
+          <span className="brand-lockup">
+            <span className="brand-signal" /> Publish Relay
+          </span>
+        </header>
+        <div className="page-heading">
+          <div>
+            <p className="eyebrow">Workspace settings</p>
+            <h1>Connected accounts</h1>
+            <p>Manage publishing access and connection health for Atlas Studio.</p>
+          </div>
+          <button className="primary-button connect-account">＋ Connect account</button>
+        </div>
+        <section className="account-summary" aria-label="Account health summary">
+          <div>
+            <strong>3</strong>
+            <span>Connected accounts</span>
+          </div>
+          <div>
+            <strong className="success-text">2</strong>
+            <span>Healthy</span>
+          </div>
+          <div>
+            <strong className="warning-text">1</strong>
+            <span>Needs attention</span>
+          </div>
+        </section>
+        <section className="accounts-section" aria-labelledby="accounts-title">
+          <h2 id="accounts-title" className="sr-only">
+            Accounts
+          </h2>
+          <div className="account-toolbar">
+            <label className="search-control">
+              <span aria-hidden="true">⌕</span>
+              <input
+                className="account-search"
+                placeholder="Search name or handle"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                }}
+              />
+            </label>
+            <label className="filter-label">
+              Health
+              <select
+                className="health-filter"
+                value={health}
+                onChange={(event) => {
+                  setHealth(event.target.value);
+                }}
+              >
+                <option>All health</option>
+                <option>Connected</option>
+                <option>Reconnect required</option>
+              </select>
+            </label>
+          </div>
+          {groups.map((provider) => {
+            const rows = visible.filter((account) => account.provider === provider);
+            if (!rows.length) return null;
+            return (
+              <section className="provider-group" key={provider}>
+                <header>
+                  <div>
+                    <Mark provider={provider} />
+                    <div>
+                      <h2>{provider}</h2>
+                      <span>
+                        {rows.length} {rows.length === 1 ? 'account' : 'accounts'}
+                      </span>
+                    </div>
+                  </div>
+                  <button className="text-button">＋ Connect another</button>
+                </header>
+                <div className="account-list">
+                  {rows.map((account) => (
+                    <AccountRow
+                      account={account}
+                      key={account.id}
+                      onDisconnect={setDisconnecting}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+          {!visible.length && (
+            <div className="filter-empty">
+              <h2>No accounts match these filters</h2>
+              <p>Try another name or reset the health filter.</p>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  setQuery('');
+                  setHealth('All health');
+                }}
+              >
+                Clear filters
+              </button>
+            </div>
+          )}
+        </section>
+      </main>
+      {menuOpen && (
+        <button
+          className="rail-backdrop"
+          aria-label="Close navigation"
+          onClick={() => {
+            setMenuOpen(false);
+          }}
+        />
+      )}
+      {disconnecting && (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="disconnect-title"
+          >
+            <span className="danger-icon">!</span>
+            <h2 id="disconnect-title">Disconnect {disconnecting.name}?</h2>
+            <p>
+              Scheduled jobs for <strong>{disconnecting.handle}</strong> will be paused. Published
+              posts will remain live.
+            </p>
+            <div className="dialog-actions">
+              <button
+                className="secondary-button"
+                autoFocus
+                onClick={() => {
+                  setDisconnecting(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                onClick={() => {
+                  setDisconnecting(null);
+                }}
+              >
+                Disconnect account
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function App() {
+  const path = window.location.pathname;
+  if (path === '/register') return <AuthPage mode="register" />;
+  if (path === '/login' || path === '/') return <AuthPage mode="login" />;
+  return <AccountsPage />;
 }
 
 const root = document.getElementById('root');

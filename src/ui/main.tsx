@@ -210,15 +210,10 @@ function ForgotPasswordPage() {
 
 function OnboardingPage() {
   const [step, setStep] = useState(1);
-  const initialWorkspaceName = sessionStorage.getItem('publish-relay-workspace-name') ?? '';
-  const [workspaceName, setWorkspaceName] = useState(initialWorkspaceName);
-  const [workspaceSlug, setWorkspaceSlug] = useState(
-    initialWorkspaceName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, ''),
-  );
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceSlug, setWorkspaceSlug] = useState('');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   useEffect(() => {
     void fetch('/api/workspaces/current')
@@ -232,9 +227,11 @@ function OnboardingPage() {
       .then(({ data }) => {
         setWorkspaceName(data.name);
         setWorkspaceSlug(data.slug);
+        setIsWorkspaceLoading(false);
       })
       .catch(() => {
         setWorkspaceError('Could not load the workspace');
+        setIsWorkspaceLoading(false);
       });
   }, []);
   const titles = ['Name your workspace', 'Connect your first account', 'Schedule your first post'];
@@ -278,6 +275,7 @@ function OnboardingPage() {
                 <input
                   className="text-input"
                   value={workspaceName}
+                  disabled={isWorkspaceLoading}
                   onChange={(event) => {
                     setWorkspaceName(event.target.value);
                   }}
@@ -289,6 +287,7 @@ function OnboardingPage() {
                 <input
                   className="text-input"
                   value={workspaceSlug}
+                  disabled={isWorkspaceLoading}
                   onChange={(event) => {
                     setWorkspaceSlug(event.target.value);
                   }}
@@ -400,9 +399,18 @@ function OnboardingPage() {
                   else window.location.href = `/w/${workspaceSlug}/accounts`;
                 })();
               }}
-              disabled={step === 1 && (!workspaceName.trim() || !workspaceSlug.trim() || isSaving)}
+              disabled={
+                step === 1 &&
+                (isWorkspaceLoading || !workspaceName.trim() || !workspaceSlug.trim() || isSaving)
+              }
             >
-              {isSaving ? 'Saving…' : step === 3 ? 'Open workspace' : 'Continue'}
+              {isWorkspaceLoading
+                ? 'Loading…'
+                : isSaving
+                  ? 'Saving…'
+                  : step === 3
+                    ? 'Open workspace'
+                    : 'Continue'}
             </button>
           </div>
         </section>

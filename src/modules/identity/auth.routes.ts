@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import type { AuthIdentity, AuthService } from './auth.service.js';
+import { requireWorkspaceAction, type WorkspaceAction } from './authorization.js';
 import { sessionCookieOptions, verifyCsrfToken } from './session.js';
 
 const SESSION_COOKIE = 'publish_relay_session';
@@ -29,7 +30,22 @@ async function authenticateRequest(
   return session ? auth.authenticate(session.workspaceId, session.token) : null;
 }
 
-export function registerAuthRoutes(application: FastifyInstance, auth: AuthService): void {
+async function authorizeRequest(
+  request: FastifyRequest,
+  auth: AuthService,
+  action: WorkspaceAction,
+): Promise<AuthIdentity | null> {
+  const identity = await authenticateRequest(request, auth);
+  if (!identity) return null;
+  requireWorkspaceAction(identity.role, action);
+  return identity;
+}
+
+export function registerAuthRoutes(
+  application: FastifyInstance,
+  auth: AuthService,
+  options: { secureCookies: boolean },
+): void {
   application.register(cookie);
 
   application.post('/api/auth/register', async (request, reply) => {
@@ -52,11 +68,11 @@ export function registerAuthRoutes(application: FastifyInstance, auth: AuthServi
     reply.setCookie(
       SESSION_COOKIE,
       `${session.workspaceId}.${session.token}`,
-      sessionCookieOptions(application.initialConfig.https !== undefined),
+      sessionCookieOptions(options.secureCookies),
     );
     reply.setCookie(CSRF_COOKIE, session.csrfToken, {
       sameSite: 'lax',
-      secure: application.initialConfig.https !== undefined,
+      secure: options.secureCookies,
       path: '/',
     });
     return {
@@ -88,7 +104,7 @@ export function registerAuthRoutes(application: FastifyInstance, auth: AuthServi
   });
 
   application.get('/app', async (request, reply) => {
-    const identity = await authenticateRequest(request, auth);
+    const identity = await authorizeRequest(request, auth, 'content:read');
     if (!identity) return reply.code(401).type('text/html').send('Authentication required');
     return reply
       .type('text/html')

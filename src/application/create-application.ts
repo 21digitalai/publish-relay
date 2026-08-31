@@ -9,7 +9,8 @@ export function createApplication(config: RuntimeConfig, auth?: AuthService): Fa
 
   application.get('/health/live', () => ({ data: { status: 'ok' }, error: null }));
   application.get('/api', () => ({ data: { name: 'Publish Relay' }, error: null }));
-  if (auth) registerAuthRoutes(application, auth);
+  if (auth)
+    registerAuthRoutes(application, auth, { secureCookies: config.NODE_ENV === 'production' });
 
   return application;
 }

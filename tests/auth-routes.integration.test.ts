@@ -30,6 +30,15 @@ function createTestApplication(store: AuthStore) {
   return application;
 }
 
+function createProductionApplication(store: AuthStore) {
+  const application = createApplication(
+    { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
+    new AuthService(store),
+  );
+  applications.push(application);
+  return application;
+}
+
 describe('authentication HTTP boundary', () => {
   it('registers an account and returns only the identity contract', async () => {
     const response = await createTestApplication(createStore()).inject({
@@ -93,6 +102,49 @@ describe('authentication HTTP boundary', () => {
       ).statusCode,
     ).toBe(200);
     expect(store.revokeSession).toHaveBeenCalledOnce();
+  });
+
+  it('sets secure cookies in production behind a TLS-terminating reverse proxy', async () => {
+    const store = createStore();
+    vi.mocked(store.findLogin).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      passwordHash: await hashPassword('long-password'),
+    });
+    const response = await createProductionApplication(store).inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'owner@example.test', password: 'long-password' },
+    });
+    expect(response.cookies).toHaveLength(2);
+    expect(response.cookies.every((cookie) => cookie.secure)).toBe(true);
+  });
+
+  it('denies a session cookie when its workspace is substituted', async () => {
+    const store = createStore();
+    vi.mocked(store.findSession).mockImplementation((workspaceId) =>
+      Promise.resolve(
+        workspaceId === 'w1'
+          ? {
+              userId: 'u1',
+              workspaceId: 'w1',
+              role: 'owner',
+              expiresAt: new Date(Date.now() + 60_000),
+              revokedAt: null,
+            }
+          : null,
+      ),
+    );
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    const response = await createTestApplication(store).inject({
+      method: 'GET',
+      url: '/app',
+      headers: { cookie: 'publish_relay_session=w2.token' },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(store.findSession).toHaveBeenCalledWith('w2', expect.any(String));
+    expect(store.findCurrentRole).not.toHaveBeenCalled();
   });
 
   it('denies a session when live membership lookup no longer authorizes it', async () => {

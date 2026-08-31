@@ -105,7 +105,10 @@ describe('Publish Relay CLI', () => {
         state: 'published',
         providerToken: 'provider-secret',
         nested: { password: 'credential' },
-        links: { job: '/api/v1/jobs/job-1', post: '/api/v1/posts/post-1' },
+        createdAt: '2026-08-31T21:00:00.000Z',
+        updatedAt: '2026-08-31T21:01:00.000Z',
+        scheduledAt: '2026-08-31T21:02:00.000Z',
+        links: { self: '/api/v1/jobs/job-1', post: '/api/v1/posts/post-1' },
       },
       meta: { requestId: 'request-success', internalTrace: 'private-trace' },
     });
@@ -120,13 +123,98 @@ describe('Publish Relay CLI', () => {
         state: 'published',
         providerToken: '[REDACTED]',
         nested: '[REDACTED]',
-        links: { job: '/api/v1/jobs/job-1', post: '/api/v1/posts/post-1' },
+        createdAt: '2026-08-31T21:00:00.000Z',
+        updatedAt: '2026-08-31T21:01:00.000Z',
+        scheduledAt: '2026-08-31T21:02:00.000Z',
+        links: { self: '/api/v1/jobs/job-1', post: '/api/v1/posts/post-1' },
       },
       meta: { requestId: 'request-success', internalTrace: '[REDACTED]' },
     });
     expect(result.stdout).not.toContain('provider-secret');
     expect(result.stdout).not.toContain('credential');
     expect(result.stdout).not.toContain('private-trace');
+  });
+
+  it('preserves the posts list contract while redacting injected nested fields', async () => {
+    const baseUrl = await fixture(200, {
+      success: true,
+      data: {
+        items: [
+          {
+            id: 'post-1',
+            createdAt: '2026-08-31T21:00:00.000Z',
+            updatedAt: '2026-08-31T21:01:00.000Z',
+            links: { self: '/api/v1/posts/post-1', providerConsole: 'private-url' },
+            accessToken: 'provider-secret',
+          },
+        ],
+        nextCursor: 'cursor-1',
+      },
+      meta: { requestId: 'request-list' },
+    });
+    const result = await cli(['posts', 'list', '--base-url', baseUrl], {
+      PUBLISH_RELAY_API_KEY: 'test-key',
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      success: true,
+      data: {
+        items: [
+          {
+            id: 'post-1',
+            createdAt: '2026-08-31T21:00:00.000Z',
+            updatedAt: '2026-08-31T21:01:00.000Z',
+            links: { self: '/api/v1/posts/post-1', providerConsole: '[REDACTED]' },
+            accessToken: '[REDACTED]',
+          },
+        ],
+        nextCursor: 'cursor-1',
+      },
+      meta: { requestId: 'request-list' },
+    });
+  });
+
+  it('preserves the post detail contract including nested job links', async () => {
+    const baseUrl = await fixture(200, {
+      success: true,
+      data: {
+        id: 'post-1',
+        revisionId: 'revision-1',
+        revisionNumber: 2,
+        createdAt: '2026-08-31T21:00:00.000Z',
+        updatedAt: '2026-08-31T21:01:00.000Z',
+        links: { self: '/api/v1/posts/post-1' },
+        jobs: [
+          {
+            id: 'job-1',
+            state: 'queued',
+            scheduledAt: '2026-08-31T21:02:00.000Z',
+            links: { self: '/api/v1/jobs/job-1' },
+            providerToken: 'provider-secret',
+          },
+        ],
+      },
+      meta: { requestId: 'request-detail' },
+    });
+    const result = await cli(['posts', 'show', 'post-1', '--base-url', baseUrl], {
+      PUBLISH_RELAY_API_KEY: 'test-key',
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: {
+        revisionNumber: 2,
+        links: { self: '/api/v1/posts/post-1' },
+        jobs: [
+          {
+            id: 'job-1',
+            state: 'queued',
+            scheduledAt: '2026-08-31T21:02:00.000Z',
+            links: { self: '/api/v1/jobs/job-1' },
+            providerToken: '[REDACTED]',
+          },
+        ],
+      },
+    });
   });
 
   it('preflights workspace before a mutation and sends body plus idempotency key', async () => {

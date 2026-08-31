@@ -39,6 +39,7 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   'media:create': { method: 'POST', path: '/api/v1/media', body: true },
   'media:show': { method: 'GET', path: '/api/v1/media/:id' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
+  'posts:list': { method: 'GET', path: '/api/v1/posts' },
   'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
   'posts:update': { method: 'PATCH', path: '/api/v1/posts/:id', body: true },
   'schedules:create': { method: 'POST', path: '/api/v1/schedules', body: true },
@@ -53,7 +54,7 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   'audit:list': { method: 'GET', path: '/api/v1/audit-events' },
   health: { method: 'GET', path: '/health/live' },
 };
-const SAFE_OUTPUT_KEYS = new Set([
+const ENVELOPE_OUTPUT_KEYS = [
   'success',
   'data',
   'error',
@@ -76,8 +77,43 @@ const SAFE_OUTPUT_KEYS = new Set([
   'next',
   'cursor',
   'version',
-]);
+] as const;
+const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
+  'posts:list': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'items',
+    'nextCursor',
+    'createdAt',
+    'updatedAt',
+    'self',
+  ]),
+  'posts:show': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'createdAt',
+    'updatedAt',
+    'revisionNumber',
+    'scheduledAt',
+    'jobs',
+    'self',
+  ]),
+  'publishes:show': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'createdAt',
+    'updatedAt',
+    'scheduledAt',
+    'self',
+  ]),
+  'publishes:poll': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'createdAt',
+    'updatedAt',
+    'scheduledAt',
+    'self',
+  ]),
+};
+const DEFAULT_OUTPUT_KEYS = new Set(ENVELOPE_OUTPUT_KEYS);
 const REDACTED = '[REDACTED]';
+let activeCommand = 'error';
 
 class CliError extends Error {
   public constructor(
@@ -207,10 +243,11 @@ function errorCode(body: Json): string | undefined {
 function redactOutput(value: Json): Json {
   if (Array.isArray(value)) return value.map(redactOutput);
   if (!value || typeof value !== 'object') return value;
+  const safeKeys = SAFE_OUTPUT_KEYS_BY_COMMAND[activeCommand] ?? DEFAULT_OUTPUT_KEYS;
   return Object.fromEntries(
     Object.entries(value).map(([key, child]) => [
       key,
-      SAFE_OUTPUT_KEYS.has(key) ? redactOutput(child) : REDACTED,
+      safeKeys.has(key) ? redactOutput(child) : REDACTED,
     ]),
   );
 }
@@ -298,6 +335,7 @@ async function pollJob(
 
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
+  activeCommand = parsed.command;
   if (parsed.command === 'version') return { success: true, data: { version: '1.0.0' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);

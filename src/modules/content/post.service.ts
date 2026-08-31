@@ -1,6 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { PostValidationError } from './post.errors.js';
 import { createPostIntent, revisePostIntent, type PostRevisionInput } from './post.repository.js';
 
 export interface PostIntentInput extends PostRevisionInput {
@@ -10,12 +11,13 @@ export interface PostIntentInput extends PostRevisionInput {
 
 function validatePostIntent(input: PostIntentInput): void {
   if (input.providerAccountIds.length === 0)
-    throw new Error('At least one provider account is required');
+    throw new PostValidationError('At least one provider account is required');
   if (new Set(input.providerAccountIds).size !== input.providerAccountIds.length)
-    throw new Error('Provider account targets must be unique');
+    throw new PostValidationError('Provider account targets must be unique');
   if (new Set(input.mediaIds).size !== input.mediaIds.length)
-    throw new Error('Media references must be unique');
-  if (!Number.isFinite(input.scheduledAt.getTime())) throw new Error('Scheduled time is invalid');
+    throw new PostValidationError('Media references must be unique');
+  if (!Number.isFinite(input.scheduledAt.getTime()))
+    throw new PostValidationError('Scheduled time is invalid');
 }
 
 export async function createPost(

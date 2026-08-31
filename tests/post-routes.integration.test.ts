@@ -234,9 +234,64 @@ describe('POST /api/v1/posts', () => {
       error: { code: 'rate_limit_exceeded' },
     });
   });
+
+  it('redacts unexpected mutation failures behind the stable error envelope', async () => {
+    const internalMessage = 'database password appeared in an internal failure';
+    vi.spyOn(database, 'transaction').mockRejectedValueOnce(new Error(internalMessage));
+    const failed = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+        'idempotency-key': 'unexpected-failure',
+      },
+      payload: requestPayload(),
+    });
+
+    expect(failed.statusCode).toBe(500);
+    expect(failed.body).not.toContain(internalMessage);
+    const failureBody = failed.json<{
+      success: boolean;
+      error: { code: string; message: string; requestId: string };
+    }>();
+    expect(failureBody).toMatchObject({
+      success: false,
+      error: {
+        code: 'internal_error',
+        message: 'Internal server error',
+      },
+    });
+    expect(typeof failureBody.error.requestId).toBe('string');
+  });
 });
 
 describe('GET /api/v1/posts and jobs', () => {
+  it.each(['/api/v1/posts/not-a-uuid', '/api/v1/jobs/not-a-uuid'])(
+    'returns the stable validation envelope for invalid detail path %s',
+    async (url) => {
+      const response = await application.inject({
+        method: 'GET',
+        url,
+        headers: {
+          authorization: 'Bearer pr_test.secret',
+          'x-publish-relay-workspace': workspaceId,
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = response.json<{
+        success: boolean;
+        error: { code: string; requestId: string };
+      }>();
+      expect(body).toMatchObject({
+        success: false,
+        error: { code: 'invalid_request' },
+      });
+      expect(typeof body.error.requestId).toBe('string');
+    },
+  );
+
   it('paginates with filter-bound cursors and exposes bounded direct-resource details', async () => {
     const headers = {
       authorization: 'Bearer pr_test.secret',

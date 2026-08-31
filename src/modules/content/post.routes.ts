@@ -10,6 +10,7 @@ import type { ApiRateLimiter } from '../api/rate-limit.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { createPostRequestSchema } from './post.contract.js';
+import { PostValidationError } from './post.errors.js';
 import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
 import { createPostInTransaction } from './post.service.js';
 
@@ -108,45 +109,74 @@ export function registerPostRoutes(
   });
 
   application.get('/api/v1/posts/:postId', async (request, reply) => {
-    const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
-    if (!principal)
+    try {
+      const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+      if (!principal)
+        return await reply
+          .code(401)
+          .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
+      const { postId } = z.object({ postId: z.uuid() }).parse(request.params);
+      const post = await getPostDetail(database, principal.workspaceId, postId);
+      if (!post)
+        return await reply.code(404).send(errorEnvelope('not_found', 'Post not found', request.id));
+      return await reply.send(
+        successEnvelope(
+          {
+            ...post,
+            links: { self: `/api/v1/posts/${post.id}` },
+            jobs: post.jobs.map((job) => ({ ...job, links: { self: `/api/v1/jobs/${job.id}` } })),
+          },
+          request.id,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof ApiKeyAuthorizationError)
+        return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (error instanceof z.ZodError)
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', error.message, request.id));
+      request.log.error({ err: error }, 'Post detail request failed');
       return await reply
-        .code(401)
-        .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
-    if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
-    const { postId } = z.object({ postId: z.uuid() }).parse(request.params);
-    const post = await getPostDetail(database, principal.workspaceId, postId);
-    if (!post)
-      return await reply.code(404).send(errorEnvelope('not_found', 'Post not found', request.id));
-    return await reply.send(
-      successEnvelope(
-        {
-          ...post,
-          links: { self: `/api/v1/posts/${post.id}` },
-          jobs: post.jobs.map((job) => ({ ...job, links: { self: `/api/v1/jobs/${job.id}` } })),
-        },
-        request.id,
-      ),
-    );
+        .code(500)
+        .send(errorEnvelope('internal_error', 'Internal server error', request.id));
+    }
   });
 
   application.get('/api/v1/jobs/:jobId', async (request, reply) => {
-    const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
-    if (!principal)
+    try {
+      const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+      if (!principal)
+        return await reply
+          .code(401)
+          .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
+      const { jobId } = z.object({ jobId: z.uuid() }).parse(request.params);
+      const job = await getJobDetail(database, principal.workspaceId, jobId);
+      if (!job)
+        return await reply.code(404).send(errorEnvelope('not_found', 'Job not found', request.id));
+      return await reply.send(
+        successEnvelope(
+          {
+            ...job,
+            links: { self: `/api/v1/jobs/${job.id}`, post: `/api/v1/posts/${job.postId}` },
+          },
+          request.id,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof ApiKeyAuthorizationError)
+        return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (error instanceof z.ZodError)
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', error.message, request.id));
+      request.log.error({ err: error }, 'Job detail request failed');
       return await reply
-        .code(401)
-        .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
-    if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
-    const { jobId } = z.object({ jobId: z.uuid() }).parse(request.params);
-    const job = await getJobDetail(database, principal.workspaceId, jobId);
-    if (!job)
-      return await reply.code(404).send(errorEnvelope('not_found', 'Job not found', request.id));
-    return await reply.send(
-      successEnvelope(
-        { ...job, links: { self: `/api/v1/jobs/${job.id}`, post: `/api/v1/posts/${job.postId}` } },
-        request.id,
-      ),
-    );
+        .code(500)
+        .send(errorEnvelope('internal_error', 'Internal server error', request.id));
+    }
   });
 
   application.post('/api/v1/posts', async (request, reply) => {
@@ -202,11 +232,14 @@ export function registerPostRoutes(
     } catch (error) {
       if (error instanceof ApiKeyAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
-      if (error instanceof z.ZodError || error instanceof Error)
+      if (error instanceof z.ZodError || error instanceof PostValidationError)
         return await reply
           .code(400)
           .send(errorEnvelope('invalid_request', error.message, request.id));
-      throw error;
+      request.log.error({ err: error }, 'Post mutation failed');
+      return await reply
+        .code(500)
+        .send(errorEnvelope('internal_error', 'Internal server error', request.id));
     }
   });
 }

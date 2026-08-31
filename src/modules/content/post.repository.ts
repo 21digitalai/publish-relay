@@ -9,6 +9,7 @@ import {
   publicationJobs,
   revisionMedia,
 } from '../../database/schema.js';
+import { PostValidationError } from './post.errors.js';
 
 export interface PostRevisionInput {
   content: Record<string, unknown>;
@@ -31,7 +32,7 @@ async function validateTargetOwnership(
       ),
     );
   if (accounts.length !== input.providerAccountIds.length)
-    throw new Error('One or more provider accounts do not belong to the workspace');
+    throw new PostValidationError('One or more provider accounts do not belong to the workspace');
   if (input.mediaIds.length === 0) return;
   const media = await database
     .select({ id: mediaObjects.id })
@@ -43,7 +44,7 @@ async function validateTargetOwnership(
       ),
     );
   if (media.length !== input.mediaIds.length)
-    throw new Error('One or more media objects do not belong to the workspace');
+    throw new PostValidationError('One or more media objects do not belong to the workspace');
 }
 
 async function createRevisionTargets(

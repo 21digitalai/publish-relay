@@ -272,6 +272,23 @@ function jobState(body: Json): string | undefined {
     : undefined;
 }
 
+function routePath(
+  route: { path: string },
+  command: string,
+  id: string | undefined,
+  flags: Record<string, string | true>,
+): string {
+  const path = route.path.replace(':id', encodeURIComponent(id ?? ''));
+  if (command !== 'posts:list') return path;
+  const query = new URLSearchParams();
+  for (const name of ['cursor', 'limit']) {
+    const value = flags[name];
+    if (typeof value === 'string') query.set(name, value);
+  }
+  const encoded = query.toString();
+  return encoded ? `${path}?${encoded}` : path;
+}
+
 async function pollJob(
   profile: Profile,
   key: string,
@@ -354,7 +371,7 @@ async function run(): Promise<Json> {
   }
   if (route.path.includes(':id') && !parsed.id)
     throw new CliError(EXIT.usage, 'A resource ID is required');
-  const path = route.path.replace(':id', encodeURIComponent(parsed.id ?? ''));
+  const path = routePath(route, parsed.command, parsed.id, parsed.flags);
   if (parsed.command === 'publishes:poll' && parsed.id)
     return pollJob(profile, key, expected, path, parsed.id, parsed.flags);
   const body = await readBody(parsed.flags['body-file']);

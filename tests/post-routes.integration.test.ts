@@ -1,4 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -8,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import { CursorCodec } from '../src/modules/api/contract.js';
 import { registerPostRoutes } from '../src/modules/content/post.routes.js';
+import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js';
+import { ApiKeyAuthorizationError } from '../src/modules/identity/api-key.service.js';
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
 
 const migrations = [
@@ -35,6 +40,67 @@ const foreignProviderAccountId = '00000000-0000-4000-8000-000000000811';
 let database: PGlite;
 let application: FastifyInstance;
 let apiKeys: ApiKeyService;
+let authenticate: ReturnType<typeof vi.fn>;
+let requireCapability: ReturnType<typeof vi.fn>;
+const temporaryDirectories: string[] = [];
+
+async function runCli(args: string[], apiKey = 'pr_test.secret') {
+  if (!application.server.listening) await application.listen({ host: '127.0.0.1', port: 0 });
+  const address = application.server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing application address');
+  return new Promise<{ code: number; body: Record<string, unknown>; stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          'src/entrypoints/cli.ts',
+          ...args,
+          '--base-url',
+          `http://127.0.0.1:${String(address.port)}`,
+        ],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            PUBLISH_RELAY_API_KEY: apiKey,
+            PUBLISH_RELAY_WORKSPACE: workspaceId,
+          },
+        },
+      );
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (value) => (stdout += String(value)));
+      child.stderr.on('data', (value) => (stderr += String(value)));
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (!stdout.trim()) {
+          reject(new Error(`CLI exited without JSON output (code ${String(code)}): ${stderr}`));
+          return;
+        }
+        try {
+          resolve({
+            code: code ?? -1,
+            body: JSON.parse(stdout) as Record<string, unknown>,
+            stderr,
+          });
+        } catch (error) {
+          reject(new Error(`CLI emitted invalid JSON: ${stdout}`, { cause: error }));
+        }
+      });
+    },
+  );
+}
+
+function stableEnvelope(body: Record<string, unknown>): Record<string, unknown> {
+  const copy = structuredClone(body);
+  const meta = copy.meta as Record<string, unknown> | undefined;
+  if (meta) delete meta.requestId;
+  const error = copy.error as Record<string, unknown> | undefined;
+  if (error) delete error.requestId;
+  return copy;
+}
 
 function requestPayload(text = 'Scheduled through the API') {
   return {
@@ -74,16 +140,16 @@ beforeEach(async () => {
     INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
       VALUES ('${foreignProviderAccountId}', '${foreignWorkspaceId}', '00000000-0000-4000-8000-000000000813', 'foreign', 'Foreign');
   `);
-  apiKeys = {
-    authenticate: vi.fn().mockResolvedValue({
-      id: apiKeyId,
-      workspaceId,
-      createdByUserId: userId,
-      capabilities: ['schedules:write', 'schedules:read'],
-    }),
-    requireCapability: vi.fn().mockResolvedValue(undefined),
-  } as unknown as ApiKeyService;
+  authenticate = vi.fn().mockResolvedValue({
+    id: apiKeyId,
+    workspaceId,
+    createdByUserId: userId,
+    capabilities: ['schedules:write', 'schedules:read'],
+  });
+  requireCapability = vi.fn().mockResolvedValue(undefined);
+  apiKeys = { authenticate, requireCapability } as unknown as ApiKeyService;
   application = Fastify();
+  registerApiKeyRoutes(application, apiKeys);
   registerPostRoutes(
     application,
     drizzle(database) as unknown as NodePgDatabase,
@@ -102,6 +168,9 @@ beforeEach(async () => {
 afterEach(async () => {
   await application.close();
   await database.close();
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
+  );
 });
 
 describe('POST /api/v1/posts', () => {
@@ -367,5 +436,212 @@ describe('GET /api/v1/posts and jobs', () => {
         })
       ).statusCode,
     ).toBe(404);
+  });
+});
+
+describe('CLI and direct HTTP parity', () => {
+  const headers = {
+    authorization: 'Bearer pr_test.secret',
+    'x-publish-relay-workspace': workspaceId,
+  };
+
+  it('returns the same stable create envelope, including idempotent replay', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-cli-parity-'));
+    temporaryDirectories.push(directory);
+    const bodyFile = join(directory, 'body.json');
+    await writeFile(bodyFile, JSON.stringify(requestPayload()));
+    const direct = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: { ...headers, 'idempotency-key': 'cli-parity-create' },
+      payload: requestPayload(),
+    });
+    const throughCli = await runCli([
+      'posts',
+      'create',
+      '--require-workspace',
+      workspaceId,
+      '--idempotency-key',
+      'cli-parity-create',
+      '--body-file',
+      bodyFile,
+    ]);
+
+    expect(direct.statusCode).toBe(201);
+    expect(throughCli.code).toBe(0);
+    expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+
+    const createdBody = direct.json<{ data: { links: { jobs: string[] } } }>();
+    const jobPath = createdBody.data.links.jobs[0];
+    if (!jobPath) throw new Error('Expected a publication job link');
+    const jobId = jobPath.split('/').at(-1);
+    if (!jobId) throw new Error('Expected a publication job ID');
+    const directJob = await application.inject({ method: 'GET', url: jobPath, headers });
+    const cliJob = await runCli(['publishes', 'show', jobId]);
+    expect(directJob.statusCode).toBe(200);
+    expect(cliJob.code).toBe(0);
+    expect(stableEnvelope(cliJob.body)).toEqual(stableEnvelope(directJob.json()));
+
+    const mismatch = await runCli([
+      'posts',
+      'create',
+      '--require-workspace',
+      foreignWorkspaceId,
+      '--idempotency-key',
+      'cli-parity-wrong-workspace',
+      '--body-file',
+      bodyFile,
+    ]);
+    expect(mismatch.code).toBe(4);
+    expect(mismatch.body).toMatchObject({
+      success: false,
+      error: { code: 'workspace_mismatch' },
+    });
+  });
+
+  it.each([
+    [
+      'invalid cursor',
+      '/api/v1/posts?cursor=malformed',
+      ['posts', 'list', '--cursor', 'malformed'],
+      400,
+      5,
+    ],
+    [
+      'missing resource',
+      `/api/v1/posts/${foreignProviderAccountId}`,
+      ['posts', 'show', foreignProviderAccountId],
+      404,
+      5,
+    ],
+    [
+      'missing publication job',
+      `/api/v1/jobs/${foreignProviderAccountId}`,
+      ['publishes', 'show', foreignProviderAccountId],
+      404,
+      5,
+    ],
+  ])('matches %s envelopes and exits', async (_name, url, command, status, exit) => {
+    const direct = await application.inject({ method: 'GET', url, headers });
+    const throughCli = await runCli(command);
+    expect(direct.statusCode).toBe(status);
+    expect(throughCli.code).toBe(exit);
+    expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+  });
+
+  it('matches capability denial without leaking the key', async () => {
+    requireCapability.mockRejectedValue(new ApiKeyAuthorizationError('denied'));
+    const direct = await application.inject({ method: 'GET', url: '/api/v1/posts', headers });
+    const throughCli = await runCli(['posts', 'list']);
+    expect(direct.statusCode).toBe(403);
+    expect(throughCli.code).toBe(4);
+    expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+    expect(JSON.stringify(throughCli.body)).not.toContain('pr_test.secret');
+  });
+
+  it.each(['revoked-key', 'expired-key'])('matches rejected %s authentication', async (key) => {
+    authenticate.mockImplementation((_workspace, secret) =>
+      Promise.resolve(
+        secret === key
+          ? null
+          : ({
+              id: apiKeyId,
+              workspaceId,
+              createdByUserId: userId,
+              capabilities: ['schedules:write', 'schedules:read'],
+            } as never),
+      ),
+    );
+    const requestHeaders = { ...headers, authorization: `Bearer ${key}` };
+    const direct = await application.inject({
+      method: 'GET',
+      url: '/api/v1/posts',
+      headers: requestHeaders,
+    });
+    const throughCli = await runCli(['posts', 'list'], key);
+    expect(direct.statusCode).toBe(401);
+    expect(throughCli.code).toBe(3);
+    expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+    expect(JSON.stringify(throughCli.body)).not.toContain(key);
+  });
+
+  it('matches idempotency conflict', async () => {
+    const mutationHeaders = { ...headers, 'idempotency-key': 'cli-parity-conflict' };
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: '/api/v1/posts',
+          headers: mutationHeaders,
+          payload: requestPayload(),
+        })
+      ).statusCode,
+    ).toBe(201);
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-cli-conflict-'));
+    temporaryDirectories.push(directory);
+    const bodyFile = join(directory, 'body.json');
+    await writeFile(bodyFile, JSON.stringify(requestPayload('Changed content')));
+    const direct = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: mutationHeaders,
+      payload: requestPayload('Changed content'),
+    });
+    const throughCli = await runCli([
+      'posts',
+      'create',
+      '--require-workspace',
+      workspaceId,
+      '--idempotency-key',
+      'cli-parity-conflict',
+      '--body-file',
+      bodyFile,
+    ]);
+    expect(direct.statusCode).toBe(409);
+    expect(throughCli.code).toBe(6);
+    expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+  });
+
+  it('matches read rate limiting', async () => {
+    for (let index = 0; index < 10; index += 1)
+      expect(
+        (await application.inject({ method: 'GET', url: '/api/v1/posts', headers })).statusCode,
+      ).toBe(200);
+    const direct = await application.inject({ method: 'GET', url: '/api/v1/posts', headers });
+    const throughCli = await runCli(['posts', 'list']);
+    expect(direct.statusCode).toBe(429);
+    expect(throughCli.code).toBe(7);
+    expect(stableEnvelope(throughCli.body)).toEqual(stableEnvelope(direct.json()));
+  });
+
+  it('preserves the job DTO while redacting an injected nested field', async () => {
+    application.addHook('preSerialization', (_request, _reply, payload, done) => {
+      const envelope = payload as { data?: Record<string, unknown> };
+      done(null, {
+        ...envelope,
+        ...(envelope.data
+          ? { data: { ...envelope.data, diagnostic: { accessToken: 'provider-secret' } } }
+          : {}),
+      });
+    });
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: { ...headers, 'idempotency-key': 'cli-parity-redaction' },
+      payload: requestPayload(),
+    });
+    const jobPath = created.json<{ data: { links: { jobs: string[] } } }>().data.links.jobs[0];
+    if (!jobPath) throw new Error('Expected a publication job link');
+    const jobId = jobPath.split('/').at(-1);
+    if (!jobId) throw new Error('Expected a publication job ID');
+
+    const direct = await application.inject({ method: 'GET', url: jobPath, headers });
+    const throughCli = await runCli(['publishes', 'show', jobId]);
+    const directBody = stableEnvelope(direct.json());
+    const directData = directBody.data as Record<string, unknown>;
+    directData.diagnostic = '[REDACTED]';
+    expect(throughCli.code).toBe(0);
+    expect(stableEnvelope(throughCli.body)).toEqual(directBody);
+    expect(JSON.stringify(throughCli.body)).not.toContain('provider-secret');
   });
 });

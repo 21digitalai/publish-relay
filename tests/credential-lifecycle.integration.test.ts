@@ -18,12 +18,14 @@ import type {
 } from '../src/modules/credentials/envelope.js';
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
 import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
+import { hashOauthState, issueOauthTransaction } from '../src/modules/credentials/oauth.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
   '0001_solid_spiral.sql',
   '0002_busy_mantis.sql',
   '0003_many_marvel_boy.sql',
+  '0004_easy_doctor_spectrum.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -87,19 +89,36 @@ describe('credential and OAuth persistence', () => {
   });
 
   it('consumes an unexpired OAuth state once and discovers multiple fake accounts', async () => {
-    const stateHash = 'only-a-hash-is-persisted';
-    await database.exec(
-      `INSERT INTO oauth_transactions (workspace_id, user_id, provider, state_hash, expires_at) VALUES ('${workspaceId}', '${userId}', 'fake', '${stateHash}', now() + interval '5 minutes')`,
-    );
     const db = drizzle(database) as unknown as NodePgDatabase;
-    const first = await withTenantTransaction(db, { workspaceId }, (tx) =>
-      consumeOauthTransaction(tx, workspaceId, stateHash, new Date()),
+    const key = randomBytes(32);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    const issued = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'fake',
+      redirectUri: 'https://app.example.test/oauth/callback',
+    });
+    expect(issued.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(10 * 60 * 1000);
+    const persisted = await database.query<{ state_hash: string; redirect_uri: string }>(
+      'select state_hash, redirect_uri from oauth_transactions',
     );
-    const second = await withTenantTransaction(db, { workspaceId }, (tx) =>
-      consumeOauthTransaction(tx, workspaceId, stateHash, new Date()),
-    );
+    expect(persisted.rows[0]?.state_hash).toBe(hashOauthState(issued.state));
+    expect(JSON.stringify(persisted.rows[0])).not.toContain(issued.state);
+    const attempts = await Promise.all([
+      withTenantTransaction(db, { workspaceId }, (tx) =>
+        consumeOauthTransaction(tx, workspaceId, hashOauthState(issued.state), new Date()),
+      ),
+      withTenantTransaction(db, { workspaceId }, (tx) =>
+        consumeOauthTransaction(tx, workspaceId, hashOauthState(issued.state), new Date()),
+      ),
+    ]);
+    const first = attempts.find(Boolean);
     expect(first?.provider).toBe('fake');
-    expect(second).toBeNull();
+    expect(first?.redirectUri).toBe('https://app.example.test/oauth/callback');
+    expect(attempts.filter(Boolean)).toHaveLength(1);
     const adapter = new FakeProviderConnectionAdapter([
       { providerAccountId: 'one', displayName: 'One' },
       { providerAccountId: 'two', displayName: 'Two' },

@@ -230,6 +230,10 @@ export const oauthTransactions = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     provider: text('provider').notNull(),
     stateHash: text('state_hash').notNull().unique(),
+    pkceCredentialId: uuid('pkce_credential_id')
+      .notNull()
+      .references(() => credentials.id, { onDelete: 'restrict' }),
+    redirectUri: text('redirect_uri').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
     ...timestamps,

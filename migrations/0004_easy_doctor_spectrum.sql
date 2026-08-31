@@ -1,0 +1,3 @@
+ALTER TABLE "oauth_transactions" ADD COLUMN "pkce_credential_id" uuid NOT NULL;--> statement-breakpoint
+ALTER TABLE "oauth_transactions" ADD COLUMN "redirect_uri" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "oauth_transactions" ADD CONSTRAINT "oauth_transactions_pkce_credential_id_credentials_id_fk" FOREIGN KEY ("pkce_credential_id") REFERENCES "public"."credentials"("id") ON DELETE restrict ON UPDATE no action;

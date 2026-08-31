@@ -83,7 +83,13 @@ export async function consumeOauthTransaction(
   workspaceId: string,
   stateHash: string,
   now: Date,
-): Promise<{ id: string; userId: string; provider: string } | null> {
+): Promise<{
+  id: string;
+  userId: string;
+  provider: string;
+  pkceCredentialId: string;
+  redirectUri: string;
+} | null> {
   const rows = await database
     .update(oauthTransactions)
     .set({ consumedAt: now, updatedAt: now })
@@ -99,6 +105,28 @@ export async function consumeOauthTransaction(
       id: oauthTransactions.id,
       userId: oauthTransactions.userId,
       provider: oauthTransactions.provider,
+      pkceCredentialId: oauthTransactions.pkceCredentialId,
+      redirectUri: oauthTransactions.redirectUri,
     });
   return rows[0] ?? null;
+}
+
+export async function createOauthTransaction(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    userId: string;
+    provider: string;
+    stateHash: string;
+    pkceCredentialId: string;
+    redirectUri: string;
+    expiresAt: Date;
+  },
+): Promise<string> {
+  const rows = await database
+    .insert(oauthTransactions)
+    .values(input)
+    .returning({ id: oauthTransactions.id });
+  if (!rows[0]) throw new Error('OAuth transaction insert returned no record');
+  return rows[0].id;
 }

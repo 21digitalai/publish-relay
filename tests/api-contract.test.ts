@@ -62,6 +62,20 @@ describe('API v1 contract', () => {
     });
   });
 
+  it('publishes provider-neutral post collection and direct-resource contracts', () => {
+    expect(apiV1OpenApiDocument()).toMatchObject({
+      paths: {
+        '/api/v1/posts': { get: { operationId: 'listPosts', responses: { '200': {}, '400': {} } } },
+        '/api/v1/posts/{postId}': {
+          get: { operationId: 'getPost', responses: { '200': {}, '404': {} } },
+        },
+        '/api/v1/jobs/{jobId}': {
+          get: { operationId: 'getJob', responses: { '200': {}, '404': {} } },
+        },
+      },
+    });
+  });
+
   it('round trips a signed cursor with normalized filters', () => {
     const codec = new CursorCodec(randomBytes(32));
     const now = new Date('2026-08-31T12:00:00.000Z');

@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-import { createPostRequestSchema, postMutationResponseSchema } from '../content/post.contract.js';
+import {
+  createPostRequestSchema,
+  jobDetailResponseSchema,
+  postCollectionResponseSchema,
+  postDetailResponseSchema,
+  postMutationResponseSchema,
+} from '../content/post.contract.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
 const accountSchema = z.object({
@@ -52,6 +58,49 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         },
       },
       '/api/v1/posts': {
+        get: {
+          operationId: 'listPosts',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            { name: 'cursor', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Bounded post summaries',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(postCollectionResponseSchema)),
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid or filter-mismatched cursor',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '401': {
+              description: 'Authentication required',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '403': {
+              description: 'Missing schedules:read capability',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '429': {
+              description: 'Read rate limit exceeded',
+              headers: {
+                'Retry-After': { schema: { type: 'integer', minimum: 1 } },
+                'X-RateLimit-Limit': { schema: { type: 'integer', minimum: 1 } },
+                'X-RateLimit-Remaining': { schema: { type: 'integer', minimum: 0 } },
+              },
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+          },
+        },
         post: {
           operationId: 'createPost',
           security: [{ bearerAuth: [], workspace: [] }],
@@ -115,6 +164,62 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               content: {
                 'application/json': { schema: openApiJsonSchema(errorResponseSchema) },
               },
+            },
+          },
+        },
+      },
+      '/api/v1/posts/{postId}': {
+        get: {
+          operationId: 'getPost',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'postId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Post detail',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(postDetailResponseSchema)),
+                },
+              },
+            },
+            '404': {
+              description: 'Post not found',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+          },
+        },
+      },
+      '/api/v1/jobs/{jobId}': {
+        get: {
+          operationId: 'getJob',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'jobId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Publication job detail',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(jobDetailResponseSchema)),
+                },
+              },
+            },
+            '404': {
+              description: 'Job not found',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
             },
           },
         },

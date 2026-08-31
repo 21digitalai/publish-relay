@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -24,6 +24,23 @@ function resourceLinks(result: { postId: string; revisionId: string; jobIds: str
   };
 }
 
+async function admitRead(
+  rateLimiter: ApiRateLimiter,
+  principal: { workspaceId: string; id: string },
+  requestId: string,
+  reply: FastifyReply,
+): Promise<boolean> {
+  const decision = rateLimiter.check(principal.workspaceId, principal.id, 'read');
+  void reply.header('X-RateLimit-Limit', decision.limit);
+  void reply.header('X-RateLimit-Remaining', decision.remaining);
+  if (decision.allowed) return true;
+  void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);
+  await reply
+    .code(429)
+    .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', requestId));
+  return false;
+}
+
 export function registerPostRoutes(
   application: FastifyInstance,
   database: NodePgDatabase,
@@ -38,6 +55,7 @@ export function registerPostRoutes(
         return await reply
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
       const query = z
         .object({
           cursor: z.string().optional(),
@@ -95,6 +113,7 @@ export function registerPostRoutes(
       return await reply
         .code(401)
         .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+    if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
     const { postId } = z.object({ postId: z.uuid() }).parse(request.params);
     const post = await getPostDetail(database, principal.workspaceId, postId);
     if (!post)
@@ -117,6 +136,7 @@ export function registerPostRoutes(
       return await reply
         .code(401)
         .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+    if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
     const { jobId } = z.object({ jobId: z.uuid() }).parse(request.params);
     const job = await getJobDetail(database, principal.workspaceId, jobId);
     if (!job)

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import { errorEnvelope, successEnvelope } from '../api/contract.js';
+import type { ApiRateLimiter } from '../api/rate-limit.js';
 import type { ApiKeyCapability } from './api-key.js';
 import type { ApiKeyPrincipal, ApiKeyService } from './api-key.service.js';
 
@@ -26,13 +27,28 @@ export async function authorizeApiKeyRequest(
   return principal;
 }
 
-export function registerApiKeyRoutes(application: FastifyInstance, service: ApiKeyService): void {
+export function registerApiKeyRoutes(
+  application: FastifyInstance,
+  service: ApiKeyService,
+  rateLimiter?: ApiRateLimiter,
+): void {
   application.get('/api/v1/account', async (request, reply) => {
     const principal = await authorizeApiKeyRequest(request, service);
     if (!principal)
       return reply
         .code(401)
         .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+    const decision = rateLimiter?.check(principal.workspaceId, principal.id, 'read');
+    if (decision) {
+      void reply.header('X-RateLimit-Limit', decision.limit);
+      void reply.header('X-RateLimit-Remaining', decision.remaining);
+      if (!decision.allowed) {
+        void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);
+        return reply
+          .code(429)
+          .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+      }
+    }
     return successEnvelope(principal, request.id);
   });
 }

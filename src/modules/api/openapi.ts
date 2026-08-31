@@ -36,6 +36,17 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
                 'application/json': { schema: openApiJsonSchema(errorResponseSchema) },
               },
             },
+            '429': {
+              description: 'Rate limit exceeded',
+              headers: {
+                'Retry-After': { schema: { type: 'integer', minimum: 1 } },
+                'X-RateLimit-Limit': { schema: { type: 'integer', minimum: 1 } },
+                'X-RateLimit-Remaining': { schema: { type: 'integer', minimum: 0 } },
+              },
+              content: {
+                'application/json': { schema: openApiJsonSchema(errorResponseSchema) },
+              },
+            },
           },
         },
       },

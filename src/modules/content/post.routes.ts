@@ -2,13 +2,15 @@ import type { FastifyInstance } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
-import { errorEnvelope, successEnvelope } from '../api/contract.js';
+import type { CursorCodec } from '../api/contract.js';
+import { InvalidCursorError, errorEnvelope, successEnvelope } from '../api/contract.js';
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { createPostRequestSchema } from './post.contract.js';
+import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
 import { createPostInTransaction } from './post.service.js';
 
 function resourceLinks(result: { postId: string; revisionId: string; jobIds: string[] }) {
@@ -27,7 +29,106 @@ export function registerPostRoutes(
   database: NodePgDatabase,
   apiKeys: ApiKeyService,
   rateLimiter: ApiRateLimiter,
+  cursorCodec: CursorCodec,
 ): void {
+  application.get('/api/v1/posts', async (request, reply) => {
+    try {
+      const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+      if (!principal)
+        return await reply
+          .code(401)
+          .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      const query = z
+        .object({
+          cursor: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(100).default(25),
+        })
+        .parse(request.query);
+      const filters = { resource: 'posts', limit: query.limit };
+      const position = query.cursor
+        ? cursorCodec.decode(query.cursor, filters).position
+        : undefined;
+      const before = position
+        ? z.object({ createdAt: z.iso.datetime(), id: z.uuid() }).parse(JSON.parse(position))
+        : undefined;
+      const rows = await listPostSummaries(database, {
+        workspaceId: principal.workspaceId,
+        limit: query.limit + 1,
+        ...(before ? { before: { createdAt: new Date(before.createdAt), id: before.id } } : {}),
+      });
+      const page = rows.slice(0, query.limit);
+      const last = page[page.length - 1];
+      const nextCursor =
+        rows.length > query.limit && last
+          ? cursorCodec.encode(
+              JSON.stringify({ createdAt: last.createdAt.toISOString(), id: last.id }),
+              filters,
+            )
+          : null;
+      return await reply.send(
+        successEnvelope(
+          {
+            items: page.map((post) => ({ ...post, links: { self: `/api/v1/posts/${post.id}` } })),
+            nextCursor,
+          },
+          request.id,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof ApiKeyAuthorizationError)
+        return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (
+        error instanceof InvalidCursorError ||
+        error instanceof z.ZodError ||
+        error instanceof SyntaxError
+      )
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', error.message, request.id));
+      throw error;
+    }
+  });
+
+  application.get('/api/v1/posts/:postId', async (request, reply) => {
+    const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+    if (!principal)
+      return await reply
+        .code(401)
+        .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+    const { postId } = z.object({ postId: z.uuid() }).parse(request.params);
+    const post = await getPostDetail(database, principal.workspaceId, postId);
+    if (!post)
+      return await reply.code(404).send(errorEnvelope('not_found', 'Post not found', request.id));
+    return await reply.send(
+      successEnvelope(
+        {
+          ...post,
+          links: { self: `/api/v1/posts/${post.id}` },
+          jobs: post.jobs.map((job) => ({ ...job, links: { self: `/api/v1/jobs/${job.id}` } })),
+        },
+        request.id,
+      ),
+    );
+  });
+
+  application.get('/api/v1/jobs/:jobId', async (request, reply) => {
+    const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+    if (!principal)
+      return await reply
+        .code(401)
+        .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+    const { jobId } = z.object({ jobId: z.uuid() }).parse(request.params);
+    const job = await getJobDetail(database, principal.workspaceId, jobId);
+    if (!job)
+      return await reply.code(404).send(errorEnvelope('not_found', 'Job not found', request.id));
+    return await reply.send(
+      successEnvelope(
+        { ...job, links: { self: `/api/v1/jobs/${job.id}`, post: `/api/v1/posts/${job.postId}` } },
+        request.id,
+      ),
+    );
+  });
+
   application.post('/api/v1/posts', async (request, reply) => {
     try {
       const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:write');

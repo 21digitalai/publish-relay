@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { RuntimeConfig } from '../config/runtime-config.js';
 import { registerApiDocumentationRoute } from '../modules/api/openapi.js';
 import { ApiRateLimiter } from '../modules/api/rate-limit.js';
+import { CursorCodec } from '../modules/api/contract.js';
 import type { AuthService } from '../modules/identity/auth.service.js';
 import { registerAuthRoutes } from '../modules/identity/auth.routes.js';
 import type { ApiKeyService } from '../modules/identity/api-key.service.js';
@@ -44,7 +45,17 @@ export function createApplication(
       windowMs: 60_000,
     });
     registerApiKeyRoutes(application, apiKeys, rateLimiter);
-    if (database) registerPostRoutes(application, database, apiKeys, rateLimiter);
+    if (database) {
+      if (!config.CURSOR_SIGNING_SECRET)
+        throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
+      registerPostRoutes(
+        application,
+        database,
+        apiKeys,
+        rateLimiter,
+        new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
+      );
+    }
   }
 
   return application;

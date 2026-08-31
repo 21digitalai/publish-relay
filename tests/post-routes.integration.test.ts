@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
+import { CursorCodec } from '../src/modules/api/contract.js';
 import { registerPostRoutes } from '../src/modules/content/post.routes.js';
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
 
@@ -78,7 +79,7 @@ beforeEach(async () => {
       id: apiKeyId,
       workspaceId,
       createdByUserId: userId,
-      capabilities: ['schedules:write'],
+      capabilities: ['schedules:write', 'schedules:read'],
     }),
     requireCapability: vi.fn().mockResolvedValue(undefined),
   } as unknown as ApiKeyService;
@@ -94,6 +95,7 @@ beforeEach(async () => {
       mutationKey: 10,
       windowMs: 60_000,
     }),
+    new CursorCodec(Buffer.alloc(32, 7)),
   );
 });
 
@@ -198,6 +200,7 @@ describe('POST /api/v1/posts', () => {
         mutationKey: 1,
         windowMs: 60_000,
       }),
+      new CursorCodec(Buffer.alloc(32, 7)),
     );
     const baseRequest = {
       method: 'POST' as const,
@@ -230,5 +233,84 @@ describe('POST /api/v1/posts', () => {
       success: false,
       error: { code: 'rate_limit_exceeded' },
     });
+  });
+});
+
+describe('GET /api/v1/posts and jobs', () => {
+  it('paginates with filter-bound cursors and exposes bounded direct-resource details', async () => {
+    const headers = {
+      authorization: 'Bearer pr_test.secret',
+      'x-publish-relay-workspace': workspaceId,
+    };
+    for (const [index, text] of ['First', 'Second'].entries())
+      expect(
+        (
+          await application.inject({
+            method: 'POST',
+            url: '/api/v1/posts',
+            headers: { ...headers, 'idempotency-key': `list-post-${String(index)}` },
+            payload: requestPayload(text),
+          })
+        ).statusCode,
+      ).toBe(201);
+
+    const firstPage = await application.inject({
+      method: 'GET',
+      url: '/api/v1/posts?limit=1',
+      headers,
+    });
+    expect(firstPage.statusCode).toBe(200);
+    const page = firstPage.json<{
+      data: { items: { id: string; links: { self: string } }[]; nextCursor: string };
+    }>().data;
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).not.toHaveProperty('createdByUserId');
+    expect(page.items[0]).not.toHaveProperty('content');
+
+    expect(
+      (
+        await application.inject({
+          method: 'GET',
+          url: `/api/v1/posts?limit=2&cursor=${encodeURIComponent(page.nextCursor)}`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (await application.inject({ method: 'GET', url: '/api/v1/posts?cursor=malformed', headers }))
+        .statusCode,
+    ).toBe(400);
+
+    const listedPost = page.items[0];
+    if (!listedPost) throw new Error('Expected a post summary');
+    const post = await application.inject({
+      method: 'GET',
+      url: listedPost.links.self,
+      headers,
+    });
+    expect(post.statusCode).toBe(200);
+    const detail = post.json<{ data: { jobs: { id: string; links: { self: string } }[] } }>().data;
+    expect(detail).not.toHaveProperty('createdByUserId');
+    expect(detail).not.toHaveProperty('content');
+    const listedJob = detail.jobs[0];
+    if (!listedJob) throw new Error('Expected a publication job');
+    const job = await application.inject({
+      method: 'GET',
+      url: listedJob.links.self,
+      headers,
+    });
+    expect(job.statusCode).toBe(200);
+    expect(job.json<{ data: Record<string, unknown> }>().data).not.toHaveProperty(
+      'providerAccountId',
+    );
+    expect(
+      (
+        await application.inject({
+          method: 'GET',
+          url: `/api/v1/jobs/${foreignProviderAccountId}`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(404);
   });
 });

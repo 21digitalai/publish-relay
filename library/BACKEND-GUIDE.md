@@ -27,6 +27,8 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - Mutation request fingerprints use canonical JSON with sorted object keys while preserving array order; all mutation routes must validate a bounded `Idempotency-Key` before invoking the transactional replay store.
 - `POST /api/v1/posts` is the canonical provider-neutral scheduling mutation. It requires `schedules:write`, mutation-rate admission, and `Idempotency-Key`; the API-key creator is the durable user attribution while the key remains the audit/idempotency principal. Its allowlisted response exposes only post/revision identity plus direct post and job links.
 - Post mutation runtime and OpenAPI schemas share `src/modules/content/post.contract.ts`; the HTTP boundary and generated document must consume that contract rather than maintaining parallel request or response shapes.
+- Provider-neutral post collection/detail and job detail reads use allowlisted projections from `post-read.repository.ts`. Post collections are capped at 100 rows and use `CursorCodec` cursors bound to the normalized collection filters; malformed or filter-mismatched cursors fail closed with 400.
+- `CURSOR_SIGNING_SECRET` is required whenever database-backed API routes are registered and must contain at least 32 bytes of secret material supplied by runtime configuration.
 
 ## Persistence and tenant context
 

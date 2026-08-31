@@ -6,6 +6,7 @@ const runtimeConfigSchema = z.object({
   HOST: z.string().min(1).default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3100),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
+  CURSOR_SIGNING_SECRET: z.string().min(32).optional(),
 });
 
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;

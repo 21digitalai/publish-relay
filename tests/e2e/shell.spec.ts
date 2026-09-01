@@ -267,10 +267,104 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
 
   await page.unroute('**/api/workflow/jobs?limit=100');
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
-    route.fulfill({ status: 503, contentType: 'application/json', body: '{"data":null,"error":"Queue offline"}' }),
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: '{"data":null,"error":"Queue offline"}',
+    }),
   );
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Queue offline');
+});
+
+test('projects live calendar jobs by date, time, account lane, and active workspace', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workflow/jobs?limit=100', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: 'mira-morning',
+              state: 'dispatching',
+              scheduledAt: '2026-09-01T09:15:00+03:00',
+              contentPreview: 'Morning dispatch',
+              providerAccount: { displayName: 'Mira Editorial', handle: 'mira', provider: 'x' },
+            },
+            {
+              id: 'mira-lunch',
+              state: 'retry_wait',
+              scheduledAt: '2026-09-01T12:30:00+03:00',
+              contentPreview: 'Lunch retry',
+              providerAccount: { displayName: 'Mira Editorial', handle: 'mira', provider: 'x' },
+            },
+            {
+              id: 'studio-next-day',
+              state: 'failed',
+              scheduledAt: '2026-09-02T10:45:00+03:00',
+              contentPreview: 'Next day failure',
+              providerAccount: { displayName: 'Studio Notes', handle: 'studio', provider: 'x' },
+            },
+          ],
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto('/w/mira-studio/calendar');
+  await expect(page.getByRole('status')).toContainText('Loading publication calendar');
+  await expect(page.getByRole('button', { name: '2 accounts' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
+  const septemberFirst = page.getByRole('gridcell', { name: /Tuesday, September 1, 2026/ });
+  const septemberSecond = page.getByRole('gridcell', { name: /Wednesday, September 2, 2026/ });
+  await expect(septemberFirst.getByRole('link')).toHaveCount(2);
+  await expect(septemberSecond.getByRole('link')).toHaveCount(1);
+  await expect(septemberFirst.getByRole('link').first()).toHaveAttribute(
+    'href',
+    '/w/mira-studio/jobs/mira-morning',
+  );
+
+  await page.getByRole('button', { name: 'Week', exact: true }).click();
+  const morning = page.getByRole('link', { name: /Mira Editorial, Dispatching/ });
+  const lunch = page.getByRole('link', { name: /Mira Editorial, Retrying/ });
+  await expect(morning).toHaveAttribute('style', /top: 53\.75px/);
+  await expect(lunch).toHaveAttribute('style', /top: 193\.5px/);
+  await expect(page.getByRole('link', { name: /Studio Notes, Failed/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Day', exact: true }).click();
+  await expect(page.getByLabel('Day calendar').getByRole('link')).toHaveCount(2);
+
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await expect(page.locator('.timeline-lane')).toHaveCount(1);
+  await expect(page.locator('.timeline-lane').getByRole('link')).toHaveCount(2);
+  await expect(page.locator('.timeline-lane').getByRole('link').first()).toHaveAttribute(
+    'href',
+    '/w/mira-studio/jobs/mira-morning',
+  );
+
+  await page.unroute('**/api/workflow/jobs?limit=100');
+  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+    route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
+  );
+  await page.reload();
+  await expect(page.getByRole('button', { name: '0 accounts' })).toBeVisible();
+  await expect(page.locator('.time-calendar')).toBeVisible();
+
+  await page.unroute('**/api/workflow/jobs?limit=100');
+  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: '{"data":null,"error":"Calendar offline"}',
+    }),
+  );
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('Calendar offline');
 });
 
 test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({
@@ -311,7 +405,11 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
 
   await page.unroute('**/api/workflow/jobs/pending-job');
   await page.route('**/api/workflow/jobs/pending-job', (route) =>
-    route.fulfill({ status: 404, contentType: 'application/json', body: '{"data":null,"error":"Job missing"}' }),
+    route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: '{"data":null,"error":"Job missing"}',
+    }),
   );
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Job missing');

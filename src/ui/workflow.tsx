@@ -91,6 +91,38 @@ function formatTime(value: string): string {
   }).format(new Date(value));
 }
 
+function workspacePath(): string {
+  return window.location.pathname.split('/').slice(0, 3).join('/');
+}
+
+function startOfDay(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+function addDays(value: Date, days: number): Date {
+  const result = new Date(value);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function startOfWeek(value: Date): Date {
+  const day = value.getDay() || 7;
+  return addDays(startOfDay(value), 1 - day);
+}
+
+function sameDay(left: Date, right: Date): boolean {
+  return startOfDay(left).getTime() === startOfDay(right).getTime();
+}
+
+function calendarAnchor(jobs: Job[]): Date {
+  const firstJob = jobs.at(0);
+  return firstJob ? startOfDay(new Date(firstJob.scheduledAt)) : startOfDay(new Date());
+}
+
+function jobPath(job: Job): string {
+  return `${workspacePath()}/jobs/${job.id}`;
+}
+
 function Status({ state }: { state: JobState }) {
   return (
     <span className={`job-status ${state}`}>
@@ -320,7 +352,9 @@ export function QueuePage() {
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
-        setLoadError(error instanceof Error ? error.message : 'Could not load the publication queue');
+        setLoadError(
+          error instanceof Error ? error.message : 'Could not load the publication queue',
+        );
       });
     return () => {
       controller.abort();
@@ -504,7 +538,9 @@ export function CalendarPage() {
               </button>
             ))}
           </div>
-          <button className="filter-button">3 accounts</button>
+          <button className="filter-button">
+            {new Set((jobs ?? []).map((job) => `${job.provider}:${job.handle}`)).size} accounts
+          </button>
           <button className="filter-button">All statuses</button>
         </div>
         {loadError ? (
@@ -530,6 +566,9 @@ export function CalendarPage() {
 }
 
 function MonthCalendar({ jobs }: { jobs: Job[] }) {
+  const anchor = calendarAnchor(jobs);
+  const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const visibleStart = startOfWeek(monthStart);
   return (
     <div className="month-calendar" role="grid">
       <div className="month-weekdays">
@@ -538,22 +577,33 @@ function MonthCalendar({ jobs }: { jobs: Job[] }) {
         ))}
       </div>
       <div className="month-days">
-        {Array.from({ length: 35 }, (_, index) => {
-          const day = index + 1;
+        {Array.from({ length: 42 }, (_, index) => {
+          const date = addDays(visibleStart, index);
+          const dayJobs = jobs
+            .filter((job) => sameDay(new Date(job.scheduledAt), date))
+            .sort(
+              (left, right) => Number(right.state === 'failed') - Number(left.state === 'failed'),
+            );
+          const isCurrentMonth = date.getMonth() === anchor.getMonth();
           return (
-            <div className={day === 1 ? 'today' : ''} role="gridcell" key={day}>
-              <time>{day}</time>
-              {day === 1 &&
-                jobs.slice(0, 3).map((job) => (
-                  <a
-                    className={`calendar-job ${job.state}`}
-                    href={`/w/atlas/jobs/${job.id}`}
-                    key={job.id}
-                  >
-                    <strong>{formatTime(job.scheduledAt).split(', ').at(-1)}</strong>
-                    {job.account}
-                  </a>
-                ))}
+            <div
+              className={
+                sameDay(date, new Date()) ? 'today' : isCurrentMonth ? '' : 'outside-month'
+              }
+              role="gridcell"
+              aria-label={date.toLocaleDateString('en', { dateStyle: 'full' })}
+              key={date.toISOString()}
+            >
+              <time dateTime={date.toISOString()}>{date.getDate()}</time>
+              {dayJobs.slice(0, 3).map((job) => (
+                <a className={`calendar-job ${job.state}`} href={jobPath(job)} key={job.id}>
+                  <strong>{formatTime(job.scheduledAt).split(', ').at(-1)}</strong>
+                  {job.account}
+                </a>
+              ))}
+              {dayJobs.length > 3 && (
+                <span className="calendar-more">+{dayJobs.length - 3} more</span>
+              )}
             </div>
           );
         })}
@@ -563,13 +613,19 @@ function MonthCalendar({ jobs }: { jobs: Job[] }) {
 }
 
 function TimeCalendar({ dayOnly, jobs }: { dayOnly: boolean; jobs: Job[] }) {
-  const days = dayOnly ? ['Tue 1'] : ['Mon 31', 'Tue 1', 'Wed 2', 'Thu 3', 'Fri 4'];
+  const anchor = calendarAnchor(jobs);
+  const firstDay = dayOnly ? anchor : startOfWeek(anchor);
+  const dates = Array.from({ length: dayOnly ? 1 : 5 }, (_, index) => addDays(firstDay, index));
+  const hourStart = 8;
+  const pixelsPerHour = 43;
   return (
-    <div className="time-calendar">
+    <div className={`time-calendar ${dayOnly ? 'day-only' : ''}`}>
       <div className="time-header">
         <span />
-        {days.map((day) => (
-          <strong key={day}>{day}</strong>
+        {dates.map((date) => (
+          <strong key={date.toISOString()}>
+            {date.toLocaleDateString('en', { weekday: 'short', day: 'numeric' })}
+          </strong>
         ))}
       </div>
       <div className="time-grid">
@@ -578,20 +634,28 @@ function TimeCalendar({ dayOnly, jobs }: { dayOnly: boolean; jobs: Job[] }) {
             <span key={time}>{time}</span>
           ))}
         </div>
-        {days.map((day, index) => (
-          <div className="time-day" key={day}>
-            {(dayOnly || index === 1) &&
-              jobs.slice(0, 3).map((job, jobIndex) => (
-                <a
-                  className={`calendar-block ${job.state}`}
-                  style={{ top: `${String(42 + jobIndex * 72)}px` }}
-                  href={`/w/atlas/jobs/${job.id}`}
-                  key={job.id}
-                >
-                  <strong>{job.account}</strong>
-                  <span>{job.text}</span>
-                </a>
-              ))}
+        {dates.map((date) => (
+          <div className="time-day" key={date.toISOString()}>
+            {jobs
+              .filter((job) => sameDay(new Date(job.scheduledAt), date))
+              .map((job) => {
+                const scheduled = new Date(job.scheduledAt);
+                const top =
+                  ((scheduled.getHours() - hourStart) * 60 + scheduled.getMinutes()) *
+                  (pixelsPerHour / 60);
+                return (
+                  <a
+                    className={`calendar-block ${job.state}`}
+                    style={{ top: `${String(Math.max(0, top))}px` }}
+                    href={jobPath(job)}
+                    key={job.id}
+                    aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
+                  >
+                    <strong>{job.account}</strong>
+                    <span>{job.text}</span>
+                  </a>
+                );
+              })}
           </div>
         ))}
       </div>
@@ -600,6 +664,16 @@ function TimeCalendar({ dayOnly, jobs }: { dayOnly: boolean; jobs: Job[] }) {
 }
 
 function TimelineCalendar({ jobs }: { jobs: Job[] }) {
+  const anchor = calendarAnchor(jobs);
+  const visibleJobs = jobs.filter((job) => sameDay(new Date(job.scheduledAt), anchor));
+  const lanes = Array.from(
+    visibleJobs.reduce((grouped, job) => {
+      const key = `${job.provider}:${job.handle}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), job]);
+      return grouped;
+    }, new Map<string, Job[]>()),
+  );
+  const timelineStartHour = 9;
   return (
     <div className="timeline-calendar">
       <div className="timeline-hours">
@@ -608,14 +682,31 @@ function TimelineCalendar({ jobs }: { jobs: Job[] }) {
           <span key={hour}>{hour}</span>
         ))}
       </div>
-      {jobs.slice(0, 3).map((job) => (
-        <div className="timeline-lane" key={job.account}>
-          <strong>{job.account}</strong>
-          <a className={`timeline-job ${job.state}`} href={`/w/atlas/jobs/${job.id}`}>
-            {job.text}
-          </a>
-        </div>
-      ))}
+      {lanes.map(([accountKey, accountJobs]) => {
+        const firstJob = accountJobs.at(0);
+        if (!firstJob) return null;
+        return (
+          <div className="timeline-lane" key={accountKey}>
+            <strong>{firstJob.account}</strong>
+            {accountJobs.map((job) => {
+              const scheduled = new Date(job.scheduledAt);
+              const hourOffset = scheduled.getHours() - timelineStartHour;
+              const column = Math.max(2, Math.min(7, 2 + hourOffset));
+              return (
+                <a
+                  className={`timeline-job ${job.state}`}
+                  href={jobPath(job)}
+                  style={{ gridColumn: `${String(column)} / span 1` }}
+                  key={job.id}
+                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
+                >
+                  {job.text}
+                </a>
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -630,7 +721,10 @@ export function JobDetailPage() {
     const controller = new AbortController();
     void fetch(`/api/workflow/jobs/${encodeURIComponent(jobId)}`, { signal: controller.signal })
       .then(async (response) => {
-        const result = (await response.json()) as { data: JobDetailDto | null; error: string | null };
+        const result = (await response.json()) as {
+          data: JobDetailDto | null;
+          error: string | null;
+        };
         if (!response.ok || !result.data)
           throw new Error(result.error ?? 'Could not load publication job');
         setJob(detailToJob(result.data));

@@ -60,6 +60,7 @@ function createDeployFixture(): {
       PUBLISH_RELAY_NODE_BIN: nodeBin,
       PUBLISH_RELAY_NPM_CLI: npmCli,
       PUBLISH_RELAY_HEALTH_URL: 'http://127.0.0.1:3999/health/ready',
+      MIGRATION_DATABASE_URL: 'postgresql://migrator@127.0.0.1/publish_relay',
     },
     source,
     currentLink,
@@ -68,6 +69,23 @@ function createDeployFixture(): {
 }
 
 describe('deployment scripts', () => {
+  it('provisions distinct forced-RLS web and cross-workspace worker authorities', () => {
+    const content = readFileSync(
+      join(projectRoot, 'deploy/bootstrap-database-authorities.sql'),
+      'utf8',
+    );
+    expect(content).toContain('publish_relay_web');
+    expect(content).toMatch(/publish_relay_web[^;]+NOBYPASSRLS/);
+    expect(content).toContain('publish_relay_worker');
+    expect(content).toMatch(/publish_relay_worker[^;]+BYPASSRLS/);
+    expect(content).not.toMatch(/PASSWORD|CREATE ROLE [^;]+\sLOGIN(?:\s|;)/);
+    expect(readFileSync(join(projectRoot, 'src/entrypoints/web.ts'), 'utf8')).toContain(
+      '-c role=publish_relay_web',
+    );
+    expect(readFileSync(join(projectRoot, 'src/entrypoints/worker.ts'), 'utf8')).toContain(
+      '-c role=publish_relay_worker',
+    );
+  });
   it('defaults the application listener to the isolated port and accepts an override', () => {
     expect(loadRuntimeConfig({ NODE_ENV: 'test' }).PORT).toBe(3106);
     expect(loadRuntimeConfig({ NODE_ENV: 'test', PORT: '43199' }).PORT).toBe(43199);
@@ -79,6 +97,12 @@ describe('deployment scripts', () => {
       expect(content).toContain('ExecStart=/opt/publish-relay/node24/bin/node');
       expect(content).not.toContain('/usr/bin/node');
     }
+    expect(
+      readFileSync(join(projectRoot, 'deploy/systemd/publish-relay-web.service'), 'utf8'),
+    ).toContain('publish-relay-web.env');
+    expect(
+      readFileSync(join(projectRoot, 'deploy/systemd/publish-relay-worker.service'), 'utf8'),
+    ).toContain('publish-relay-worker.env');
     for (const script of ['publish-release.sh', 'rollback-release.sh']) {
       const content = readFileSync(join(projectRoot, 'deploy', script), 'utf8');
       expect(content).toContain('PUBLISH_RELAY_HEALTH_URL');
@@ -144,7 +168,7 @@ describe('deployment scripts', () => {
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
-        DATABASE_URL: databaseUrl,
+        MIGRATION_DATABASE_URL: databaseUrl,
         RESTORE_DATABASE_URL: databaseUrl,
         BACKUP_AGE_IDENTITY: 'identity.txt',
       },

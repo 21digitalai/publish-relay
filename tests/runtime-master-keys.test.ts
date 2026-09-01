@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadRuntimeConfig } from '../src/config/runtime-config.js';
+import { loadRuntimeConfig, resolveWorkerDatabaseUrl } from '../src/config/runtime-config.js';
 import { RuntimeMasterKeyProvider } from '../src/config/runtime-master-keys.js';
 
 describe('production runtime secret configuration', () => {
@@ -36,5 +36,32 @@ describe('production runtime secret configuration', () => {
         PUBLISH_RELAY_PUBLIC_ORIGIN: 'http://relay.example.test',
       }),
     ).toThrow(/HTTPS/);
+  });
+
+  it('requires a distinct worker database URL in production', () => {
+    const production = loadRuntimeConfig({
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://web@127.0.0.1/publish_relay',
+      PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: 'v1',
+      PUBLISH_RELAY_X_CONSUMER_KEY: 'consumer',
+      PUBLISH_RELAY_X_CONSUMER_SECRET: 'secret',
+      PUBLISH_RELAY_PUBLIC_ORIGIN: 'https://relay.example.test',
+    });
+    expect(() => resolveWorkerDatabaseUrl(production)).toThrow(/WORKER_DATABASE_URL/);
+    expect(
+      resolveWorkerDatabaseUrl({
+        ...production,
+        WORKER_DATABASE_URL: 'postgresql://worker@127.0.0.1/publish_relay',
+      }),
+    ).toBe('postgresql://worker@127.0.0.1/publish_relay');
+  });
+
+  it('allows the development worker to reuse DATABASE_URL', () => {
+    const development = loadRuntimeConfig({
+      DATABASE_URL: 'postgresql://development@127.0.0.1/publish_relay',
+    });
+    expect(resolveWorkerDatabaseUrl(development)).toBe(
+      'postgresql://development@127.0.0.1/publish_relay',
+    );
   });
 });

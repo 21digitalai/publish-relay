@@ -6,12 +6,12 @@ if [[ $# -ne 1 ]]; then
   exit 64
 fi
 : "${RESTORE_DATABASE_URL:?RESTORE_DATABASE_URL is required}"
-: "${DATABASE_URL:?DATABASE_URL is required for production-target protection}"
+: "${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required for production-target protection}"
 : "${BACKUP_AGE_IDENTITY:?BACKUP_AGE_IDENTITY is required}"
 
 restore_database_name="$(node -e 'process.stdout.write(new URL(process.argv[1]).pathname.slice(1))' "$RESTORE_DATABASE_URL")"
-production_database_name="$(node -e 'process.stdout.write(new URL(process.argv[1]).pathname.slice(1))' "$DATABASE_URL")"
-if [[ "$RESTORE_DATABASE_URL" == "$DATABASE_URL" || "$restore_database_name" == "$production_database_name" ]]; then
+production_database_name="$(node -e 'process.stdout.write(new URL(process.argv[1]).pathname.slice(1))' "$MIGRATION_DATABASE_URL")"
+if [[ "$RESTORE_DATABASE_URL" == "$MIGRATION_DATABASE_URL" || "$restore_database_name" == "$production_database_name" ]]; then
   echo "restore target must not be the production database" >&2
   exit 65
 fi

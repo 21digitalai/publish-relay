@@ -28,9 +28,10 @@ beforeEach(async () => {
   for (const migrationUrl of migrationUrls)
     await database.exec(await readFile(migrationUrl, 'utf8'));
   await database.exec(`
-    CREATE ROLE publish_relay_app NOLOGIN;
-    GRANT USAGE ON SCHEMA public TO publish_relay_app;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
+    CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
+    CREATE ROLE publish_relay_worker NOLOGIN BYPASSRLS;
+    GRANT USAGE ON SCHEMA public TO publish_relay_app, publish_relay_worker;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app, publish_relay_worker;
   `);
 });
 
@@ -109,6 +110,42 @@ describe('PostgreSQL tenant isolation', () => {
         `INSERT INTO api_keys (workspace_id, created_by_user_id, label, prefix, secret_hash) VALUES ('${workspaceA}', '${userId}', 'cross tenant', 'pr_cross', 'hash')`,
       ),
     ).rejects.toThrow(/row-level security/i);
+  });
+
+  it('allows only the worker authority to discover work across forced-RLS tenants', async () => {
+    const workspaceA = '00000000-0000-4000-8000-000000000051';
+    const workspaceB = '00000000-0000-4000-8000-000000000052';
+    const userId = '00000000-0000-4000-8000-000000000053';
+    await database.exec(`
+      INSERT INTO users (id, email, password_hash) VALUES ('${userId}', 'worker@example.test', 'redacted-hash');
+      INSERT INTO workspaces (id, name, slug) VALUES
+        ('${workspaceA}', 'Worker A', 'worker-a'),
+        ('${workspaceB}', 'Worker B', 'worker-b');
+      INSERT INTO api_keys (workspace_id, created_by_user_id, label, prefix, secret_hash) VALUES
+        ('${workspaceA}', '${userId}', 'A', 'pr_worker_a', 'hash-a'),
+        ('${workspaceB}', '${userId}', 'B', 'pr_worker_b', 'hash-b');
+      SET ROLE publish_relay_app;
+      SELECT set_config('app.workspace_id', '${workspaceA}', false);
+    `);
+    const webRows = await database.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM api_keys',
+    );
+    expect(webRows.rows[0]?.count).toBe(1);
+
+    await database.exec('RESET ROLE; SET ROLE publish_relay_worker; RESET app.workspace_id;');
+    const workerRows = await database.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM api_keys',
+    );
+    expect(workerRows.rows[0]?.count).toBe(2);
+
+    const repositoryDatabase = drizzle(database) as unknown as NodePgDatabase;
+    const scopedMutation = await withTenantTransaction(
+      repositoryDatabase,
+      { workspaceId: workspaceA },
+      (transaction) =>
+        revokeApiKey(transaction, workspaceA, '00000000-0000-0000-0000-000000000000', new Date()),
+    );
+    expect(scopedMutation).toBe(false);
   });
 
   it('permits rows in the active workspace and prevents audit mutation', async () => {

@@ -15,6 +15,7 @@ service_user="${PUBLISH_RELAY_SERVICE_USER:-publish-relay}"
 node_bin="${PUBLISH_RELAY_NODE_BIN:-/opt/publish-relay/node24/bin/node}"
 npm_cli="${PUBLISH_RELAY_NPM_CLI:-/opt/publish-relay/node24/lib/node_modules/npm/bin/npm-cli.js}"
 health_url="${PUBLISH_RELAY_HEALTH_URL:-http://127.0.0.1:3106/health/ready}"
+: "${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}"
 
 [[ "$release_id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid release id" >&2; exit 64; }
 [[ -f "${source_directory}/package-lock.json" ]] || { echo "source directory is not a release" >&2; exit 66; }
@@ -30,7 +31,7 @@ cp -a "${source_directory}/." "$release_directory/"
 chown -R "${service_user}:${service_user}" "$release_directory"
 
 sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --prefix "$release_directory"
-sudo -u "$service_user" "$node_bin" "$npm_cli" run db:migrate:production --prefix "$release_directory"
+sudo -u "$service_user" env DATABASE_URL="$MIGRATION_DATABASE_URL" "$node_bin" "$npm_cli" run db:migrate:production --prefix "$release_directory"
 ln -sfn "$release_directory" "${current_link}.next"
 mv -Tf "${current_link}.next" "$current_link"
 systemctl restart publish-relay-web publish-relay-worker

@@ -12,7 +12,10 @@ import { XHttpClient } from '../modules/providers/x-http-client.js';
 
 const config = loadRuntimeConfig();
 if (!config.DATABASE_URL) throw new Error('DATABASE_URL is required for the web process');
-const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
+const pool = new pg.Pool({
+  connectionString: config.DATABASE_URL,
+  options: '-c role=publish_relay_web',
+});
 const database = drizzle(pool);
 const activeKeyVersion = config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION;
 const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY;

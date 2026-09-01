@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
-import { loadRuntimeConfig } from '../config/runtime-config.js';
+import { loadRuntimeConfig, resolveWorkerDatabaseUrl } from '../config/runtime-config.js';
 import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import {
   createLocalXMediaSource,
@@ -12,8 +12,8 @@ import {
 
 const config = loadRuntimeConfig();
 const shutdownController = new AbortController();
+const workerDatabaseUrl = resolveWorkerDatabaseUrl(config);
 if (
-  !config.DATABASE_URL ||
   !config.MEDIA_STORAGE_ROOT ||
   !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION ||
   !config.PUBLISH_RELAY_X_CONSUMER_KEY ||
@@ -22,7 +22,10 @@ if (
   throw new Error(
     'Database, media storage, master key, and X runtime configuration are required for the worker',
   );
-const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
+const pool = new pg.Pool({
+  connectionString: workerDatabaseUrl,
+  options: '-c role=publish_relay_worker',
+});
 const database = drizzle(pool);
 const runtime = {
   database,

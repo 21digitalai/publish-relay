@@ -11,7 +11,11 @@ import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.reposit
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
 import { createPostRequestSchema } from './post.contract.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
-import { createPostInTransaction, editPostInTransaction } from './post.service.js';
+import {
+  createPostInTransaction,
+  editPostInTransaction,
+  reschedulePostInTransaction,
+} from './post.service.js';
 import {
   browserJobStates,
   getBrowserJobDetail,
@@ -31,6 +35,7 @@ const listQuerySchema = z.object({
 });
 const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
+const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 
 function authorizeMutation(request: FastifyRequest): boolean {
@@ -222,6 +227,56 @@ export function registerBrowserWorkflowRoutes(
       return reply.code(409).send({ data: null, error: 'Idempotency key was already used' });
     if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');
     return reply.code(result.response.statusCode).send(result.response.body);
+  });
+
+  application.patch('/api/workflow/posts/:postId/schedule', async (request, reply) => {
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!authorizeMutation(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const key = idempotencyKey(request.headers);
+    const params = postParamsSchema.safeParse(request.params);
+    const parsed = reschedulePostSchema.safeParse(request.body);
+    if (!key || !params.success || !parsed.success)
+      return reply.code(400).send({ data: null, error: 'Invalid schedule revision' });
+    if (isPastSchedule(parsed.data.scheduledAt, dependencies.now?.()))
+      return reply.code(400).send({ data: null, error: 'Scheduled time must not be in the past' });
+    try {
+      const result = await executeBrowserMutation(
+        dependencies.database,
+        {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          operation: `reschedule-post:${params.data.postId}`,
+          idempotencyKey: key,
+          requestFingerprint: mutationFingerprint(parsed.data),
+        },
+        async (transaction) => ({
+          statusCode: 200,
+          body: {
+            data: await reschedulePostInTransaction(transaction, {
+              workspaceId: identity.workspaceId,
+              postId: params.data.postId,
+              scheduledAt: new Date(parsed.data.scheduledAt),
+            }),
+            error: null,
+          },
+        }),
+      );
+      if (result.kind === 'conflict')
+        return await reply
+          .code(409)
+          .send({ data: null, error: 'Idempotency key was already used' });
+      if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');
+      return await reply.code(result.response.statusCode).send(result.response.body);
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
   });
 
   application.get('/api/workflow/jobs', async (request, reply) => {

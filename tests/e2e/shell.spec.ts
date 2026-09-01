@@ -567,7 +567,7 @@ test('edits a scheduled job through the canonical browser revision route', async
       }),
     }),
   );
-  await page.route('**/api/workflow/posts/scheduled-post', async (route) => {
+  await page.route('**/api/workflow/posts/scheduled-post/schedule', async (route) => {
     revisionPayload = route.request().postDataJSON() as Record<string, unknown>;
     revisionKeys.push(route.request().headers()['idempotency-key'] ?? '');
     if (revisionKeys.length === 1)
@@ -591,8 +591,7 @@ test('edits a scheduled job through the canonical browser revision route', async
   expect(revisionKeys).toHaveLength(2);
   expect(revisionKeys[1]).toBe(revisionKeys[0]);
   expect(revisionPayload).toMatchObject({
-    content: { type: 'text', text: 'Move this publication safely.' },
-    providerAccountIds: ['00000000-0000-4000-8000-000000000201'],
+    scheduledAt: expect.any(String),
   });
   expect(
     new Date(String((revisionPayload as Record<string, unknown> | null)?.scheduledAt)).getDate(),

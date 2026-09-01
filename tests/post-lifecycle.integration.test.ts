@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupTemporaryMedia, storeMedia } from '../src/modules/content/media.service.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
-import { createPost, editPost } from '../src/modules/content/post.service.js';
+import { createPost, editPost, reschedulePost } from '../src/modules/content/post.service.js';
 import {
   cleanupExpiredStaging,
   cleanupJobStaging,
@@ -188,6 +188,42 @@ describe('post revision lifecycle', () => {
       'superseded',
     ]);
     expect(jobs.rows.map((row) => row.revision_number)).toEqual([1, 1, 2, 2]);
+  });
+
+  it('reschedules the complete immutable revision without losing targets, media, or content shape', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const mediaId = '00000000-0000-4000-8000-000000000299';
+    await database.exec(`INSERT INTO media_objects
+      (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+      VALUES ('${mediaId}', '${workspaceId}', 'schedule/media', 'schedule-hash', 'image/png', 4, 'ready')`);
+    const created = await createPost(db, {
+      workspaceId,
+      userId,
+      content: { type: 'quote', quoteId: 'quote-1', text: 'Preserve every field' },
+      mediaIds: [mediaId],
+      providerAccountIds: [accountOne, accountTwo],
+      scheduledAt: new Date('2026-09-01T10:00:00.000Z'),
+    });
+    const result = await reschedulePost(db, {
+      workspaceId,
+      postId: created.postId,
+      scheduledAt: new Date('2026-09-02T11:30:00.000Z'),
+      now: new Date('2026-09-01T09:00:00.000Z'),
+    });
+    expect(result.jobIds).toHaveLength(2);
+    expect(result.supersededJobIds).toHaveLength(2);
+    const revisions = await database.query<{
+      content: Record<string, unknown>;
+      media_count: number;
+    }>(`
+      SELECT r.content, count(rm.media_id)::int AS media_count
+      FROM post_revisions r LEFT JOIN revision_media rm ON rm.revision_id = r.id
+      WHERE r.post_id = '${created.postId}' GROUP BY r.id, r.revision_number ORDER BY r.revision_number
+    `);
+    expect(revisions.rows[1]).toEqual({
+      content: { type: 'quote', quoteId: 'quote-1', text: 'Preserve every field' },
+      media_count: 1,
+    });
   });
 
   it('rejects foreign workspace account and media targets atomically before persistence', async () => {

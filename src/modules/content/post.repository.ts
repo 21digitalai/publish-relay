@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -144,4 +144,52 @@ export async function revisePostIntent(
     ...targets,
     supersededJobIds: superseded.map((job) => job.id),
   };
+}
+
+export async function reschedulePostIntent(
+  database: NodePgDatabase,
+  input: { workspaceId: string; postId: string; scheduledAt: Date; now: Date },
+): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
+  const revisions = await database
+    .select({ id: postRevisions.id, content: postRevisions.content })
+    .from(postRevisions)
+    .where(
+      and(eq(postRevisions.workspaceId, input.workspaceId), eq(postRevisions.postId, input.postId)),
+    )
+    .orderBy(desc(postRevisions.revisionNumber))
+    .limit(1);
+  const revision = revisions[0];
+  if (!revision) throw new PostNotFoundError('Post not found in workspace');
+  const [media, jobs] = await Promise.all([
+    database
+      .select({ id: revisionMedia.mediaId })
+      .from(revisionMedia)
+      .where(
+        and(
+          eq(revisionMedia.workspaceId, input.workspaceId),
+          eq(revisionMedia.revisionId, revision.id),
+        ),
+      )
+      .orderBy(asc(revisionMedia.position)),
+    database
+      .select({
+        providerAccountId: publicationJobs.providerAccountId,
+        state: publicationJobs.state,
+      })
+      .from(publicationJobs)
+      .where(
+        and(
+          eq(publicationJobs.workspaceId, input.workspaceId),
+          eq(publicationJobs.revisionId, revision.id),
+        ),
+      ),
+  ]);
+  if (jobs.length === 0 || jobs.some((job) => job.state !== 'scheduled'))
+    throw new PostValidationError('Schedule can only be edited before every target dispatches');
+  return revisePostIntent(database, {
+    ...input,
+    content: revision.content as Record<string, unknown>,
+    mediaIds: media.map((item) => item.id),
+    providerAccountIds: jobs.map((job) => job.providerAccountId),
+  });
 }

@@ -1144,10 +1144,10 @@ export function JobDetailPage() {
                 }
                 onClick={() => {
                   const target = matchingLocalInstants(editSchedule)[editScheduleOption];
-                  if (!target || !job.postId || !job.providerAccountId) return;
+                  if (!target || !job.postId) return;
                   setIsMutating(true);
                   setMutationError(null);
-                  void fetch(`/api/workflow/posts/${encodeURIComponent(job.postId)}`, {
+                  void fetch(`/api/workflow/posts/${encodeURIComponent(job.postId)}/schedule`, {
                     method: 'PATCH',
                     headers: {
                       'content-type': 'application/json',
@@ -1155,8 +1155,6 @@ export function JobDetailPage() {
                       'idempotency-key': editScheduleIntentKey.current,
                     },
                     body: JSON.stringify({
-                      content: { type: 'text', text: job.text },
-                      providerAccountIds: [job.providerAccountId],
                       scheduledAt: target.toISOString(),
                     }),
                   })

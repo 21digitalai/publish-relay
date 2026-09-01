@@ -14,45 +14,6 @@ interface Job {
   provider: string;
 }
 
-const JOBS: Job[] = [
-  {
-    id: 'job-2048',
-    state: 'failed',
-    scheduledAt: '2026-09-01T09:30:00+03:00',
-    text: 'The clearest plans leave room for the unexpected.',
-    account: 'Daily Viber',
-    handle: '@dailyviber',
-    provider: 'X',
-  },
-  {
-    id: 'job-2049',
-    state: 'scheduled',
-    scheduledAt: '2026-09-01T11:15:00+03:00',
-    text: 'New release notes are ready. Here is what changed.',
-    account: 'Atlas Studio',
-    handle: '@atlasstudio',
-    provider: 'X',
-  },
-  {
-    id: 'job-2050',
-    state: 'retrying',
-    scheduledAt: '2026-09-01T14:00:00+03:00',
-    text: 'A short field guide to calmer publishing operations.',
-    account: 'Mira Editorial',
-    handle: '@miraeditorial',
-    provider: 'X',
-  },
-  {
-    id: 'job-2051',
-    state: 'published',
-    scheduledAt: '2026-09-02T08:45:00+03:00',
-    text: 'Yesterday’s dispatch completed successfully.',
-    account: 'Daily Viber',
-    handle: '@dailyviber',
-    provider: 'X',
-  },
-];
-
 const STATE_LABELS: Record<JobState, string> = {
   scheduled: 'Scheduled',
   failed: 'Failed',
@@ -461,6 +422,28 @@ export function QueuePage() {
 
 export function CalendarPage() {
   const [mode, setMode] = useState('Week');
+  const [jobs, setJobs] = useState<Job[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch('/api/workflow/jobs?limit=100', { signal: controller.signal })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          data: { items: QueueJobDto[] } | null;
+          error: string | null;
+        };
+        if (!response.ok || !result.data)
+          throw new Error(result.error ?? 'Could not load the publication calendar');
+        setJobs(result.data.items.map(toJob));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setLoadError(error instanceof Error ? error.message : 'Could not load the calendar');
+      });
+    return () => {
+      controller.abort();
+    };
+  }, []);
   return (
     <WorkspaceLayout active="calendar">
       <div className="calendar-heading">
@@ -496,19 +479,29 @@ export function CalendarPage() {
           <button className="filter-button">3 accounts</button>
           <button className="filter-button">All statuses</button>
         </div>
-        {mode === 'Month' ? (
-          <MonthCalendar />
+        {loadError ? (
+          <div className="filter-empty" role="alert">
+            <h2>Calendar unavailable</h2>
+            <p>{loadError}</p>
+          </div>
+        ) : jobs === null ? (
+          <div className="filter-empty" role="status">
+            <h2>Loading publication calendar</h2>
+            <p>Fetching scheduled job positions…</p>
+          </div>
+        ) : mode === 'Month' ? (
+          <MonthCalendar jobs={jobs} />
         ) : mode === 'Timeline' ? (
-          <TimelineCalendar />
+          <TimelineCalendar jobs={jobs} />
         ) : (
-          <TimeCalendar dayOnly={mode === 'Day'} />
+          <TimeCalendar dayOnly={mode === 'Day'} jobs={jobs} />
         )}
       </section>
     </WorkspaceLayout>
   );
 }
 
-function MonthCalendar() {
+function MonthCalendar({ jobs }: { jobs: Job[] }) {
   return (
     <div className="month-calendar" role="grid">
       <div className="month-weekdays">
@@ -523,7 +516,7 @@ function MonthCalendar() {
             <div className={day === 1 ? 'today' : ''} role="gridcell" key={day}>
               <time>{day}</time>
               {day === 1 &&
-                JOBS.slice(0, 3).map((job) => (
+                jobs.slice(0, 3).map((job) => (
                   <a
                     className={`calendar-job ${job.state}`}
                     href={`/w/atlas/jobs/${job.id}`}
@@ -541,7 +534,7 @@ function MonthCalendar() {
   );
 }
 
-function TimeCalendar({ dayOnly }: { dayOnly: boolean }) {
+function TimeCalendar({ dayOnly, jobs }: { dayOnly: boolean; jobs: Job[] }) {
   const days = dayOnly ? ['Tue 1'] : ['Mon 31', 'Tue 1', 'Wed 2', 'Thu 3', 'Fri 4'];
   return (
     <div className="time-calendar">
@@ -560,7 +553,7 @@ function TimeCalendar({ dayOnly }: { dayOnly: boolean }) {
         {days.map((day, index) => (
           <div className="time-day" key={day}>
             {(dayOnly || index === 1) &&
-              JOBS.slice(0, 3).map((job, jobIndex) => (
+              jobs.slice(0, 3).map((job, jobIndex) => (
                 <a
                   className={`calendar-block ${job.state}`}
                   style={{ top: `${String(42 + jobIndex * 72)}px` }}
@@ -578,7 +571,7 @@ function TimeCalendar({ dayOnly }: { dayOnly: boolean }) {
   );
 }
 
-function TimelineCalendar() {
+function TimelineCalendar({ jobs }: { jobs: Job[] }) {
   return (
     <div className="timeline-calendar">
       <div className="timeline-hours">
@@ -587,7 +580,7 @@ function TimelineCalendar() {
           <span key={hour}>{hour}</span>
         ))}
       </div>
-      {JOBS.slice(0, 3).map((job) => (
+      {jobs.slice(0, 3).map((job) => (
         <div className="timeline-lane" key={job.account}>
           <strong>{job.account}</strong>
           <a className={`timeline-job ${job.state}`} href={`/w/atlas/jobs/${job.id}`}>

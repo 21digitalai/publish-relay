@@ -75,10 +75,7 @@ function browserJobJoins(database: NodePgDatabase) {
     );
 }
 
-export async function listBrowserJobSummaries(
-  database: NodePgDatabase,
-  input: BrowserJobFilters,
-) {
+export async function listBrowserJobSummaries(database: NodePgDatabase, input: BrowserJobFilters) {
   const cursor = input.before
     ? or(
         lt(publicationJobs.scheduledAt, input.before.scheduledAt),

@@ -365,7 +365,8 @@ describe('browser workflow PostgreSQL boundary', () => {
       if (operation === 'edit' && !postId) throw new Error('Missing boundary edit post');
       const response = await application.inject({
         method: operation === 'create' ? 'POST' : 'PATCH',
-        url: operation === 'create' ? '/api/workflow/posts' : `/api/workflow/posts/${String(postId)}`,
+        url:
+          operation === 'create' ? '/api/workflow/posts' : `/api/workflow/posts/${String(postId)}`,
         headers,
         payload: { ...requestPayload('Boundary schedule'), scheduledAt },
       });

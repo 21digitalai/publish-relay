@@ -41,8 +41,15 @@ export async function editPost(
   database: NodePgDatabase,
   input: PostIntentInput & { postId: string; now?: Date },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
-  validatePostIntent(input);
   return withTenantTransaction(database, input, (transaction) =>
-    revisePostIntent(transaction, { ...input, now: input.now ?? new Date() }),
+    editPostInTransaction(transaction, input),
   );
+}
+
+export async function editPostInTransaction(
+  transaction: NodePgDatabase,
+  input: PostIntentInput & { postId: string; now?: Date },
+): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
+  validatePostIntent(input);
+  return revisePostIntent(transaction, { ...input, now: input.now ?? new Date() });
 }

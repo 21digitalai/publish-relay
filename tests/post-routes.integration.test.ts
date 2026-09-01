@@ -224,6 +224,39 @@ describe('browser workflow PostgreSQL boundary', () => {
     expect(counts.rows[0]).toEqual({ posts: 1, mutations: 1 });
   });
 
+  it('revises a browser post once and supersedes its previous job', async () => {
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+      'x-csrf-token': 'browser-csrf',
+      'idempotency-key': 'browser-create-edit',
+    };
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers,
+      payload: requestPayload('Original browser post'),
+    });
+    const postId = created.json<{ data: { id: string } }>().data.id;
+    const request = {
+      method: 'PATCH' as const,
+      url: `/api/workflow/posts/${postId}`,
+      headers: { ...headers, 'idempotency-key': 'browser-edit-1' },
+      payload: {
+        ...requestPayload('Edited browser post'),
+        scheduledAt: '2026-09-03T11:00:00.000Z',
+      },
+    };
+    const edited = await application.inject(request);
+    const replayed = await application.inject(request);
+    expect(edited.statusCode).toBe(200);
+    expect(replayed.headers['idempotency-replayed']).toBe('true');
+    expect(replayed.json()).toEqual(edited.json());
+    expect(edited.json()).toMatchObject({
+      data: { postId, supersededJobIds: [expect.any(String)], jobIds: [expect.any(String)] },
+    });
+  });
+
   it('paginates and filters real tenant rows without exposing foreign or private fields', async () => {
     for (const [key, text] of [
       ['browser-one', 'First browser post'],

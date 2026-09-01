@@ -9,7 +9,7 @@ import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
 import { createPostRequestSchema } from './post.contract.js';
-import { createPostInTransaction } from './post.service.js';
+import { createPostInTransaction, editPostInTransaction } from './post.service.js';
 import {
   browserJobStates,
   getBrowserJobDetail,
@@ -28,6 +28,7 @@ const listQuerySchema = z.object({
   beforeId: z.uuid().optional(),
 });
 const jobParamsSchema = z.object({ jobId: z.uuid() });
+const postParamsSchema = z.object({ postId: z.uuid() });
 
 function authorizeMutation(request: FastifyRequest): boolean {
   const cookies = request.cookies as Record<string, string | undefined> | undefined;
@@ -130,6 +131,47 @@ export function registerBrowserWorkflowRoutes(
             error: null,
           },
         };
+      },
+    );
+    if (result.kind === 'conflict')
+      return reply.code(409).send({ data: null, error: 'Idempotency key was already used' });
+    if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');
+    return reply.code(result.response.statusCode).send(result.response.body);
+  });
+
+  application.patch('/api/workflow/posts/:postId', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!authorizeMutation(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const key = idempotencyKey(request.headers);
+    if (!key)
+      return reply.code(400).send({ data: null, error: 'A valid Idempotency-Key is required' });
+    const params = postParamsSchema.safeParse(request.params);
+    const parsed = createPostRequestSchema.safeParse(request.body);
+    if (!params.success || !parsed.success)
+      return reply.code(400).send({ data: null, error: 'Invalid post revision' });
+    const body = parsed.data;
+    const result = await executeBrowserMutation(
+      dependencies.database,
+      {
+        workspaceId: identity.workspaceId,
+        userId: identity.userId,
+        operation: `edit-post:${params.data.postId}`,
+        idempotencyKey: key,
+        requestFingerprint: mutationFingerprint(body),
+      },
+      async (transaction) => {
+        const edited = await editPostInTransaction(transaction, {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          postId: params.data.postId,
+          content: body.content,
+          mediaIds: body.mediaIds,
+          providerAccountIds: body.providerAccountIds,
+          scheduledAt: new Date(body.scheduledAt),
+        });
+        return { statusCode: 200, body: { data: edited, error: null } };
       },
     );
     if (result.kind === 'conflict')

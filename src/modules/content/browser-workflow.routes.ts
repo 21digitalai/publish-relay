@@ -30,6 +30,8 @@ const listQuerySchema = z.object({
     .pipe(z.array(z.enum(browserJobStates)).max(browserJobStates.length))
     .optional(),
   providerAccountId: z.uuid().optional(),
+  scheduledAfter: z.iso.datetime().optional(),
+  scheduledBefore: z.iso.datetime().optional(),
   beforeScheduledAt: z.iso.datetime().optional(),
   beforeId: z.uuid().optional(),
 });
@@ -37,6 +39,7 @@ const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
 const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
+const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
 function authorizeMutation(request: FastifyRequest): boolean {
   const cookies = request.cookies as Record<string, string | undefined> | undefined;
@@ -288,11 +291,22 @@ export function registerBrowserWorkflowRoutes(
     const query = parsed.data;
     if (Boolean(query.beforeScheduledAt) !== Boolean(query.beforeId))
       return reply.code(400).send({ data: null, error: 'Incomplete queue cursor' });
+    if (
+      Boolean(query.scheduledAfter) !== Boolean(query.scheduledBefore) ||
+      (query.scheduledAfter &&
+        query.scheduledBefore &&
+        (new Date(query.scheduledBefore).getTime() <= new Date(query.scheduledAfter).getTime() ||
+          new Date(query.scheduledBefore).getTime() - new Date(query.scheduledAfter).getTime() >
+            MAX_SCHEDULE_GUIDANCE_WINDOW_MS))
+    )
+      return reply.code(400).send({ data: null, error: 'Invalid schedule window' });
     const rows = await listBrowserJobSummaries(dependencies.database, {
       workspaceId: identity.workspaceId,
       limit: query.limit + 1,
       ...(query.states ? { states: query.states } : {}),
       ...(query.providerAccountId ? { providerAccountId: query.providerAccountId } : {}),
+      ...(query.scheduledAfter ? { scheduledAfter: new Date(query.scheduledAfter) } : {}),
+      ...(query.scheduledBefore ? { scheduledBefore: new Date(query.scheduledBefore) } : {}),
       ...(query.beforeScheduledAt && query.beforeId
         ? { before: { scheduledAt: new Date(query.beforeScheduledAt), id: query.beforeId } }
         : {}),

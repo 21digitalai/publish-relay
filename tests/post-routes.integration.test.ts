@@ -508,6 +508,29 @@ describe('browser workflow PostgreSQL boundary', () => {
     expect(secondBody.data.items).toHaveLength(1);
     expect(secondBody.data.items[0]?.id).not.toBe(firstBody.data.items[0]?.id);
 
+    const windowed = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs?limit=100&states=scheduled&providerAccountId=${providerAccountId}&scheduledAfter=2026-09-02T09%3A00%3A00.000Z&scheduledBefore=2026-09-02T11%3A00%3A00.000Z`,
+      headers: browserHeaders,
+    });
+    expect(windowed.statusCode).toBe(200);
+    expect(windowed.json<{ data: { items: unknown[] } }>().data.items).toHaveLength(2);
+
+    const outOfWindow = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs?limit=100&states=scheduled&providerAccountId=${providerAccountId}&scheduledAfter=2026-09-03T09%3A00%3A00.000Z&scheduledBefore=2026-09-03T11%3A00%3A00.000Z`,
+      headers: browserHeaders,
+    });
+    expect(outOfWindow.statusCode).toBe(200);
+    expect(outOfWindow.json<{ data: { items: unknown[] } }>().data.items).toHaveLength(0);
+
+    const oversizedWindow = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs?scheduledAfter=2026-09-01T00%3A00%3A00.000Z&scheduledBefore=2026-09-09T00%3A00%3A00.000Z`,
+      headers: browserHeaders,
+    });
+    expect(oversizedWindow.statusCode).toBe(400);
+
     const detail = await application.inject({
       method: 'GET',
       url: `/api/workflow/jobs/${firstBody.data.items[0]?.id ?? ''}`,

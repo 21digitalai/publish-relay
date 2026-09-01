@@ -334,6 +334,12 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   expect(collisionQueryUrls.some((url) => url.includes('states=scheduled'))).toBe(true);
   expect(collisionQueryUrls.some((url) => url.includes('beforeId='))).toBe(true);
   expect(
+    collisionQueryUrls.every((url) => {
+      const query = new URL(url).searchParams;
+      return query.has('scheduledAfter') && query.has('scheduledBefore');
+    }),
+  ).toBe(true);
+  expect(
     new Set(collisionQueryUrls.map((url) => new URL(url).searchParams.get('providerAccountId'))),
   ).toEqual(
     new Set(['00000000-0000-4000-8000-000000000201', '00000000-0000-4000-8000-000000000203']),

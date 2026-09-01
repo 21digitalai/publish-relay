@@ -54,24 +54,35 @@ interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview'> {
 const COLLISION_SPACING_MS = 15 * 60_000;
 const COLLISION_PAGE_LIMIT = 100;
 const COLLISION_MAX_PAGES_PER_ACCOUNT = 50;
+const COLLISION_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
 interface QueueCursor {
   beforeScheduledAt: string;
   beforeId: string;
 }
 
-function nextCollisionFreeSchedule(candidate: Date, jobs: QueueJobDto[]): Date {
+function nextCollisionFreeSchedule(
+  candidate: Date,
+  jobs: QueueJobDto[],
+  windowEnd: Date,
+): Date | null {
   let next = candidate.getTime();
   const times = jobs.map((job) => new Date(job.scheduledAt).getTime()).filter(Number.isFinite);
   for (let attempt = 0; attempt <= times.length; attempt += 1) {
     const conflicts = times.filter((time) => Math.abs(time - next) < COLLISION_SPACING_MS);
-    if (conflicts.length === 0) return new Date(next);
+    if (conflicts.length === 0)
+      return next + COLLISION_SPACING_MS <= windowEnd.getTime() ? new Date(next) : null;
     next = Math.max(...conflicts) + COLLISION_SPACING_MS;
   }
   throw new Error('A collision-free schedule could not be calculated.');
 }
 
-async function loadScheduledJobsForAccounts(accountIds: string[]): Promise<QueueJobDto[]> {
+async function loadScheduledJobsForAccounts(
+  accountIds: string[],
+  candidate: Date,
+): Promise<{ jobs: QueueJobDto[]; windowEnd: Date }> {
+  const windowStart = new Date(candidate.getTime() - COLLISION_SPACING_MS);
+  const windowEnd = new Date(windowStart.getTime() + COLLISION_WINDOW_MS);
   const pages = await Promise.all(
     accountIds.map(async (accountId) => {
       const items: QueueJobDto[] = [];
@@ -81,6 +92,8 @@ async function loadScheduledJobsForAccounts(accountIds: string[]): Promise<Queue
           limit: String(COLLISION_PAGE_LIMIT),
           states: 'scheduled',
           providerAccountId: accountId,
+          scheduledAfter: windowStart.toISOString(),
+          scheduledBefore: windowEnd.toISOString(),
         });
         if (next) {
           query.set('beforeScheduledAt', next.beforeScheduledAt);
@@ -98,7 +111,7 @@ async function loadScheduledJobsForAccounts(accountIds: string[]): Promise<Queue
       throw new Error('Schedule guidance is unavailable for this account history.');
     }),
   );
-  return pages.flat();
+  return { jobs: pages.flat(), windowEnd };
 }
 
 function toJob(dto: QueueJobDto): Job {
@@ -208,6 +221,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [collisionGuidance, setCollisionGuidance] = useState<'loading' | 'ready' | 'unavailable'>(
     'loading',
   );
+  const [collisionWindowEnd, setCollisionWindowEnd] = useState<Date | null>(null);
   const [body, setBody] = useState('');
   const [scheduled, setScheduled] = useState(true);
   const [receipt, setReceipt] = useState<{ count: number; scheduledAt: string } | null>(null);
@@ -219,6 +233,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const scheduleOptions = useMemo(() => matchingLocalInstants(localSchedule), [localSchedule]);
   const [scheduleOption, setScheduleOption] = useState(0);
   const scheduledAt = scheduleOptions[scheduleOption];
+  const scheduledAtMillis = scheduledAt ? scheduledAt.getTime() : null;
   const scheduleError =
     scheduled && scheduleOptions.length === 0
       ? 'This local time does not exist because the clock changes. Choose another time.'
@@ -264,17 +279,18 @@ function Composer({ onClose }: { onClose: () => void }) {
       });
   }, []);
   useEffect(() => {
-    if (selectedAccounts.length === 0) {
+    if (selectedAccounts.length === 0 || scheduledAtMillis === null) {
       setScheduledJobs([]);
       setCollisionGuidance('ready');
       return;
     }
     let active = true;
     setCollisionGuidance('loading');
-    void loadScheduledJobsForAccounts(selectedAccounts)
-      .then((jobs) => {
+    void loadScheduledJobsForAccounts(selectedAccounts, new Date(scheduledAtMillis))
+      .then((result) => {
         if (!active) return;
-        setScheduledJobs(jobs);
+        setScheduledJobs(result.jobs);
+        setCollisionWindowEnd(result.windowEnd);
         setCollisionGuidance('ready');
       })
       .catch(() => {
@@ -285,7 +301,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     return () => {
       active = false;
     };
-  }, [selectedAccounts]);
+  }, [scheduledAtMillis, selectedAccounts]);
   useEffect(() => {
     intentKey.current = crypto.randomUUID();
   }, [body, localSchedule, scheduleOption, scheduled, selectedAccounts]);
@@ -478,9 +494,14 @@ function Composer({ onClose }: { onClose: () => void }) {
                   className="secondary-button"
                   type="button"
                   onClick={() => {
-                    setLocalSchedule(
-                      localDateTimeValue(nextCollisionFreeSchedule(scheduledAt, scheduledJobs)),
-                    );
+                    const opening = collisionWindowEnd
+                      ? nextCollisionFreeSchedule(scheduledAt, scheduledJobs, collisionWindowEnd)
+                      : null;
+                    if (!opening) {
+                      setCollisionGuidance('unavailable');
+                      return;
+                    }
+                    setLocalSchedule(localDateTimeValue(opening));
                     setScheduleOption(0);
                   }}
                 >

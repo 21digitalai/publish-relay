@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -29,6 +29,8 @@ export interface BrowserJobFilters {
   limit: number;
   states?: BrowserJobState[];
   providerAccountId?: string;
+  scheduledAfter?: Date;
+  scheduledBefore?: Date;
   before?: { scheduledAt: Date; id: string };
 }
 
@@ -93,6 +95,10 @@ export async function listBrowserJobSummaries(database: NodePgDatabase, input: B
           input.states?.length ? inArray(publicationJobs.state, input.states) : undefined,
           input.providerAccountId
             ? eq(publicationJobs.providerAccountId, input.providerAccountId)
+            : undefined,
+          input.scheduledAfter ? gte(publicationJobs.scheduledAt, input.scheduledAfter) : undefined,
+          input.scheduledBefore
+            ? lte(publicationJobs.scheduledAt, input.scheduledBefore)
             : undefined,
           cursor,
         ),

@@ -51,6 +51,7 @@ let application: FastifyInstance;
 let apiKeys: ApiKeyService;
 let authenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
+let browserNow: Date | undefined;
 const temporaryDirectories: string[] = [];
 
 async function runCli(args: string[], apiKey = 'pr_test.secret') {
@@ -120,6 +121,7 @@ function requestPayload(text = 'Scheduled through the API') {
 }
 
 beforeEach(async () => {
+  browserNow = undefined;
   database = new PGlite();
   for (const migration of migrations)
     await database.exec(
@@ -184,6 +186,7 @@ beforeEach(async () => {
   );
   registerBrowserWorkflowRoutes(application, {
     database: drizzle(database) as unknown as NodePgDatabase,
+    now: () => browserNow ?? new Date(),
     auth: {
       authenticate: vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' }),
     } as unknown as AuthService,
@@ -331,6 +334,48 @@ describe('browser workflow PostgreSQL boundary', () => {
     );
     expect(counts.rows[0]).toEqual({ revisions: 1, jobs: 1, mutations: 0 });
   });
+
+  it.each([
+    { operation: 'create', scheduledAt: '2026-09-02T10:00:00.001Z', expected: 201 },
+    { operation: 'create', scheduledAt: '2026-09-02T09:59:59.999Z', expected: 400 },
+    { operation: 'edit', scheduledAt: '2026-09-02T10:00:00.001Z', expected: 200 },
+    { operation: 'edit', scheduledAt: '2026-09-02T09:59:59.999Z', expected: 400 },
+  ] as const)(
+    '$operation schedule at $scheduledAt returns $expected around the grace boundary',
+    async ({ operation, scheduledAt, expected }) => {
+      browserNow = new Date('2026-09-02T10:01:00.000Z');
+      const headers = {
+        ...browserHeaders,
+        cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+        'x-csrf-token': 'browser-csrf',
+        'idempotency-key': `boundary-${operation}-${String(expected)}`,
+      };
+      let postId: string | undefined;
+      if (operation === 'edit') {
+        browserNow = new Date('2026-09-01T10:01:00.000Z');
+        const created = await application.inject({
+          method: 'POST',
+          url: '/api/workflow/posts',
+          headers: { ...headers, 'idempotency-key': `boundary-edit-base-${String(expected)}` },
+          payload: requestPayload('Boundary edit base'),
+        });
+        postId = created.json<{ data: { id: string } }>().data.id;
+        browserNow = new Date('2026-09-02T10:01:00.000Z');
+      }
+      if (operation === 'edit' && !postId) throw new Error('Missing boundary edit post');
+      const response = await application.inject({
+        method: operation === 'create' ? 'POST' : 'PATCH',
+        url: operation === 'create' ? '/api/workflow/posts' : `/api/workflow/posts/${String(postId)}`,
+        headers,
+        payload: { ...requestPayload('Boundary schedule'), scheduledAt },
+      });
+      expect(response.statusCode).toBe(expected);
+      const mutations = await database.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM browser_mutation_results WHERE idempotency_key = 'boundary-${operation}-${String(expected)}'`,
+      );
+      expect(mutations.rows[0]?.count).toBe(expected === 400 ? 0 : 1);
+    },
+  );
 
   it.each([
     {

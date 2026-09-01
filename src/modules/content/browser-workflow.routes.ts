@@ -109,7 +109,7 @@ function serializeJobSummary(job: NonNullable<Awaited<ReturnType<typeof getBrows
 
 export function registerBrowserWorkflowRoutes(
   application: FastifyInstance,
-  dependencies: { auth: AuthService; database: NodePgDatabase },
+  dependencies: { auth: AuthService; database: NodePgDatabase; now?: () => Date },
 ): void {
   application.post('/api/workflow/posts', async (request, reply) => {
     let identity;
@@ -127,7 +127,7 @@ export function registerBrowserWorkflowRoutes(
     const parsed = createPostRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ data: null, error: 'Invalid post' });
     const body = parsed.data;
-    if (isPastSchedule(body.scheduledAt))
+    if (isPastSchedule(body.scheduledAt, dependencies.now?.()))
       return reply.code(400).send({ data: null, error: 'Scheduled time must not be in the past' });
     let result;
     try {
@@ -189,7 +189,7 @@ export function registerBrowserWorkflowRoutes(
     if (!params.success || !parsed.success)
       return reply.code(400).send({ data: null, error: 'Invalid post revision' });
     const body = parsed.data;
-    if (isPastSchedule(body.scheduledAt))
+    if (isPastSchedule(body.scheduledAt, dependencies.now?.()))
       return reply.code(400).send({ data: null, error: 'Scheduled time must not be in the past' });
     let result;
     try {

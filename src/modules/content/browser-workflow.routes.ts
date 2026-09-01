@@ -31,6 +31,7 @@ const listQuerySchema = z.object({
 });
 const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
+const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 
 function authorizeMutation(request: FastifyRequest): boolean {
   const cookies = request.cookies as Record<string, string | undefined> | undefined;
@@ -56,7 +57,7 @@ function idempotencyKey(headers: Record<string, unknown>): string | null {
 }
 
 function isPastSchedule(value: string, now = new Date()): boolean {
-  return new Date(value).getTime() < now.getTime() - 60_000;
+  return new Date(value).getTime() < now.getTime() - NOW_SCHEDULE_CLOCK_SKEW_MS;
 }
 
 function mutationError(request: FastifyRequest, reply: FastifyReply, error: unknown) {

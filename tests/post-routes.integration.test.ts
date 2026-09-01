@@ -299,6 +299,36 @@ describe('browser workflow PostgreSQL boundary', () => {
     expect(rows.rows[0]?.count).toBe(0);
   });
 
+  it('rejects a past browser revision without creating a new revision or job', async () => {
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+      'x-csrf-token': 'browser-csrf',
+      'idempotency-key': 'create-before-past-edit',
+    };
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers,
+      payload: requestPayload('Original'),
+    });
+    const postId = created.json<{ data: { id: string } }>().data.id;
+    const rejected = await application.inject({
+      method: 'PATCH',
+      url: `/api/workflow/posts/${postId}`,
+      headers: { ...headers, 'idempotency-key': 'past-edit-1' },
+      payload: { ...requestPayload('Past edit'), scheduledAt: '2020-01-01T00:00:00.000Z' },
+    });
+    expect(rejected.statusCode).toBe(400);
+    const counts = await database.query<{ revisions: number; jobs: number; mutations: number }>(
+      `SELECT
+        (SELECT count(*)::int FROM post_revisions WHERE post_id = '${postId}') AS revisions,
+        (SELECT count(*)::int FROM publication_jobs WHERE post_id = '${postId}') AS jobs,
+        (SELECT count(*)::int FROM browser_mutation_results WHERE idempotency_key = 'past-edit-1') AS mutations`,
+    );
+    expect(counts.rows[0]).toEqual({ revisions: 1, jobs: 1, mutations: 0 });
+  });
+
   it('rejects a foreign browser target without post, job, or idempotency residue', async () => {
     const response = await application.inject({
       method: 'POST',

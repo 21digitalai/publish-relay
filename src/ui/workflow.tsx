@@ -134,6 +134,37 @@ function cookieValue(name: string): string {
   );
 }
 
+function localDateTimeValue(value: Date): string {
+  const offset = value.getTimezoneOffset() * 60_000;
+  return new Date(value.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function offsetLabel(value: Date): string {
+  const minutes = -value.getTimezoneOffset();
+  const sign = minutes >= 0 ? '+' : '-';
+  const absolute = Math.abs(minutes);
+  return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(
+    absolute % 60,
+  ).padStart(2, '0')}`;
+}
+
+function matchingLocalInstants(localValue: string): Date[] {
+  const desired = localValue.replace('T', ' ');
+  const approximate = new Date(localValue).getTime();
+  const matches: Date[] = [];
+  for (let minutes = -180; minutes <= 180; minutes += 15) {
+    const candidate = new Date(approximate + minutes * 60_000);
+    const rendered = `${String(candidate.getFullYear())}-${String(
+      candidate.getMonth() + 1,
+    ).padStart(2, '0')}-${String(candidate.getDate()).padStart(2, '0')} ${String(
+      candidate.getHours(),
+    ).padStart(2, '0')}:${String(candidate.getMinutes()).padStart(2, '0')}`;
+    if (rendered === desired && !matches.some((match) => match.getTime() === candidate.getTime()))
+      matches.push(candidate);
+  }
+  return matches;
+}
+
 function Status({ state }: { state: JobState }) {
   return (
     <span className={`job-status ${state}`}>
@@ -154,8 +185,22 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
-  const scheduledAt = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
-  const invalid = !body.trim() || selectedAccounts.length === 0 || state !== 'ready';
+  const initialSchedule = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
+  const [localSchedule, setLocalSchedule] = useState(localDateTimeValue(initialSchedule));
+  const scheduleOptions = useMemo(() => matchingLocalInstants(localSchedule), [localSchedule]);
+  const [scheduleOption, setScheduleOption] = useState(0);
+  const scheduledAt = scheduleOptions[scheduleOption];
+  const scheduleError =
+    scheduled && scheduleOptions.length === 0
+      ? 'This local time does not exist because the clock changes. Choose another time.'
+      : scheduled && scheduledAt && scheduledAt.getTime() <= Date.now()
+        ? 'Choose a future publishing time.'
+        : null;
+  const invalid =
+    !body.trim() ||
+    selectedAccounts.length === 0 ||
+    state !== 'ready' ||
+    (scheduled && (!scheduledAt || Boolean(scheduleError)));
   useEffect(() => {
     void fetch('/api/provider-accounts')
       .then(async (response) => {
@@ -181,11 +226,12 @@ function Composer({ onClose }: { onClose: () => void }) {
   }, []);
   useEffect(() => {
     intentKey.current = crypto.randomUUID();
-  }, [body, scheduled, selectedAccounts]);
+  }, [body, localSchedule, scheduleOption, scheduled, selectedAccounts]);
   const submit = async () => {
     setState('saving');
     setError(null);
     const targetTime = scheduled ? scheduledAt : new Date();
+    if (!targetTime) return;
     try {
       const response = await fetch('/api/workflow/posts', {
         method: 'POST',
@@ -314,18 +360,15 @@ function Composer({ onClose }: { onClose: () => void }) {
             {scheduled && (
               <div className="schedule-fields">
                 <label className="field-label">
-                  Date
-                  <input className="text-input" value={scheduledAt.toLocaleDateString()} readOnly />
-                </label>
-                <label className="field-label">
-                  Time
+                  Date and time
                   <input
-                    className="text-input"
-                    value={scheduledAt.toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                    readOnly
+                    className="schedule-date-time text-input"
+                    type="datetime-local"
+                    value={localSchedule}
+                    onChange={(event) => {
+                      setLocalSchedule(event.target.value);
+                      setScheduleOption(0);
+                    }}
                   />
                 </label>
                 <label className="field-label">
@@ -336,7 +379,31 @@ function Composer({ onClose }: { onClose: () => void }) {
                     readOnly
                   />
                 </label>
+                {scheduleOptions.length > 1 && (
+                  <fieldset className="schedule-offset-choice">
+                    <legend>This time occurs twice. Choose the intended offset.</legend>
+                    {scheduleOptions.map((option, index) => (
+                      <label key={option.toISOString()}>
+                        <input
+                          className="schedule-offset-radio"
+                          type="radio"
+                          name="schedule-offset"
+                          checked={scheduleOption === index}
+                          onChange={() => {
+                            setScheduleOption(index);
+                          }}
+                        />
+                        {offsetLabel(option)}
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
               </div>
+            )}
+            {scheduleError && (
+              <p className="inline-validation" role="alert">
+                {scheduleError}
+              </p>
             )}
             {state === 'loading' && (
               <p className="inline-validation">Loading connected accounts before scheduling.</p>

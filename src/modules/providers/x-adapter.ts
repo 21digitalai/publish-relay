@@ -109,12 +109,13 @@ export class XProviderAdapter implements ProviderAdapter {
     } catch (error) {
       const outcome = failedOutcome(error);
       return outcome.status === 'unknown'
-        ? { ...outcome, reconciliationKey: staged.stageId }
+        ? { ...outcome, reconciliationKey: `x:manual:${staged.idempotencyKey}` }
         : outcome;
     }
   }
 
   public async lookup(reconciliationKey: string): Promise<PublishOutcome> {
+    if (reconciliationKey.startsWith('x:manual:')) return { status: 'unknown', reconciliationKey };
     try {
       const post = await this.client.getPost(reconciliationKey.replace(/^x:/, ''));
       return post

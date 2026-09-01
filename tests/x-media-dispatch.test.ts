@@ -211,41 +211,68 @@ describe('X media dispatch composition', () => {
     );
   });
 
-  it('reconciles an expired ambiguous dispatch through provider lookup', async () => {
+  it('preserves the real ambiguous create lineage without treating its job hash as a post id', async () => {
+    vi.mocked(claimDueJobs).mockResolvedValue([
+      {
+        id: 'job-unknown',
+        workspaceId: 'workspace-1',
+        revisionId: 'revision-1',
+        providerAccountId: 'account-1',
+        state: 'leased',
+        attemptNumber: 1,
+        leaseOwner: 'worker-1',
+        leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
+      },
+    ]);
+    databaseTransaction.orderBy.mockResolvedValueOnce([
+      {
+        credentialId: 'credential-1',
+        accountId: 'x-account-1',
+        content: { type: 'text', text: 'ambiguous post' },
+        mediaId: null as never,
+        mimeType: null as never,
+      },
+    ]);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockImplementation(() => Promise.resolve(Buffer.from('{}')));
+    const ambiguousError = Object.assign(new Error('sanitized timeout'), {
+      status: 503,
+      outcomeUnknown: true,
+    });
+    const createPost = vi.fn(() => Promise.reject(ambiguousError));
+    const getPost = vi.fn(() => Promise.resolve(null));
+    const runtime = {
+      database: databaseTransaction as never,
+      keys: {} as never,
+      source: {} as XMediaSource,
+      createClient: vi.fn(() => ({ createPost, getPost }) as unknown as XMediaUploadClient),
+      workerId: 'worker-1',
+      leaseMs: 30_000,
+    };
+
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:00:00Z'))).resolves.toBe(1);
+    const finishInput = vi.mocked(finishDispatchAttempt).mock.calls[0]?.[1];
+    expect(finishInput).toMatchObject({
+      jobId: 'job-unknown',
+      outcome: 'unknown',
+      reconciliationKey: 'x:manual:job-key',
+    });
+
     vi.mocked(recoverExpiredDispatches).mockResolvedValue(['job-unknown']);
     vi.mocked(claimReconciliationJobs).mockResolvedValue(['job-unknown']);
-    vi.mocked(resolveReconciliation).mockResolvedValue(true);
     databaseTransaction.orderBy.mockResolvedValueOnce([
       {
         workspaceId: 'workspace-1',
         credentialId: 'credential-1',
-        reconciliationKey: 'x:post-1',
+        reconciliationKey: finishInput?.reconciliationKey,
       } as never,
     ]);
-    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
-    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
-    const getPost = vi.fn(() => Promise.resolve({ id: 'post-1', username: 'dailyviber' }));
 
-    await expect(
-      reconcileXJobs(
-        {
-          database: databaseTransaction as never,
-          keys: {} as never,
-          source: {} as XMediaSource,
-          createClient: vi.fn(() => ({ getPost }) as unknown as XMediaUploadClient),
-          workerId: 'worker-1',
-          leaseMs: 30_000,
-        },
-        new Date('2026-09-01T00:02:00Z'),
-      ),
-    ).resolves.toBe(1);
+    await expect(reconcileXJobs(runtime, new Date('2026-09-01T00:02:00Z'))).resolves.toBe(0);
 
     expect(recoverExpiredDispatches).toHaveBeenCalled();
-    expect(getPost).toHaveBeenCalledWith('post-1');
-    expect(resolveReconciliation).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ jobId: 'job-unknown', outcome: 'published' }),
-    );
+    expect(getPost).not.toHaveBeenCalled();
+    expect(resolveReconciliation).not.toHaveBeenCalled();
   });
 
   it('dispatches a text-only job through the durable attempt boundary', async () => {

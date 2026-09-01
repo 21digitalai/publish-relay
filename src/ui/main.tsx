@@ -13,35 +13,25 @@ interface Account {
   lastSync: string;
 }
 
-const accounts: Account[] = [
-  {
-    id: 'x-daily',
-    provider: 'X',
-    name: 'Daily Viber',
-    handle: '@dailyviber',
-    health: 'Connected',
-    capabilities: 'Posts · Media',
-    lastSync: 'Today, 18:42 EEST',
-  },
-  {
-    id: 'x-studio',
-    provider: 'X',
-    name: 'Studio Notes',
-    handle: '@studionotes',
-    health: 'Reconnect required',
-    capabilities: 'Posts',
-    lastSync: 'Aug 29, 11:08 EEST',
-  },
-  {
-    id: 'ig-mira',
-    provider: 'Instagram',
-    name: 'Mira Studio',
-    handle: '@mirastudio',
-    health: 'Connected',
-    capabilities: 'Posts · Reels',
-    lastSync: 'Today, 18:39 EEST',
-  },
-];
+function getCsrfToken(): string {
+  const entry = document.cookie
+    .split('; ')
+    .find((value) => value.startsWith('publish_relay_csrf='));
+  return entry ? (entry.split('=')[1] ?? '') : '';
+}
+
+async function beginXConnection(): Promise<void> {
+  const response = await fetch('/api/oauth/x', {
+    method: 'POST',
+    headers: { 'x-csrf-token': getCsrfToken() },
+  });
+  const result = (await response.json()) as {
+    data: { authorizationUrl: string } | null;
+    error: string | null;
+  };
+  if (!response.ok || !result.data) throw new Error(result.error ?? 'Could not start X connection');
+  window.location.href = result.data.authorizationUrl;
+}
 
 function formText(fields: FormData, name: string): string {
   const value = fields.get(name);
@@ -306,7 +296,7 @@ function OnboardingPage() {
                 Connect securely through the provider. Publish Relay never asks you to paste account
                 tokens.
               </p>
-              <button className="provider-connect-card">
+              <button className="provider-connect-card" onClick={() => void beginXConnection()}>
                 <Mark provider="X" />
                 <span>
                   <strong>Connect X</strong>
@@ -473,9 +463,11 @@ function Rail({ open, onClose }: { open: boolean; onClose: () => void }) {
 function AccountRow({
   account,
   onDisconnect,
+  onReconnect,
 }: {
   account: Account;
   onDisconnect: (account: Account) => void;
+  onReconnect: () => void;
 }) {
   const needsReconnect = account.health === 'Reconnect required';
   return (
@@ -501,7 +493,11 @@ function AccountRow({
         <span>Last sync {account.lastSync}</span>
       </div>
       <div className="account-actions">
-        {needsReconnect && <button className="secondary-button reconnect">Reconnect</button>}
+        {needsReconnect && (
+          <button className="secondary-button reconnect" onClick={onReconnect}>
+            Reconnect
+          </button>
+        )}
         <button
           className="icon-button"
           aria-label={`More actions for ${account.name}`}
@@ -521,6 +517,46 @@ function AccountsPage() {
   const [query, setQuery] = useState('');
   const [health, setHealth] = useState('All health');
   const [disconnecting, setDisconnecting] = useState<Account | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  useEffect(() => {
+    void fetch('/api/provider-accounts')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Accounts could not be loaded');
+        return response.json() as Promise<{
+          data: {
+            accounts: {
+              id: string;
+              provider: string;
+              displayName: string;
+              status: string;
+              updatedAt: string;
+            }[];
+          };
+        }>;
+      })
+      .then(({ data }) => {
+        setAccounts(
+          data.accounts.map((account) => {
+            const handleMatch = /\(@([^)]*)\)$/.exec(account.displayName);
+            return {
+              id: account.id,
+              provider: account.provider.toLowerCase() === 'x' ? 'X' : 'Instagram',
+              name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
+              handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
+              health: account.status === 'active' ? 'Connected' : 'Reconnect required',
+              capabilities: 'Posts · Media',
+              lastSync: new Date(account.updatedAt).toLocaleString(),
+            };
+          }),
+        );
+        setLoadState('ready');
+      })
+      .catch(() => {
+        setLoadState('error');
+      });
+  }, []);
   const visible = useMemo(
     () =>
       accounts.filter(
@@ -528,10 +564,11 @@ function AccountsPage() {
           `${account.name} ${account.handle}`.toLowerCase().includes(query.toLowerCase()) &&
           (health === 'All health' || account.health === health),
       ),
-    [query, health],
+    [accounts, query, health],
   );
   const groups = ['X', 'Instagram'] as const;
   const previewState = new URLSearchParams(window.location.search).get('state');
+  const renderedState = previewState ?? loadState;
   return (
     <div className="workspace-app">
       <a className="skip-link" href="#main-content">
@@ -564,7 +601,12 @@ function AccountsPage() {
             <h1>Connected accounts</h1>
             <p>Manage publishing access and connection health for Atlas Studio.</p>
           </div>
-          <button className="primary-button connect-account">＋ Connect account</button>
+          <button
+            className="primary-button connect-account"
+            onClick={() => void beginXConnection()}
+          >
+            ＋ Connect account
+          </button>
         </div>
         <section className="account-summary" aria-label="Account health summary">
           <div>
@@ -584,6 +626,11 @@ function AccountsPage() {
           <h2 id="accounts-title" className="sr-only">
             Accounts
           </h2>
+          {actionError && (
+            <div className="accounts-error" role="alert">
+              <p>{actionError}</p>
+            </div>
+          )}
           <div className="account-toolbar">
             <label className="search-control">
               <span aria-hidden="true">⌕</span>
@@ -611,28 +658,29 @@ function AccountsPage() {
               </select>
             </label>
           </div>
-          {previewState === 'loading' && (
+          {renderedState === 'loading' && (
             <div className="account-skeletons" aria-label="Loading accounts">
               <div />
               <div />
               <div />
             </div>
           )}
-          {previewState === 'error' && (
+          {renderedState === 'error' && (
             <div className="accounts-error" role="alert">
               <h2>Accounts could not be loaded</h2>
               <p>The connection service did not respond. Your schedules are unchanged.</p>
               <button className="secondary-button">Try again</button>
             </div>
           )}
-          {previewState === 'empty' && (
+          {(renderedState === 'empty' || (renderedState === 'ready' && accounts.length === 0)) && (
             <div className="filter-empty">
               <h2>Connect your first account</h2>
               <p>Add a provider account to start scheduling from this workspace.</p>
               <button className="primary-button">Connect account</button>
             </div>
           )}
-          {!previewState &&
+          {renderedState === 'ready' &&
+            accounts.length > 0 &&
             groups.map((provider) => {
               const rows = visible.filter((account) => account.provider === provider);
               if (!rows.length) return null;
@@ -648,7 +696,9 @@ function AccountsPage() {
                         </span>
                       </div>
                     </div>
-                    <button className="text-button">＋ Connect another</button>
+                    <button className="text-button" onClick={() => void beginXConnection()}>
+                      ＋ Connect another
+                    </button>
                   </header>
                   <div className="account-list">
                     {rows.map((account) => (
@@ -656,13 +706,16 @@ function AccountsPage() {
                         account={account}
                         key={account.id}
                         onDisconnect={setDisconnecting}
+                        onReconnect={() => {
+                          void beginXConnection();
+                        }}
                       />
                     ))}
                   </div>
                 </section>
               );
             })}
-          {!visible.length && (
+          {renderedState === 'ready' && accounts.length > 0 && !visible.length && (
             <div className="filter-empty">
               <h2>No accounts match these filters</h2>
               <p>Try another name or reset the health filter.</p>
@@ -699,8 +752,8 @@ function AccountsPage() {
             <span className="danger-icon">!</span>
             <h2 id="disconnect-title">Disconnect {disconnecting.name}?</h2>
             <p>
-              Scheduled jobs for <strong>{disconnecting.handle}</strong> will be paused. Published
-              posts will remain live.
+              Scheduled jobs for <strong>{disconnecting.handle}</strong> must be cancelled first.
+              Published posts will remain live.
             </p>
             <div className="dialog-actions">
               <button
@@ -715,7 +768,27 @@ function AccountsPage() {
               <button
                 className="danger-button"
                 onClick={() => {
-                  setDisconnecting(null);
+                  const accountId = disconnecting.id;
+                  setActionError(null);
+                  void fetch(`/api/provider-accounts/${accountId}`, {
+                    method: 'DELETE',
+                    headers: { 'x-csrf-token': getCsrfToken() },
+                  })
+                    .then(async (response) => {
+                      const result = (await response.json()) as { error: string | null };
+                      if (!response.ok)
+                        throw new Error(result.error ?? 'Could not disconnect account');
+                      setAccounts((current) =>
+                        current.filter((account) => account.id !== accountId),
+                      );
+                      setDisconnecting(null);
+                    })
+                    .catch((error: unknown) => {
+                      setDisconnecting(null);
+                      setActionError(
+                        error instanceof Error ? error.message : 'Could not disconnect account',
+                      );
+                    });
                 }}
               >
                 Disconnect account

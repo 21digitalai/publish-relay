@@ -53,7 +53,7 @@ export async function authenticateRequest(
   return session ? auth.authenticate(session.workspaceId, session.token) : null;
 }
 
-async function authorizeRequest(
+export async function authorizeRequest(
   request: FastifyRequest,
   auth: AuthService,
   action: WorkspaceAction,

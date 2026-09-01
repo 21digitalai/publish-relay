@@ -66,7 +66,7 @@ export function registerXOauthRoutes(
       },
     );
     return result
-      ? { data: result, error: null }
+      ? reply.redirect('/app?oauth=x-connected')
       : reply.code(400).send({ data: null, error: 'X OAuth transaction is invalid or expired' });
   });
 }

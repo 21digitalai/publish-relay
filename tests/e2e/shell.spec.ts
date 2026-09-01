@@ -14,6 +14,42 @@ async function establishWorkspaceSession(page: Page) {
   expect(response.ok()).toBe(true);
 }
 
+async function mockConnectedAccounts(page: Page) {
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000201',
+              provider: 'x',
+              displayName: 'Daily Viber (@dailyviber)',
+              status: 'active',
+              updatedAt: '2026-09-01T00:00:00Z',
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000202',
+              provider: 'x',
+              displayName: 'Studio Notes (@studionotes)',
+              status: 'reconnect_required',
+              updatedAt: '2026-08-29T00:00:00Z',
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000203',
+              provider: 'instagram',
+              displayName: 'Mira Studio (@mirastudio)',
+              status: 'active',
+              updatedAt: '2026-09-01T00:00:00Z',
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+}
+
 test('renders the login surface and reports an inline authentication error', async ({ page }) => {
   await page.route('**/api/auth/login', (route) =>
     route.fulfill({
@@ -86,6 +122,7 @@ test('registers, persists the first workspace update, and reloads the protected 
 
 test('filters accounts and opens a named disconnect confirmation', async ({ page }) => {
   await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
   await page.goto('/w/atlas/accounts');
   await expect(page.getByRole('heading', { name: 'Connected accounts' })).toBeVisible();
   await expect(page.getByText('Studio Notes')).toBeVisible();
@@ -100,6 +137,7 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
 
 test('uses the mobile navigation drawer', async ({ page }) => {
   await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/w/atlas/accounts');
   await page.getByRole('button', { name: 'Open navigation' }).click();

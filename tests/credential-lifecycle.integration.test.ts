@@ -18,6 +18,10 @@ import type {
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
 import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
 import {
+  disconnectProviderAccount,
+  listProviderAccounts,
+} from '../src/modules/credentials/provider-account.service.js';
+import {
   cleanupExpiredOauthTransactions,
   consumeOauthCallback,
   hashOauthState,
@@ -35,6 +39,10 @@ const migrations = [
   '0002_busy_mantis.sql',
   '0003_many_marvel_boy.sql',
   '0004_easy_doctor_spectrum.sql',
+  '0005_round_thunderball.sql',
+  '0006_enforce_content_workspace_foreign_keys.sql',
+  '0007_add_scheduler_attempt_ledger.sql',
+  '0008_handy_shen.sql',
   '0009_generalize_oauth_transaction_secret.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
@@ -288,5 +296,55 @@ describe('credential and OAuth persistence', () => {
         (select count(*)::int from credentials where revoked_at is null) as active_credentials`,
     );
     expect(counts.rows[0]).toEqual({ transactions: 0, active_credentials: 1 });
+  });
+
+  it('lists an allowlisted account summary and revokes the final disconnected credential', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const key = randomBytes(32);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    await connectProvider(
+      db,
+      keys,
+      new FakeProviderConnectionAdapter([
+        { providerAccountId: 'external-account', displayName: 'Daily Viber (@dailyviber)' },
+      ]),
+      {
+        workspaceId,
+        userId,
+        provider: 'x',
+        accessToken: 'secret-token',
+        requestId: 'req-connect-account',
+      },
+    );
+    const accounts = await listProviderAccounts(db, workspaceId);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      provider: 'x',
+      displayName: 'Daily Viber (@dailyviber)',
+      status: 'active',
+    });
+    expect(Object.keys(accounts[0] ?? {})).toEqual([
+      'id',
+      'provider',
+      'displayName',
+      'status',
+      'updatedAt',
+    ]);
+    await expect(
+      disconnectProviderAccount(db, {
+        workspaceId,
+        userId,
+        accountId: accounts[0]?.id ?? '',
+        requestId: 'req-disconnect-account',
+      }),
+    ).resolves.toBe('disconnected');
+    expect(await listProviderAccounts(db, workspaceId)).toEqual([]);
+    const revoked = await database.query<{ count: number }>(
+      'select count(*)::int as count from credentials where revoked_at is not null',
+    );
+    expect(revoked.rows[0]?.count).toBe(1);
   });
 });

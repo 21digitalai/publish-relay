@@ -104,6 +104,7 @@ Group by provider and show each connected account independently. Rows include pr
 - Search name/handle; filter provider, health, and workspace access.
 - Reconnect is primary for expired credentials.
 - Disconnect names the account, explains scheduled-job impact, and requires explicit confirmation.
+- Account rows load from the tenant-scoped account API. Connect and reconnect use the same secure X OAuth redirect; successful callbacks return to the protected workspace. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
 
 ## Composer
 

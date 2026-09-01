@@ -251,6 +251,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               {accounts.map((account) => (
                 <label key={account.id}>
                   <input
+                    className="account-picker-checkbox"
                     type="checkbox"
                     checked={selectedAccounts.includes(account.id)}
                     onChange={() => {

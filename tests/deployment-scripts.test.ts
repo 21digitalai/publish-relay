@@ -120,6 +120,8 @@ describe('deployment scripts', () => {
     expect(content).toContain('publish_relay_migrator_login');
     expect(content).toContain('publish_relay_web_login');
     expect(content).toContain('publish_relay_worker_login');
+    expect(content).toContain('(cd "$project_root" && DATABASE_URL=');
+    expect(content).toContain('status >/dev/null 2>&1 || return 0');
     expect(content).toContain('55436');
     expect(content).toContain('3106');
     expect(content).not.toContain('/Users/');

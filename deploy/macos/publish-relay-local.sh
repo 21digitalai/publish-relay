@@ -24,12 +24,12 @@ IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='publish_relay_worker_login') 
 END $$;
 SELECT 'CREATE DATABASE publish_relay OWNER publish_relay_migrator_login' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='publish_relay')\gexec
 SQL
-DATABASE_URL="postgresql://publish_relay_migrator_login@127.0.0.1:$postgres_port/publish_relay" "$node_bin" "$project_root/dist/database/migrate.js"
+(cd "$project_root" && DATABASE_URL="postgresql://publish_relay_migrator_login@127.0.0.1:$postgres_port/publish_relay" "$node_bin" "$project_root/dist/database/migrate.js")
 "$pg_bin/psql" -h 127.0.0.1 -p "$postgres_port" -d publish_relay -v ON_ERROR_STOP=1 -f "$project_root/deploy/bootstrap-database-authorities.sql"
 "$pg_bin/psql" -h 127.0.0.1 -p "$postgres_port" postgres -v ON_ERROR_STOP=1 -c 'GRANT publish_relay_web TO publish_relay_web_login; GRANT publish_relay_worker TO publish_relay_worker_login;'
 "$pg_bin/pg_ctl" -D "$data_dir" stop -m fast -w >/dev/null; }
 install_runtime(){ require_runtime; mkdir -p "$plist_dir" "$log_dir" "$media_dir"; for label in "${labels[@]}"; do bootout "$(plist_path "$label")"; done; initialize_database; write_wrapper web; write_wrapper worker; write_plist "${labels[0]}" "$pg_bin/postgres" "$log_dir/postgres.log" "$log_dir/postgres-error.log" -D "$data_dir" -p "$postgres_port"; write_plist "${labels[1]}" "$runtime_root/run-web.sh" "$log_dir/web.log" "$log_dir/web-error.log"; write_plist "${labels[2]}" "$runtime_root/run-worker.sh" "$log_dir/worker.log" "$log_dir/worker-error.log"; }
 start_runtime(){ require_runtime; for label in "${labels[@]}"; do bootout "$(plist_path "$label")"; launchctl bootstrap "$domain" "$(plist_path "$label")"; done; for _ in {1..30}; do curl --fail --silent "http://127.0.0.1:$web_port/health/ready" >/dev/null && return; sleep 1; done; echo "not ready; inspect $log_dir" >&2; exit 70; }
-stop_runtime(){ for label in "${labels[@]}"; do bootout "$(plist_path "$label")"; done; for _ in {1..30}; do "$pg_bin/pg_ctl" -D "$data_dir" status >/dev/null 2>&1 || return; sleep 1; done; echo "PostgreSQL did not stop cleanly" >&2; exit 70; }
+stop_runtime(){ for label in "${labels[@]}"; do bootout "$(plist_path "$label")"; done; for _ in {1..30}; do "$pg_bin/pg_ctl" -D "$data_dir" status >/dev/null 2>&1 || return 0; sleep 1; done; echo "PostgreSQL did not stop cleanly" >&2; exit 70; }
 status_runtime(){ local failed=0; for label in "${labels[@]}"; do launchctl print "$domain/$label" >/dev/null 2>&1 && echo "$label: running" || { echo "$label: stopped"; failed=1; }; done; curl --fail --silent "http://127.0.0.1:$web_port/health/ready" >/dev/null && echo 'health: ready' || { echo 'health: unavailable'; failed=1; }; return "$failed"; }
 case "$action" in install) install_runtime; start_runtime;; start) start_runtime;; stop) stop_runtime;; restart) stop_runtime; start_runtime;; status) status_runtime;; uninstall) stop_runtime; echo "runtime data preserved at $runtime_root";; esac

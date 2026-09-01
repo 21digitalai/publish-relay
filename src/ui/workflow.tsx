@@ -184,6 +184,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     { id: string; provider: string; displayName: string; status: string }[]
   >([]);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
+  const [scheduledJobs, setScheduledJobs] = useState<QueueJobDto[]>([]);
   const [body, setBody] = useState('');
   const [scheduled, setScheduled] = useState(true);
   const [receipt, setReceipt] = useState<{ count: number; scheduledAt: string } | null>(null);
@@ -201,6 +202,14 @@ function Composer({ onClose }: { onClose: () => void }) {
       : scheduled && scheduledAt && scheduledAt.getTime() <= Date.now()
         ? 'Choose a future publishing time.'
         : null;
+  const collisions = scheduledAt
+    ? scheduledJobs.filter(
+        (job) =>
+          Boolean(job.providerAccount.id) &&
+          selectedAccounts.includes(job.providerAccount.id ?? '') &&
+          Math.abs(new Date(job.scheduledAt).getTime() - scheduledAt.getTime()) < 15 * 60_000,
+      )
+    : [];
   const invalid =
     !body.trim() ||
     selectedAccounts.length === 0 ||
@@ -227,6 +236,19 @@ function Composer({ onClose }: { onClose: () => void }) {
           reason instanceof Error ? reason.message : 'Connected accounts could not be loaded.',
         );
         setState('ready');
+      });
+  }, []);
+  useEffect(() => {
+    void fetch('/api/workflow/jobs?limit=100')
+      .then(async (response) => {
+        if (!response.ok) return { data: { items: [] } };
+        return response.json() as Promise<{ data: { items: QueueJobDto[] } }>;
+      })
+      .then(({ data }) => {
+        setScheduledJobs(data.items);
+      })
+      .catch(() => {
+        setScheduledJobs([]);
       });
   }, []);
   useEffect(() => {
@@ -409,6 +431,28 @@ function Composer({ onClose }: { onClose: () => void }) {
               <p className="inline-validation" role="alert">
                 {scheduleError}
               </p>
+            )}
+            {scheduled && scheduledAt && collisions.length > 0 && (
+              <div className="schedule-collision-guidance" role="status">
+                <strong>
+                  {collisions.length}{' '}
+                  {collisions.length === 1 ? 'nearby publication' : 'nearby publications'} detected
+                </strong>
+                <p>Leave breathing room for this account or keep the exact minute intentionally.</p>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    const latest = Math.max(
+                      ...collisions.map((job) => new Date(job.scheduledAt).getTime()),
+                    );
+                    setLocalSchedule(localDateTimeValue(new Date(latest + 15 * 60_000)));
+                    setScheduleOption(0);
+                  }}
+                >
+                  Use next 15-minute opening
+                </button>
+              </div>
             )}
             {state === 'loading' && (
               <p className="inline-validation">Loading connected accounts before scheduling.</p>

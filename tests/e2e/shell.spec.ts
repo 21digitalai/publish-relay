@@ -189,6 +189,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
               scheduledAt: '2026-09-01T09:30:00+03:00',
               contentPreview: 'The clearest plans leave room for the unexpected.',
               providerAccount: {
+                id: '00000000-0000-4000-8000-000000000201',
                 displayName: 'Daily Viber',
                 handle: 'dailyviber',
                 provider: 'x',
@@ -262,6 +263,10 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
   const scheduleInput = page.getByLabel('Date and time');
+  await scheduleInput.fill('2026-09-01T09:30');
+  await expect(page.getByText('1 nearby publication detected')).toBeVisible();
+  await page.getByRole('button', { name: 'Use next 15-minute opening' }).click();
+  await expect(scheduleInput).toHaveValue('2026-09-01T09:45');
   await scheduleInput.fill('2020-01-01T09:00');
   await expect(page.getByRole('alert')).toContainText('future publishing time');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();

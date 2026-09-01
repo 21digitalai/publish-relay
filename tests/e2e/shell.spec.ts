@@ -172,6 +172,26 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
       }),
     }),
   );
+  await page.route('**/api/workflow/jobs/job-2048', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: 'job-2048',
+          postId: 'post-2048',
+          state: 'failed',
+          scheduledAt: '2026-09-01T09:30:00+03:00',
+          content: { type: 'text', text: 'The clearest plans leave room for the unexpected.' },
+          providerAccount: {
+            displayName: 'Daily Viber',
+            handle: 'dailyviber',
+            provider: 'x',
+          },
+        },
+        error: null,
+      }),
+    }),
+  );
   await page.goto('/w/atlas/queue');
   await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
   await expect(page.getByText('The clearest plans')).toBeVisible();

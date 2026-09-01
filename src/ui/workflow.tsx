@@ -69,6 +69,10 @@ interface QueueJobDto {
   providerAccount: { displayName: string; handle: string; provider: string };
 }
 
+interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview'> {
+  content: { text?: string };
+}
+
 function toJob(dto: QueueJobDto): Job {
   const state: JobState =
     dto.state === 'retry_wait'
@@ -87,6 +91,10 @@ function toJob(dto: QueueJobDto): Job {
       : `@${dto.providerAccount.handle}`,
     provider: dto.providerAccount.provider.toUpperCase(),
   };
+}
+
+function detailToJob(dto: JobDetailDto): Job {
+  return toJob({ ...dto, contentPreview: dto.content.text ?? '' });
 }
 
 function formatTime(value: string): string {
@@ -592,10 +600,48 @@ function TimelineCalendar() {
 }
 
 export function JobDetailPage() {
-  const initial = JOBS.find((job) => window.location.pathname.endsWith(job.id)) ?? JOBS.at(0);
-  if (!initial) throw new Error('Job fixture is unavailable');
-  const [job, setJob] = useState(initial);
+  const jobId = window.location.pathname.split('/').at(-1) ?? '';
+  const [job, setJob] = useState<Job | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`/api/workflow/jobs/${encodeURIComponent(jobId)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const result = (await response.json()) as { data: JobDetailDto | null; error: string | null };
+        if (!response.ok || !result.data)
+          throw new Error(result.error ?? 'Could not load publication job');
+        setJob(detailToJob(result.data));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setLoadError(error instanceof Error ? error.message : 'Could not load publication job');
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [jobId]);
+  if (loadError)
+    return (
+      <WorkspaceLayout active="queue">
+        <div className="filter-empty" role="alert">
+          <h1>Job unavailable</h1>
+          <p>{loadError}</p>
+          <a className="secondary-button" href="/w/atlas/queue">
+            Back to queue
+          </a>
+        </div>
+      </WorkspaceLayout>
+    );
+  if (!job)
+    return (
+      <WorkspaceLayout active="queue">
+        <div className="filter-empty" role="status">
+          <h1>Loading publication job</h1>
+          <p>Fetching the latest execution state…</p>
+        </div>
+      </WorkspaceLayout>
+    );
   return (
     <WorkspaceLayout active="queue">
       <div className="detail-route">

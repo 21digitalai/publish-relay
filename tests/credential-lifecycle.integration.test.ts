@@ -388,5 +388,30 @@ describe('credential and OAuth persistence', () => {
       'select count(*)::int as count from credentials where revoked_at is not null',
     );
     expect(revoked.rows[0]?.count).toBe(1);
+    await connectProvider(
+      db,
+      keys,
+      new FakeProviderConnectionAdapter([
+        { providerAccountId: 'external-account', displayName: 'Daily Viber reconnected' },
+      ]),
+      {
+        workspaceId,
+        userId,
+        provider: 'x',
+        accessToken: 'replacement-secret-token',
+        requestId: 'req-reconnect-account',
+      },
+    );
+    const reconnectedAccounts = await listProviderAccounts(db, workspaceId);
+    expect(reconnectedAccounts).toHaveLength(1);
+    expect(reconnectedAccounts[0]).toMatchObject({
+      id: accountId,
+      displayName: 'Daily Viber reconnected',
+      status: 'active',
+    });
+    const historyAfterReconnect = await database.query<{ count: number }>(
+      'select count(*)::int as count from publication_jobs',
+    );
+    expect(historyAfterReconnect.rows[0]?.count).toBe(1);
   });
 });

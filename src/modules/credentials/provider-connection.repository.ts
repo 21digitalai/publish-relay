@@ -65,17 +65,54 @@ export async function replaceProviderConnection(
         .returning({ id: providerConnections.id });
   const connection = connectionRows[0];
   if (!connection) throw new Error('Provider connection write returned no record');
-  await database
-    .delete(providerAccounts)
+  const existingAccounts = await database
+    .select({
+      id: providerAccounts.id,
+      providerAccountId: providerAccounts.providerAccountId,
+    })
+    .from(providerAccounts)
     .where(
       and(
         eq(providerAccounts.workspaceId, input.workspaceId),
         eq(providerAccounts.connectionId, connection.id),
       ),
     );
-  if (input.accounts.length > 0)
+  const existingByProviderId = new Map(
+    existingAccounts.map((account) => [account.providerAccountId, account.id]),
+  );
+  const discoveredIds = new Set(input.accounts.map((account) => account.providerAccountId));
+  const now = new Date();
+  for (const account of existingAccounts) {
+    if (!discoveredIds.has(account.providerAccountId))
+      await database
+        .update(providerAccounts)
+        .set({ disconnectedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(providerAccounts.workspaceId, input.workspaceId),
+            eq(providerAccounts.id, account.id),
+          ),
+        );
+  }
+  for (const account of input.accounts) {
+    const existingId = existingByProviderId.get(account.providerAccountId);
+    if (!existingId) continue;
+    await database
+      .update(providerAccounts)
+      .set({ displayName: account.displayName, disconnectedAt: null, updatedAt: now })
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerAccounts.id, existingId),
+        ),
+      );
+  }
+  const newAccounts = input.accounts.filter(
+    (account) => !existingByProviderId.has(account.providerAccountId),
+  );
+  if (newAccounts.length > 0)
     await database.insert(providerAccounts).values(
-      input.accounts.map((account) => ({
+      newAccounts.map((account) => ({
         workspaceId: input.workspaceId,
         connectionId: connection.id,
         providerAccountId: account.providerAccountId,

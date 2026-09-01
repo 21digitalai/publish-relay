@@ -5,7 +5,7 @@ const runtimeConfigSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: z.url().startsWith('postgresql://').optional(),
     HOST: z.string().min(1).default('127.0.0.1'),
-    PORT: z.coerce.number().int().min(1).max(65535).default(3100),
+    PORT: z.coerce.number().int().min(1).max(65535).default(3106),
     WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
     WORKER_ID: z.string().min(1).optional(),
     MEDIA_STORAGE_ROOT: z.string().min(1).optional(),

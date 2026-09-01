@@ -12,6 +12,8 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { loadRuntimeConfig } from '../src/config/runtime-config.js';
+
 const projectRoot = resolve(import.meta.dirname, '..');
 
 function writeExecutable(path: string, content: string): void {
@@ -39,11 +41,11 @@ function createDeployFixture(): {
   writeExecutable(join(bin, 'mv'), '[[ "$1" == "-Tf" ]] && shift; command /bin/mv "$@"');
   writeExecutable(join(bin, 'sudo'), 'shift 2; exec "$@"');
   const nodeBin = join(bin, 'node24');
-  const npmBin = join(bin, 'npm24');
-  writeExecutable(nodeBin, '[[ "$1" == "--version" ]] && echo v24.8.0');
+  const npmCli = join(bin, 'npm-cli.js');
+  writeFileSync(npmCli, 'fixture npm CLI');
   writeExecutable(
-    npmBin,
-    'echo "npm $*" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 || "$*" != *"db:migrate:production"* ]]',
+    nodeBin,
+    'if [[ "$1" == "--version" ]]; then echo v24.8.0; exit 0; fi; shift; echo "npm $*" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 || "$*" != *"db:migrate:production"* ]]',
   );
   writeExecutable(join(bin, 'systemctl'), 'echo "systemctl $*" >> "$COMMAND_LOG"');
   writeExecutable(join(bin, 'curl'), 'echo "curl $*" >> "$COMMAND_LOG"');
@@ -56,7 +58,7 @@ function createDeployFixture(): {
       PUBLISH_RELAY_CURRENT_LINK: currentLink,
       PUBLISH_RELAY_SERVICE_USER: 'test-user',
       PUBLISH_RELAY_NODE_BIN: nodeBin,
-      PUBLISH_RELAY_NPM_BIN: npmBin,
+      PUBLISH_RELAY_NPM_CLI: npmCli,
       PUBLISH_RELAY_HEALTH_URL: 'http://127.0.0.1:3999/health/ready',
     },
     source,
@@ -66,11 +68,15 @@ function createDeployFixture(): {
 }
 
 describe('deployment scripts', () => {
+  it('defaults the application listener to the isolated port and accepts an override', () => {
+    expect(loadRuntimeConfig({ NODE_ENV: 'test' }).PORT).toBe(3106);
+    expect(loadRuntimeConfig({ NODE_ENV: 'test', PORT: '43199' }).PORT).toBe(43199);
+  });
+
   it('pins both services to the isolated Node 24 path and isolated health port', () => {
     for (const unit of ['publish-relay-web.service', 'publish-relay-worker.service']) {
       const content = readFileSync(join(projectRoot, 'deploy/systemd', unit), 'utf8');
-      expect(content).toContain('PUBLISH_RELAY_NODE_BIN=/opt/publish-relay/node24/bin/node');
-      expect(content).toContain('ExecStart=${PUBLISH_RELAY_NODE_BIN}');
+      expect(content).toContain('ExecStart=/opt/publish-relay/node24/bin/node');
       expect(content).not.toContain('/usr/bin/node');
     }
     for (const script of ['publish-release.sh', 'rollback-release.sh']) {

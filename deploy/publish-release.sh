@@ -13,7 +13,7 @@ release_directory="${release_root}/${release_id}"
 current_link="${PUBLISH_RELAY_CURRENT_LINK:-/opt/publish-relay/current}"
 service_user="${PUBLISH_RELAY_SERVICE_USER:-publish-relay}"
 node_bin="${PUBLISH_RELAY_NODE_BIN:-/opt/publish-relay/node24/bin/node}"
-npm_bin="${PUBLISH_RELAY_NPM_BIN:-/opt/publish-relay/node24/bin/npm}"
+npm_cli="${PUBLISH_RELAY_NPM_CLI:-/opt/publish-relay/node24/lib/node_modules/npm/bin/npm-cli.js}"
 health_url="${PUBLISH_RELAY_HEALTH_URL:-http://127.0.0.1:3106/health/ready}"
 
 [[ "$release_id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid release id" >&2; exit 64; }
@@ -21,7 +21,7 @@ health_url="${PUBLISH_RELAY_HEALTH_URL:-http://127.0.0.1:3106/health/ready}"
 [[ -f "${source_directory}/dist/database/migrate.js" ]] || { echo "compiled migration entrypoint is missing" >&2; exit 66; }
 [[ ! -e "$release_directory" ]] || { echo "release already exists" >&2; exit 73; }
 [[ -x "$node_bin" ]] || { echo "Node 24 executable is missing: $node_bin" >&2; exit 69; }
-[[ -x "$npm_bin" ]] || { echo "Node 24 npm executable is missing: $npm_bin" >&2; exit 69; }
+[[ -f "$npm_cli" ]] || { echo "Node 24 npm CLI is missing: $npm_cli" >&2; exit 69; }
 [[ "$($node_bin --version)" =~ ^v24\. ]] || { echo "selected Node executable is not Node 24" >&2; exit 69; }
 
 install -d -o "$service_user" -g "$service_user" "$release_root"
@@ -29,8 +29,8 @@ install -d -o "$service_user" -g "$service_user" "$release_directory"
 cp -a "${source_directory}/." "$release_directory/"
 chown -R "${service_user}:${service_user}" "$release_directory"
 
-sudo -u "$service_user" "$npm_bin" ci --omit=dev --ignore-scripts --prefix "$release_directory"
-sudo -u "$service_user" "$npm_bin" run db:migrate:production --prefix "$release_directory"
+sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --prefix "$release_directory"
+sudo -u "$service_user" "$node_bin" "$npm_cli" run db:migrate:production --prefix "$release_directory"
 ln -sfn "$release_directory" "${current_link}.next"
 mv -Tf "${current_link}.next" "$current_link"
 systemctl restart publish-relay-web publish-relay-worker

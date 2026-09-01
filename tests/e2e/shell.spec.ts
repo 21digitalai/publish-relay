@@ -149,9 +149,21 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
   let detailState = 'failed';
   let retryHeaders: Record<string, string> | null = null;
   let retryAttempts = 0;
+  let createPayload: Record<string, unknown> | null = null;
+  let createHeaders: Record<string, string> | null = null;
+  await page.route('**/api/workflow/posts', async (route) => {
+    createPayload = route.request().postDataJSON() as Record<string, unknown>;
+    createHeaders = route.request().headers();
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: 'post-new', jobIds: ['one', 'two'] }, error: null }),
+    });
+  });
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -222,6 +234,17 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
+  await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
+  expect(createHeaders?.['x-csrf-token']).toBeTruthy();
+  expect(createHeaders?.['idempotency-key']).toBeTruthy();
+  expect(createPayload).toMatchObject({
+    content: { type: 'text', text: 'A clear publishing update for two accounts.' },
+    providerAccountIds: [
+      '00000000-0000-4000-8000-000000000201',
+      '00000000-0000-4000-8000-000000000203',
+    ],
+  });
   await page.getByRole('button', { name: 'Close composer' }).click();
   await page.goto('/w/atlas/calendar');
   for (const mode of ['Month', 'Week', 'Day', 'Timeline']) {

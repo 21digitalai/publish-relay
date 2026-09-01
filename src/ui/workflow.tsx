@@ -144,10 +144,67 @@ function Status({ state }: { state: JobState }) {
 }
 
 function Composer({ onClose }: { onClose: () => void }) {
+  const [accounts, setAccounts] = useState<
+    { id: string; provider: string; displayName: string; status: string }[]
+  >([]);
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [body, setBody] = useState('');
   const [scheduled, setScheduled] = useState(true);
-  const [receipt, setReceipt] = useState(false);
-  const invalid = !body.trim();
+  const [receipt, setReceipt] = useState<{ count: number; scheduledAt: string } | null>(null);
+  const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const scheduledAt = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
+  const invalid = !body.trim() || selectedAccounts.length === 0 || state !== 'ready';
+  useEffect(() => {
+    void fetch('/api/provider-accounts')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Connected accounts could not be loaded.');
+        return response.json() as Promise<{
+          data: {
+            accounts: { id: string; provider: string; displayName: string; status: string }[];
+          };
+        }>;
+      })
+      .then(({ data }) => {
+        const active = data.accounts.filter((account) => account.status === 'active');
+        setAccounts(active);
+        setSelectedAccounts(active.map((account) => account.id));
+        setState('ready');
+      })
+      .catch((reason: unknown) => {
+        setError(
+          reason instanceof Error ? reason.message : 'Connected accounts could not be loaded.',
+        );
+        setState('ready');
+      });
+  }, []);
+  const submit = async () => {
+    setState('saving');
+    setError(null);
+    const targetTime = scheduled ? scheduledAt : new Date();
+    try {
+      const response = await fetch('/api/workflow/posts', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-csrf-token': cookieValue('publish_relay_csrf'),
+          'idempotency-key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          content: { type: 'text', text: body.trim() },
+          providerAccountIds: selectedAccounts,
+          scheduledAt: targetTime.toISOString(),
+        }),
+      });
+      const envelope = (await response.json()) as { error?: string | null };
+      if (!response.ok) throw new Error(envelope.error ?? 'The post could not be scheduled.');
+      setReceipt({ count: selectedAccounts.length, scheduledAt: targetTime.toISOString() });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The post could not be scheduled.');
+    } finally {
+      setState('ready');
+    }
+  };
   return (
     <div className="sheet-backdrop">
       <section
@@ -168,8 +225,8 @@ function Composer({ onClose }: { onClose: () => void }) {
         {receipt ? (
           <div className="composer-receipt" role="status">
             <span aria-hidden="true">✓</span>
-            <h3>2 posts scheduled</h3>
-            <p>Sep 1 at 11:15 AM EEST</p>
+            <h3>{receipt.count} posts scheduled</h3>
+            <p>{formatTime(receipt.scheduledAt)}</p>
             <div>
               <a className="secondary-button" href="/w/atlas/queue">
                 Open Queue
@@ -183,22 +240,32 @@ function Composer({ onClose }: { onClose: () => void }) {
           <>
             <fieldset className="account-picker">
               <legend>Publish to</legend>
-              <label>
-                <input type="checkbox" defaultChecked />
-                <span className="account-avatar">DV</span>
-                <span>
-                  <strong>Daily Viber</strong>
-                  <small>@dailyviber · X</small>
-                </span>
-              </label>
-              <label>
-                <input type="checkbox" defaultChecked />
-                <span className="account-avatar">AS</span>
-                <span>
-                  <strong>Atlas Studio</strong>
-                  <small>@atlasstudio · X</small>
-                </span>
-              </label>
+              {state === 'loading' && <p>Loading connected accounts…</p>}
+              {state !== 'loading' && accounts.length === 0 && (
+                <p>Connect an account before scheduling.</p>
+              )}
+              {accounts.map((account) => (
+                <label key={account.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedAccounts.includes(account.id)}
+                    onChange={() => {
+                      setSelectedAccounts((current) =>
+                        current.includes(account.id)
+                          ? current.filter((id) => id !== account.id)
+                          : [...current, account.id],
+                      );
+                    }}
+                  />
+                  <span className="account-avatar">
+                    {account.displayName.slice(0, 2).toUpperCase()}
+                  </span>
+                  <span>
+                    <strong>{account.displayName}</strong>
+                    <small>{account.provider.toUpperCase()}</small>
+                  </span>
+                </label>
+              ))}
             </fieldset>
             <label className="field-label">
               Post body
@@ -243,33 +310,43 @@ function Composer({ onClose }: { onClose: () => void }) {
               <div className="schedule-fields">
                 <label className="field-label">
                   Date
-                  <input className="text-input" value="Sep 1, 2026" readOnly />
+                  <input className="text-input" value={scheduledAt.toLocaleDateString()} readOnly />
                 </label>
                 <label className="field-label">
                   Time
-                  <input className="text-input" value="11:15" readOnly />
+                  <input
+                    className="text-input"
+                    value={scheduledAt.toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    readOnly
+                  />
                 </label>
                 <label className="field-label">
                   Timezone
-                  <select className="health-filter" defaultValue="Europe/Sofia">
-                    <option>Europe/Sofia (EEST, UTC+3)</option>
-                  </select>
+                  <input
+                    className="text-input"
+                    value={Intl.DateTimeFormat().resolvedOptions().timeZone}
+                    readOnly
+                  />
                 </label>
               </div>
             )}
             {invalid && <p className="inline-validation">Add post text before scheduling.</p>}
+            {error && (
+              <p className="inline-validation" role="alert">
+                {error}
+              </p>
+            )}
             <footer>
               <button className="secondary-button" onClick={onClose}>
                 Save draft
               </button>
-              <button
-                className="primary-button"
-                disabled={invalid}
-                onClick={() => {
-                  setReceipt(true);
-                }}
-              >
-                Schedule 2 posts
+              <button className="primary-button" disabled={invalid} onClick={() => void submit()}>
+                {state === 'saving'
+                  ? 'Scheduling…'
+                  : `Schedule ${String(selectedAccounts.length)} posts`}
               </button>
             </footer>
           </>

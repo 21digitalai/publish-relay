@@ -177,8 +177,66 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
       body: JSON.stringify({ data: { id: 'post-new', jobIds: ['one', 'two'] }, error: null }),
     });
   });
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
-    route.fulfill({
+  const collisionQueryUrls: string[] = [];
+  await page.route('**/api/workflow/jobs?*', (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('states') === 'scheduled') {
+      collisionQueryUrls.push(url.toString());
+      const accountId = url.searchParams.get('providerAccountId');
+      const isFirstAccount = accountId === '00000000-0000-4000-8000-000000000201';
+      const isSecondPage = url.searchParams.has('beforeId');
+      const items = isFirstAccount
+        ? [
+            {
+              id: isSecondPage
+                ? '00000000-0000-4000-8000-000000000402'
+                : '00000000-0000-4000-8000-000000000401',
+              state: 'scheduled',
+              scheduledAt: isSecondPage ? '2026-09-01T09:50:00+03:00' : '2026-09-01T09:40:00+03:00',
+              contentPreview: 'Nearby publication',
+              providerAccount: {
+                id: accountId,
+                displayName: 'Daily Viber',
+                handle: 'dailyviber',
+                provider: 'x',
+              },
+            },
+            ...(isSecondPage
+              ? [
+                  {
+                    id: '00000000-0000-4000-8000-000000000403',
+                    state: 'scheduled',
+                    scheduledAt: '2026-09-01T10:20:00+03:00',
+                    contentPreview: 'Exact boundary publication',
+                    providerAccount: {
+                      id: accountId,
+                      displayName: 'Daily Viber',
+                      handle: 'dailyviber',
+                      provider: 'x',
+                    },
+                  },
+                ]
+              : []),
+          ]
+        : [];
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            items,
+            next:
+              isFirstAccount && !isSecondPage
+                ? {
+                    beforeScheduledAt: '2026-09-01T09:40:00+03:00',
+                    beforeId: '00000000-0000-4000-8000-000000000401',
+                  }
+                : null,
+          },
+          error: null,
+        }),
+      });
+    }
+    return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         data: {
@@ -199,8 +257,8 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
         },
         error: null,
       }),
-    }),
-  );
+    });
+  });
   await page.route('**/api/workflow/jobs/job-2048/retry', async (route) => {
     retryAttempts += 1;
     retryHeaders = route.request().headers();
@@ -266,11 +324,18 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await scheduleInput.fill('2026-09-01T09:30');
   await expect(page.getByText('1 nearby publication detected')).toBeVisible();
   await page.getByRole('button', { name: 'Use next 15-minute opening' }).click();
-  await expect(scheduleInput).toHaveValue('2026-09-01T09:45');
+  await expect(scheduleInput).toHaveValue('2026-09-01T10:05');
+  expect(collisionQueryUrls.some((url) => url.includes('states=scheduled'))).toBe(true);
+  expect(collisionQueryUrls.some((url) => url.includes('beforeId='))).toBe(true);
+  expect(
+    new Set(collisionQueryUrls.map((url) => new URL(url).searchParams.get('providerAccountId'))),
+  ).toEqual(
+    new Set(['00000000-0000-4000-8000-000000000201', '00000000-0000-4000-8000-000000000203']),
+  );
   await scheduleInput.fill('2020-01-01T09:00');
   await expect(page.getByRole('alert')).toContainText('future publishing time');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
-  await scheduleInput.fill('2027-09-01T09:45');
+  await scheduleInput.fill('2026-09-01T10:05');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
   await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
   await expect(page.getByRole('alert')).toContainText('Retry safely');
@@ -286,9 +351,9 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
       '00000000-0000-4000-8000-000000000203',
     ],
   });
-  expect(
-    new Date(String((createPayload as Record<string, unknown> | null)?.scheduledAt)).getFullYear(),
-  ).toBe(2027);
+  expect(new Date(String((createPayload as Record<string, unknown> | null)?.scheduledAt))).toEqual(
+    new Date('2026-09-01T10:05:00+03:00'),
+  );
   await page.getByRole('button', { name: 'Close composer' }).click();
   await page.goto('/w/atlas/calendar');
   for (const mode of ['Month', 'Week', 'Day', 'Timeline']) {
@@ -325,6 +390,21 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   expect(cancelHeaders?.['idempotency-key']).toBeTruthy();
   await page.reload();
   await expect(page.locator('.job-status.cancelled')).toContainText('Cancelled');
+});
+
+test('reports collision guidance as unavailable instead of an empty result', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'Queue unavailable' }),
+    }),
+  );
+  await page.goto('/w/atlas/queue');
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await expect(page.getByText('Nearby schedule guidance is unavailable.')).toBeVisible();
 });
 
 test('renders truthful queue loading, live states, empty, filtered-empty, and error states', async ({

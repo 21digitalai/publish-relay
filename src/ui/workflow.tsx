@@ -51,6 +51,56 @@ interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview'> {
   content: { text?: string };
 }
 
+const COLLISION_SPACING_MS = 15 * 60_000;
+const COLLISION_PAGE_LIMIT = 100;
+const COLLISION_MAX_PAGES_PER_ACCOUNT = 50;
+
+interface QueueCursor {
+  beforeScheduledAt: string;
+  beforeId: string;
+}
+
+function nextCollisionFreeSchedule(candidate: Date, jobs: QueueJobDto[]): Date {
+  let next = candidate.getTime();
+  const times = jobs.map((job) => new Date(job.scheduledAt).getTime()).filter(Number.isFinite);
+  for (let attempt = 0; attempt <= times.length; attempt += 1) {
+    const conflicts = times.filter((time) => Math.abs(time - next) < COLLISION_SPACING_MS);
+    if (conflicts.length === 0) return new Date(next);
+    next = Math.max(...conflicts) + COLLISION_SPACING_MS;
+  }
+  throw new Error('A collision-free schedule could not be calculated.');
+}
+
+async function loadScheduledJobsForAccounts(accountIds: string[]): Promise<QueueJobDto[]> {
+  const pages = await Promise.all(
+    accountIds.map(async (accountId) => {
+      const items: QueueJobDto[] = [];
+      let next: QueueCursor | null = null;
+      for (let page = 0; page < COLLISION_MAX_PAGES_PER_ACCOUNT; page += 1) {
+        const query = new URLSearchParams({
+          limit: String(COLLISION_PAGE_LIMIT),
+          states: 'scheduled',
+          providerAccountId: accountId,
+        });
+        if (next) {
+          query.set('beforeScheduledAt', next.beforeScheduledAt);
+          query.set('beforeId', next.beforeId);
+        }
+        const response = await fetch(`/api/workflow/jobs?${query.toString()}`);
+        if (!response.ok) throw new Error('Schedule guidance could not be loaded.');
+        const envelope = (await response.json()) as {
+          data: { items: QueueJobDto[]; next: QueueCursor | null };
+        };
+        items.push(...envelope.data.items);
+        next = envelope.data.next;
+        if (!next) return items;
+      }
+      throw new Error('Schedule guidance is unavailable for this account history.');
+    }),
+  );
+  return pages.flat();
+}
+
 function toJob(dto: QueueJobDto): Job {
   const knownStates: JobState[] = [
     'scheduled',
@@ -155,6 +205,9 @@ function Composer({ onClose }: { onClose: () => void }) {
   >([]);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<QueueJobDto[]>([]);
+  const [collisionGuidance, setCollisionGuidance] = useState<'loading' | 'ready' | 'unavailable'>(
+    'loading',
+  );
   const [body, setBody] = useState('');
   const [scheduled, setScheduled] = useState(true);
   const [receipt, setReceipt] = useState<{ count: number; scheduledAt: string } | null>(null);
@@ -177,7 +230,9 @@ function Composer({ onClose }: { onClose: () => void }) {
         (job) =>
           Boolean(job.providerAccount.id) &&
           selectedAccounts.includes(job.providerAccount.id ?? '') &&
-          Math.abs(new Date(job.scheduledAt).getTime() - scheduledAt.getTime()) < 15 * 60_000,
+          new Date(job.scheduledAt).getTime() >= Date.now() &&
+          Math.abs(new Date(job.scheduledAt).getTime() - scheduledAt.getTime()) <
+            COLLISION_SPACING_MS,
       )
     : [];
   const invalid =
@@ -209,18 +264,28 @@ function Composer({ onClose }: { onClose: () => void }) {
       });
   }, []);
   useEffect(() => {
-    void fetch('/api/workflow/jobs?limit=100')
-      .then(async (response) => {
-        if (!response.ok) return { data: { items: [] } };
-        return response.json() as Promise<{ data: { items: QueueJobDto[] } }>;
-      })
-      .then(({ data }) => {
-        setScheduledJobs(data.items);
+    if (selectedAccounts.length === 0) {
+      setScheduledJobs([]);
+      setCollisionGuidance('ready');
+      return;
+    }
+    let active = true;
+    setCollisionGuidance('loading');
+    void loadScheduledJobsForAccounts(selectedAccounts)
+      .then((jobs) => {
+        if (!active) return;
+        setScheduledJobs(jobs);
+        setCollisionGuidance('ready');
       })
       .catch(() => {
+        if (!active) return;
         setScheduledJobs([]);
+        setCollisionGuidance('unavailable');
       });
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [selectedAccounts]);
   useEffect(() => {
     intentKey.current = crypto.randomUUID();
   }, [body, localSchedule, scheduleOption, scheduled, selectedAccounts]);
@@ -413,16 +478,20 @@ function Composer({ onClose }: { onClose: () => void }) {
                   className="secondary-button"
                   type="button"
                   onClick={() => {
-                    const latest = Math.max(
-                      ...collisions.map((job) => new Date(job.scheduledAt).getTime()),
+                    setLocalSchedule(
+                      localDateTimeValue(nextCollisionFreeSchedule(scheduledAt, scheduledJobs)),
                     );
-                    setLocalSchedule(localDateTimeValue(new Date(latest + 15 * 60_000)));
                     setScheduleOption(0);
                   }}
                 >
                   Use next 15-minute opening
                 </button>
               </div>
+            )}
+            {scheduled && collisionGuidance === 'unavailable' && (
+              <p className="inline-validation" role="status">
+                Nearby schedule guidance is unavailable. You can still choose a time intentionally.
+              </p>
             )}
             {state === 'loading' && (
               <p className="inline-validation">Loading connected accounts before scheduling.</p>

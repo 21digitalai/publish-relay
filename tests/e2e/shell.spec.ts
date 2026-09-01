@@ -272,3 +272,51 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Queue offline');
 });
+
+test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workflow/jobs/pending-job', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: 'pending-job',
+          postId: 'pending-post',
+          state: 'accepted_pending',
+          scheduledAt: '2026-09-01T09:30:00+03:00',
+          content: { type: 'text', text: 'Waiting for provider confirmation.' },
+          providerAccount: {
+            displayName: 'Mira Editorial',
+            handle: 'miraeditorial',
+            provider: 'x',
+          },
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto('/w/mira-studio/jobs/pending-job');
+  await expect(page.getByRole('status')).toContainText('Loading publication job');
+  await expect(page.getByRole('heading', { name: 'Mira Editorial' })).toBeVisible();
+  await expect(page.getByText('Provider processing')).toBeVisible();
+  await expect(page.getByText('Waiting for provider confirmation.')).toBeVisible();
+  await expect(page.getByRole('link', { name: /Back to queue/ })).toHaveAttribute(
+    'href',
+    '/w/mira-studio/queue',
+  );
+  await expect(page.getByRole('button', { name: 'Retry now' })).toBeHidden();
+
+  await page.unroute('**/api/workflow/jobs/pending-job');
+  await page.route('**/api/workflow/jobs/pending-job', (route) =>
+    route.fulfill({ status: 404, contentType: 'application/json', body: '{"data":null,"error":"Job missing"}' }),
+  );
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('Job missing');
+  await expect(page.getByRole('link', { name: 'Back to queue' })).toHaveAttribute(
+    'href',
+    '/w/mira-studio/queue',
+  );
+});

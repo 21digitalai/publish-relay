@@ -219,3 +219,56 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await expect(page.getByRole('alertdialog')).toContainText('preventing a duplicate post');
   await expect(page.getByRole('button', { name: 'Keep job' })).toBeFocused();
 });
+
+test('renders truthful queue loading, live states, empty, filtered-empty, and error states', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workflow/jobs?limit=100', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: 'dispatching-job',
+              state: 'dispatching',
+              scheduledAt: '2026-09-01T09:30:00+03:00',
+              contentPreview: 'Dispatching now',
+              providerAccount: { displayName: 'Daily Viber', handle: 'dailyviber', provider: 'x' },
+            },
+            {
+              id: 'retry-job',
+              state: 'retry_wait',
+              scheduledAt: '2026-09-01T10:30:00+03:00',
+              contentPreview: 'Waiting to retry',
+              providerAccount: { displayName: 'Daily Viber', handle: 'dailyviber', provider: 'x' },
+            },
+          ],
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto('/w/atlas/queue');
+  await expect(page.getByRole('status')).toContainText('Loading publication queue');
+  await expect(page.getByRole('link', { name: /^Dispatching / })).toBeVisible();
+  await expect(page.getByRole('link', { name: /^Retrying / })).toBeVisible();
+  await page.getByPlaceholder('Search posts or accounts').fill('no-match');
+  await expect(page.getByText('No jobs match these filters')).toBeVisible();
+
+  await page.unroute('**/api/workflow/jobs?limit=100');
+  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+    route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
+  );
+  await page.reload();
+  await expect(page.getByText('Nothing scheduled yet')).toBeVisible();
+
+  await page.unroute('**/api/workflow/jobs?limit=100');
+  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"data":null,"error":"Queue offline"}' }),
+  );
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('Queue offline');
+});

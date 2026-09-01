@@ -289,6 +289,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
         body: JSON.stringify({ data: null, error: 'Cancel service unavailable' }),
       });
     detailState = 'cancelled';
+    await new Promise((resolve) => setTimeout(resolve, 200));
     return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data: { state: 'cancelled' }, error: null }),

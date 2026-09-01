@@ -904,6 +904,7 @@ export function JobDetailPage() {
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
   const [editSchedule, setEditSchedule] = useState('');
   const [editScheduleOption, setEditScheduleOption] = useState(0);
+  const editScheduleIntentKey = useRef(crypto.randomUUID());
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isMutating, setIsMutating] = useState(false);
   useEffect(() => {
@@ -1038,6 +1039,7 @@ export function JobDetailPage() {
               onClick={() => {
                 setEditSchedule(localDateTimeValue(new Date(job.scheduledAt)));
                 setEditScheduleOption(0);
+                editScheduleIntentKey.current = crypto.randomUUID();
                 setIsEditingSchedule(true);
                 setMutationError(null);
               }}
@@ -1080,6 +1082,7 @@ export function JobDetailPage() {
                 onChange={(event) => {
                   setEditSchedule(event.target.value);
                   setEditScheduleOption(0);
+                  editScheduleIntentKey.current = crypto.randomUUID();
                 }}
               />
             </label>
@@ -1135,7 +1138,7 @@ export function JobDetailPage() {
                     headers: {
                       'content-type': 'application/json',
                       'x-csrf-token': cookieValue('publish_relay_csrf'),
-                      'idempotency-key': crypto.randomUUID(),
+                      'idempotency-key': editScheduleIntentKey.current,
                     },
                     body: JSON.stringify({
                       content: { type: 'text', text: job.text },

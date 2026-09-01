@@ -540,6 +540,7 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
 test('edits a scheduled job through the canonical browser revision route', async ({ page }) => {
   await establishWorkspaceSession(page);
   let revisionPayload: Record<string, unknown> | null = null;
+  const revisionKeys: string[] = [];
   await page.route('**/api/workflow/jobs/scheduled-job', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -563,6 +564,13 @@ test('edits a scheduled job through the canonical browser revision route', async
   );
   await page.route('**/api/workflow/posts/scheduled-post', async (route) => {
     revisionPayload = route.request().postDataJSON() as Record<string, unknown>;
+    revisionKeys.push(route.request().headers()['idempotency-key'] ?? '');
+    if (revisionKeys.length === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Revision response interrupted' }),
+      });
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data: { revisionId: 'revision-new' }, error: null }),
@@ -572,14 +580,16 @@ test('edits a scheduled job through the canonical browser revision route', async
   await page.getByRole('button', { name: 'Edit schedule' }).click();
   await page.getByLabel('Date and time').fill('2027-09-02T10:15');
   await page.getByRole('button', { name: 'Update schedule' }).click();
+  await expect(page.getByRole('alert')).toContainText('Revision response interrupted');
+  await page.getByRole('button', { name: 'Update schedule' }).click();
   await expect(page.getByRole('dialog', { name: 'Edit publishing time' })).toBeHidden();
+  expect(revisionKeys).toHaveLength(2);
+  expect(revisionKeys[1]).toBe(revisionKeys[0]);
   expect(revisionPayload).toMatchObject({
     content: { type: 'text', text: 'Move this publication safely.' },
     providerAccountIds: ['00000000-0000-4000-8000-000000000201'],
   });
   expect(
-    new Date(
-      String((revisionPayload as Record<string, unknown> | null)?.scheduledAt),
-    ).getDate(),
+    new Date(String((revisionPayload as Record<string, unknown> | null)?.scheduledAt)).getDate(),
   ).toBe(2);
 });

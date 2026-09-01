@@ -46,7 +46,14 @@ function resultRows<T>(result: { rows?: T[] } | T[]): T[] {
 
 export async function claimDueJobs(
   database: NodePgDatabase,
-  input: { workerId: string; now: Date; leaseMs: number; limit: number },
+  input: {
+    workerId: string;
+    now: Date;
+    leaseMs: number;
+    limit: number;
+    provider?: string;
+    requireMedia?: boolean;
+  },
 ): Promise<ClaimedJob[]> {
   if (input.limit < 1) return [];
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
@@ -59,6 +66,18 @@ export async function claimDueJobs(
         (state = 'retry_wait' AND next_attempt_at <= ${input.now}) OR
         (state = 'leased' AND lease_expires_at <= ${input.now})
       )
+      AND (${input.provider ?? null}::text IS NULL OR EXISTS (
+        SELECT 1 FROM provider_accounts account
+        JOIN provider_connections connection ON connection.id = account.connection_id
+        WHERE account.id = publication_jobs.provider_account_id
+          AND account.workspace_id = publication_jobs.workspace_id
+          AND connection.provider = ${input.provider ?? null}
+      ))
+      AND (${input.requireMedia ?? false} = false OR EXISTS (
+        SELECT 1 FROM revision_media media
+        WHERE media.revision_id = publication_jobs.revision_id
+          AND media.workspace_id = publication_jobs.workspace_id
+      ))
       ORDER BY COALESCE(next_attempt_at, scheduled_at), id
       FOR UPDATE SKIP LOCKED
       LIMIT ${input.limit}

@@ -20,6 +20,8 @@ function createStore(): AuthStore {
     findCurrentRole: vi.fn(),
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
+    listWorkspaces: vi.fn(),
+    rotateWorkspaceSession: vi.fn(),
   };
 }
 
@@ -329,5 +331,52 @@ describe('authentication HTTP boundary', () => {
     });
     expect(response.statusCode).toBe(302);
     expect(response.headers.location).toBe('/login');
+  });
+
+  it('lists workspaces and rotates the current browser session when switching', async () => {
+    const store = createStore();
+    const currentId = '00000000-0000-4000-8000-000000000001';
+    const targetId = '00000000-0000-4000-8000-000000000002';
+    const userId = '00000000-0000-4000-8000-000000000003';
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId,
+      workspaceId: currentId,
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    const workspaces = [
+      { id: currentId, slug: 'atlas', name: 'Atlas', role: 'owner' as const },
+      { id: targetId, slug: 'relay', name: 'Relay', role: 'editor' as const },
+    ];
+    vi.mocked(store.listWorkspaces).mockResolvedValue(workspaces);
+    vi.mocked(store.rotateWorkspaceSession).mockResolvedValue({
+      userId,
+      workspaceId: targetId,
+      role: 'editor',
+      slug: 'relay',
+    });
+    const application = createTestApplication(store);
+    const cookie = `publish_relay_session=${currentId}.current-token; publish_relay_csrf=csrf-token`;
+    const list = await application.inject({
+      method: 'GET',
+      url: '/api/workspaces',
+      headers: { cookie },
+    });
+    expect(list.json()).toEqual({ data: { workspaces }, error: null });
+    const switched = await application.inject({
+      method: 'POST',
+      url: `/api/workspaces/${targetId}/switch`,
+      headers: { cookie, 'x-csrf-token': 'csrf-token' },
+    });
+    expect(switched.statusCode).toBe(200);
+    expect(switched.cookies.find((item) => item.name === 'publish_relay_session')?.value).toMatch(
+      new RegExp(`^${targetId}\\.`),
+    );
+    expect(switched.json()).toEqual({
+      data: { workspace: { id: targetId, slug: 'relay', role: 'editor' } },
+      error: null,
+    });
   });
 });

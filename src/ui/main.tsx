@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
@@ -430,51 +430,143 @@ export function Rail({
   active?: 'queue' | 'calendar' | 'accounts' | 'settings';
   onCreate?: () => void;
 }) {
+  const [workspaces, setWorkspaces] = useState<
+    { id: string; slug: string; name: string; role: string }[]
+  >([]);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [workspaceQuery, setWorkspaceQuery] = useState('');
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const activeSlug = window.location.pathname.split('/')[2] ?? '';
+  useEffect(() => {
+    void fetch('/api/workspaces')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Workspaces could not be loaded');
+        return response.json() as Promise<{ data: { workspaces: typeof workspaces } }>;
+      })
+      .then((result) => {
+        setWorkspaces(result.data.workspaces);
+      })
+      .catch(() => {
+        setWorkspaceError('Workspaces could not be loaded');
+      });
+  }, []);
+  useEffect(() => {
+    if (workspaceOpen) searchRef.current?.focus();
+  }, [workspaceOpen]);
+  const activeWorkspace =
+    workspaces.find((workspace) => workspace.slug === activeSlug) ?? workspaces[0];
+  const visibleWorkspaces = workspaces.filter((workspace) =>
+    workspace.name.toLowerCase().includes(workspaceQuery.toLowerCase()),
+  );
+  const workspaceHref = (destination: string) =>
+    `/w/${activeWorkspace?.slug ?? (activeSlug || 'workspace')}/${destination}`;
   return (
     <aside className={`app-rail ${open ? 'open' : ''}`} aria-label="Primary navigation">
       <div className="rail-header">
-        <a className="brand-lockup" href="/w/atlas/accounts">
+        <a className="brand-lockup" href={workspaceHref('accounts')}>
           <span className="brand-signal" /> Publish Relay
         </a>
         <button className="rail-close" onClick={onClose} aria-label="Close navigation">
           ×
         </button>
       </div>
-      <button className="workspace-switcher">
+      <button
+        className="workspace-switcher"
+        aria-haspopup="listbox"
+        aria-expanded={workspaceOpen}
+        onClick={() => {
+          setWorkspaceOpen((current) => !current);
+        }}
+      >
         <span>
-          <strong>Atlas Studio</strong>
-          <small>Owner · 3 accounts</small>
+          <strong>{activeWorkspace?.name ?? 'Loading workspace…'}</strong>
+          <small>{activeWorkspace?.role ?? 'Authenticated workspace'}</small>
         </span>
         <span aria-hidden="true">⌄</span>
       </button>
+      {workspaceOpen && (
+        <div className="workspace-menu">
+          <label className="workspace-search-label">
+            <span className="sr-only">Search workspaces</span>
+            <input
+              ref={searchRef}
+              className="workspace-search-input"
+              value={workspaceQuery}
+              placeholder="Search workspaces"
+              onChange={(event) => {
+                setWorkspaceQuery(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setWorkspaceOpen(false);
+              }}
+            />
+          </label>
+          {workspaceError && <p className="workspace-menu-error">{workspaceError}</p>}
+          <div className="workspace-options" role="listbox" aria-label="Workspaces">
+            {visibleWorkspaces.map((workspace) => (
+              <button
+                className={`workspace-option ${workspace.id === activeWorkspace?.id ? 'selected' : ''}`}
+                role="option"
+                aria-selected={workspace.id === activeWorkspace?.id}
+                key={workspace.id}
+                onClick={() => {
+                  if (workspace.id === activeWorkspace?.id) {
+                    setWorkspaceOpen(false);
+                    return;
+                  }
+                  setWorkspaceError(null);
+                  void fetch(`/api/workspaces/${workspace.id}/switch`, {
+                    method: 'POST',
+                    headers: { 'x-csrf-token': getCsrfToken() },
+                  })
+                    .then((response) => {
+                      if (!response.ok) throw new Error('Workspace could not be opened');
+                      window.location.href = `/w/${workspace.slug}/accounts`;
+                    })
+                    .catch(() => {
+                      setWorkspaceError('Workspace could not be opened');
+                    });
+                }}
+              >
+                <span>
+                  <strong>{workspace.name}</strong>
+                  <small>{workspace.role}</small>
+                </span>
+                {workspace.id === activeWorkspace?.id && <span aria-hidden="true">✓</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <button className="create-post-button" onClick={onCreate}>
         <span aria-hidden="true">＋</span> Create post
       </button>
       <nav className="rail-nav">
         <a
           className={active === 'queue' ? 'active' : ''}
-          href="/w/atlas/queue"
+          href={workspaceHref('queue')}
           aria-current={active === 'queue' ? 'page' : undefined}
         >
           ▤ <span>Queue</span>
         </a>
         <a
           className={active === 'calendar' ? 'active' : ''}
-          href="/w/atlas/calendar"
+          href={workspaceHref('calendar')}
           aria-current={active === 'calendar' ? 'page' : undefined}
         >
           ▦ <span>Calendar</span>
         </a>
         <a
           className={active === 'accounts' ? 'active' : ''}
-          href="/w/atlas/accounts"
+          href={workspaceHref('accounts')}
           aria-current={active === 'accounts' ? 'page' : undefined}
         >
           ◉ <span>Accounts</span>
         </a>
         <a
           className={active === 'settings' ? 'active' : ''}
-          href="/w/atlas/settings/workspace"
+          href={workspaceHref('settings/workspace')}
           aria-current={active === 'settings' ? 'page' : undefined}
         >
           ⚙ <span>Settings</span>

@@ -14,6 +14,8 @@ function createStore(): AuthStore {
     findCurrentRole: vi.fn(),
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
+    listWorkspaces: vi.fn(),
+    rotateWorkspaceSession: vi.fn(),
   };
 }
 
@@ -83,5 +85,30 @@ describe('AuthService', () => {
       workspaceId: 'w1',
       role: 'viewer',
     });
+  });
+
+  it('rotates only the current session into an authorized target workspace', async () => {
+    const store = createStore();
+    vi.mocked(store.rotateWorkspaceSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w2',
+      role: 'editor',
+      slug: 'second-workspace',
+    });
+    const result = await new AuthService(store, 1_000).switchWorkspace(
+      { userId: 'u1', workspaceId: 'w1', role: 'owner' },
+      'current-token',
+      'w2',
+      new Date(0),
+    );
+    expect(store.rotateWorkspaceSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentWorkspaceId: 'w1',
+        targetWorkspaceId: 'w2',
+        userId: 'u1',
+        expiresAt: new Date(1_000),
+      }),
+    );
+    expect(result).toMatchObject({ workspaceId: 'w2', slug: 'second-workspace', role: 'editor' });
   });
 });

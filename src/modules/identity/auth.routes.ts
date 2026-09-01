@@ -23,6 +23,7 @@ const workspaceProfileSchema = z.object({
     .max(80)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i),
 });
+const workspaceSwitchSchema = z.object({ workspaceId: z.uuid() });
 
 function parseSessionCookie(
   value: string | undefined,
@@ -179,6 +180,36 @@ export function registerAuthRoutes(
     return workspace
       ? { data: workspace, error: null }
       : reply.code(404).send({ data: null, error: 'Workspace was not found' });
+  });
+
+  application.get('/api/workspaces', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    return { data: { workspaces: await auth.listWorkspaces(identity) }, error: null };
+  });
+
+  application.post('/api/workspaces/:workspaceId/switch', async (request, reply) => {
+    const session = parseSessionCookie(request.cookies[SESSION_COOKIE]);
+    const identity = await authenticateRequest(request, auth);
+    if (!session || !identity)
+      return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (
+      !verifyCsrfToken(
+        request.cookies[CSRF_COOKIE],
+        request.headers['x-csrf-token'] as string | undefined,
+      )
+    )
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const input = workspaceSwitchSchema.safeParse(request.params);
+    if (!input.success)
+      return reply.code(404).send({ data: null, error: 'Workspace was not found' });
+    const switched = await auth.switchWorkspace(identity, session.token, input.data.workspaceId);
+    if (!switched) return reply.code(404).send({ data: null, error: 'Workspace was not found' });
+    setSessionCookies(reply, switched, options.secureCookies);
+    return {
+      data: { workspace: { id: switched.workspaceId, slug: switched.slug, role: switched.role } },
+      error: null,
+    };
   });
 
   const publicShell = (_request: FastifyRequest, reply: FastifyReply) =>

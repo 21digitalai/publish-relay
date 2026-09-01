@@ -35,6 +35,23 @@ export interface AuthStore {
     userId: string,
     input: { name: string; slug: string },
   ) => Promise<{ id: string; name: string; slug: string }>;
+  listWorkspaces: (userId: string) => Promise<WorkspaceSummary[]>;
+  rotateWorkspaceSession: (input: {
+    currentWorkspaceId: string;
+    currentTokenHash: string;
+    targetWorkspaceId: string;
+    userId: string;
+    tokenHash: string;
+    csrfSecretHash: string;
+    expiresAt: Date;
+  }) => Promise<(AuthIdentity & { slug: string }) | null>;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  slug: string;
+  name: string;
+  role: MembershipRole;
 }
 
 export interface SessionResult extends AuthIdentity {
@@ -110,6 +127,31 @@ export class AuthService {
     identity: AuthIdentity,
   ): Promise<{ id: string; name: string; slug: string } | null> {
     return this.store.findWorkspace(identity.workspaceId, identity.userId);
+  }
+
+  async listWorkspaces(identity: AuthIdentity): Promise<WorkspaceSummary[]> {
+    return this.store.listWorkspaces(identity.userId);
+  }
+
+  async switchWorkspace(
+    identity: AuthIdentity,
+    currentToken: string,
+    targetWorkspaceId: string,
+    now = new Date(),
+  ): Promise<(SessionResult & { slug: string }) | null> {
+    const token = createOpaqueToken();
+    const csrfToken = createOpaqueToken();
+    const expiresAt = new Date(now.getTime() + this.sessionLifetimeMs);
+    const target = await this.store.rotateWorkspaceSession({
+      currentWorkspaceId: identity.workspaceId,
+      currentTokenHash: hashOpaqueToken(currentToken),
+      targetWorkspaceId,
+      userId: identity.userId,
+      tokenHash: hashOpaqueToken(token),
+      csrfSecretHash: hashOpaqueToken(csrfToken),
+      expiresAt,
+    });
+    return target ? { ...target, token, csrfToken, expiresAt } : null;
   }
 
   async authenticate(

@@ -22,6 +22,8 @@ function createStore(): AuthStore {
     findCurrentRole: vi.fn(),
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
+    listWorkspaces: vi.fn(),
+    rotateWorkspaceSession: vi.fn(),
   };
 }
 

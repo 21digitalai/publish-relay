@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { memberships, sessions, users, workspaces } from '../../database/schema.js';
+import { auditEvents, memberships, sessions, users, workspaces } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { AuthStore } from './auth.service.js';
 
@@ -151,6 +151,80 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           .returning({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug });
         if (!workspace) throw new Error('Workspace was not found');
         return workspace;
+      });
+    },
+    async listWorkspaces(userId) {
+      return database.transaction(async (transaction) => {
+        await transaction.execute(sql`select set_config('app.user_id', ${userId}, true)`);
+        return transaction
+          .select({
+            id: workspaces.id,
+            slug: workspaces.slug,
+            name: workspaces.name,
+            role: memberships.role,
+          })
+          .from(memberships)
+          .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+          .where(eq(memberships.userId, userId))
+          .orderBy(workspaces.name, workspaces.id);
+      });
+    },
+    async rotateWorkspaceSession(input) {
+      return database.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${input.currentWorkspaceId}, true)`,
+        );
+        const [revoked] = await transaction
+          .update(sessions)
+          .set({ revokedAt: new Date() })
+          .where(
+            and(
+              eq(sessions.workspaceId, input.currentWorkspaceId),
+              eq(sessions.tokenHash, input.currentTokenHash),
+              isNull(sessions.revokedAt),
+            ),
+          )
+          .returning({ id: sessions.id });
+        if (!revoked) return null;
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${input.targetWorkspaceId}, true)`,
+        );
+        await transaction.execute(sql`select set_config('app.user_id', ${input.userId}, true)`);
+        const [target] = await transaction
+          .select({ workspaceId: workspaces.id, slug: workspaces.slug, role: memberships.role })
+          .from(memberships)
+          .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+          .where(
+            and(
+              eq(memberships.workspaceId, input.targetWorkspaceId),
+              eq(memberships.userId, input.userId),
+            ),
+          )
+          .limit(1);
+        if (!target) return null;
+        await transaction.insert(sessions).values({
+          workspaceId: target.workspaceId,
+          userId: input.userId,
+          tokenHash: input.tokenHash,
+          csrfSecretHash: input.csrfSecretHash,
+          expiresAt: input.expiresAt,
+        });
+        await transaction.insert(auditEvents).values({
+          workspaceId: target.workspaceId,
+          actorType: 'user',
+          actorId: input.userId,
+          action: 'workspace_switched',
+          targetType: 'workspace',
+          targetId: target.workspaceId,
+          requestId: crypto.randomUUID(),
+          metadata: { fromWorkspaceId: input.currentWorkspaceId },
+        });
+        return {
+          userId: input.userId,
+          workspaceId: target.workspaceId,
+          role: target.role,
+          slug: target.slug,
+        };
       });
     },
   };

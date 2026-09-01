@@ -168,6 +168,34 @@ export const apiMutationResults = pgTable(
   ],
 );
 
+export const browserMutationResults = pgTable(
+  'browser_mutation_results',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    operation: text('operation').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    statusCode: integer('status_code').notNull(),
+    responseBody: jsonb('response_body').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('browser_mutation_results_scope_unique').on(
+      table.workspaceId,
+      table.userId,
+      table.operation,
+      table.idempotencyKey,
+    ),
+    index('browser_mutation_results_workspace_created_idx').on(table.workspaceId, table.createdAt),
+  ],
+);
+
 export const auditEvents = pgTable(
   'audit_events',
   {

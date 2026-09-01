@@ -33,6 +33,7 @@ const migrations = [
   '0011_bored_grim_reaper.sql',
   '0012_enable_api_mutation_result_rls.sql',
   '0013_illegal_texas_twister.sql',
+  '0017_dark_whizzer.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';
@@ -190,6 +191,38 @@ describe('browser workflow PostgreSQL boundary', () => {
   const browserHeaders = {
     cookie: `publish_relay_session=${workspaceId}.browser-token`,
   };
+
+  it('creates once for a browser principal and rejects changed idempotent replays', async () => {
+    const request = {
+      method: 'POST' as const,
+      url: '/api/workflow/posts',
+      headers: {
+        ...browserHeaders,
+        cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+        'x-csrf-token': 'browser-csrf',
+        'idempotency-key': 'browser-create-1',
+      },
+      payload: requestPayload('Browser post'),
+    };
+    const created = await application.inject(request);
+    const replayed = await application.inject(request);
+    expect(created.statusCode).toBe(201);
+    expect(replayed.statusCode).toBe(201);
+    expect(replayed.headers['idempotency-replayed']).toBe('true');
+    expect(replayed.json()).toEqual(created.json());
+
+    const conflict = await application.inject({
+      ...request,
+      payload: requestPayload('Changed browser post'),
+    });
+    expect(conflict.statusCode).toBe(409);
+    const counts = await database.query<{ posts: number; mutations: number }>(
+      `SELECT
+        (SELECT count(*)::int FROM posts WHERE workspace_id = '${workspaceId}') AS posts,
+        (SELECT count(*)::int FROM browser_mutation_results WHERE workspace_id = '${workspaceId}') AS mutations`,
+    );
+    expect(counts.rows[0]).toEqual({ posts: 1, mutations: 1 });
+  });
 
   it('paginates and filters real tenant rows without exposing foreign or private fields', async () => {
     for (const [key, text] of [

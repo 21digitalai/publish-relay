@@ -79,6 +79,12 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Agent discovery
 
+## Social God shadow parity
+
+- `src/modules/parity/social-god.ts` is the credential-free boundary for Social God Daily Vibe snapshots. It accepts bounded package, `schedule_records`, account-map, and media-map JSON; it never reads either product database or provider configuration.
+- `npm run parity:social-god -- <snapshot.json>` emits the Publish Relay v1 request/CLI, fake-provider outcome, source result, and exact unresolved gaps. Output is always marked dry-run with credentials unused and external writes blocked.
+- Account and media identities must be supplied explicitly as UUID maps. Missing mappings remain gaps; the adapter never copies Postiz integration IDs into Publish Relay account authority.
+
 - `/agents.txt`, `/publish-relay-skill/SKILL.md`, `/publish-relay-skill/publish-relay-cli.js`, and `/publish-relay-skill/manifest.json` are public, tenant-neutral discovery assets. They must never contain credentials, account data, runtime configuration, or live IDs.
 - The manifest carries distinct discovery-contract and CLI versions, checksums the exact served agents, skill, and CLI bytes, and advertises CLI updates as warn-only. All four routes use the same explicit public cache policy. Agents read the skill and API contract before use; the product never self-updates an installed client.
 

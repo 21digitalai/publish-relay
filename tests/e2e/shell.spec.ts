@@ -152,12 +152,11 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.goto('/w/atlas/queue');
   await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
   await expect(page.getByText('The clearest plans')).toBeVisible();
-  const createPost = page.getByRole('button', { name: 'Create post' });
-  if (!(await createPost.isVisible())) {
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-  }
-  await createPost.dispatchEvent('click');
+  await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  const fileChooserPromise = page.waitForEvent('filechooser');
+  await page.getByText('Choose files', { exact: true }).click();
+  await fileChooserPromise;
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
@@ -166,6 +165,9 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   for (const mode of ['Month', 'Week', 'Day', 'Timeline']) {
     await page.getByRole('button', { name: mode, exact: true }).click();
     await expect(page.getByLabel(`${mode} calendar`)).toBeVisible();
+    if (mode === 'Day') {
+      await expect(page.getByLabel('Day calendar').getByText('Daily Viber')).toBeVisible();
+    }
   }
   await page.screenshot({ path: testInfo.outputPath('calendar-timeline.png'), fullPage: true });
   await page.goto('/w/atlas/jobs/job-2048');

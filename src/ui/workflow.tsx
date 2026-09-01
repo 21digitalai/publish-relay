@@ -152,10 +152,10 @@ function Composer({ onClose }: { onClose: () => void }) {
             <div className="media-dropzone">
               <strong>Add media</strong>
               <span>Drop images or video here, or choose files</span>
-              <button className="secondary-button" type="button">
+              <label className="secondary-button" htmlFor="composer-media-upload">
                 Choose files
-              </button>
-              <input className="sr-only" type="file" multiple />
+              </label>
+              <input id="composer-media-upload" className="sr-only" type="file" multiple />
             </div>
             <fieldset className="schedule-choice">
               <legend>Publishing time</legend>
@@ -221,7 +221,7 @@ function WorkspaceLayout({
   children,
 }: {
   active: 'queue' | 'calendar';
-  children: React.ReactNode;
+  children: React.ReactNode | ((openComposer: () => void) => React.ReactNode);
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -255,7 +255,11 @@ function WorkspaceLayout({
             <span className="brand-signal" /> Publish Relay
           </span>
         </header>
-        {children}
+        {typeof children === 'function'
+          ? children(() => {
+              setComposerOpen(true);
+            })
+          : children}
       </main>
       {menuOpen && (
         <button
@@ -294,91 +298,95 @@ export function QueuePage() {
   );
   return (
     <WorkspaceLayout active="queue">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Publishing operations</p>
-          <h1>Queue</h1>
-          <p>Every scheduled, active, and completed publication.</p>
-        </div>
-        <a className="primary-button" href="?compose=1">
-          ＋ Create post
-        </a>
-      </div>
-      <section className="queue-section" aria-labelledby="queue-title">
-        <h2 id="queue-title" className="sr-only">
-          Publication queue
-        </h2>
-        <div className="queue-views">
-          {['All', 'Needs attention', 'Scheduled', 'Published'].map((label) => (
-            <button
-              className={view === label ? 'active' : ''}
-              key={label}
-              onClick={() => {
-                setView(label);
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="queue-toolbar">
-          <label className="search-control">
-            <span aria-hidden="true">⌕</span>
-            <input
-              className="queue-search"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-              }}
-              placeholder="Search posts or accounts"
-            />
-          </label>
-          <button className="filter-button">Status: Any</button>
-          <button className="filter-button">Provider: Any</button>
-          <button className="filter-button">Date: This week</button>
-        </div>
-        {jobs.length ? (
-          <div className="queue-table">
-            <div className="queue-header">
-              <span>Status</span>
-              <span>Scheduled time</span>
-              <span>Post</span>
-              <span>Account</span>
-              <span>Provider</span>
-              <span>Actions</span>
+      {(openComposer) => (
+        <>
+          <div className="page-heading">
+            <div>
+              <p className="eyebrow">Publishing operations</p>
+              <h1>Queue</h1>
+              <p>Every scheduled, active, and completed publication.</p>
             </div>
-            {jobs.map((job) => (
-              <a className="queue-row" href={`/w/atlas/jobs/${job.id}`} key={job.id}>
-                <Status state={job.state} />
-                <time dateTime={job.scheduledAt}>{formatTime(job.scheduledAt)}</time>
-                <span className="post-excerpt">{job.text}</span>
-                <span className="queue-account">
-                  <strong>{job.account}</strong>
-                  <small>{job.handle}</small>
-                </span>
-                <span className="provider-chip">{job.provider}</span>
-                <span className="row-action" aria-label={`Open ${job.id}`}>
-                  →
-                </span>
-              </a>
-            ))}
-          </div>
-        ) : (
-          <div className="filter-empty">
-            <h2>No jobs match these filters</h2>
-            <p>Adjust the view or clear your search.</p>
-            <button
-              className="secondary-button"
-              onClick={() => {
-                setQuery('');
-                setView('All');
-              }}
-            >
-              Clear filters
+            <button className="primary-button" type="button" onClick={openComposer}>
+              ＋ Create post
             </button>
           </div>
-        )}
-      </section>
+          <section className="queue-section" aria-labelledby="queue-title">
+            <h2 id="queue-title" className="sr-only">
+              Publication queue
+            </h2>
+            <div className="queue-views">
+              {['All', 'Needs attention', 'Scheduled', 'Published'].map((label) => (
+                <button
+                  className={view === label ? 'active' : ''}
+                  key={label}
+                  onClick={() => {
+                    setView(label);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="queue-toolbar">
+              <label className="search-control">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  className="queue-search"
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                  }}
+                  placeholder="Search posts or accounts"
+                />
+              </label>
+              <button className="filter-button">Status: Any</button>
+              <button className="filter-button">Provider: Any</button>
+              <button className="filter-button">Date: This week</button>
+            </div>
+            {jobs.length ? (
+              <div className="queue-table">
+                <div className="queue-header">
+                  <span>Status</span>
+                  <span>Scheduled time</span>
+                  <span>Post</span>
+                  <span>Account</span>
+                  <span>Provider</span>
+                  <span>Actions</span>
+                </div>
+                {jobs.map((job) => (
+                  <a className="queue-row" href={`/w/atlas/jobs/${job.id}`} key={job.id}>
+                    <Status state={job.state} />
+                    <time dateTime={job.scheduledAt}>{formatTime(job.scheduledAt)}</time>
+                    <span className="post-excerpt">{job.text}</span>
+                    <span className="queue-account">
+                      <strong>{job.account}</strong>
+                      <small>{job.handle}</small>
+                    </span>
+                    <span className="provider-chip">{job.provider}</span>
+                    <span className="row-action" aria-label={`Open ${job.id}`}>
+                      →
+                    </span>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div className="filter-empty">
+                <h2>No jobs match these filters</h2>
+                <p>Adjust the view or clear your search.</p>
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setQuery('');
+                    setView('All');
+                  }}
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
+          </section>
+        </>
+      )}
     </WorkspaceLayout>
   );
 }
@@ -483,7 +491,7 @@ function TimeCalendar({ dayOnly }: { dayOnly: boolean }) {
         </div>
         {days.map((day, index) => (
           <div className="time-day" key={day}>
-            {index === 1 &&
+            {(dayOnly || index === 1) &&
               JOBS.slice(0, 3).map((job, jobIndex) => (
                 <a
                   className={`calendar-block ${job.state}`}

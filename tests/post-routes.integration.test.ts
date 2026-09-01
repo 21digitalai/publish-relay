@@ -280,6 +280,31 @@ describe('browser workflow PostgreSQL boundary', () => {
     expect(rows.rows[0]?.count).toBe(0);
   });
 
+  it('rejects a foreign browser target without post, job, or idempotency residue', async () => {
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: {
+        ...browserHeaders,
+        cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+        'x-csrf-token': 'browser-csrf',
+        'idempotency-key': 'browser-foreign-1',
+      },
+      payload: {
+        ...requestPayload('Foreign target'),
+        providerAccountIds: [foreignProviderAccountId],
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    const rows = await database.query<{ posts: number; jobs: number; mutations: number }>(
+      `SELECT
+        (SELECT count(*)::int FROM posts WHERE workspace_id = '${workspaceId}') AS posts,
+        (SELECT count(*)::int FROM publication_jobs WHERE workspace_id = '${workspaceId}') AS jobs,
+        (SELECT count(*)::int FROM browser_mutation_results WHERE idempotency_key = 'browser-foreign-1') AS mutations`,
+    );
+    expect(rows.rows[0]).toEqual({ posts: 0, jobs: 0, mutations: 0 });
+  });
+
   it('paginates and filters real tenant rows without exposing foreign or private fields', async () => {
     for (const [key, text] of [
       ['browser-one', 'First browser post'],

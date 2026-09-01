@@ -13,7 +13,9 @@ export function canPerformWorkspaceAction(role: MembershipRole, action: Workspac
   return ALLOWED_ACTIONS[role].has(action);
 }
 
+export class WorkspaceAuthorizationError extends Error {}
+
 export function requireWorkspaceAction(role: MembershipRole, action: WorkspaceAction): void {
   if (!canPerformWorkspaceAction(role, action))
-    throw new Error(`Role ${role} cannot perform ${action}`);
+    throw new WorkspaceAuthorizationError(`Role ${role} cannot perform ${action}`);
 }

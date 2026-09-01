@@ -1,14 +1,16 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
+import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
 import { createPostRequestSchema } from './post.contract.js';
+import { PostValidationError } from './post.errors.js';
 import { createPostInTransaction, editPostInTransaction } from './post.service.js';
 import {
   browserJobStates,
@@ -57,6 +59,17 @@ function isPastSchedule(value: string, now = new Date()): boolean {
   return new Date(value).getTime() < now.getTime() - 60_000;
 }
 
+function mutationError(request: FastifyRequest, reply: FastifyReply, error: unknown) {
+  if (error instanceof WorkspaceAuthorizationError)
+    return reply
+      .code(403)
+      .send({ data: null, error: 'You cannot change content in this workspace' });
+  if (error instanceof z.ZodError || error instanceof PostValidationError)
+    return reply.code(400).send({ data: null, error: error.message });
+  request.log.error({ err: error }, 'Browser post mutation failed');
+  return reply.code(500).send({ data: null, error: 'Internal server error' });
+}
+
 function serializeJob(job: Awaited<ReturnType<typeof getBrowserJobDetail>>) {
   if (!job) return null;
   return {
@@ -96,7 +109,12 @@ export function registerBrowserWorkflowRoutes(
   dependencies: { auth: AuthService; database: NodePgDatabase },
 ): void {
   application.post('/api/workflow/posts', async (request, reply) => {
-    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     if (!authorizeMutation(request))
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
@@ -108,37 +126,42 @@ export function registerBrowserWorkflowRoutes(
     const body = parsed.data;
     if (isPastSchedule(body.scheduledAt))
       return reply.code(400).send({ data: null, error: 'Scheduled time must not be in the past' });
-    const result = await executeBrowserMutation(
-      dependencies.database,
-      {
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
-        operation: 'create-post',
-        idempotencyKey: key,
-        requestFingerprint: mutationFingerprint(body),
-      },
-      async (transaction) => {
-        const created = await createPostInTransaction(transaction, {
+    let result;
+    try {
+      result = await executeBrowserMutation(
+        dependencies.database,
+        {
           workspaceId: identity.workspaceId,
           userId: identity.userId,
-          content: body.content,
-          mediaIds: body.mediaIds,
-          providerAccountIds: body.providerAccountIds,
-          scheduledAt: new Date(body.scheduledAt),
-        });
-        return {
-          statusCode: 201,
-          body: {
-            data: {
-              id: created.postId,
-              revisionId: created.revisionId,
-              jobIds: created.jobIds,
+          operation: 'create-post',
+          idempotencyKey: key,
+          requestFingerprint: mutationFingerprint(body),
+        },
+        async (transaction) => {
+          const created = await createPostInTransaction(transaction, {
+            workspaceId: identity.workspaceId,
+            userId: identity.userId,
+            content: body.content,
+            mediaIds: body.mediaIds,
+            providerAccountIds: body.providerAccountIds,
+            scheduledAt: new Date(body.scheduledAt),
+          });
+          return {
+            statusCode: 201,
+            body: {
+              data: {
+                id: created.postId,
+                revisionId: created.revisionId,
+                jobIds: created.jobIds,
+              },
+              error: null,
             },
-            error: null,
-          },
-        };
-      },
-    );
+          };
+        },
+      );
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (result.kind === 'conflict')
       return reply.code(409).send({ data: null, error: 'Idempotency key was already used' });
     if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');
@@ -146,7 +169,12 @@ export function registerBrowserWorkflowRoutes(
   });
 
   application.patch('/api/workflow/posts/:postId', async (request, reply) => {
-    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     if (!authorizeMutation(request))
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
@@ -160,28 +188,33 @@ export function registerBrowserWorkflowRoutes(
     const body = parsed.data;
     if (isPastSchedule(body.scheduledAt))
       return reply.code(400).send({ data: null, error: 'Scheduled time must not be in the past' });
-    const result = await executeBrowserMutation(
-      dependencies.database,
-      {
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
-        operation: `edit-post:${params.data.postId}`,
-        idempotencyKey: key,
-        requestFingerprint: mutationFingerprint(body),
-      },
-      async (transaction) => {
-        const edited = await editPostInTransaction(transaction, {
+    let result;
+    try {
+      result = await executeBrowserMutation(
+        dependencies.database,
+        {
           workspaceId: identity.workspaceId,
           userId: identity.userId,
-          postId: params.data.postId,
-          content: body.content,
-          mediaIds: body.mediaIds,
-          providerAccountIds: body.providerAccountIds,
-          scheduledAt: new Date(body.scheduledAt),
-        });
-        return { statusCode: 200, body: { data: edited, error: null } };
-      },
-    );
+          operation: `edit-post:${params.data.postId}`,
+          idempotencyKey: key,
+          requestFingerprint: mutationFingerprint(body),
+        },
+        async (transaction) => {
+          const edited = await editPostInTransaction(transaction, {
+            workspaceId: identity.workspaceId,
+            userId: identity.userId,
+            postId: params.data.postId,
+            content: body.content,
+            mediaIds: body.mediaIds,
+            providerAccountIds: body.providerAccountIds,
+            scheduledAt: new Date(body.scheduledAt),
+          });
+          return { statusCode: 200, body: { data: edited, error: null } };
+        },
+      );
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (result.kind === 'conflict')
       return reply.code(409).send({ data: null, error: 'Idempotency key was already used' });
     if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');

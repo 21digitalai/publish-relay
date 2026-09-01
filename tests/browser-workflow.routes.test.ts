@@ -2,6 +2,8 @@ import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthService } from '../src/modules/identity/auth.service.js';
+import { WorkspaceAuthorizationError } from '../src/modules/identity/authorization.js';
+import { PostValidationError } from '../src/modules/content/post.errors.js';
 
 const authorizeRequest = vi.fn();
 const listBrowserJobSummaries = vi.fn();
@@ -9,12 +11,16 @@ const getBrowserJobDetail = vi.fn();
 const cancelPendingJob = vi.fn();
 const requestOperatorRetry = vi.fn();
 const verifyCsrfToken = vi.fn(() => true);
+const executeBrowserMutation = vi.fn();
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest,
   CSRF_COOKIE: 'publish_relay_csrf',
 }));
 vi.mock('../src/modules/identity/session.js', () => ({ verifyCsrfToken }));
+vi.mock('../src/modules/content/browser-idempotency.repository.js', () => ({
+  executeBrowserMutation,
+}));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   cancelPendingJob,
   requestOperatorRetry,
@@ -90,6 +96,54 @@ describe('browser workflow read contract', () => {
       },
       error: null,
     });
+    await application.close();
+  });
+
+  it('maps browser post authorization, validation, and unexpected failures to safe envelopes', async () => {
+    const payload = {
+      content: { type: 'text', text: 'Safe browser post' },
+      providerAccountIds: ['00000000-0000-4000-8000-000000000804'],
+      scheduledAt: '2026-09-02T10:00:00.000Z',
+    };
+    const headers = {
+      'idempotency-key': 'safe-create',
+      'x-csrf-token': 'csrf',
+      cookie: 'publish_relay_csrf=csrf',
+    };
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, { auth: {} as AuthService, database: {} as never });
+
+    authorizeRequest.mockRejectedValueOnce(new WorkspaceAuthorizationError('viewer detail'));
+    const denied = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers,
+      payload,
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.body).not.toContain('viewer detail');
+
+    authorizeRequest.mockResolvedValue({ workspaceId, userId: 'user', role: 'owner' });
+    executeBrowserMutation.mockRejectedValueOnce(new PostValidationError('duplicate target'));
+    const invalid = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers,
+      payload,
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toEqual({ data: null, error: 'duplicate target' });
+
+    executeBrowserMutation.mockRejectedValueOnce(new Error('database-secret-detail'));
+    const failed = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers,
+      payload,
+    });
+    expect(failed.statusCode).toBe(500);
+    expect(failed.json()).toEqual({ data: null, error: 'Internal server error' });
+    expect(failed.body).not.toContain('database-secret-detail');
     await application.close();
   });
 

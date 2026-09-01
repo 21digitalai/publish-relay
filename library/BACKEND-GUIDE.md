@@ -81,7 +81,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Social God shadow parity
 
-- `src/modules/parity/social-god.ts` is the credential-free boundary for Social God Daily Vibe snapshots. It accepts bounded package, `schedule_records`, account-map, and media-map JSON; it never reads either product database or provider configuration.
+- `src/modules/parity/social-god.ts` is the credential-free boundary for Social God Daily Vibe snapshots. It accepts bounded package, `schedule_records`, account-map, media-map, and explicit item-to-package-map JSON; it never reads either product database or provider configuration. Current raw schedule rows join through `item_id` to either the package's `postiz_notes.cms_item_id` or the explicit map; synthetic `package_id` fields are not required.
 - `npm run parity:social-god -- <snapshot.json>` emits the Publish Relay v1 request/CLI, fake-provider outcome, source result, and exact unresolved gaps. Output is always marked dry-run with credentials unused and external writes blocked.
 - Account and media identities must be supplied explicitly as UUID maps. Missing mappings remain gaps; the adapter never copies Postiz integration IDs into Publish Relay account authority.
 

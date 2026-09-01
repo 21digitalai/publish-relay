@@ -14,6 +14,7 @@ const mediaSchema = z.union([
 
 const packageSchema = z.object({
   package_id: z.string().min(1),
+  postiz_notes: z.object({ cms_item_id: z.union([z.string(), z.number()]).optional() }).default({}),
   article: z
     .object({
       title: z.string().default(''),
@@ -47,6 +48,7 @@ export const socialGodSnapshotSchema = z.object({
   schedule_records: z.array(recordSchema).max(500),
   account_map: z.record(z.string(), z.uuid()),
   media_map: z.record(z.string(), z.uuid()).default({}),
+  item_package_map: z.record(z.string(), z.string().min(1)).default({}),
 });
 
 type SocialGodSnapshot = z.infer<typeof socialGodSnapshotSchema>;
@@ -115,10 +117,20 @@ function mediaIdsFor(
 export function buildSocialGodParity(raw: unknown) {
   const input = socialGodSnapshotSchema.parse(raw);
   const packages = new Map(input.packages.map((pkg) => [pkg.package_id, pkg]));
+  const packageIdsByItemId = new Map(
+    input.packages.flatMap((pkg) =>
+      pkg.postiz_notes.cms_item_id === undefined
+        ? []
+        : [[String(pkg.postiz_notes.cms_item_id), pkg.package_id] as const],
+    ),
+  );
   const rows = input.schedule_records.map((record) => {
     const metadataPackageId = record.metadata.package_id;
-    const packageId =
+    const itemId = record.item_id === undefined ? '' : String(record.item_id);
+    const directPackageId =
       record.package_id ?? (typeof metadataPackageId === 'string' ? metadataPackageId : '');
+    const mappedPackageId = input.item_package_map[itemId] ?? packageIdsByItemId.get(itemId) ?? '';
+    const packageId = directPackageId.length > 0 ? directPackageId : mappedPackageId;
     const pkg = packages.get(packageId);
     const accountId = input.account_map[record.platform];
     const gaps: string[] = [];

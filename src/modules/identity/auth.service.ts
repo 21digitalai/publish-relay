@@ -26,6 +26,7 @@ export interface AuthStore {
     tokenHash: string,
   ) => Promise<(AuthIdentity & { expiresAt: Date; revokedAt: Date | null }) | null>;
   findCurrentRole: (userId: string, workspaceId: string) => Promise<MembershipRole | null>;
+  findShellProfile: (workspaceId: string, userId: string) => Promise<ShellProfile | null>;
   findWorkspace: (
     workspaceId: string,
     userId: string,
@@ -45,6 +46,11 @@ export interface AuthStore {
     csrfSecretHash: string;
     expiresAt: Date;
   }) => Promise<(AuthIdentity & { slug: string }) | null>;
+}
+
+export interface ShellProfile {
+  user: { displayName: string; email: string };
+  workspace: WorkspaceSummary;
 }
 
 export interface WorkspaceSummary {
@@ -127,6 +133,10 @@ export class AuthService {
     identity: AuthIdentity,
   ): Promise<{ id: string; name: string; slug: string } | null> {
     return this.store.findWorkspace(identity.workspaceId, identity.userId);
+  }
+
+  async getShellProfile(identity: AuthIdentity): Promise<ShellProfile | null> {
+    return this.store.findShellProfile(identity.workspaceId, identity.userId);
   }
 
   async listWorkspaces(identity: AuthIdentity): Promise<WorkspaceSummary[]> {

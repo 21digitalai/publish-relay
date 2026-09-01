@@ -14,6 +14,28 @@ async function establishWorkspaceSession(page: Page) {
   expect(response.ok()).toBe(true);
 }
 
+test('renders persisted shell identity on desktop and mobile after reload', async ({ page }) => {
+  const suffix = Math.random().toString(36).slice(2);
+  const displayName = `Nova Operator ${suffix}`;
+  const email = `nova-${suffix}@example.test`;
+  const workspaceName = `Nebula Desk ${suffix}`;
+  const response = await page.request.post('/api/auth/register', {
+    data: { displayName, email, password: 'long-password-123!', workspaceName },
+  });
+  expect(response.ok()).toBe(true);
+  await page.goto('/w/nebula/accounts');
+  await expect(page.getByRole('button', { name: new RegExp(displayName) })).toContainText(email);
+  await expect(
+    page.getByText(`Manage publishing access and connection health for ${workspaceName}.`),
+  ).toBeVisible();
+  await expect(page.getByText('All systems operational')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: new RegExp(displayName) })).toContainText(email);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(page.getByRole('button', { name: new RegExp(displayName) })).toContainText(email);
+});
+
 async function mockConnectedAccounts(page: Page) {
   await page.route('**/api/provider-accounts', (route) =>
     route.fulfill({
@@ -218,6 +240,26 @@ test('operates the workspace switcher completely from the keyboard', async ({ pa
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
   let switchedTo = '';
+  let activeShellWorkspace = {
+    id: '00000000-0000-4000-8000-000000000401',
+    slug: 'atlas',
+    name: 'Atlas',
+  };
+  await page.route('**/api/auth/session', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          user: { displayName: 'Switch Operator', email: 'switch@example.test' },
+          workspace: {
+            ...activeShellWorkspace,
+            role: activeShellWorkspace.slug === 'atlas' ? 'owner' : 'editor',
+          },
+        },
+        error: null,
+      }),
+    }),
+  );
   await page.route('**/api/workspaces', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -244,6 +286,11 @@ test('operates the workspace switcher completely from the keyboard', async ({ pa
   );
   await page.route('**/api/workspaces/*/switch', (route) => {
     switchedTo = route.request().url();
+    activeShellWorkspace = {
+      id: '00000000-0000-4000-8000-000000000402',
+      slug: 'relay',
+      name: 'Relay',
+    };
     return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data: { workspace: { slug: 'relay' } }, error: null }),
@@ -263,6 +310,12 @@ test('operates the workspace switcher completely from the keyboard', async ({ pa
   await expect(search).toHaveAttribute('aria-activedescendant', /000000000402$/);
   await search.press('Enter');
   await expect(page).toHaveURL('/w/relay/accounts');
+  await expect(page.getByRole('button', { name: /Switch Operator/ })).toContainText(
+    'switch@example.test',
+  );
+  await expect(
+    page.getByText('Manage publishing access and connection health for Relay.'),
+  ).toBeVisible();
   expect(switchedTo).toContain('00000000-0000-4000-8000-000000000402/switch');
 });
 

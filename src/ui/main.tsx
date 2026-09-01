@@ -430,6 +430,10 @@ export function Rail({
   active?: 'queue' | 'calendar' | 'accounts' | 'settings';
   onCreate?: () => void;
 }) {
+  const [profile, setProfile] = useState<{
+    user: { displayName: string; email: string };
+    workspace: { id: string; slug: string; name: string; role: string };
+  } | null>(null);
   const [workspaces, setWorkspaces] = useState<
     { id: string; slug: string; name: string; role: string }[]
   >([]);
@@ -441,6 +445,17 @@ export function Rail({
   const [activeWorkspaceIndex, setActiveWorkspaceIndex] = useState(0);
   const activeSlug = window.location.pathname.split('/')[2] ?? '';
   useEffect(() => {
+    void fetch('/api/auth/session')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Profile could not be loaded');
+        return response.json() as Promise<{ data: NonNullable<typeof profile> }>;
+      })
+      .then((result) => {
+        setProfile(result.data);
+      })
+      .catch(() => {
+        setProfile(null);
+      });
     void fetch('/api/workspaces')
       .then(async (response) => {
         if (!response.ok) throw new Error('Workspaces could not be loaded');
@@ -457,7 +472,15 @@ export function Rail({
     if (workspaceOpen) searchRef.current?.focus();
   }, [workspaceOpen]);
   const activeWorkspace =
-    workspaces.find((workspace) => workspace.slug === activeSlug) ?? workspaces[0];
+    workspaces.find((workspace) => workspace.slug === activeSlug) ??
+    workspaces[0] ??
+    profile?.workspace;
+  const initials = profile?.user.displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('');
   const visibleWorkspaces = workspaces.filter((workspace) =>
     workspace.name.toLowerCase().includes(workspaceQuery.toLowerCase()),
   );
@@ -621,13 +644,13 @@ export function Rail({
       </nav>
       <div className="rail-footer">
         <div className="connection-health">
-          <span className="health-dot" /> All systems operational
+          <span className="health-dot" /> Signed in
         </div>
         <button className="user-menu">
-          <span className="avatar">PA</span>
+          <span className="avatar">{profile ? initials : '—'}</span>
           <span>
-            <strong>Plamen</strong>
-            <small>plamen@example.com</small>
+            <strong>{profile?.user.displayName ?? 'Loading profile…'}</strong>
+            <small>{profile?.user.email ?? 'Authenticated account'}</small>
           </span>
         </button>
       </div>
@@ -694,6 +717,7 @@ function AccountsPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [workspaceName, setWorkspaceName] = useState('your active workspace');
   const loadAccounts = useCallback(() => {
     setLoadState('loading');
     setActionError(null);
@@ -735,6 +759,19 @@ function AccountsPage() {
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
+  useEffect(() => {
+    void fetch('/api/auth/session')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Workspace could not be loaded');
+        return response.json() as Promise<{ data: { workspace: { name: string } } }>;
+      })
+      .then((result) => {
+        setWorkspaceName(result.data.workspace.name);
+      })
+      .catch(() => {
+        setWorkspaceName('your active workspace');
+      });
+  }, []);
   const connectX = () => {
     setActionError(null);
     void beginXConnection().catch((error: unknown) => {
@@ -785,7 +822,7 @@ function AccountsPage() {
           <div>
             <p className="eyebrow">Workspace settings</p>
             <h1>Connected accounts</h1>
-            <p>Manage publishing access and connection health for Atlas Studio.</p>
+            <p>Manage publishing access and connection health for {workspaceName}.</p>
           </div>
           <button className="primary-button connect-account" onClick={connectX}>
             ＋ Connect account

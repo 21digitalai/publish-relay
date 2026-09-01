@@ -20,6 +20,7 @@ function createStore(): AuthStore {
     revokeSession: vi.fn(),
     findSession: vi.fn(),
     findCurrentRole: vi.fn(),
+    findShellProfile: vi.fn(),
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
     listWorkspaces: vi.fn(),

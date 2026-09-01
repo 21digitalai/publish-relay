@@ -38,6 +38,34 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('PostgreSQL tenant isolation', () => {
+  it('returns only the authenticated tenant shell profile', async () => {
+    const workspaceA = '00000000-0000-4000-8000-000000000061';
+    const workspaceB = '00000000-0000-4000-8000-000000000062';
+    const userA = '00000000-0000-4000-8000-000000000063';
+    const userB = '00000000-0000-4000-8000-000000000064';
+    await database.exec(`
+      ALTER TABLE users ADD COLUMN display_name text NOT NULL DEFAULT 'Test Operator';
+      INSERT INTO users (id, display_name, email, password_hash) VALUES
+        ('${userA}', 'Local Operator', 'local@example.test', 'hash-a'),
+        ('${userB}', 'Hidden Operator', 'hidden@example.test', 'hash-b');
+      INSERT INTO workspaces (id, name, slug) VALUES
+        ('${workspaceA}', 'Local Test', 'local-test'),
+        ('${workspaceB}', 'Hidden Tenant', 'hidden-tenant');
+      SELECT set_config('app.workspace_id', '${workspaceA}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${workspaceA}', '${userA}', 'owner');
+      SELECT set_config('app.workspace_id', '${workspaceB}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${workspaceB}', '${userB}', 'owner');
+      RESET app.workspace_id;
+      SET ROLE publish_relay_app;
+    `);
+    const store = createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase);
+
+    await expect(store.findShellProfile(workspaceA, userA)).resolves.toEqual({
+      user: { displayName: 'Local Operator', email: 'local@example.test' },
+      workspace: { id: workspaceA, name: 'Local Test', slug: 'local-test', role: 'owner' },
+    });
+    await expect(store.findShellProfile(workspaceA, userB)).resolves.toBeNull();
+  });
   it('updates the registered workspace profile in place without creating a duplicate', async () => {
     const workspaceId = '00000000-0000-4000-8000-000000000041';
     const userId = '00000000-0000-4000-8000-000000000042';

@@ -18,6 +18,7 @@ function createStore(): AuthStore {
     revokeSession: vi.fn(),
     findSession: vi.fn(),
     findCurrentRole: vi.fn(),
+    findShellProfile: vi.fn(),
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
     listWorkspaces: vi.fn(),
@@ -87,6 +88,10 @@ describe('authentication HTTP boundary', () => {
       revokedAt: null,
     });
     vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.findShellProfile).mockResolvedValue({
+      user: { displayName: 'Relay Owner', email: 'owner@example.test' },
+      workspace: { id: 'w1', name: 'Relay', slug: 'relay', role: 'owner' },
+    });
     const application = createTestApplication(store);
     const login = await application.inject({
       method: 'POST',
@@ -100,6 +105,21 @@ describe('authentication HTTP boundary', () => {
       (await application.inject({ method: 'GET', url: '/app', headers: { cookie: cookieHeader } }))
         .statusCode,
     ).toBe(200);
+    expect(
+      (
+        await application.inject({
+          method: 'GET',
+          url: '/api/auth/session',
+          headers: { cookie: cookieHeader },
+        })
+      ).json(),
+    ).toEqual({
+      data: {
+        user: { displayName: 'Relay Owner', email: 'owner@example.test' },
+        workspace: { id: 'w1', name: 'Relay', slug: 'relay', role: 'owner' },
+      },
+      error: null,
+    });
     expect(
       (
         await application.inject({

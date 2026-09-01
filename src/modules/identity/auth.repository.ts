@@ -132,6 +132,35 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
         return row?.role ?? null;
       });
     },
+    async findShellProfile(workspaceId, userId) {
+      return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
+        const [profile] = await transaction
+          .select({
+            displayName: users.displayName,
+            email: users.email,
+            id: workspaces.id,
+            name: workspaces.name,
+            slug: workspaces.slug,
+            role: memberships.role,
+          })
+          .from(memberships)
+          .innerJoin(users, eq(users.id, memberships.userId))
+          .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+          .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+          .limit(1);
+        return profile
+          ? {
+              user: { displayName: profile.displayName, email: profile.email },
+              workspace: {
+                id: profile.id,
+                name: profile.name,
+                slug: profile.slug,
+                role: profile.role,
+              },
+            }
+          : null;
+      });
+    },
     async findWorkspace(workspaceId, userId) {
       return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
         const [workspace] = await transaction

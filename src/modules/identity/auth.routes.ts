@@ -145,9 +145,11 @@ export function registerAuthRoutes(
 
   application.get('/api/auth/session', async (request, reply) => {
     const identity = await authenticateRequest(request, auth);
-    return identity
-      ? { data: identity, error: null }
-      : reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const profile = await auth.getShellProfile(identity);
+    return profile
+      ? { data: profile, error: null }
+      : reply.code(404).send({ data: null, error: 'Account profile was not found' });
   });
 
   application.patch('/api/workspaces/current', async (request, reply) => {

@@ -70,6 +70,8 @@ Normal text must meet 4.5:1 contrast and large text/UI boundaries 3:1. Semantic 
 
 Desktop uses a 240px left rail with wordmark, workspace switcher, Create post, Queue, Calendar, Accounts, Settings, then help/user/connection health in the footer. Create post remains visible without scrolling. Mobile uses a drawer.
 
+The rail user identity and active workspace label always render from the authenticated persisted shell profile. Initials derive from the display name. Connection copy must describe only bounded known session/account state; it must never invent a global platform-health claim.
+
 Routes:
 
 - `/login`, `/register`, `/forgot-password`

@@ -42,6 +42,7 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 - Browser session and API-key bearer material is never persisted. Store SHA-256 hashes; API keys expose only a public `pr_` prefix beside the hash. Revocation and expiry are checked before authorization.
 - Browser session cookies carry the workspace UUID beside an opaque token so forced tenant RLS can be established before the hashed session lookup. Login rotates prior sessions, protected requests reload the live membership role, and state-changing browser routes require a matching double-submit CSRF token.
 - The authenticated onboarding shell reloads its canonical workspace profile through `GET /api/workspaces/current`; profile changes use the matching CSRF-protected `PATCH` route and navigation uses the returned canonical slug.
+- The protected shell identity comes from `GET /api/auth/session`, whose allowlisted detail DTO contains only the persisted user's display name/email and active membership workspace id/name/slug/role. It never exposes session material, hashes, default-workspace internals, or records from another tenant.
 - Audit events are append-only and accept allowlisted, redacted metadata only. Secrets and content bodies do not belong in audit or application logs.
 
 ## Provider credentials and OAuth

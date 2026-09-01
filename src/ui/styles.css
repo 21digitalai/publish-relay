@@ -1211,6 +1211,10 @@ select:focus-visible {
 .time-calendar.day-only .time-grid {
   grid-template-columns: 64px minmax(220px, 1fr);
 }
+.time-calendar.week-view .time-header,
+.time-calendar.week-view .time-grid {
+  grid-template-columns: 64px repeat(7, minmax(110px, 1fr));
+}
 .time-header {
   min-height: 44px;
   align-items: center;
@@ -1274,9 +1278,12 @@ select:focus-visible {
 .timeline-hours,
 .timeline-lane {
   display: grid;
-  grid-template-columns: 160px repeat(6, 1fr);
+  grid-template-columns: 160px repeat(24, minmax(28px, 1fr));
   align-items: center;
   min-width: 800px;
+}
+.timeline-hour {
+  grid-column: span 4;
 }
 .timeline-hours {
   min-height: 40px;
@@ -1289,6 +1296,7 @@ select:focus-visible {
 }
 .timeline-lane > strong {
   padding-left: 16px;
+  grid-row: 1 / -1;
 }
 .timeline-job {
   grid-row: 1;

@@ -626,11 +626,11 @@ function MonthCalendar({ jobs }: { jobs: Job[] }) {
 function TimeCalendar({ dayOnly, jobs }: { dayOnly: boolean; jobs: Job[] }) {
   const anchor = calendarAnchor(jobs);
   const firstDay = dayOnly ? anchor : startOfWeek(anchor);
-  const dates = Array.from({ length: dayOnly ? 1 : 5 }, (_, index) => addDays(firstDay, index));
+  const dates = Array.from({ length: dayOnly ? 1 : 7 }, (_, index) => addDays(firstDay, index));
   const hourStart = 8;
   const pixelsPerHour = 43;
   return (
-    <div className={`time-calendar ${dayOnly ? 'day-only' : ''}`}>
+    <div className={`time-calendar ${dayOnly ? 'day-only' : 'week-view'}`}>
       <div className="time-header">
         <span />
         {dates.map((date) => (
@@ -690,7 +690,9 @@ function TimelineCalendar({ jobs }: { jobs: Job[] }) {
       <div className="timeline-hours">
         <span />
         {['09:00', '10:00', '11:00', '12:00', '13:00', '14:00'].map((hour) => (
-          <span key={hour}>{hour}</span>
+          <span className="timeline-hour" key={hour}>
+            {hour}
+          </span>
         ))}
       </div>
       {lanes.map(([accountKey, accountJobs]) => {
@@ -699,15 +701,19 @@ function TimelineCalendar({ jobs }: { jobs: Job[] }) {
         return (
           <div className="timeline-lane" key={accountKey}>
             <strong>{firstJob.account}</strong>
-            {accountJobs.map((job) => {
+            {accountJobs.map((job, jobIndex) => {
               const scheduled = new Date(job.scheduledAt);
-              const hourOffset = scheduled.getHours() - timelineStartHour;
-              const column = Math.max(2, Math.min(7, 2 + hourOffset));
+              const minuteOffset =
+                (scheduled.getHours() - timelineStartHour) * 60 + scheduled.getMinutes();
+              const column = Math.max(2, Math.min(25, 2 + Math.floor(minuteOffset / 15)));
               return (
                 <a
                   className={`timeline-job ${job.state}`}
                   href={jobPath(job)}
-                  style={{ gridColumn: `${String(column)} / span 1` }}
+                  style={{
+                    gridColumn: `${String(column)} / span 2`,
+                    gridRow: String(jobIndex + 1),
+                  }}
                   key={job.id}
                   aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
                 >

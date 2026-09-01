@@ -298,7 +298,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
             {
               id: 'mira-lunch',
               state: 'retry_wait',
-              scheduledAt: '2026-09-01T12:30:00+03:00',
+              scheduledAt: '2026-09-01T09:30:00+03:00',
               contentPreview: 'Lunch retry',
               providerAccount: { displayName: 'Mira Editorial', handle: 'mira', provider: 'x' },
             },
@@ -307,6 +307,13 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
               state: 'failed',
               scheduledAt: '2026-09-02T10:45:00+03:00',
               contentPreview: 'Next day failure',
+              providerAccount: { displayName: 'Studio Notes', handle: 'studio', provider: 'x' },
+            },
+            {
+              id: 'studio-weekend',
+              state: 'scheduled',
+              scheduledAt: '2026-09-06T11:00:00+03:00',
+              contentPreview: 'Sunday publication',
               providerAccount: { displayName: 'Studio Notes', handle: 'studio', provider: 'x' },
             },
           ],
@@ -333,8 +340,9 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   const morning = page.getByRole('link', { name: /Mira Editorial, Dispatching/ });
   const lunch = page.getByRole('link', { name: /Mira Editorial, Retrying/ });
   await expect(morning).toHaveAttribute('style', /top: 53\.75px/);
-  await expect(lunch).toHaveAttribute('style', /top: 193\.5px/);
+  await expect(lunch).toHaveAttribute('style', /top: 64\.5px/);
   await expect(page.getByRole('link', { name: /Studio Notes, Failed/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Studio Notes, Scheduled/ })).toBeVisible();
 
   await page.getByRole('button', { name: 'Day', exact: true }).click();
   await expect(page.getByLabel('Day calendar').getByRole('link')).toHaveCount(2);
@@ -342,6 +350,14 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   await expect(page.locator('.timeline-lane')).toHaveCount(1);
   await expect(page.locator('.timeline-lane').getByRole('link')).toHaveCount(2);
+  await expect(page.locator('.timeline-lane').getByRole('link').first()).toHaveAttribute(
+    'style',
+    /grid-area: 1 \/ 3 \/ auto \/ span 2/,
+  );
+  await expect(page.locator('.timeline-lane').getByRole('link').nth(1)).toHaveAttribute(
+    'style',
+    /grid-area: 2 \/ 4 \/ auto \/ span 2/,
+  );
   await expect(page.locator('.timeline-lane').getByRole('link').first()).toHaveAttribute(
     'href',
     '/w/mira-studio/jobs/mira-morning',

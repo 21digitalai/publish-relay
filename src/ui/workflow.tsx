@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { Rail } from './main.js';
 
@@ -60,6 +60,34 @@ const STATE_LABELS: Record<JobState, string> = {
   published: 'Published',
   cancelled: 'Cancelled',
 };
+
+interface QueueJobDto {
+  id: string;
+  state: string;
+  scheduledAt: string;
+  contentPreview: string;
+  providerAccount: { displayName: string; handle: string; provider: string };
+}
+
+function toJob(dto: QueueJobDto): Job {
+  const state: JobState =
+    dto.state === 'retry_wait'
+      ? 'retrying'
+      : dto.state === 'published' || dto.state === 'failed' || dto.state === 'cancelled'
+        ? dto.state
+        : 'scheduled';
+  return {
+    id: dto.id,
+    state,
+    scheduledAt: dto.scheduledAt,
+    text: dto.contentPreview,
+    account: dto.providerAccount.displayName,
+    handle: dto.providerAccount.handle.startsWith('@')
+      ? dto.providerAccount.handle
+      : `@${dto.providerAccount.handle}`,
+    provider: dto.providerAccount.provider.toUpperCase(),
+  };
+}
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat('en', {
@@ -284,9 +312,31 @@ function WorkspaceLayout({
 export function QueuePage() {
   const [query, setQuery] = useState('');
   const [view, setView] = useState('All');
+  const [queueJobs, setQueueJobs] = useState<Job[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch('/api/workflow/jobs?limit=100', { signal: controller.signal })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          data: { items: QueueJobDto[] } | null;
+          error: string | null;
+        };
+        if (!response.ok || !result.data)
+          throw new Error(result.error ?? 'Could not load the publication queue');
+        setQueueJobs(result.data.items.map(toJob));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setLoadError(error instanceof Error ? error.message : 'Could not load the publication queue');
+      });
+    return () => {
+      controller.abort();
+    };
+  }, []);
   const jobs = useMemo(
     () =>
-      JOBS.filter(
+      (queueJobs ?? []).filter(
         (job) =>
           `${job.text} ${job.account}`.toLowerCase().includes(query.toLowerCase()) &&
           (view === 'All' ||
@@ -294,7 +344,7 @@ export function QueuePage() {
               ? ['failed', 'retrying'].includes(job.state)
               : STATE_LABELS[job.state] === view)),
       ),
-    [query, view],
+    [query, queueJobs, view],
   );
   return (
     <WorkspaceLayout active="queue">
@@ -343,7 +393,17 @@ export function QueuePage() {
               <button className="filter-button">Provider: Any</button>
               <button className="filter-button">Date: This week</button>
             </div>
-            {jobs.length ? (
+            {loadError ? (
+              <div className="filter-empty" role="alert">
+                <h2>Queue unavailable</h2>
+                <p>{loadError}</p>
+              </div>
+            ) : queueJobs === null ? (
+              <div className="filter-empty" role="status">
+                <h2>Loading publication queue</h2>
+                <p>Fetching the latest job states…</p>
+              </div>
+            ) : jobs.length ? (
               <div className="queue-table">
                 <div className="queue-header">
                   <span>Status</span>

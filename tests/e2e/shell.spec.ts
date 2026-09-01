@@ -337,6 +337,7 @@ test('keeps the current session valid after a hidden invalid workspace switch', 
 test('renders queue, composer, calendar modes, and safe job recovery', async ({
   page,
 }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-09-01T05:00:00.000Z'));
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
   let detailState = 'failed';

@@ -1,5 +1,11 @@
 # Publish Relay deployment
 
+## Persistent macOS development runtime
+
+Run `deploy/macos/publish-relay-local.sh install` after a Node 24 build to create three native per-user launchd services: PostgreSQL on isolated port 55436, web on 127.0.0.1:3106, and the durable worker. The controller initializes and migrates a private database, provisions distinct migration/web/worker authorities, generates host-specific plists and Vault-injected wrappers beneath `${XDG_STATE_HOME:-$HOME/.local/state}/publish-relay`, and keeps secrets and machine paths out of source control.
+
+The commands are `install`, `start`, `stop`, `restart`, `status`, and `uninstall`. launchd restarts crashed processes; logs and media live below the runtime root. Uninstall unloads services but preserves runtime data for recovery. Tool paths and ports can be overridden with `PUBLISH_RELAY_NODE_BIN`, `PUBLISH_RELAY_POSTGRES_BIN`, `PUBLISH_RELAY_POSTGRES_PORT`, and `PUBLISH_RELAY_PORT`.
+
 Production uses immutable releases under `/opt/publish-relay/releases`, an atomic `current` symlink, and separate hardened systemd web and worker units. Web secrets belong in root-owned `/etc/publish-relay/publish-relay-web.env`; worker secrets belong in `/etc/publish-relay/publish-relay-worker.env`. Both are injected from the approved vault and never belong in a release. The deployment-only `MIGRATION_DATABASE_URL` is supplied to release, backup, and restore tooling without placing it in either runtime environment file.
 
 ## Database authorities

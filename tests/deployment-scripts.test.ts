@@ -111,6 +111,20 @@ describe('deployment scripts', () => {
     }
   });
 
+  it('packages the local runtime as secret-free crash-restarting launchd services', () => {
+    const content = readFileSync(join(projectRoot, 'deploy/macos/publish-relay-local.sh'), 'utf8');
+    expect(content).toContain('local.publish-relay.postgres');
+    expect(content).toContain('<key>KeepAlive</key><true/>');
+    expect(content).toContain('publish-relay/local-master-key');
+    expect(content).toContain('publish-relay/local-cursor-secret');
+    expect(content).toContain('publish_relay_migrator_login');
+    expect(content).toContain('publish_relay_web_login');
+    expect(content).toContain('publish_relay_worker_login');
+    expect(content).toContain('55436');
+    expect(content).toContain('3106');
+    expect(content).not.toContain('/Users/');
+  });
+
   it('uses the compiled production migration before switching the current release', () => {
     const fixture = createDeployFixture();
     execFileSync(

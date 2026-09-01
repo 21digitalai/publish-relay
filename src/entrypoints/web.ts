@@ -18,8 +18,8 @@ const pool = new pg.Pool({
 });
 const database = drizzle(pool);
 const activeKeyVersion = config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION;
-const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY;
-const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET;
+const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
+const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
 const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
 if (!activeKeyVersion || !xConsumerKey || !xConsumerSecret || !publicOrigin)
   throw new Error('X OAuth runtime configuration is required for the web process');

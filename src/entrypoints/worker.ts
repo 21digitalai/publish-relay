@@ -13,11 +13,13 @@ import {
 const config = loadRuntimeConfig();
 const shutdownController = new AbortController();
 const workerDatabaseUrl = resolveWorkerDatabaseUrl(config);
+const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
+const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
 if (
   !config.MEDIA_STORAGE_ROOT ||
   !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION ||
-  !config.PUBLISH_RELAY_X_CONSUMER_KEY ||
-  !config.PUBLISH_RELAY_X_CONSUMER_SECRET
+  !xConsumerKey ||
+  !xConsumerSecret
 )
   throw new Error(
     'Database, media storage, master key, and X runtime configuration are required for the worker',
@@ -32,8 +34,8 @@ const runtime = {
   keys: new RuntimeMasterKeyProvider(config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION),
   source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
   createClient: createXMediaClientFactory({
-    consumerKey: config.PUBLISH_RELAY_X_CONSUMER_KEY,
-    consumerSecret: config.PUBLISH_RELAY_X_CONSUMER_SECRET,
+    consumerKey: xConsumerKey,
+    consumerSecret: xConsumerSecret,
   }),
   workerId: config.WORKER_ID ?? 'publish-relay-worker',
   leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),

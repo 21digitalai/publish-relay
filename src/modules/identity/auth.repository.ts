@@ -172,6 +172,22 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
     async rotateWorkspaceSession(input) {
       return database.transaction(async (transaction) => {
         await transaction.execute(
+          sql`select set_config('app.workspace_id', ${input.targetWorkspaceId}, true)`,
+        );
+        await transaction.execute(sql`select set_config('app.user_id', ${input.userId}, true)`);
+        const [target] = await transaction
+          .select({ workspaceId: workspaces.id, slug: workspaces.slug, role: memberships.role })
+          .from(memberships)
+          .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+          .where(
+            and(
+              eq(memberships.workspaceId, input.targetWorkspaceId),
+              eq(memberships.userId, input.userId),
+            ),
+          )
+          .limit(1);
+        if (!target) return null;
+        await transaction.execute(
           sql`select set_config('app.workspace_id', ${input.currentWorkspaceId}, true)`,
         );
         const [revoked] = await transaction
@@ -189,19 +205,6 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
         await transaction.execute(
           sql`select set_config('app.workspace_id', ${input.targetWorkspaceId}, true)`,
         );
-        await transaction.execute(sql`select set_config('app.user_id', ${input.userId}, true)`);
-        const [target] = await transaction
-          .select({ workspaceId: workspaces.id, slug: workspaces.slug, role: memberships.role })
-          .from(memberships)
-          .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
-          .where(
-            and(
-              eq(memberships.workspaceId, input.targetWorkspaceId),
-              eq(memberships.userId, input.userId),
-            ),
-          )
-          .limit(1);
-        if (!target) return null;
         await transaction.insert(sessions).values({
           workspaceId: target.workspaceId,
           userId: input.userId,

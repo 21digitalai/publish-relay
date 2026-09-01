@@ -197,6 +197,73 @@ test('uses the mobile navigation drawer', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Create post' })).toBeVisible();
 });
 
+test('operates the workspace switcher completely from the keyboard', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  let switchedTo = '';
+  await page.route('**/api/workspaces', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          workspaces: [
+            {
+              id: '00000000-0000-4000-8000-000000000401',
+              slug: 'atlas',
+              name: 'Atlas',
+              role: 'owner',
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000402',
+              slug: 'relay',
+              name: 'Relay',
+              role: 'editor',
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workspaces/*/switch', (route) => {
+    switchedTo = route.request().url();
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { workspace: { slug: 'relay' } }, error: null }),
+    });
+  });
+  await page.goto('/w/atlas/accounts');
+  if ((page.viewportSize()?.width ?? 0) < 768)
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  const trigger = page.getByRole('button', { name: /Atlas owner/ });
+  await trigger.click();
+  const search = page.getByRole('combobox', { name: 'Search workspaces' });
+  await expect(search).toBeFocused();
+  await search.press('Escape');
+  await expect(trigger).toBeFocused();
+  await trigger.press('Enter');
+  await search.press('End');
+  await expect(search).toHaveAttribute('aria-activedescendant', /000000000402$/);
+  await search.press('Enter');
+  await expect(page).toHaveURL('/w/relay/accounts');
+  expect(switchedTo).toContain('00000000-0000-4000-8000-000000000402/switch');
+});
+
+test('keeps the current session valid after a hidden invalid workspace switch', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  const csrf = (await page.context().cookies()).find(
+    (cookie) => cookie.name === 'publish_relay_csrf',
+  )?.value;
+  const response = await page.request.post(
+    '/api/workspaces/00000000-0000-4000-8000-000000000499/switch',
+    { headers: { 'x-csrf-token': csrf ?? '' } },
+  );
+  expect(response.status()).toBe(404);
+  expect((await page.request.get('/api/auth/session')).ok()).toBe(true);
+});
+
 test('renders queue, composer, calendar modes, and safe job recovery', async ({
   page,
 }, testInfo) => {

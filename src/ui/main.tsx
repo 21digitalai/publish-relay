@@ -437,6 +437,8 @@ export function Rail({
   const [workspaceQuery, setWorkspaceQuery] = useState('');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [activeWorkspaceIndex, setActiveWorkspaceIndex] = useState(0);
   const activeSlug = window.location.pathname.split('/')[2] ?? '';
   useEffect(() => {
     void fetch('/api/workspaces')
@@ -459,6 +461,25 @@ export function Rail({
   const visibleWorkspaces = workspaces.filter((workspace) =>
     workspace.name.toLowerCase().includes(workspaceQuery.toLowerCase()),
   );
+  const chooseWorkspace = (workspace: (typeof workspaces)[number]) => {
+    if (workspace.id === activeWorkspace?.id) {
+      setWorkspaceOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+    setWorkspaceError(null);
+    void fetch(`/api/workspaces/${workspace.id}/switch`, {
+      method: 'POST',
+      headers: { 'x-csrf-token': getCsrfToken() },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('Workspace could not be opened');
+        window.location.href = `/w/${workspace.slug}/accounts`;
+      })
+      .catch(() => {
+        setWorkspaceError('Workspace could not be opened');
+      });
+  };
   const workspaceHref = (destination: string) =>
     `/w/${activeWorkspace?.slug ?? (activeSlug || 'workspace')}/${destination}`;
   return (
@@ -472,11 +493,13 @@ export function Rail({
         </button>
       </div>
       <button
+        ref={triggerRef}
         className="workspace-switcher"
         aria-haspopup="listbox"
         aria-expanded={workspaceOpen}
         onClick={() => {
           setWorkspaceOpen((current) => !current);
+          setActiveWorkspaceIndex(0);
         }}
       >
         <span>
@@ -494,39 +517,63 @@ export function Rail({
               className="workspace-search-input"
               value={workspaceQuery}
               placeholder="Search workspaces"
+              role="combobox"
+              aria-controls="workspace-options"
+              aria-expanded="true"
+              aria-activedescendant={
+                visibleWorkspaces[activeWorkspaceIndex]
+                  ? `workspace-option-${visibleWorkspaces[activeWorkspaceIndex].id}`
+                  : undefined
+              }
               onChange={(event) => {
                 setWorkspaceQuery(event.target.value);
+                setActiveWorkspaceIndex(0);
               }}
               onKeyDown={(event) => {
-                if (event.key === 'Escape') setWorkspaceOpen(false);
+                if (event.key === 'Escape') {
+                  setWorkspaceOpen(false);
+                  triggerRef.current?.focus();
+                } else if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  setActiveWorkspaceIndex((current) =>
+                    Math.min(current + 1, visibleWorkspaces.length - 1),
+                  );
+                } else if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setActiveWorkspaceIndex((current) => Math.max(current - 1, 0));
+                } else if (event.key === 'Home') {
+                  event.preventDefault();
+                  setActiveWorkspaceIndex(0);
+                } else if (event.key === 'End') {
+                  event.preventDefault();
+                  setActiveWorkspaceIndex(Math.max(visibleWorkspaces.length - 1, 0));
+                } else if (event.key === 'Enter' && visibleWorkspaces[activeWorkspaceIndex]) {
+                  event.preventDefault();
+                  chooseWorkspace(visibleWorkspaces[activeWorkspaceIndex]);
+                }
               }}
             />
           </label>
           {workspaceError && <p className="workspace-menu-error">{workspaceError}</p>}
-          <div className="workspace-options" role="listbox" aria-label="Workspaces">
-            {visibleWorkspaces.map((workspace) => (
+          <div
+            id="workspace-options"
+            className="workspace-options"
+            role="listbox"
+            aria-label="Workspaces"
+          >
+            {visibleWorkspaces.map((workspace, index) => (
               <button
+                id={`workspace-option-${workspace.id}`}
                 className={`workspace-option ${workspace.id === activeWorkspace?.id ? 'selected' : ''}`}
                 role="option"
                 aria-selected={workspace.id === activeWorkspace?.id}
                 key={workspace.id}
+                tabIndex={-1}
+                onMouseEnter={() => {
+                  setActiveWorkspaceIndex(index);
+                }}
                 onClick={() => {
-                  if (workspace.id === activeWorkspace?.id) {
-                    setWorkspaceOpen(false);
-                    return;
-                  }
-                  setWorkspaceError(null);
-                  void fetch(`/api/workspaces/${workspace.id}/switch`, {
-                    method: 'POST',
-                    headers: { 'x-csrf-token': getCsrfToken() },
-                  })
-                    .then((response) => {
-                      if (!response.ok) throw new Error('Workspace could not be opened');
-                      window.location.href = `/w/${workspace.slug}/accounts`;
-                    })
-                    .catch(() => {
-                      setWorkspaceError('Workspace could not be opened');
-                    });
+                  chooseWorkspace(workspace);
                 }}
               >
                 <span>

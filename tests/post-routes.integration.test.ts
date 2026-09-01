@@ -55,10 +55,12 @@ let apiKeys: ApiKeyService;
 let authenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
 let browserNow: Date | undefined;
+let mediaPutError: Error | undefined;
 const temporaryDirectories: string[] = [];
 const storedMedia = new Map<string, Buffer>();
 const mediaStorage: MediaStorage = {
   put: (input) => {
+    if (mediaPutError) return Promise.reject(mediaPutError);
     const sha256 = createHash('sha256').update(input.bytes).digest('hex');
     const storageKey = `${input.workspaceId}/${input.mediaId}/${sha256}`;
     storedMedia.set(storageKey, Buffer.from(input.bytes));
@@ -138,6 +140,7 @@ function requestPayload(text = 'Scheduled through the API') {
 
 beforeEach(async () => {
   storedMedia.clear();
+  mediaPutError = undefined;
   browserNow = undefined;
   database = new PGlite();
   for (const migration of migrations)
@@ -332,6 +335,93 @@ describe('agent media upload PostgreSQL boundary', () => {
       ).statusCode,
     ).toBe(400);
     expect(storedMedia.size).toBe(0);
+  });
+
+  it('rejects declared and detected MIME mismatches before reserving mutation state', async () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0x01]);
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: { ...headers, 'idempotency-key': 'media-mime-mismatch' },
+      payload: jpeg,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(storedMedia.size).toBe(0);
+    const rows = await database.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM api_mutation_results WHERE idempotency_key = 'media-mime-mismatch'",
+    );
+    expect(rows.rows[0]?.count).toBe(0);
+  });
+
+  it('enforces the upload body limit at the HTTP boundary', async () => {
+    const oversized = Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024 - png.length + 1)]);
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: { ...headers, 'idempotency-key': 'media-oversized' },
+      payload: oversized,
+    });
+    expect(response.statusCode).toBe(413);
+    expect(storedMedia.size).toBe(0);
+  });
+
+  it('rejects missing content:write capability before storage or idempotency', async () => {
+    requireCapability.mockRejectedValueOnce(
+      new ApiKeyAuthorizationError('Insufficient capability'),
+    );
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: { ...headers, 'idempotency-key': 'media-no-capability' },
+      payload: png,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(storedMedia.size).toBe(0);
+    const rows = await database.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM api_mutation_results WHERE idempotency_key = 'media-no-capability'",
+    );
+    expect(rows.rows[0]?.count).toBe(0);
+  });
+
+  it('rate limits before reserving idempotency state', async () => {
+    for (let index = 0; index < 10; index += 1) {
+      const accepted = await application.inject({
+        method: 'POST',
+        url: '/api/v1/media',
+        headers: { ...headers, 'idempotency-key': `media-rate-${String(index)}` },
+        payload: png,
+      });
+      expect(accepted.statusCode).toBe(201);
+    }
+    const rejected = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: { ...headers, 'idempotency-key': 'media-rate-rejected' },
+      payload: png,
+    });
+    expect(rejected.statusCode).toBe(429);
+    const rows = await database.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM api_mutation_results WHERE idempotency_key = 'media-rate-rejected'",
+    );
+    expect(rows.rows[0]?.count).toBe(0);
+  });
+
+  it('rolls back database and storage ownership when storage fails', async () => {
+    mediaPutError = new Error('storage unavailable');
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: { ...headers, 'idempotency-key': 'media-storage-failure' },
+      payload: png,
+    });
+    expect(response.statusCode).toBe(500);
+    expect(storedMedia.size).toBe(0);
+    const rows = await database.query<{ media: number; mutations: number }>(
+      `SELECT
+        (SELECT count(*)::int FROM media_objects WHERE workspace_id = '${workspaceId}') AS media,
+        (SELECT count(*)::int FROM api_mutation_results WHERE idempotency_key = 'media-storage-failure') AS mutations`,
+    );
+    expect(rows.rows[0]).toEqual({ media: 0, mutations: 0 });
   });
 });
 

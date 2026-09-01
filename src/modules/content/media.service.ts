@@ -27,6 +27,14 @@ function detectMimeType(bytes: Buffer): string {
   return match.mimeType;
 }
 
+export function validateMediaContentType(bytes: Buffer, declaredMimeType: string): void {
+  const detectedMimeType = detectMimeType(bytes);
+  if (detectedMimeType !== declaredMimeType)
+    throw new Error(
+      `Media Content-Type mismatch: declared ${declaredMimeType}, detected ${detectedMimeType}`,
+    );
+}
+
 export async function storeMedia(
   database: NodePgDatabase,
   storage: MediaStorage,

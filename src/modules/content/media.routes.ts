@@ -10,7 +10,7 @@ import type { ApiRateLimiter } from '../api/rate-limit.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import type { MediaStorage } from './media-storage.js';
-import { storeMediaInTransaction } from './media.service.js';
+import { storeMediaInTransaction, validateMediaContentType } from './media.service.js';
 
 export const AGENT_MEDIA_MAX_BYTES = 5 * 1024 * 1024;
 const SUPPORTED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -69,6 +69,7 @@ export function registerMediaRoutes(
         typeof suppliedKey === 'string' ? suppliedKey : undefined,
       );
       const bytes = request.body;
+      validateMediaContentType(bytes, contentType);
       const fingerprint = createHash('sha256')
         .update(contentType)
         .update('\0')

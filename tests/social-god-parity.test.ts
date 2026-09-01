@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { buildSocialGodParity } from '../src/modules/parity/social-god.js';
+import {
+  buildSocialGodParity,
+  scheduleSocialGodSnapshot,
+} from '../src/modules/parity/social-god.js';
 
 describe('Social God dry-run parity', () => {
   it('maps text, quote, thread, media, account, schedule and result fields without credentials', () => {
@@ -91,5 +94,91 @@ describe('Social God dry-run parity', () => {
         'scheduled_at missing',
       ]),
     );
+  });
+});
+
+describe('Social God Publish Relay scheduling', () => {
+  const snapshot = (accountId: string) => ({
+    packages: [
+      {
+        package_id: 'daily-3',
+        postiz_notes: { cms_item_id: 91 },
+        article: { title: 'Relay', body_text: 'Relay body' },
+        platform_renders: { x_premium_long: { text: 'Relay post' } },
+      },
+    ],
+    schedule_records: [
+      {
+        id: 9,
+        item_id: 91,
+        platform: 'x_premium_long',
+        scheduled_for_utc: '2026-09-04T13:00:00.000Z',
+      },
+    ],
+    account_map: { x_premium_long: accountId },
+  });
+
+  it('preflights the workspace and reuses the exact idempotency key on replay', async () => {
+    const accountId = randomUUID();
+    const postId = randomUUID();
+    const revisionId = randomUUID();
+    const jobId = randomUUID();
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetcher = (url: string | URL | Request, init?: RequestInit) => {
+      const urlText = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      calls.push({ url: urlText, ...(init ? { init } : {}) });
+      return Promise.resolve(
+        urlText.endsWith('/api/v1/account')
+          ? Response.json({
+              data: { workspaceId: 'workspace-1', workspaceLabel: 'Daily Vibe' },
+            })
+          : Response.json({
+              data: {
+                id: postId,
+                revisionId,
+                links: { self: `/api/v1/posts/${postId}`, jobs: [`/api/v1/jobs/${jobId}`] },
+              },
+            }),
+      );
+    };
+    const options = {
+      target: 'publish-relay' as const,
+      baseUrl: 'http://relay.test',
+      workspace: 'workspace-1',
+      apiKey: 'test-only',
+      fetcher,
+    };
+
+    await scheduleSocialGodSnapshot(snapshot(accountId), options);
+    await scheduleSocialGodSnapshot(snapshot(accountId), options);
+
+    const mutations = calls.filter((call) => call.init?.method === 'POST');
+    expect(mutations).toHaveLength(2);
+    expect(new Headers(mutations[0]?.init?.headers).get('idempotency-key')).toBe(
+      new Headers(mutations[1]?.init?.headers).get('idempotency-key'),
+    );
+    const requestBody = mutations[0]?.init?.body;
+    expect(typeof requestBody).toBe('string');
+    expect(JSON.parse(typeof requestBody === 'string' ? requestBody : '')).toMatchObject({
+      providerAccountIds: [accountId],
+      scheduledAt: '2026-09-04T13:00:00.000Z',
+    });
+  });
+
+  it('fails the complete batch before network access when a join is unresolved', async () => {
+    const fetcher = vi.fn();
+    await expect(
+      scheduleSocialGodSnapshot(
+        { packages: [], schedule_records: [{ id: 10 }], account_map: {} },
+        {
+          target: 'publish-relay',
+          baseUrl: 'http://relay.test',
+          workspace: 'workspace-1',
+          apiKey: 'test-only',
+          fetcher,
+        },
+      ),
+    ).rejects.toThrow('unresolved mappings');
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

@@ -205,3 +205,95 @@ export function buildSocialGodParity(raw: unknown) {
     records: rows,
   };
 }
+
+export type SocialGodRelayTarget = 'dry-run' | 'publish-relay';
+
+interface SocialGodRelayOptions {
+  target: SocialGodRelayTarget;
+  baseUrl?: string;
+  workspace?: string;
+  apiKey?: string;
+  fetcher?: typeof fetch;
+}
+
+function requireRelayOption(value: string | undefined, name: string): string {
+  if (!value) throw new Error(`${name} is required when target is publish-relay`);
+  return value;
+}
+
+function boundedApiResult(body: unknown): { id: string; revisionId: string; jobIds: string[] } {
+  const parsed = z
+    .object({
+      data: z.object({
+        id: z.uuid(),
+        revisionId: z.uuid(),
+        links: z.object({ jobs: z.array(z.string()).max(50) }),
+      }),
+    })
+    .parse(body);
+  return {
+    id: parsed.data.id,
+    revisionId: parsed.data.revisionId,
+    jobIds: parsed.data.links.jobs.map((path) => path.split('/').at(-1) ?? ''),
+  };
+}
+
+export async function scheduleSocialGodSnapshot(raw: unknown, options: SocialGodRelayOptions) {
+  const report = buildSocialGodParity(raw);
+  if (options.target === 'dry-run') return report;
+  if (report.counts.gaps > 0) {
+    const gaps = report.records
+      .filter((record) => !record.parity.matched)
+      .map((record) => ({ source: record.source, gaps: record.parity.gaps }));
+    throw new Error(`Social God snapshot has unresolved mappings: ${JSON.stringify(gaps)}`);
+  }
+
+  const baseUrl = requireRelayOption(options.baseUrl, 'baseUrl');
+  const workspace = requireRelayOption(options.workspace, 'workspace');
+  const apiKey = requireRelayOption(options.apiKey, 'apiKey');
+  const fetcher = options.fetcher ?? fetch;
+  const accountResponse = await fetcher(new URL('/api/v1/account', baseUrl), {
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      accept: 'application/json',
+      'x-publish-relay-workspace': workspace,
+    },
+  });
+  const accountBody = (await accountResponse.json()) as unknown;
+  const account = z
+    .object({ data: z.object({ workspaceId: z.string(), workspaceLabel: z.string() }) })
+    .safeParse(accountBody);
+  if (
+    !accountResponse.ok ||
+    !account.success ||
+    (account.data.data.workspaceId !== workspace && account.data.data.workspaceLabel !== workspace)
+  )
+    throw new Error('Publish Relay workspace preflight failed');
+
+  const submitted = [];
+  for (const record of report.records) {
+    if (!record.request) throw new Error('Matched Social God record is missing its Relay request');
+    const response = await fetcher(new URL('/api/v1/posts', baseUrl), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'x-publish-relay-workspace': workspace,
+        'idempotency-key': record.request.headers['idempotency-key'],
+      },
+      body: JSON.stringify(record.request.body),
+    });
+    const body = (await response.json()) as unknown;
+    if (!response.ok)
+      throw new Error(
+        `Publish Relay rejected Social God schedule ${record.source.scheduleRecordId}`,
+      );
+    submitted.push({ source: record.source, relay: boundedApiResult(body) });
+  }
+  return {
+    contract: 'publish-relay/social-god-schedule-v1',
+    mode: 'publish-relay',
+    submitted,
+  };
+}

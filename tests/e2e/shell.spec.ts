@@ -156,7 +156,9 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   if (!(await createPost.isVisible())) {
     await page.getByRole('button', { name: 'Open navigation' }).click();
   }
-  await createPost.click({ force: true });
+  await createPost.evaluate((button) => {
+    button.click();
+  });
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');

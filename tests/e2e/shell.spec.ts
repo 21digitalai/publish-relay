@@ -50,7 +50,9 @@ async function mockConnectedAccounts(page: Page) {
   );
 }
 
-test('renders the login surface and reports an inline authentication error', async ({ page }) => {
+test('renders the login surface and reports an inline authentication error', async ({
+  page,
+}, testInfo) => {
   await page.route('**/api/auth/login', (route) =>
     route.fulfill({
       status: 401,
@@ -64,6 +66,7 @@ test('renders the login surface and reports an inline authentication error', asy
   await page.getByLabel('Password').fill('incorrect-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+  await page.screenshot({ path: testInfo.outputPath('auth-error.png'), fullPage: true });
 });
 
 test('renders the honest recovery unavailable state', async ({ page }) => {
@@ -120,7 +123,7 @@ test('registers, persists the first workspace update, and reloads the protected 
   await expect(page).toHaveURL(`/w/${workspaceSlug}/accounts`);
 });
 
-test('filters accounts and opens a named disconnect confirmation', async ({ page }) => {
+test('filters accounts and opens a named disconnect confirmation', async ({ page }, testInfo) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
   await page.goto('/w/atlas/accounts');
@@ -133,6 +136,7 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
   await page.getByRole('button', { name: 'More actions for Studio Notes' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('Disconnect Studio Notes?');
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.screenshot({ path: testInfo.outputPath('accounts-disconnect.png'), fullPage: true });
 });
 
 test('uses the mobile navigation drawer', async ({ page }) => {
@@ -313,8 +317,10 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.goto('/w/atlas/queue');
   await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
   await expect(page.getByText('The clearest plans')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('queue-populated.png'), fullPage: true });
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('composer.png'), fullPage: true });
   const fileChooserPromise = page.waitForEvent('filechooser');
   await page.getByText('Choose files', { exact: true }).click();
   await fileChooserPromise;
@@ -362,13 +368,18 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
     if (mode === 'Day') {
       await expect(page.getByLabel('Day calendar').getByText('Daily Viber')).toBeVisible();
     }
+    await page.screenshot({
+      path: testInfo.outputPath(`calendar-${mode.toLowerCase()}.png`),
+      fullPage: true,
+    });
   }
-  await page.screenshot({ path: testInfo.outputPath('calendar-timeline.png'), fullPage: true });
   await page.goto('/w/atlas/jobs/job-2048');
   await expect(page.getByRole('heading', { name: 'Daily Viber' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('job-detail-failed.png'), fullPage: true });
   await page.getByRole('button', { name: 'Retry now' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('preventing a duplicate post');
   await expect(page.getByRole('button', { name: 'Keep job' })).toBeFocused();
+  await page.screenshot({ path: testInfo.outputPath('job-retry-confirm.png'), fullPage: true });
   await page.getByRole('button', { name: 'Retry safely' }).click();
   await expect(page.getByText('Retry service unavailable', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry now' }).click();
@@ -381,6 +392,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await expect(page.getByText('Retry queued')).toBeVisible();
   await page.getByRole('button', { name: 'Cancel job' }).click();
   await expect(page.getByRole('button', { name: 'Keep job' })).toBeFocused();
+  await page.screenshot({ path: testInfo.outputPath('job-cancel-confirm.png'), fullPage: true });
   await page.getByRole('button', { name: 'Cancel job', exact: true }).last().click();
   await expect(page.getByText('Cancel service unavailable', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel job' }).click();
@@ -409,7 +421,7 @@ test('reports collision guidance as unavailable instead of an empty result', asy
 
 test('renders truthful queue loading, live states, empty, filtered-empty, and error states', async ({
   page,
-}) => {
+}, testInfo) => {
   await establishWorkspaceSession(page);
   await page.route('**/api/workflow/jobs?limit=100', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -440,6 +452,7 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   });
   await page.goto('/w/atlas/queue');
   await expect(page.getByRole('status')).toContainText('Loading publication queue');
+  await page.screenshot({ path: testInfo.outputPath('queue-loading.png'), fullPage: true });
   await expect(page.getByRole('link', { name: /^Dispatching / })).toBeVisible();
   await expect(page.getByRole('link', { name: /^Retrying / })).toBeVisible();
   await page.getByPlaceholder('Search posts or accounts').fill('no-match');
@@ -451,6 +464,7 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   );
   await page.reload();
   await expect(page.getByText('Nothing scheduled yet')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('queue-empty.png'), fullPage: true });
 
   await page.unroute('**/api/workflow/jobs?limit=100');
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
@@ -462,6 +476,7 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   );
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Queue offline');
+  await page.screenshot({ path: testInfo.outputPath('queue-error.png'), fullPage: true });
 });
 
 test('projects live calendar jobs by date, time, account lane, and active workspace', async ({

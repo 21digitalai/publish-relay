@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTemporaryMedia, storeMedia } from '../src/modules/content/media.service.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { createPost, editPost, reschedulePost } from '../src/modules/content/post.service.js';
+import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 import {
   cleanupExpiredStaging,
   cleanupJobStaging,
@@ -224,6 +225,43 @@ describe('post revision lifecycle', () => {
       content: { type: 'quote', quoteId: 'quote-1', text: 'Preserve every field' },
       media_count: 1,
     });
+  });
+
+  it('serializes schedule editing against a concurrent scheduler claim', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const dueAt = new Date('2026-09-01T10:00:00.000Z');
+    const created = await createPost(db, {
+      workspaceId,
+      userId,
+      content: { type: 'text', text: 'Publish exactly once' },
+      mediaIds: [],
+      providerAccountIds: [accountOne],
+      scheduledAt: dueAt,
+    });
+
+    const [rescheduleResult, claimResult] = await Promise.allSettled([
+      reschedulePost(db, {
+        workspaceId,
+        postId: created.postId,
+        scheduledAt: new Date('2026-09-02T10:00:00.000Z'),
+        now: dueAt,
+      }),
+      claimDueJobs(db, { workerId: 'race-worker', now: dueAt, leaseMs: 30_000, limit: 1 }),
+    ]);
+    const jobs = await database.query<{ state: string; count: number }>(`
+      SELECT state, count(*)::int AS count
+      FROM publication_jobs WHERE post_id = '${created.postId}' GROUP BY state
+    `);
+    const counts = Object.fromEntries(jobs.rows.map((row) => [row.state, row.count]));
+
+    expect((counts.leased ?? 0) > 0 && (counts.scheduled ?? 0) > 0).toBe(false);
+    if (claimResult.status === 'fulfilled' && claimResult.value.length === 1) {
+      expect(rescheduleResult.status).toBe('rejected');
+      expect(counts).toEqual({ leased: 1 });
+    } else {
+      expect(rescheduleResult.status).toBe('fulfilled');
+      expect(counts).toEqual({ scheduled: 1, superseded: 1 });
+    }
   });
 
   it('rejects foreign workspace account and media targets atomically before persistence', async () => {

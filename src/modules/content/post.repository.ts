@@ -107,7 +107,12 @@ export async function createPostIntent(
 
 export async function revisePostIntent(
   database: NodePgDatabase,
-  input: PostRevisionInput & { workspaceId: string; postId: string; now: Date },
+  input: PostRevisionInput & {
+    workspaceId: string;
+    postId: string;
+    now: Date;
+    expectedSupersededJobCount?: number;
+  },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
   await validateTargetOwnership(database, input);
   const existing = await database
@@ -131,6 +136,11 @@ export async function revisePostIntent(
       ),
     )
     .returning({ id: publicationJobs.id });
+  if (
+    input.expectedSupersededJobCount !== undefined &&
+    superseded.length !== input.expectedSupersededJobCount
+  )
+    throw new PostValidationError('Schedule changed after dispatch started; no changes were saved');
   const targets = await createRevisionTargets(database, {
     ...input,
     revisionNumber: current.revisionNumber + 1,
@@ -160,36 +170,38 @@ export async function reschedulePostIntent(
     .limit(1);
   const revision = revisions[0];
   if (!revision) throw new PostNotFoundError('Post not found in workspace');
-  const [media, jobs] = await Promise.all([
-    database
-      .select({ id: revisionMedia.mediaId })
-      .from(revisionMedia)
-      .where(
-        and(
-          eq(revisionMedia.workspaceId, input.workspaceId),
-          eq(revisionMedia.revisionId, revision.id),
-        ),
-      )
-      .orderBy(asc(revisionMedia.position)),
-    database
-      .select({
-        providerAccountId: publicationJobs.providerAccountId,
-        state: publicationJobs.state,
-      })
-      .from(publicationJobs)
-      .where(
-        and(
-          eq(publicationJobs.workspaceId, input.workspaceId),
-          eq(publicationJobs.revisionId, revision.id),
-        ),
+  // Scheduler claims lock the same rows with FOR UPDATE SKIP LOCKED. Holding these
+  // locks through supersession makes the pre-dispatch check atomic with claiming.
+  const jobs = await database
+    .select({
+      providerAccountId: publicationJobs.providerAccountId,
+      state: publicationJobs.state,
+    })
+    .from(publicationJobs)
+    .where(
+      and(
+        eq(publicationJobs.workspaceId, input.workspaceId),
+        eq(publicationJobs.revisionId, revision.id),
       ),
-  ]);
+    )
+    .for('update');
   if (jobs.length === 0 || jobs.some((job) => job.state !== 'scheduled'))
     throw new PostValidationError('Schedule can only be edited before every target dispatches');
+  const media = await database
+    .select({ id: revisionMedia.mediaId })
+    .from(revisionMedia)
+    .where(
+      and(
+        eq(revisionMedia.workspaceId, input.workspaceId),
+        eq(revisionMedia.revisionId, revision.id),
+      ),
+    )
+    .orderBy(asc(revisionMedia.position));
   return revisePostIntent(database, {
     ...input,
     content: revision.content as Record<string, unknown>,
     mediaIds: media.map((item) => item.id),
     providerAccountIds: jobs.map((job) => job.providerAccountId),
+    expectedSupersededJobCount: jobs.length,
   });
 }

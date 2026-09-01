@@ -6,7 +6,8 @@ import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import {
   createLocalXMediaSource,
   createXMediaClientFactory,
-  dispatchDueXMedia,
+  dispatchDueXJobs,
+  reconcileXJobs,
 } from '../modules/providers/x-media-dispatch.service.js';
 
 const config = loadRuntimeConfig();
@@ -42,7 +43,8 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 while (!shutdownController.signal.aborted) {
-  await dispatchDueXMedia(runtime);
+  await reconcileXJobs(runtime);
+  await dispatchDueXJobs(runtime);
   await new Promise<void>((resolve) => setTimeout(resolve, config.WORKER_POLL_INTERVAL_MS));
 }
 await pool.end();

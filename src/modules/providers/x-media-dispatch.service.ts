@@ -6,6 +6,8 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   mediaObjects,
+  postRevisions,
+  publicationAttempts,
   providerAccounts,
   providerConnections,
   publicationJobs,
@@ -14,7 +16,16 @@ import {
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { getActiveCredential } from '../credentials/credential.repository.js';
 import { decryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
-import { claimDueJobs, deriveJobIdempotencyKey } from '../scheduler/job.repository.js';
+import {
+  claimDueJobs,
+  claimReconciliationJobs,
+  deriveJobIdempotencyKey,
+  finishDispatchAttempt,
+  recoverExpiredDispatches,
+  resolveReconciliation,
+  startDispatchAttempt,
+} from '../scheduler/job.repository.js';
+import { XProviderAdapter, type XClient } from './x-adapter.js';
 import { XHttpClient, type XHttpClientOptions } from './x-http-client.js';
 import {
   stageXMedia,
@@ -30,7 +41,7 @@ export interface XMediaDispatchInput {
   idempotencyKey: string;
 }
 
-export type XMediaClientFactory = (credential: string) => XMediaUploadClient;
+export type XMediaClientFactory = (credential: string) => XMediaUploadClient & Partial<XClient>;
 
 export interface XDispatchRuntime {
   database: NodePgDatabase;
@@ -75,9 +86,19 @@ async function loadXJobContext(database: NodePgDatabase, workspaceId: string, jo
     const rows = await transaction
       .select({
         credentialId: providerConnections.credentialId,
+        accountId: providerAccounts.providerAccountId,
+        content: postRevisions.content,
         mediaId: revisionMedia.mediaId,
+        mimeType: mediaObjects.mimeType,
       })
       .from(publicationJobs)
+      .innerJoin(
+        postRevisions,
+        and(
+          eq(postRevisions.workspaceId, publicationJobs.workspaceId),
+          eq(postRevisions.id, publicationJobs.revisionId),
+        ),
+      )
       .innerJoin(
         providerAccounts,
         and(
@@ -99,6 +120,13 @@ async function loadXJobContext(database: NodePgDatabase, workspaceId: string, jo
           eq(revisionMedia.revisionId, publicationJobs.revisionId),
         ),
       )
+      .leftJoin(
+        mediaObjects,
+        and(
+          eq(mediaObjects.workspaceId, revisionMedia.workspaceId),
+          eq(mediaObjects.id, revisionMedia.mediaId),
+        ),
+      )
       .where(
         and(
           eq(publicationJobs.workspaceId, workspaceId),
@@ -112,12 +140,16 @@ async function loadXJobContext(database: NodePgDatabase, workspaceId: string, jo
     if (!first) return null;
     return {
       credentialId: first.credentialId,
-      mediaIds: rows.flatMap((row) => (row.mediaId ? [row.mediaId] : [])),
+      accountId: first.accountId,
+      content: first.content as { type?: string; text?: string; quotedPostId?: string },
+      media: rows.flatMap((row) =>
+        row.mediaId && row.mimeType ? [{ id: row.mediaId, mimeType: row.mimeType }] : [],
+      ),
     };
   });
 }
 
-export async function dispatchDueXMedia(
+export async function dispatchDueXJobs(
   runtime: XDispatchRuntime,
   now = new Date(),
 ): Promise<number> {
@@ -127,12 +159,12 @@ export async function dispatchDueXMedia(
     leaseMs: runtime.leaseMs,
     limit: 10,
     provider: 'x',
-    requireMedia: true,
+    requireMedia: false,
   });
   let dispatched = 0;
   for (const job of jobs) {
     const context = await loadXJobContext(runtime.database, job.workspaceId, job.id);
-    if (!context || context.mediaIds.length === 0) continue;
+    if (!context) continue;
     const stored = await withTenantTransaction(
       runtime.database,
       { workspaceId: job.workspaceId },
@@ -141,16 +173,75 @@ export async function dispatchDueXMedia(
     if (!stored) throw new Error('X account credential is unavailable');
     const plaintext = await decryptCredential(stored, runtime.keys);
     try {
-      await stageXJobMedia(runtime.database, runtime.source, runtime.createClient, {
+      const idempotencyKey = deriveJobIdempotencyKey({
+        jobId: job.id,
+        revisionId: job.revisionId,
+        providerAccountId: job.providerAccountId,
+      });
+      const stagedMedia = await stageXJobMedia(
+        runtime.database,
+        runtime.source,
+        runtime.createClient,
+        {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          credential: plaintext.toString('utf8'),
+          mediaIds: context.media.map((media) => media.id),
+          idempotencyKey,
+        },
+      );
+      if (stagedMedia.state === 'pending') continue;
+      const text = context.content.text ?? '';
+      const content =
+        context.content.type === 'quote' && context.content.quotedPostId
+          ? {
+              kind: 'quote' as const,
+              text,
+              quotedPostId: context.content.quotedPostId,
+              media: context.media,
+            }
+          : { kind: 'text' as const, text, media: context.media };
+      const adapter = new XProviderAdapter(
+        runtime.createClient(plaintext.toString('utf8')) as XMediaUploadClient & XClient,
+      );
+      const staged = await adapter.stage(
+        context.accountId,
+        {
+          ...content,
+          media: content.media.map((media, index) => ({
+            ...media,
+            id: stagedMedia.mediaIds[index] ?? media.id,
+          })),
+        },
+        idempotencyKey,
+      );
+      const attempt = await startDispatchAttempt(runtime.database, {
         workspaceId: job.workspaceId,
         jobId: job.id,
-        credential: plaintext.toString('utf8'),
-        mediaIds: context.mediaIds,
-        idempotencyKey: deriveJobIdempotencyKey({
-          jobId: job.id,
-          revisionId: job.revisionId,
-          providerAccountId: job.providerAccountId,
-        }),
+        workerId: runtime.workerId,
+        fingerprint: idempotencyKey,
+        now,
+      });
+      if (!attempt) continue;
+      const outcome = await adapter.publish(staged);
+      const failed = outcome.status === 'failed';
+      const retryAt =
+        failed && (outcome.code === 'rate_limit' || outcome.code === 'transient')
+          ? new Date(now.getTime() + (outcome.retryAfterSeconds ?? 30) * 1000)
+          : undefined;
+      await finishDispatchAttempt(runtime.database, {
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        attemptId: attempt.attemptId,
+        outcome: outcome.status === 'failed' ? outcome.code : outcome.status,
+        now,
+        ...(retryAt ? { retryAt } : {}),
+        ...(outcome.status === 'published' ? { externalPostId: outcome.externalPostId } : {}),
+        ...(outcome.status === 'accepted_pending'
+          ? { reconciliationKey: outcome.providerJobId }
+          : {}),
+        ...(outcome.status === 'unknown' ? { reconciliationKey: outcome.reconciliationKey } : {}),
+        ...(outcome.status === 'failed' ? { redactedError: outcome.message } : {}),
       });
     } finally {
       plaintext.fill(0);
@@ -159,6 +250,102 @@ export async function dispatchDueXMedia(
   }
   return dispatched;
 }
+
+async function loadXReconciliationContext(
+  database: NodePgDatabase,
+  jobId: string,
+): Promise<{ workspaceId: string; credentialId: string; reconciliationKey: string } | null> {
+  const rows = await database
+    .select({
+      workspaceId: publicationJobs.workspaceId,
+      credentialId: providerConnections.credentialId,
+      reconciliationKey: publicationAttempts.reconciliationKey,
+    })
+    .from(publicationJobs)
+    .innerJoin(
+      providerAccounts,
+      and(
+        eq(providerAccounts.workspaceId, publicationJobs.workspaceId),
+        eq(providerAccounts.id, publicationJobs.providerAccountId),
+      ),
+    )
+    .innerJoin(
+      providerConnections,
+      and(
+        eq(providerConnections.workspaceId, publicationJobs.workspaceId),
+        eq(providerConnections.id, providerAccounts.connectionId),
+      ),
+    )
+    .innerJoin(
+      publicationAttempts,
+      and(
+        eq(publicationAttempts.workspaceId, publicationJobs.workspaceId),
+        eq(publicationAttempts.jobId, publicationJobs.id),
+      ),
+    )
+    .where(and(eq(publicationJobs.id, jobId), eq(providerConnections.provider, 'x')))
+    .orderBy(asc(publicationAttempts.startedAt));
+  const row = rows.at(-1);
+  return row?.reconciliationKey ? { ...row, reconciliationKey: row.reconciliationKey } : null;
+}
+
+export async function reconcileXJobs(runtime: XDispatchRuntime, now = new Date()): Promise<number> {
+  await recoverExpiredDispatches(runtime.database, now);
+  const jobIds = await claimReconciliationJobs(runtime.database, {
+    workerId: runtime.workerId,
+    now,
+    leaseMs: runtime.leaseMs,
+    limit: 10,
+  });
+  let resolved = 0;
+  for (const jobId of jobIds) {
+    const context = await loadXReconciliationContext(runtime.database, jobId);
+    if (!context) continue;
+    const stored = await withTenantTransaction(
+      runtime.database,
+      { workspaceId: context.workspaceId },
+      (transaction) => getActiveCredential(transaction, context.workspaceId, context.credentialId),
+    );
+    if (!stored) throw new Error('X account credential is unavailable');
+    const plaintext = await decryptCredential(stored, runtime.keys);
+    try {
+      const adapter = new XProviderAdapter(
+        runtime.createClient(plaintext.toString('utf8')) as XMediaUploadClient & XClient,
+      );
+      const outcome = await adapter.lookup(context.reconciliationKey);
+      if (outcome.status === 'unknown') continue;
+      const retryAt =
+        outcome.status === 'failed' &&
+        (outcome.code === 'rate_limit' || outcome.code === 'transient')
+          ? new Date(now.getTime() + (outcome.retryAfterSeconds ?? 30) * 1000)
+          : undefined;
+      const state =
+        outcome.status === 'published'
+          ? 'published'
+          : outcome.status === 'accepted_pending'
+            ? 'accepted_pending'
+            : retryAt
+              ? 'retry_wait'
+              : 'failed';
+      if (
+        await resolveReconciliation(runtime.database, {
+          workspaceId: context.workspaceId,
+          jobId,
+          workerId: runtime.workerId,
+          outcome: state,
+          now,
+          ...(retryAt ? { retryAt } : {}),
+        })
+      )
+        resolved += 1;
+    } finally {
+      plaintext.fill(0);
+    }
+  }
+  return resolved;
+}
+
+export const dispatchDueXMedia = dispatchDueXJobs;
 
 export function createXMediaClientFactory(
   options: Pick<XHttpClientOptions, 'consumerKey' | 'consumerSecret'>,

@@ -598,3 +598,44 @@ test('edits a scheduled job through the canonical browser revision route', async
     new Date(String((revisionPayload as Record<string, unknown> | null)?.scheduledAt)).getDate(),
   ).toBe(2);
 });
+
+test.describe('Europe/Sofia DST scheduling', () => {
+  test.use({ timezoneId: 'Europe/Sofia' });
+
+  test('blocks spring gaps and persists both autumn-fold offsets', async ({ page }) => {
+    await establishWorkspaceSession(page);
+    await mockConnectedAccounts(page);
+    const persistedSchedules: string[] = [];
+    await page.route('**/api/workflow/jobs?limit=100', (route) =>
+      route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]}}' }),
+    );
+    await page.route('**/api/workflow/posts', async (route) => {
+      const payload = route.request().postDataJSON() as { scheduledAt: string };
+      persistedSchedules.push(payload.scheduledAt);
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: '{"data":{"id":"post-dst","jobIds":["one","two"]},"error":null}',
+      });
+    });
+    await page.goto('/w/atlas/queue');
+
+    const scheduleFold = async (offsetLabel: string) => {
+      await page.getByRole('button', { name: 'Create post' }).last().click();
+      await page.getByLabel('Post body').fill(`DST choice ${offsetLabel}`);
+      await page.getByLabel('Date and time').fill('2027-03-28T03:30');
+      await expect(page.getByRole('alert')).toContainText('clock changes');
+      await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
+      await page.getByLabel('Date and time').fill('2027-10-31T03:30');
+      await expect(page.getByText('This time occurs twice')).toBeVisible();
+      await page.getByRole('radio', { name: offsetLabel, exact: true }).check();
+      await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
+      await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
+      await page.getByRole('button', { name: 'Close composer' }).click();
+    };
+
+    await scheduleFold('UTC+03:00');
+    await scheduleFold('UTC+02:00');
+    expect(persistedSchedules).toEqual(['2027-10-31T00:30:00.000Z', '2027-10-31T01:30:00.000Z']);
+  });
+});

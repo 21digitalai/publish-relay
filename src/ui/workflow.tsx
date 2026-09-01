@@ -15,6 +15,8 @@ type JobState =
 
 interface Job {
   id: string;
+  postId?: string | undefined;
+  providerAccountId?: string | undefined;
   state: JobState;
   scheduledAt: string;
   text: string;
@@ -37,10 +39,11 @@ const STATE_LABELS: Record<JobState, string> = {
 
 interface QueueJobDto {
   id: string;
+  postId?: string;
   state: string;
   scheduledAt: string;
   contentPreview: string;
-  providerAccount: { displayName: string; handle: string; provider: string };
+  providerAccount: { id?: string; displayName: string; handle: string; provider: string };
 }
 
 interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview'> {
@@ -66,6 +69,8 @@ function toJob(dto: QueueJobDto): Job {
         : 'failed';
   return {
     id: dto.id,
+    postId: dto.postId,
+    providerAccountId: dto.providerAccount.id,
     state,
     scheduledAt: dto.scheduledAt,
     text: dto.contentPreview,
@@ -896,6 +901,9 @@ export function JobDetailPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
+  const [isEditingSchedule, setIsEditingSchedule] = useState(false);
+  const [editSchedule, setEditSchedule] = useState('');
+  const [editScheduleOption, setEditScheduleOption] = useState(0);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isMutating, setIsMutating] = useState(false);
   useEffect(() => {
@@ -1024,7 +1032,16 @@ export function JobDetailPage() {
             </div>
           )}
           <footer className="detail-actions">
-            <button className="secondary-button" disabled={job.state !== 'scheduled'}>
+            <button
+              className="secondary-button"
+              disabled={job.state !== 'scheduled'}
+              onClick={() => {
+                setEditSchedule(localDateTimeValue(new Date(job.scheduledAt)));
+                setEditScheduleOption(0);
+                setIsEditingSchedule(true);
+                setMutationError(null);
+              }}
+            >
               Edit schedule
             </button>
             <button
@@ -1044,6 +1061,116 @@ export function JobDetailPage() {
           )}
         </section>
       </div>
+      {isEditingSchedule && (
+        <div className="dialog-backdrop">
+          <section
+            className="confirm-dialog edit-schedule-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-schedule-title"
+          >
+            <h2 id="edit-schedule-title">Edit publishing time</h2>
+            <p>The existing post will be revised and its pending job safely superseded.</p>
+            <label className="field-label">
+              Date and time
+              <input
+                className="edit-schedule-date-time text-input"
+                type="datetime-local"
+                value={editSchedule}
+                onChange={(event) => {
+                  setEditSchedule(event.target.value);
+                  setEditScheduleOption(0);
+                }}
+              />
+            </label>
+            {matchingLocalInstants(editSchedule).length === 0 && (
+              <p className="inline-validation" role="alert">
+                This local time does not exist because the clock changes.
+              </p>
+            )}
+            {matchingLocalInstants(editSchedule).length > 1 && (
+              <fieldset className="schedule-offset-choice">
+                <legend>This time occurs twice. Choose the intended offset.</legend>
+                {matchingLocalInstants(editSchedule).map((option, index) => (
+                  <label key={option.toISOString()}>
+                    <input
+                      className="edit-schedule-offset-radio"
+                      type="radio"
+                      name="edit-schedule-offset"
+                      checked={editScheduleOption === index}
+                      onChange={() => {
+                        setEditScheduleOption(index);
+                      }}
+                    />
+                    {offsetLabel(option)}
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            <div className="dialog-actions">
+              <button
+                className="secondary-button"
+                autoFocus
+                onClick={() => {
+                  setIsEditingSchedule(false);
+                }}
+              >
+                Keep current time
+              </button>
+              <button
+                className="primary-button"
+                disabled={
+                  isMutating ||
+                  matchingLocalInstants(editSchedule).length === 0 ||
+                  (matchingLocalInstants(editSchedule)[editScheduleOption]?.getTime() ?? 0) <=
+                    Date.now()
+                }
+                onClick={() => {
+                  const target = matchingLocalInstants(editSchedule)[editScheduleOption];
+                  if (!target || !job.postId || !job.providerAccountId) return;
+                  setIsMutating(true);
+                  setMutationError(null);
+                  void fetch(`/api/workflow/posts/${encodeURIComponent(job.postId)}`, {
+                    method: 'PATCH',
+                    headers: {
+                      'content-type': 'application/json',
+                      'x-csrf-token': cookieValue('publish_relay_csrf'),
+                      'idempotency-key': crypto.randomUUID(),
+                    },
+                    body: JSON.stringify({
+                      content: { type: 'text', text: job.text },
+                      providerAccountIds: [job.providerAccountId],
+                      scheduledAt: target.toISOString(),
+                    }),
+                  })
+                    .then(async (response) => {
+                      const result = (await response.json()) as {
+                        data: unknown;
+                        error: string | null;
+                      };
+                      if (!response.ok || !result.data)
+                        throw new Error(result.error ?? 'Could not update the publishing time');
+                      setJob({ ...job, scheduledAt: target.toISOString() });
+                      setIsEditingSchedule(false);
+                    })
+                    .catch((error: unknown) => {
+                      setMutationError(
+                        error instanceof Error
+                          ? error.message
+                          : 'Could not update the publishing time',
+                      );
+                    })
+                    .finally(() => {
+                      setIsMutating(false);
+                    });
+                }}
+              >
+                {isMutating ? 'Updating…' : 'Update schedule'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {dialog && (
         <div className="dialog-backdrop">
           <section

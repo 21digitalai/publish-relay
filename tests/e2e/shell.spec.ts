@@ -536,3 +536,50 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
     '/w/mira-studio/queue',
   );
 });
+
+test('edits a scheduled job through the canonical browser revision route', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  let revisionPayload: Record<string, unknown> | null = null;
+  await page.route('**/api/workflow/jobs/scheduled-job', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: 'scheduled-job',
+          postId: 'scheduled-post',
+          state: 'scheduled',
+          scheduledAt: '2027-09-01T09:30:00+03:00',
+          content: { type: 'text', text: 'Move this publication safely.' },
+          providerAccount: {
+            id: '00000000-0000-4000-8000-000000000201',
+            displayName: 'Daily Viber',
+            handle: 'dailyviber',
+            provider: 'x',
+          },
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/posts/scheduled-post', async (route) => {
+    revisionPayload = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { revisionId: 'revision-new' }, error: null }),
+    });
+  });
+  await page.goto('/w/atlas/jobs/scheduled-job');
+  await page.getByRole('button', { name: 'Edit schedule' }).click();
+  await page.getByLabel('Date and time').fill('2027-09-02T10:15');
+  await page.getByRole('button', { name: 'Update schedule' }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit publishing time' })).toBeHidden();
+  expect(revisionPayload).toMatchObject({
+    content: { type: 'text', text: 'Move this publication safely.' },
+    providerAccountIds: ['00000000-0000-4000-8000-000000000201'],
+  });
+  expect(
+    new Date(
+      String((revisionPayload as Record<string, unknown> | null)?.scheduledAt),
+    ).getDate(),
+  ).toBe(2);
+});

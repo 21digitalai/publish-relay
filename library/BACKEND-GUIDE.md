@@ -12,6 +12,7 @@
 - Secrets referenced through approved runtime/Vault mechanisms; never stored in plaintext project docs or logs.
 
 - The application has one repository and build with separate `web` and `worker` process entrypoints.
+- Production releases are immutable directories under `/opt/publish-relay/releases` selected through an atomic `current` symlink. Separate hardened systemd web/worker units share one root-owned environment file. Deployments run forward migrations before switching the symlink; application rollback never reverses schema. PostgreSQL backups use custom format encrypted with age, and restore drills target an explicitly isolated database.
 - Domain modules own their domain, application, and infrastructure internals. Cross-module imports use public contracts; another module's infrastructure is private and guarded by lint plus a regression test.
 - Runtime input is validated with Zod. HTTP responses use `{ data, error }`. Pino logging is supplied through Fastify and must never include secrets or post bodies.
 - Vitest owns unit/integration tests and Playwright owns rendered browser acceptance.

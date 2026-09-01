@@ -20,4 +20,17 @@ describe('application', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ data: { status: 'ok' }, error: null });
   });
+
+  it('fails readiness when the database is not configured', async () => {
+    const application = createApplication({
+      NODE_ENV: 'test',
+      HOST: '127.0.0.1',
+      PORT: 3100,
+      WORKER_POLL_INTERVAL_MS: 1000,
+    });
+    applications.push(application);
+    const response = await application.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ data: null, error: 'Database is not configured' });
+  });
 });

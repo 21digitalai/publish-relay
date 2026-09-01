@@ -1,0 +1,22 @@
+[Unit]
+Description=Publish Relay worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=publish-relay
+Group=publish-relay
+EnvironmentFile=/etc/publish-relay/publish-relay.env
+WorkingDirectory=/opt/publish-relay/current
+ExecStart=/usr/bin/node dist/entrypoints/worker.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/publish-relay
+
+[Install]
+WantedBy=multi-user.target

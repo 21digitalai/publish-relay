@@ -1,5 +1,6 @@
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -36,6 +37,15 @@ export function createApplication(
   application.register(fastifyStatic, { root: uiRoot, wildcard: false });
 
   application.get('/health/live', () => ({ data: { status: 'ok' }, error: null }));
+  application.get('/health/ready', async (_request, reply) => {
+    if (!database) return reply.code(503).send({ data: null, error: 'Database is not configured' });
+    try {
+      await database.execute(sql`select 1`);
+      return { data: { status: 'ready' }, error: null };
+    } catch {
+      return reply.code(503).send({ data: null, error: 'Database is unavailable' });
+    }
+  });
   application.get('/api', () => ({ data: { name: 'Publish Relay' }, error: null }));
   registerApiDocumentationRoute(application);
   registerAgentDiscoveryRoutes(application);

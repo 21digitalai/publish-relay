@@ -66,7 +66,13 @@ function browserJobJoins(database: NodePgDatabase) {
         eq(providerAccounts.id, publicationJobs.providerAccountId),
       ),
     )
-    .innerJoin(providerConnections, eq(providerConnections.id, providerAccounts.connectionId));
+    .innerJoin(
+      providerConnections,
+      and(
+        eq(providerConnections.workspaceId, publicationJobs.workspaceId),
+        eq(providerConnections.id, providerAccounts.connectionId),
+      ),
+    );
 }
 
 export async function listBrowserJobSummaries(

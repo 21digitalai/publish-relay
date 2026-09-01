@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { Rail } from './main.js';
 
-type JobState = 'scheduled' | 'failed' | 'retrying' | 'published' | 'cancelled';
+type JobState =
+  | 'scheduled'
+  | 'leased'
+  | 'dispatching'
+  | 'accepted_pending'
+  | 'failed'
+  | 'retrying'
+  | 'published'
+  | 'cancelled'
+  | 'superseded';
 
 interface Job {
   id: string;
@@ -20,6 +29,10 @@ const STATE_LABELS: Record<JobState, string> = {
   retrying: 'Retrying',
   published: 'Published',
   cancelled: 'Cancelled',
+  leased: 'Preparing',
+  dispatching: 'Dispatching',
+  accepted_pending: 'Provider processing',
+  superseded: 'Superseded',
 };
 
 interface QueueJobDto {
@@ -35,12 +48,22 @@ interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview'> {
 }
 
 function toJob(dto: QueueJobDto): Job {
+  const knownStates: JobState[] = [
+    'scheduled',
+    'leased',
+    'dispatching',
+    'accepted_pending',
+    'failed',
+    'published',
+    'cancelled',
+    'superseded',
+  ];
   const state: JobState =
     dto.state === 'retry_wait'
       ? 'retrying'
-      : dto.state === 'published' || dto.state === 'failed' || dto.state === 'cancelled'
-        ? dto.state
-        : 'scheduled';
+      : knownStates.includes(dto.state as JobState)
+        ? (dto.state as JobState)
+        : 'failed';
   return {
     id: dto.id,
     state,
@@ -398,6 +421,11 @@ export function QueuePage() {
                   </a>
                 ))}
               </div>
+            ) : queueJobs.length === 0 && !query && view === 'All' ? (
+              <div className="filter-empty">
+                <h2>Nothing scheduled yet</h2>
+                <p>Create a post to begin building this workspace’s queue.</p>
+              </div>
             ) : (
               <div className="filter-empty">
                 <h2>No jobs match these filters</h2>
@@ -594,6 +622,7 @@ function TimelineCalendar({ jobs }: { jobs: Job[] }) {
 
 export function JobDetailPage() {
   const jobId = window.location.pathname.split('/').at(-1) ?? '';
+  const workspacePath = window.location.pathname.split('/').slice(0, 3).join('/');
   const [job, setJob] = useState<Job | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
@@ -620,7 +649,7 @@ export function JobDetailPage() {
         <div className="filter-empty" role="alert">
           <h1>Job unavailable</h1>
           <p>{loadError}</p>
-          <a className="secondary-button" href="/w/atlas/queue">
+          <a className="secondary-button" href={`${workspacePath}/queue`}>
             Back to queue
           </a>
         </div>
@@ -638,7 +667,7 @@ export function JobDetailPage() {
   return (
     <WorkspaceLayout active="queue">
       <div className="detail-route">
-        <a className="back-link" href="/w/atlas/queue">
+        <a className="back-link" href={`${workspacePath}/queue`}>
           ← Back to queue
         </a>
         <section className="job-detail">
@@ -650,11 +679,6 @@ export function JobDetailPage() {
                 {job.id} · {job.provider}
               </p>
             </div>
-            {job.state === 'published' && (
-              <a className="secondary-button" href="https://x.com" rel="noreferrer">
-                Open external post ↗
-              </a>
-            )}
           </header>
           <div className="detail-grid">
             <section>
@@ -671,7 +695,7 @@ export function JobDetailPage() {
                   Scheduled<strong>{formatTime(job.scheduledAt)}</strong>
                 </span>
                 <span>
-                  Timezone<strong>Europe/Sofia (EEST, UTC+3)</strong>
+                  Timezone<strong>Shown in your workspace timezone</strong>
                 </span>
               </div>
             </section>
@@ -680,22 +704,22 @@ export function JobDetailPage() {
               <ol className="execution-timeline">
                 <li className="complete">
                   <strong>Post created</strong>
-                  <span>Aug 31 · 4:18 PM</span>
+                  <span>Recorded by Publish Relay</span>
                 </li>
                 <li className="complete">
                   <strong>Scheduled</strong>
-                  <span>Sep 1 · 9:30 AM</span>
+                  <span>{formatTime(job.scheduledAt)}</span>
                 </li>
                 {job.state === 'failed' && (
                   <li className="failed">
                     <strong>Dispatch failed</strong>
-                    <span>Provider temporarily unavailable</span>
+                    <span>Open technical details when provider evidence is available.</span>
                   </li>
                 )}
                 {job.state === 'retrying' && (
                   <li className="active">
                     <strong>Retry queued</strong>
-                    <span>Next attempt in 4 minutes</span>
+                    <span>Waiting for the scheduler.</span>
                   </li>
                 )}
               </ol>
@@ -706,12 +730,12 @@ export function JobDetailPage() {
               <div>
                 <strong>Publishing failed</strong>
                 <p>
-                  X returned a temporary service error. Retrying is safe and will not create a
-                  duplicate visible job.
+                  This publication needs attention. Retrying uses the existing job rather than
+                  creating a new visible job.
                 </p>
                 <details>
                   <summary>Technical details</summary>
-                  <code>provider_unavailable · attempt 2 of 5</code>
+                  <code>No provider diagnostic was supplied by this response.</code>
                 </details>
               </div>
               <button

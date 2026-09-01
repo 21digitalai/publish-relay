@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import cookie from '@fastify/cookie';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -11,9 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import { CursorCodec } from '../src/modules/api/contract.js';
 import { registerPostRoutes } from '../src/modules/content/post.routes.js';
+import { registerBrowserWorkflowRoutes } from '../src/modules/content/browser-workflow.routes.js';
 import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js';
 import { ApiKeyAuthorizationError } from '../src/modules/identity/api-key.service.js';
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
+import type { AuthService } from '../src/modules/identity/auth.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -160,6 +163,7 @@ beforeEach(async () => {
   requireCapability = vi.fn().mockResolvedValue(undefined);
   apiKeys = { authenticate, requireCapability } as unknown as ApiKeyService;
   application = Fastify();
+  application.register(cookie);
   registerApiKeyRoutes(application, apiKeys);
   registerPostRoutes(
     application,
@@ -174,6 +178,82 @@ beforeEach(async () => {
     }),
     new CursorCodec(Buffer.alloc(32, 7)),
   );
+  registerBrowserWorkflowRoutes(application, {
+    database: drizzle(database) as unknown as NodePgDatabase,
+    auth: {
+      authenticate: vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' }),
+    } as unknown as AuthService,
+  });
+});
+
+describe('browser workflow PostgreSQL boundary', () => {
+  const browserHeaders = {
+    cookie: `publish_relay_session=${workspaceId}.browser-token`,
+  };
+
+  it('paginates and filters real tenant rows without exposing foreign or private fields', async () => {
+    for (const [key, text] of [
+      ['browser-one', 'First browser post'],
+      ['browser-two', 'Second browser post'],
+    ] as const) {
+      const created = await application.inject({
+        method: 'POST',
+        url: '/api/v1/posts',
+        headers: {
+          authorization: 'Bearer pr_test.secret',
+          'x-publish-relay-workspace': workspaceId,
+          'idempotency-key': key,
+        },
+        payload: requestPayload(text),
+      });
+      expect(created.statusCode).toBe(201);
+    }
+
+    const first = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs?limit=1&states=scheduled&providerAccountId=${providerAccountId}`,
+      headers: browserHeaders,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.body).not.toContain('Foreign tenant secret');
+    expect(first.body).not.toContain('workspaceId');
+    expect(first.body).not.toContain('credentialId');
+    const firstBody = first.json<{
+      data: {
+        items: { id: string; contentPreview: string }[];
+        next: { beforeScheduledAt: string; beforeId: string };
+      };
+    }>();
+    expect(firstBody.data.items).toHaveLength(1);
+    expect(firstBody.data.next).toBeTruthy();
+
+    const second = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs?limit=1&states=scheduled&providerAccountId=${providerAccountId}&beforeScheduledAt=${encodeURIComponent(firstBody.data.next.beforeScheduledAt)}&beforeId=${firstBody.data.next.beforeId}`,
+      headers: browserHeaders,
+    });
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json<{ data: { items: { id: string }[] } }>();
+    expect(secondBody.data.items).toHaveLength(1);
+    expect(secondBody.data.items[0]?.id).not.toBe(firstBody.data.items[0]?.id);
+
+    const detail = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs/${firstBody.data.items[0]?.id ?? ''}`,
+      headers: browserHeaders,
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).not.toContain('Foreign tenant secret');
+    expect(detail.body).not.toContain('workspaceId');
+    expect(detail.body).not.toContain('credentialId');
+
+    const foreign = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs/${foreignJobId}`,
+      headers: browserHeaders,
+    });
+    expect(foreign.statusCode).toBe(404);
+  });
 });
 
 afterEach(async () => {

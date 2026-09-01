@@ -16,6 +16,7 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_X_CONSUMER_SECRET: z.string().min(1).optional(),
     X_API_KEY: z.string().min(1).optional(),
     X_API_SECRET: z.string().min(1).optional(),
+    PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID: z.string().min(1).optional(),
     PUBLISH_RELAY_PUBLIC_ORIGIN: z.url().optional(),
   })
   .superRefine((config, context) => {

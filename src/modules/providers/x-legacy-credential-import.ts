@@ -20,6 +20,7 @@ export async function importLegacyXCredential(
     workspaceId: string;
     userId: string;
     sourceIntegrationId: string;
+    approvedSourceIntegrationId: string;
     expectedUsername: string;
     credentialValue: string;
     requestId: string;
@@ -28,10 +29,11 @@ export async function importLegacyXCredential(
   connectionId: string;
   accounts: { providerAccountId: string; displayName: string }[];
 }> {
-  if (!input.sourceIntegrationId) throw new Error('Source integration identity is required');
+  if (input.sourceIntegrationId !== input.approvedSourceIntegrationId)
+    throw new Error('Source integration identity is not approved');
   const credential = parseLegacyXCredential(input.credentialValue);
   const account = await client.currentAccount(credential);
-  if (account.username.toLowerCase() !== input.expectedUsername.replace(/^@/, '').toLowerCase())
+  if (account.username !== input.expectedUsername)
     throw new Error('X account identity did not match the expected account');
   return connectProvider(
     database,

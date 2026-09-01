@@ -22,33 +22,43 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-const config = loadRuntimeConfig();
-if (!config.DATABASE_URL || !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION)
-  throw new Error('Database and master-key configuration are required');
-const consumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
-const consumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
-if (!consumerKey || !consumerSecret) throw new Error('X consumer credentials are required');
-const credentialValue = await readStdin();
-const pool = new pg.Pool({
-  connectionString: config.DATABASE_URL,
-  options: '-c role=publish_relay_web',
-  max: 1,
-});
-try {
-  const result = await importLegacyXCredential(
-    drizzle(pool),
-    new RuntimeMasterKeyProvider(config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION),
-    new XHttpClient({ consumerKey, consumerSecret }),
-    {
-      workspaceId: argument('workspace-id'),
-      userId: argument('user-id'),
-      sourceIntegrationId: argument('source-integration-id'),
-      expectedUsername: argument('expected-username'),
-      credentialValue,
-      requestId: randomUUID(),
-    },
-  );
-  process.stdout.write(JSON.stringify({ success: true, data: result }) + '\\n');
-} finally {
-  await pool.end();
+async function main(): Promise<void> {
+  const config = loadRuntimeConfig();
+  if (!config.DATABASE_URL || !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION)
+    throw new Error('Database and master-key configuration are required');
+  const consumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
+  const consumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
+  if (!consumerKey || !consumerSecret) throw new Error('X consumer credentials are required');
+  if (!config.PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID)
+    throw new Error('Approved legacy X integration identity is required');
+  const credentialValue = await readStdin();
+  const pool = new pg.Pool({
+    connectionString: config.DATABASE_URL,
+    options: '-c role=publish_relay_web',
+    max: 1,
+  });
+  try {
+    const result = await importLegacyXCredential(
+      drizzle(pool),
+      new RuntimeMasterKeyProvider(config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION),
+      new XHttpClient({ consumerKey, consumerSecret }),
+      {
+        workspaceId: argument('workspace-id'),
+        userId: argument('user-id'),
+        sourceIntegrationId: argument('source-integration-id'),
+        approvedSourceIntegrationId: config.PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID,
+        expectedUsername: argument('expected-username'),
+        credentialValue,
+        requestId: randomUUID(),
+      },
+    );
+    process.stdout.write(JSON.stringify({ success: true, data: result }) + '\n');
+  } finally {
+    await pool.end();
+  }
 }
+
+main().catch(() => {
+  process.stderr.write('Legacy X credential import failed\n');
+  process.exitCode = 1;
+});

@@ -38,8 +38,11 @@ function createDeployFixture(): {
   writeExecutable(join(bin, 'chown'), 'exit 0');
   writeExecutable(join(bin, 'mv'), '[[ "$1" == "-Tf" ]] && shift; command /bin/mv "$@"');
   writeExecutable(join(bin, 'sudo'), 'shift 2; exec "$@"');
+  const nodeBin = join(bin, 'node24');
+  const npmBin = join(bin, 'npm24');
+  writeExecutable(nodeBin, '[[ "$1" == "--version" ]] && echo v24.8.0');
   writeExecutable(
-    join(bin, 'npm'),
+    npmBin,
     'echo "npm $*" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 || "$*" != *"db:migrate:production"* ]]',
   );
   writeExecutable(join(bin, 'systemctl'), 'echo "systemctl $*" >> "$COMMAND_LOG"');
@@ -52,6 +55,9 @@ function createDeployFixture(): {
       PUBLISH_RELAY_RELEASE_ROOT: join(root, 'releases'),
       PUBLISH_RELAY_CURRENT_LINK: currentLink,
       PUBLISH_RELAY_SERVICE_USER: 'test-user',
+      PUBLISH_RELAY_NODE_BIN: nodeBin,
+      PUBLISH_RELAY_NPM_BIN: npmBin,
+      PUBLISH_RELAY_HEALTH_URL: 'http://127.0.0.1:3999/health/ready',
     },
     source,
     currentLink,
@@ -60,6 +66,21 @@ function createDeployFixture(): {
 }
 
 describe('deployment scripts', () => {
+  it('pins both services to the isolated Node 24 path and isolated health port', () => {
+    for (const unit of ['publish-relay-web.service', 'publish-relay-worker.service']) {
+      const content = readFileSync(join(projectRoot, 'deploy/systemd', unit), 'utf8');
+      expect(content).toContain('PUBLISH_RELAY_NODE_BIN=/opt/publish-relay/node24/bin/node');
+      expect(content).toContain('ExecStart=${PUBLISH_RELAY_NODE_BIN}');
+      expect(content).not.toContain('/usr/bin/node');
+    }
+    for (const script of ['publish-release.sh', 'rollback-release.sh']) {
+      const content = readFileSync(join(projectRoot, 'deploy', script), 'utf8');
+      expect(content).toContain('PUBLISH_RELAY_HEALTH_URL');
+      expect(content).toContain('127.0.0.1:3106');
+      expect(content).not.toContain('127.0.0.1:3100');
+    }
+  });
+
   it('uses the compiled production migration before switching the current release', () => {
     const fixture = createDeployFixture();
     execFileSync(
@@ -72,7 +93,26 @@ describe('deployment scripts', () => {
     const commands = readFileSync(fixture.log, 'utf8');
     expect(commands).toContain('npm ci --omit=dev --ignore-scripts');
     expect(commands).toContain('npm run db:migrate:production');
+    expect(commands).toContain(
+      'curl --fail --silent --show-error http://127.0.0.1:3999/health/ready',
+    );
     expect(readlinkSync(fixture.currentLink)).toContain('release-1');
+  });
+
+  it('fails closed before install when the selected Node 24 toolchain is missing', () => {
+    const fixture = createDeployFixture();
+    const result = spawnSync(
+      'bash',
+      [join(projectRoot, 'deploy/publish-release.sh'), 'release-missing-node', fixture.source],
+      {
+        env: {
+          ...fixture.environment,
+          PUBLISH_RELAY_NODE_BIN: join(fixture.source, 'missing-node'),
+        },
+      },
+    );
+    expect(result.status).toBe(69);
+    expect(() => readFileSync(fixture.log)).toThrow();
   });
 
   it('does not switch the current release when the production migration fails', () => {

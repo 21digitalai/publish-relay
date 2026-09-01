@@ -8,8 +8,9 @@ Type=simple
 User=publish-relay
 Group=publish-relay
 EnvironmentFile=/etc/publish-relay/publish-relay.env
+Environment=PUBLISH_RELAY_NODE_BIN=/opt/publish-relay/node24/bin/node
 WorkingDirectory=/opt/publish-relay/current
-ExecStart=/usr/bin/node dist/entrypoints/web.js
+ExecStart=${PUBLISH_RELAY_NODE_BIN} dist/entrypoints/web.js
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

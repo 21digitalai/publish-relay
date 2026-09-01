@@ -149,6 +149,9 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  let detailState = 'failed';
+  let retryHeaders: Record<string, string> | null = null;
+  let retryAttempts = 0;
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -172,14 +175,30 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
       }),
     }),
   );
-  await page.route('**/api/workflow/jobs/job-2048', (route) =>
-    route.fulfill({
+  await page.route('**/api/workflow/jobs/job-2048/retry', async (route) => {
+    retryAttempts += 1;
+    retryHeaders = route.request().headers();
+    if (retryAttempts === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Retry service unavailable' }),
+      });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    detailState = 'retry_wait';
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { state: detailState }, error: null }),
+    });
+  });
+  await page.route('**/api/workflow/jobs/job-2048', (route) => {
+    return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         data: {
           id: 'job-2048',
           postId: 'post-2048',
-          state: 'failed',
+          state: detailState,
           scheduledAt: '2026-09-01T09:30:00+03:00',
           content: { type: 'text', text: 'The clearest plans leave room for the unexpected.' },
           providerAccount: {
@@ -190,8 +209,8 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
         },
         error: null,
       }),
-    }),
-  );
+    });
+  });
   await page.goto('/w/atlas/queue');
   await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
   await expect(page.getByText('The clearest plans')).toBeVisible();
@@ -218,6 +237,16 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.getByRole('button', { name: 'Retry now' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('preventing a duplicate post');
   await expect(page.getByRole('button', { name: 'Keep job' })).toBeFocused();
+  await page.getByRole('button', { name: 'Retry safely' }).click();
+  await expect(page.getByText('Retry service unavailable', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry now' }).click();
+  await page.getByRole('button', { name: 'Retry safely' }).click();
+  await expect(page.getByRole('button', { name: 'Retrying…' })).toBeDisabled();
+  await expect(page.getByText('Retry queued')).toBeVisible();
+  expect(retryHeaders?.['x-csrf-token']).toBeTruthy();
+  expect(retryHeaders?.['idempotency-key']).toBeTruthy();
+  await page.reload();
+  await expect(page.getByText('Retry queued')).toBeVisible();
 });
 
 test('renders truthful queue loading, live states, empty, filtered-empty, and error states', async ({

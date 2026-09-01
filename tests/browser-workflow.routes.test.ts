@@ -8,12 +8,13 @@ const listBrowserJobSummaries = vi.fn();
 const getBrowserJobDetail = vi.fn();
 const cancelPendingJob = vi.fn();
 const requestOperatorRetry = vi.fn();
+const verifyCsrfToken = vi.fn(() => true);
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest,
   CSRF_COOKIE: 'publish_relay_csrf',
 }));
-vi.mock('../src/modules/identity/session.js', () => ({ verifyCsrfToken: vi.fn(() => true) }));
+vi.mock('../src/modules/identity/session.js', () => ({ verifyCsrfToken }));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   cancelPendingJob,
   requestOperatorRetry,
@@ -54,6 +55,7 @@ function job() {
 describe('browser workflow read contract', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    verifyCsrfToken.mockReturnValue(true);
     authorizeRequest.mockResolvedValue({ workspaceId, userId: 'user', role: 'owner' });
   });
 
@@ -187,6 +189,67 @@ describe('browser workflow read contract', () => {
     });
     expect(response.statusCode).toBe(400);
     expect(requestOperatorRetry).not.toHaveBeenCalled();
+    await application.close();
+  });
+
+  it('retries once, replays queued state, and scopes both operations to the session workspace', async () => {
+    getBrowserJobDetail
+      .mockResolvedValueOnce({ ...job(), state: 'failed' })
+      .mockResolvedValueOnce({ ...job(), state: 'retry_wait' });
+    requestOperatorRetry.mockResolvedValue('scheduled');
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, {
+      auth: {} as AuthService,
+      database: {} as never,
+    });
+    const request = {
+      method: 'POST' as const,
+      url: `/api/workflow/jobs/${jobId}/retry`,
+      headers: {
+        'idempotency-key': 'retry-job',
+        'x-csrf-token': 'csrf',
+        cookie: 'publish_relay_csrf=csrf',
+      },
+    };
+    expect((await application.inject(request)).statusCode).toBe(200);
+    expect((await application.inject(request)).statusCode).toBe(200);
+    expect(requestOperatorRetry).toHaveBeenCalledTimes(1);
+    expect(requestOperatorRetry).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId, jobId, actorId: 'user' }),
+    );
+    expect(getBrowserJobDetail).toHaveBeenCalledWith(expect.anything(), workspaceId, jobId);
+    await application.close();
+  });
+
+  it('rejects invalid CSRF and returns lifecycle conflicts without mutating state', async () => {
+    verifyCsrfToken.mockReturnValue(false);
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, {
+      auth: {} as AuthService,
+      database: {} as never,
+    });
+    const denied = await application.inject({
+      method: 'POST',
+      url: `/api/workflow/jobs/${jobId}/cancel`,
+      headers: { 'idempotency-key': 'cancel-job' },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(cancelPendingJob).not.toHaveBeenCalled();
+
+    verifyCsrfToken.mockReturnValue(true);
+    getBrowserJobDetail.mockResolvedValue(job());
+    cancelPendingJob.mockResolvedValue(false);
+    const conflict = await application.inject({
+      method: 'POST',
+      url: `/api/workflow/jobs/${jobId}/cancel`,
+      headers: {
+        'idempotency-key': 'cancel-job',
+        'x-csrf-token': 'csrf',
+        cookie: 'publish_relay_csrf=csrf',
+      },
+    });
+    expect(conflict.statusCode).toBe(409);
     await application.close();
   });
 });

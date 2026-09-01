@@ -155,9 +155,20 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   let retryAttempts = 0;
   let createPayload: Record<string, unknown> | null = null;
   let createHeaders: Record<string, string> | null = null;
+  let firstCreateHeaders: Record<string, string> | null = null;
+  let createAttempts = 0;
   await page.route('**/api/workflow/posts', async (route) => {
+    createAttempts += 1;
     createPayload = route.request().postDataJSON() as Record<string, unknown>;
     createHeaders = route.request().headers();
+    if (createAttempts === 1) {
+      firstCreateHeaders = createHeaders;
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Response was interrupted. Retry safely.' }),
+      });
+    }
     return route.fulfill({
       status: 201,
       contentType: 'application/json',
@@ -235,9 +246,12 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
   await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
+  await expect(page.getByRole('alert')).toContainText('Retry safely');
+  await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
   await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
   expect(createHeaders?.['x-csrf-token']).toBeTruthy();
   expect(createHeaders?.['idempotency-key']).toBeTruthy();
+  expect(createHeaders?.['idempotency-key']).toBe(firstCreateHeaders?.['idempotency-key']);
   expect(createPayload).toMatchObject({
     content: { type: 'text', text: 'A clear publishing update for two accounts.' },
     providerAccountIds: [

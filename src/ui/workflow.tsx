@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Rail } from './main.js';
 
@@ -153,6 +153,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [receipt, setReceipt] = useState<{ count: number; scheduledAt: string } | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
   const [error, setError] = useState<string | null>(null);
+  const intentKey = useRef(crypto.randomUUID());
   const scheduledAt = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
   const invalid = !body.trim() || selectedAccounts.length === 0 || state !== 'ready';
   useEffect(() => {
@@ -178,6 +179,9 @@ function Composer({ onClose }: { onClose: () => void }) {
         setState('ready');
       });
   }, []);
+  useEffect(() => {
+    intentKey.current = crypto.randomUUID();
+  }, [body, scheduled, selectedAccounts]);
   const submit = async () => {
     setState('saving');
     setError(null);
@@ -188,7 +192,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         headers: {
           'content-type': 'application/json',
           'x-csrf-token': cookieValue('publish_relay_csrf'),
-          'idempotency-key': crypto.randomUUID(),
+          'idempotency-key': intentKey.current,
         },
         body: JSON.stringify({
           content: { type: 'text', text: body.trim() },
@@ -333,7 +337,20 @@ function Composer({ onClose }: { onClose: () => void }) {
                 </label>
               </div>
             )}
-            {invalid && <p className="inline-validation">Add post text before scheduling.</p>}
+            {state === 'loading' && (
+              <p className="inline-validation">Loading connected accounts before scheduling.</p>
+            )}
+            {state === 'ready' && !body.trim() && (
+              <p className="inline-validation">Add post text before scheduling.</p>
+            )}
+            {state === 'ready' && body.trim() && selectedAccounts.length === 0 && (
+              <p className="inline-validation">Select at least one connected account.</p>
+            )}
+            {state === 'saving' && (
+              <p className="inline-validation" role="status">
+                Saving this publication…
+              </p>
+            )}
             {error && (
               <p className="inline-validation" role="alert">
                 {error}

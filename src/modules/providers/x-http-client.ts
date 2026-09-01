@@ -251,7 +251,17 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     mediaId: string,
   ): Promise<{ state: 'succeeded' | 'pending' | 'failed' | 'not_finalized' }> {
     for (let attempt = 0; attempt < this.maxMediaStatusPolls; attempt += 1) {
-      const response = await this.callMediaGet(mediaId);
+      let response: XMediaResponse;
+      try {
+        response = await this.callMediaGet(mediaId);
+      } catch (error) {
+        // X returns 404 for STATUS after INIT/APPEND but before FINALIZE. That is
+        // lifecycle state, not a missing upload: the caller must FINALIZE next.
+        if (error instanceof XRequestError && error.status === 404) {
+          return { state: 'not_finalized' };
+        }
+        throw error;
+      }
       if (!response.processing_info) return { state: 'not_finalized' };
       const state = mediaState(response);
       if (state.state !== 'pending' || attempt === this.maxMediaStatusPolls - 1) return state;

@@ -205,6 +205,33 @@ describe('X OAuth 1.0a HTTP client', () => {
     ]);
   });
 
+  it('treats X media STATUS 404 before FINALIZE as not finalized', async () => {
+    const request = vi.fn().mockResolvedValue(
+      response(
+        {
+          errors: [
+            {
+              title: 'Not Found Error',
+              detail: 'Sorry, that page does not exist',
+              type: 'about:blank',
+              status: 404,
+            },
+          ],
+        },
+        404,
+      ),
+    );
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+    }).bindCredential(JSON.stringify({ accessToken: 'token', accessTokenSecret: 'token-secret' }));
+
+    await expect(client.status('media-before-finalize')).resolves.toEqual({
+      state: 'not_finalized',
+    });
+  });
+
   it('preserves media rate limits and bounds pending STATUS polling', async () => {
     const limited = vi
       .fn<typeof fetch>()

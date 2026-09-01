@@ -257,6 +257,25 @@ describe('browser workflow PostgreSQL boundary', () => {
     });
   });
 
+  it('hides missing and foreign posts from browser revision mutations', async () => {
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+      'x-csrf-token': 'browser-csrf',
+      'idempotency-key': 'browser-edit-missing',
+    };
+    for (const postId of [missingResourceId, foreignPostId]) {
+      const response = await application.inject({
+        method: 'PATCH',
+        url: `/api/workflow/posts/${postId}`,
+        headers: { ...headers, 'idempotency-key': `edit-${postId}` },
+        payload: requestPayload('Hidden post edit'),
+      });
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ data: null, error: 'Post was not found' });
+    }
+  });
+
   it('rejects a past browser schedule before reserving idempotency state', async () => {
     const response = await application.inject({
       method: 'POST',

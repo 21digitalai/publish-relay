@@ -9,7 +9,7 @@ import {
   publicationJobs,
   revisionMedia,
 } from '../../database/schema.js';
-import { PostValidationError } from './post.errors.js';
+import { PostNotFoundError, PostValidationError } from './post.errors.js';
 
 export interface PostRevisionInput {
   content: Record<string, unknown>;
@@ -119,7 +119,7 @@ export async function revisePostIntent(
     .orderBy(desc(postRevisions.revisionNumber))
     .limit(1);
   const current = existing[0];
-  if (!current) throw new Error('Post not found in workspace');
+  if (!current) throw new PostNotFoundError('Post not found in workspace');
   const superseded = await database
     .update(publicationJobs)
     .set({ state: 'superseded', supersededAt: input.now, updatedAt: input.now })

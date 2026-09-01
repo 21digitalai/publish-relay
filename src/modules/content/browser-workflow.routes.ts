@@ -10,7 +10,7 @@ import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
 import { createPostRequestSchema } from './post.contract.js';
-import { PostValidationError } from './post.errors.js';
+import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { createPostInTransaction, editPostInTransaction } from './post.service.js';
 import {
   browserJobStates,
@@ -66,6 +66,8 @@ function mutationError(request: FastifyRequest, reply: FastifyReply, error: unkn
       .send({ data: null, error: 'You cannot change content in this workspace' });
   if (error instanceof z.ZodError || error instanceof PostValidationError)
     return reply.code(400).send({ data: null, error: error.message });
+  if (error instanceof PostNotFoundError)
+    return reply.code(404).send({ data: null, error: 'Post was not found' });
   request.log.error({ err: error }, 'Browser post mutation failed');
   return reply.code(500).send({ data: null, error: 'Internal server error' });
 }

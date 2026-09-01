@@ -123,6 +123,17 @@ function jobPath(job: Job): string {
   return `${workspacePath()}/jobs/${job.id}`;
 }
 
+function cookieValue(name: string): string {
+  const prefix = `${name}=`;
+  return (
+    document.cookie
+      .split(';')
+      .map((value) => value.trim())
+      .find((value) => value.startsWith(prefix))
+      ?.slice(prefix.length) ?? ''
+  );
+}
+
 function Status({ state }: { state: JobState }) {
   return (
     <span className={`job-status ${state}`}>
@@ -717,6 +728,8 @@ export function JobDetailPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [isMutating, setIsMutating] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     void fetch(`/api/workflow/jobs/${encodeURIComponent(jobId)}`, { signal: controller.signal })
@@ -856,6 +869,11 @@ export function JobDetailPage() {
               Cancel job
             </button>
           </footer>
+          {mutationError && (
+            <p className="mutation-error" role="alert">
+              {mutationError}
+            </p>
+          )}
         </section>
       </div>
       {dialog && (
@@ -891,12 +909,46 @@ export function JobDetailPage() {
               </button>
               <button
                 className={dialog === 'cancel' ? 'danger-button' : 'primary-button'}
+                disabled={isMutating}
                 onClick={() => {
-                  setJob({ ...job, state: dialog === 'cancel' ? 'cancelled' : 'retrying' });
-                  setDialog(null);
+                  const action = dialog;
+                  setIsMutating(true);
+                  setMutationError(null);
+                  void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/${action}`, {
+                    method: 'POST',
+                    headers: {
+                      'x-csrf-token': cookieValue('publish_relay_csrf'),
+                      'idempotency-key': crypto.randomUUID(),
+                    },
+                  })
+                    .then(async (response) => {
+                      const result = (await response.json()) as {
+                        data: { state: string } | null;
+                        error: string | null;
+                      };
+                      if (!response.ok || !result.data)
+                        throw new Error(result.error ?? `Could not ${action} this job`);
+                      setJob({ ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' });
+                      setDialog(null);
+                    })
+                    .catch((error: unknown) => {
+                      setMutationError(
+                        error instanceof Error ? error.message : `Could not ${action} this job`,
+                      );
+                      setDialog(null);
+                    })
+                    .finally(() => {
+                      setIsMutating(false);
+                    });
                 }}
               >
-                {dialog === 'cancel' ? 'Cancel job' : 'Retry safely'}
+                {isMutating
+                  ? dialog === 'cancel'
+                    ? 'Cancelling…'
+                    : 'Retrying…'
+                  : dialog === 'cancel'
+                    ? 'Cancel job'
+                    : 'Retry safely'}
               </button>
             </div>
           </section>

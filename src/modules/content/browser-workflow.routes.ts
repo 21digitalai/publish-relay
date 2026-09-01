@@ -1,9 +1,12 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
-import { authorizeRequest } from '../identity/auth.routes.js';
+import { validateIdempotencyKey } from '../api/idempotency.js';
+import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
+import { verifyCsrfToken } from '../identity/session.js';
+import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import {
   browserJobStates,
   getBrowserJobDetail,
@@ -21,6 +24,30 @@ const listQuerySchema = z.object({
   beforeScheduledAt: z.iso.datetime().optional(),
   beforeId: z.uuid().optional(),
 });
+const jobParamsSchema = z.object({ jobId: z.uuid() });
+
+function authorizeMutation(request: FastifyRequest): boolean {
+  const cookies = request.cookies as Record<string, string | undefined> | undefined;
+  const cookieHeader = request.headers.cookie ?? '';
+  const csrfCookie = cookieHeader
+    .split(';')
+    .map((value) => value.trim())
+    .find((value) => value.startsWith(`${CSRF_COOKIE}=`))
+    ?.slice(CSRF_COOKIE.length + 1);
+  return verifyCsrfToken(
+    cookies?.[CSRF_COOKIE] ?? csrfCookie,
+    request.headers['x-csrf-token'] as string | undefined,
+  );
+}
+
+function idempotencyKey(headers: Record<string, unknown>): string | null {
+  try {
+    const value = headers['idempotency-key'];
+    return validateIdempotencyKey(typeof value === 'string' ? value : undefined);
+  } catch {
+    return null;
+  }
+}
 
 function serializeJob(job: Awaited<ReturnType<typeof getBrowserJobDetail>>) {
   if (!job) return null;
@@ -95,7 +122,7 @@ export function registerBrowserWorkflowRoutes(
   application.get('/api/workflow/jobs/:jobId', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    const params = z.object({ jobId: z.uuid() }).safeParse(request.params);
+    const params = jobParamsSchema.safeParse(request.params);
     if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid job' });
     const job = await getBrowserJobDetail(
       dependencies.database,
@@ -105,5 +132,59 @@ export function registerBrowserWorkflowRoutes(
     return job
       ? { data: serializeJob(job), error: null }
       : reply.code(404).send({ data: null, error: 'Job was not found' });
+  });
+
+  application.post('/api/workflow/jobs/:jobId/cancel', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!authorizeMutation(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    if (!idempotencyKey(request.headers))
+      return reply.code(400).send({ data: null, error: 'A valid Idempotency-Key is required' });
+    const params = jobParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid job' });
+    const existing = await getBrowserJobDetail(
+      dependencies.database,
+      identity.workspaceId,
+      params.data.jobId,
+    );
+    if (!existing) return reply.code(404).send({ data: null, error: 'Job was not found' });
+    if (existing.state === 'cancelled') return { data: { state: 'cancelled' }, error: null };
+    const cancelled = await cancelPendingJob(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      jobId: params.data.jobId,
+      actorId: identity.userId,
+      now: new Date(),
+    });
+    return cancelled
+      ? { data: { state: 'cancelled' }, error: null }
+      : reply.code(409).send({ data: null, error: 'This job can no longer be cancelled' });
+  });
+
+  application.post('/api/workflow/jobs/:jobId/retry', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!authorizeMutation(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    if (!idempotencyKey(request.headers))
+      return reply.code(400).send({ data: null, error: 'A valid Idempotency-Key is required' });
+    const params = jobParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid job' });
+    const existing = await getBrowserJobDetail(
+      dependencies.database,
+      identity.workspaceId,
+      params.data.jobId,
+    );
+    if (!existing) return reply.code(404).send({ data: null, error: 'Job was not found' });
+    if (existing.state === 'retry_wait') return { data: { state: 'retry_wait' }, error: null };
+    const result = await requestOperatorRetry(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      jobId: params.data.jobId,
+      actorId: identity.userId,
+      now: new Date(),
+    });
+    return result === 'scheduled'
+      ? { data: { state: 'retry_wait' }, error: null }
+      : reply.code(409).send({ data: null, error: 'This job is not eligible for retry' });
   });
 }

@@ -14,7 +14,7 @@ import {
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { getActiveCredential } from '../credentials/credential.repository.js';
 import { decryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
-import { claimDueJobs, startDispatchAttempt } from '../scheduler/job.repository.js';
+import { claimDueJobs, deriveJobIdempotencyKey } from '../scheduler/job.repository.js';
 import { XHttpClient, type XHttpClientOptions } from './x-http-client.js';
 import {
   stageXMedia,
@@ -133,14 +133,6 @@ export async function dispatchDueXMedia(
   for (const job of jobs) {
     const context = await loadXJobContext(runtime.database, job.workspaceId, job.id);
     if (!context || context.mediaIds.length === 0) continue;
-    const attempt = await startDispatchAttempt(runtime.database, {
-      workspaceId: job.workspaceId,
-      jobId: job.id,
-      workerId: runtime.workerId,
-      fingerprint: `x-media:${job.revisionId}`,
-      now,
-    });
-    if (!attempt) continue;
     const stored = await withTenantTransaction(
       runtime.database,
       { workspaceId: job.workspaceId },
@@ -154,7 +146,11 @@ export async function dispatchDueXMedia(
         jobId: job.id,
         credential: plaintext.toString('utf8'),
         mediaIds: context.mediaIds,
-        idempotencyKey: attempt.idempotencyKey,
+        idempotencyKey: deriveJobIdempotencyKey({
+          jobId: job.id,
+          revisionId: job.revisionId,
+          providerAccountId: job.providerAccountId,
+        }),
       });
     } finally {
       plaintext.fill(0);

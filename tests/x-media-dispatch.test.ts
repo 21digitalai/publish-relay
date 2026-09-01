@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   XMediaSource,
@@ -12,7 +12,7 @@ import {
 vi.mock('../src/modules/providers/x-media-staging.service.js', () => ({ stageXMedia: vi.fn() }));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   claimDueJobs: vi.fn(),
-  startDispatchAttempt: vi.fn(),
+  deriveJobIdempotencyKey: vi.fn(() => 'job-key'),
 }));
 vi.mock('../src/database/tenant-transaction.js', () => ({
   withTenantTransaction: vi.fn(
@@ -28,7 +28,7 @@ vi.mock('../src/modules/credentials/envelope.js', () => ({ decryptCredential: vi
 import { stageXMedia } from '../src/modules/providers/x-media-staging.service.js';
 import { getActiveCredential } from '../src/modules/credentials/credential.repository.js';
 import { decryptCredential } from '../src/modules/credentials/envelope.js';
-import { claimDueJobs, startDispatchAttempt } from '../src/modules/scheduler/job.repository.js';
+import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 
 const databaseTransaction = {
   select: vi.fn(() => databaseTransaction),
@@ -40,6 +40,8 @@ const databaseTransaction = {
 };
 
 describe('X media dispatch composition', () => {
+  beforeEach(() => vi.clearAllMocks());
+
   it('binds one credential-scoped client and stages every scheduled job media item', async () => {
     const client = {} as XMediaUploadClient;
     const createClient = vi.fn(() => client);
@@ -84,11 +86,6 @@ describe('X media dispatch composition', () => {
         leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
       },
     ]);
-    vi.mocked(startDispatchAttempt).mockResolvedValue({
-      attemptId: 'attempt-1',
-      attemptNumber: 1,
-      idempotencyKey: 'job-key',
-    });
     vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
     vi.mocked(decryptCredential).mockResolvedValue(
       Buffer.from('{"accessToken":"sanitized","accessTokenSecret":"sanitized"}'),
@@ -114,14 +111,58 @@ describe('X media dispatch composition', () => {
       expect.anything(),
       expect.objectContaining({ workerId: 'worker-1' }),
     );
-    expect(startDispatchAttempt).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ jobId: 'job-1' }),
-    );
     expect(createClient).toHaveBeenCalledWith(
       '{"accessToken":"sanitized","accessTokenSecret":"sanitized"}',
     );
     expect(stageXMedia).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      {
+        workspaceId: 'workspace-1',
+        jobId: 'job-1',
+        mediaId: 'media-1',
+        idempotencyKey: 'job-key:media-1',
+      },
+    );
+  });
+
+  it('resumes idempotent staging on a later worker pass after a staging failure', async () => {
+    const claimedJob = {
+      id: 'job-1',
+      workspaceId: 'workspace-1',
+      revisionId: 'revision-1',
+      providerAccountId: 'account-1',
+      state: 'leased' as const,
+      attemptNumber: 1,
+      leaseOwner: 'worker-1',
+      leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
+    };
+    vi.mocked(claimDueJobs).mockResolvedValue([claimedJob]);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockImplementation(() =>
+      Promise.resolve(Buffer.from('{"accessToken":"sanitized","accessTokenSecret":"sanitized"}')),
+    );
+    vi.mocked(stageXMedia)
+      .mockRejectedValueOnce(new Error('sanitized staging failure'))
+      .mockResolvedValueOnce({ mediaId: 'x-media-1', state: 'pending' });
+    const runtime = {
+      database: {} as never,
+      keys: {} as never,
+      source: {} as XMediaSource,
+      createClient: vi.fn(() => ({}) as XMediaUploadClient),
+      workerId: 'worker-1',
+      leaseMs: 30_000,
+    };
+
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:00:00Z'))).rejects.toThrow(
+      'sanitized staging failure',
+    );
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:02:00Z'))).resolves.toBe(1);
+
+    expect(stageXMedia).toHaveBeenCalledTimes(2);
+    expect(stageXMedia).toHaveBeenNthCalledWith(
+      2,
       expect.anything(),
       expect.anything(),
       expect.anything(),

@@ -51,10 +51,10 @@ export function createApplication(
     const body = [
       '# HELP publish_relay_process_uptime_seconds Process uptime in seconds.',
       '# TYPE publish_relay_process_uptime_seconds gauge',
-      `publish_relay_process_uptime_seconds ${process.uptime()}`,
+      `publish_relay_process_uptime_seconds ${String(process.uptime())}`,
       '# HELP publish_relay_process_resident_memory_bytes Resident memory in bytes.',
       '# TYPE publish_relay_process_resident_memory_bytes gauge',
-      `publish_relay_process_resident_memory_bytes ${memory.rss}`,
+      `publish_relay_process_resident_memory_bytes ${String(memory.rss)}`,
       '',
     ].join('\n');
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(body);

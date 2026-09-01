@@ -47,6 +47,9 @@ describe('application', () => {
     expect(response.headers['content-type']).toContain('text/plain');
     expect(response.body).toContain('publish_relay_process_uptime_seconds');
     expect(response.body).toContain('publish_relay_process_resident_memory_bytes');
+    expect(response.body).toMatch(/^publish_relay_process_uptime_seconds \d+(?:\.\d+)?$/m);
+    expect(response.body).toMatch(/^publish_relay_process_resident_memory_bytes \d+$/m);
+    expect(response.body).not.toMatch(/(?:NaN|Infinity)/);
     expect(response.body).not.toContain('DATABASE_URL');
   });
 });

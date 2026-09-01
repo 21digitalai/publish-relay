@@ -145,12 +145,17 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await establishWorkspaceSession(page);
   await page.goto('/w/atlas/accounts?state=empty');
   await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
+  await expect(page.getByLabel('Account health summary')).toContainText(
+    '0Connected accounts0Healthy0Needs attention',
+  );
   await page.screenshot({ path: testInfo.outputPath('accounts-empty.png'), fullPage: true });
   await page.goto('/w/atlas/accounts?state=loading');
   await expect(page.getByLabel('Loading accounts')).toBeVisible();
+  await expect(page.getByLabel('Loading account health')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('accounts-loading.png'), fullPage: true });
   await page.goto('/w/atlas/accounts?state=error');
   await expect(page.getByRole('alert')).toContainText('Accounts could not be loaded');
+  await expect(page.getByLabel('Account health summary')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('accounts-error.png'), fullPage: true });
   await page.goto('/w/atlas/accounts');
   await page.getByRole('button', { name: 'Connect account', exact: true }).click();
@@ -158,10 +163,16 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await page.reload();
   await expect(page.getByText('Daily Viber')).toBeVisible();
   await expect(page.getByText('Studio Notes')).toBeVisible();
+  await expect(page.getByLabel('Account health summary')).toContainText(
+    '2Connected accounts2Healthy0Needs attention',
+  );
   await page.screenshot({ path: testInfo.outputPath('accounts-populated.png'), fullPage: true });
   expect((await page.request.post('/__test__/provider-reconnect-required')).ok()).toBe(true);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Reconnect' }).first()).toBeVisible();
+  await expect(page.getByLabel('Account health summary')).toContainText(
+    '2Connected accounts0Healthy2Needs attention',
+  );
   await page.screenshot({ path: testInfo.outputPath('accounts-reconnect.png'), fullPage: true });
   await page.getByRole('button', { name: 'Reconnect' }).first().click();
   await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(0);
@@ -171,6 +182,9 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await page.getByRole('button', { name: 'Disconnect account' }).click();
   await expect(page.getByRole('alert')).toContainText('Cancel scheduled jobs');
   await expect(page.getByText('Daily Viber', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Account health summary')).toContainText(
+    '2Connected accounts2Healthy0Needs attention',
+  );
   await page.screenshot({
     path: testInfo.outputPath('accounts-disconnect-blocked.png'),
     fullPage: true,
@@ -178,6 +192,9 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await page.getByRole('button', { name: 'More actions for Studio Notes' }).click();
   await page.getByRole('button', { name: 'Disconnect account' }).click();
   await expect(page.getByText('Studio Notes', { exact: true })).toBeHidden();
+  await expect(page.getByLabel('Account health summary')).toContainText(
+    '1Connected accounts1Healthy0Needs attention',
+  );
   await page.reload();
   await expect(page.getByText('Daily Viber', { exact: true })).toBeVisible();
   await expect(page.getByText('Studio Notes', { exact: true })).toBeHidden();

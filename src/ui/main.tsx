@@ -753,6 +753,8 @@ function AccountsPage() {
   const groups = [...new Set(visible.map((account) => account.provider))];
   const previewState = new URLSearchParams(window.location.search).get('state');
   const renderedState = previewState ?? loadState;
+  const healthyCount = accounts.filter((account) => account.health === 'Connected').length;
+  const attentionCount = accounts.length - healthyCount;
   return (
     <div className="workspace-app">
       <a className="skip-link" href="#main-content">
@@ -789,20 +791,30 @@ function AccountsPage() {
             ＋ Connect account
           </button>
         </div>
-        <section className="account-summary" aria-label="Account health summary">
-          <div>
-            <strong>3</strong>
-            <span>Connected accounts</span>
-          </div>
-          <div>
-            <strong className="success-text">2</strong>
-            <span>Healthy</span>
-          </div>
-          <div>
-            <strong className="warning-text">1</strong>
-            <span>Needs attention</span>
-          </div>
-        </section>
+        {renderedState === 'loading' ? (
+          <section
+            className="account-summary loading"
+            aria-label="Loading account health"
+            aria-busy="true"
+          >
+            <span>Loading account health…</span>
+          </section>
+        ) : renderedState === 'error' ? null : (
+          <section className="account-summary" aria-label="Account health summary">
+            <div>
+              <strong>{accounts.length}</strong>
+              <span>Connected accounts</span>
+            </div>
+            <div>
+              <strong className="success-text">{healthyCount}</strong>
+              <span>Healthy</span>
+            </div>
+            <div>
+              <strong className="warning-text">{attentionCount}</strong>
+              <span>Needs attention</span>
+            </div>
+          </section>
+        )}
         <section className="accounts-section" aria-labelledby="accounts-title">
           <h2 id="accounts-title" className="sr-only">
             Accounts

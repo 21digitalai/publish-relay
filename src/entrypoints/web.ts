@@ -9,6 +9,7 @@ import { AuthService } from '../modules/identity/auth.service.js';
 import { createPostgresApiKeyStore } from '../modules/identity/api-key.repository.js';
 import { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
+import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
 
 const config = loadRuntimeConfig();
 if (!config.DATABASE_URL) throw new Error('DATABASE_URL is required for the web process');
@@ -21,7 +22,13 @@ const activeKeyVersion = config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION;
 const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
 const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
 const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
-if (!activeKeyVersion || !xConsumerKey || !xConsumerSecret || !publicOrigin)
+if (
+  !activeKeyVersion ||
+  !xConsumerKey ||
+  !xConsumerSecret ||
+  !publicOrigin ||
+  !config.MEDIA_STORAGE_ROOT
+)
   throw new Error('X OAuth runtime configuration is required for the web process');
 const application = createApplication(
   config,
@@ -34,6 +41,7 @@ const application = createApplication(
     client: new XHttpClient({ consumerKey: xConsumerKey, consumerSecret: xConsumerSecret }),
     callbackUrl: new URL('/api/oauth/x/callback', publicOrigin).toString(),
   },
+  new LocalMediaStorage(config.MEDIA_STORAGE_ROOT),
 );
 application.addHook('onClose', async () => pool.end());
 

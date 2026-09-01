@@ -7,6 +7,7 @@ export const API_KEY_CAPABILITIES = [
   'destinations:read',
   'schedules:read',
   'schedules:write',
+  'content:write',
   'publishes:submit',
   'publishes:retry',
   'audit:read',

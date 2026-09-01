@@ -22,12 +22,13 @@ const EXIT = {
   terminal: 9,
   timeout: 10,
 } as const;
-const MUTATIONS = new Set(['posts:create']);
+const MUTATIONS = new Set(['posts:create', 'media:upload']);
 const ROUTES: Record<string, { method: string; path: string; body?: boolean }> = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
   'posts:list': { method: 'GET', path: '/api/v1/posts' },
   'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
+  'media:upload': { method: 'POST', path: '/api/v1/media' },
   'publishes:show': { method: 'GET', path: '/api/v1/jobs/:id' },
   'publishes:poll': { method: 'GET', path: '/api/v1/jobs/:id' },
   health: { method: 'GET', path: '/health/live' },
@@ -76,6 +77,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'jobs',
     'self',
   ]),
+  'media:upload': new Set([...ENVELOPE_OUTPUT_KEYS, 'mimeType', 'sha256', 'byteSize']),
   'publishes:show': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'createdAt',
@@ -264,6 +266,11 @@ async function readBody(path: string | true | undefined): Promise<string | undef
   return text;
 }
 
+async function readMedia(path: string | true | undefined): Promise<Buffer | undefined> {
+  if (!path || path === true) return undefined;
+  return readFile(path);
+}
+
 function jobState(body: Json): string | undefined {
   if (!body || Array.isArray(body) || typeof body !== 'object') return undefined;
   const data = body.data;
@@ -374,16 +381,31 @@ async function run(): Promise<Json> {
   const path = routePath(route, parsed.command, parsed.id, parsed.flags);
   if (parsed.command === 'publishes:poll' && parsed.id)
     return pollJob(profile, key, expected, path, parsed.id, parsed.flags);
-  const body = await readBody(parsed.flags['body-file']);
+  const mediaPath = parsed.flags.file;
+  const media = parsed.command === 'media:upload' ? await readMedia(mediaPath) : undefined;
+  if (parsed.command === 'media:upload' && typeof parsed.flags['content-type'] !== 'string')
+    throw new CliError(EXIT.usage, 'Media upload requires --content-type');
+  const body =
+    parsed.command === 'media:upload' ? media : await readBody(parsed.flags['body-file']);
+  if (parsed.command === 'media:upload' && !body)
+    throw new CliError(EXIT.usage, 'Media upload requires --file');
   if (route.body && !body) throw new CliError(EXIT.usage, 'This command requires --body-file');
   const idempotencyKey = parsed.flags['idempotency-key'];
   if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')
     throw new CliError(EXIT.usage, 'Mutations require --idempotency-key');
+  const requestBody = Buffer.isBuffer(body) ? new Uint8Array(body) : body;
   const response = await request(profile, key, expected || undefined, path, {
     method: route.method,
-    ...(body ? { body } : {}),
+    ...(requestBody ? { body: requestBody } : {}),
     headers: {
-      ...(body ? { 'content-type': 'application/json' } : {}),
+      ...(parsed.command === 'media:upload'
+        ? {
+            'content-type': String(parsed.flags['content-type'] ?? ''),
+            'x-file-name': basename(String(mediaPath)),
+          }
+        : body
+          ? { 'content-type': 'application/json' }
+          : {}),
       ...(typeof idempotencyKey === 'string' ? { 'idempotency-key': idempotencyKey } : {}),
     },
   });

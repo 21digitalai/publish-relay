@@ -30,6 +30,7 @@ Read the manifest and API contract first. Authenticate with a workspace service 
 - account current: authenticated key only; use it as the read-first workspace guard.
 - posts list/show and publishes show/poll: schedules:read.
 - posts create: schedules:write. Live provider submission also requires publishes:submit on the server-side operation.
+- media upload: content:write. Send exact local bytes with --file, an explicit --content-type, and a unique idempotency key. Remote URL fetching is not supported.
 - Retry and audit operations require publishes:retry and audit:read respectively when those commands become available. Do not infer capabilities from CLI command visibility.
 
 Set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE. Profiles may name the API-key environment variable but must never contain its value. Before a mutation, run account current and require the expected workspace with --require-workspace.
@@ -56,6 +57,7 @@ Use the shipped non-interactive CLI for scripts. Read command help before execut
 
 Read-only example: PUBLISH_RELAY_API_KEY=<workspace-service-key> node publish-relay-cli.js account current --base-url https://relay.example --require-workspace <workspace-id>.
 Mutation example: add posts create with --body-file <request.json> and --idempotency-key <unique-operation-key> only after the read-first workspace check.
+Media example: add media upload with --file <image-path> --content-type image/png and --idempotency-key <unique-operation-key>.
 
 X live publish, credential migration, reconnect, revocation, and capability canaries require a separate explicitly authorized ticket with rollback criteria.
 `;

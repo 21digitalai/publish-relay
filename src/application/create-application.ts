@@ -17,6 +17,8 @@ import type { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
 import { registerPostRoutes } from '../modules/content/post.routes.js';
 import { registerBrowserWorkflowRoutes } from '../modules/content/browser-workflow.routes.js';
+import type { MediaStorage } from '../modules/content/media-storage.js';
+import { registerMediaRoutes } from '../modules/content/media.routes.js';
 import type { MasterKeyProvider } from '../modules/credentials/envelope.js';
 import type { XHttpClient } from '../modules/providers/x-http-client.js';
 import { registerXOauthRoutes } from '../modules/providers/x-oauth.routes.js';
@@ -29,6 +31,7 @@ export function createApplication(
   uiRootOverride?: string,
   database?: NodePgDatabase,
   xOauth?: { keys: MasterKeyProvider; client: XHttpClient; callbackUrl: string },
+  mediaStorage?: MediaStorage,
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
@@ -86,6 +89,8 @@ export function createApplication(
         rateLimiter,
         new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
       );
+      if (mediaStorage)
+        registerMediaRoutes(application, database, mediaStorage, apiKeys, rateLimiter);
     }
   }
   if (auth && database) {

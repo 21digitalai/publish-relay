@@ -1,5 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
@@ -12,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import { CursorCodec } from '../src/modules/api/contract.js';
 import { registerPostRoutes } from '../src/modules/content/post.routes.js';
+import { registerMediaRoutes } from '../src/modules/content/media.routes.js';
+import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { registerBrowserWorkflowRoutes } from '../src/modules/content/browser-workflow.routes.js';
 import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js';
 import { ApiKeyAuthorizationError } from '../src/modules/identity/api-key.service.js';
@@ -53,6 +56,19 @@ let authenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
 let browserNow: Date | undefined;
 const temporaryDirectories: string[] = [];
+const storedMedia = new Map<string, Buffer>();
+const mediaStorage: MediaStorage = {
+  put: (input) => {
+    const sha256 = createHash('sha256').update(input.bytes).digest('hex');
+    const storageKey = `${input.workspaceId}/${input.mediaId}/${sha256}`;
+    storedMedia.set(storageKey, Buffer.from(input.bytes));
+    return Promise.resolve({ storageKey });
+  },
+  delete: (storageKey) => {
+    storedMedia.delete(storageKey);
+    return Promise.resolve();
+  },
+};
 
 async function runCli(args: string[], apiKey = 'pr_test.secret') {
   if (!application.server.listening) await application.listen({ host: '127.0.0.1', port: 0 });
@@ -121,6 +137,7 @@ function requestPayload(text = 'Scheduled through the API') {
 }
 
 beforeEach(async () => {
+  storedMedia.clear();
   browserNow = undefined;
   database = new PGlite();
   for (const migration of migrations)
@@ -184,12 +201,137 @@ beforeEach(async () => {
     }),
     new CursorCodec(Buffer.alloc(32, 7)),
   );
+  registerMediaRoutes(
+    application,
+    drizzle(database) as unknown as NodePgDatabase,
+    mediaStorage,
+    apiKeys,
+    new ApiRateLimiter({
+      workspace: 10,
+      key: 10,
+      mutationWorkspace: 10,
+      mutationKey: 10,
+      windowMs: 60_000,
+    }),
+  );
   registerBrowserWorkflowRoutes(application, {
     database: drizzle(database) as unknown as NodePgDatabase,
     now: () => browserNow ?? new Date(),
     auth: {
       authenticate: vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' }),
     } as unknown as AuthService,
+  });
+});
+
+describe('agent media upload PostgreSQL boundary', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+  const headers = {
+    authorization: 'Bearer pr_test.secret',
+    'x-publish-relay-workspace': workspaceId,
+    'content-type': 'image/png',
+    'x-file-name': 'daily-vibe.png',
+    'idempotency-key': 'media-upload-1',
+  };
+
+  it('stores exact bytes once, replays identity, conflicts on changed bytes, and feeds post creation', async () => {
+    const first = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers,
+      payload: png,
+    });
+    expect(first.statusCode).toBe(201);
+    const firstBody = first.json<{
+      data: { id: string; mimeType: string; sha256: string; byteSize: number; state: string };
+    }>();
+    expect(firstBody.data).toMatchObject({
+      mimeType: 'image/png',
+      byteSize: png.length,
+      state: 'ready',
+    });
+    expect(storedMedia.size).toBe(1);
+
+    const replay = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers,
+      payload: png,
+    });
+    expect(replay.statusCode).toBe(201);
+    expect(replay.headers['idempotency-replayed']).toBe('true');
+    expect(replay.json<{ data: { id: string } }>().data.id).toBe(firstBody.data.id);
+    expect(storedMedia.size).toBe(1);
+
+    const conflict = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers,
+      payload: Buffer.concat([png, Buffer.from([2])]),
+    });
+    expect(conflict.statusCode).toBe(409);
+    expect(storedMedia.size).toBe(1);
+
+    const post = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: {
+        authorization: headers.authorization,
+        'x-publish-relay-workspace': workspaceId,
+        'content-type': 'application/json',
+        'idempotency-key': 'post-with-uploaded-media',
+      },
+      payload: { ...requestPayload(), mediaIds: [firstBody.data.id] },
+    });
+    expect(post.statusCode).toBe(201);
+
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-media-cli-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'daily-vibe.png');
+    await writeFile(path, png);
+    const cliUpload = await runCli([
+      'media',
+      'upload',
+      '--file',
+      path,
+      '--content-type',
+      'image/png',
+      '--idempotency-key',
+      'media-upload-cli-1',
+    ]);
+    expect(cliUpload.code).toBe(0);
+    expect(cliUpload.body).toMatchObject({
+      success: true,
+      data: { mimeType: 'image/png', byteSize: png.length, state: 'ready' },
+    });
+  });
+
+  it('rejects unauthenticated, unsupported, empty, and malformed uploads without storage', async () => {
+    authenticate.mockResolvedValueOnce(null);
+    expect(
+      (await application.inject({ method: 'POST', url: '/api/v1/media', headers, payload: png }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: '/api/v1/media',
+          headers: { ...headers, 'content-type': 'text/plain' },
+          payload: png,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: '/api/v1/media',
+          headers,
+          payload: Buffer.alloc(0),
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(storedMedia.size).toBe(0);
   });
 });
 

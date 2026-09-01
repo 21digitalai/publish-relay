@@ -18,12 +18,87 @@ const accountSchema = z.object({
   capabilities: z.array(z.string()),
   expiresAt: z.date().nullable(),
 });
+const mediaMutationSchema = z.object({
+  id: z.uuid(),
+  mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  byteSize: z
+    .number()
+    .int()
+    .positive()
+    .max(5 * 1024 * 1024),
+  state: z.literal('ready'),
+});
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
   return {
     openapi: '3.1.0',
     info: { title: 'Publish Relay API', version: '1.0.0' },
     paths: {
+      '/api/v1/media': {
+        post: {
+          operationId: 'uploadMedia',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', minLength: 8, maxLength: 200 },
+            },
+            {
+              name: 'X-File-Name',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', minLength: 1, maxLength: 255 },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'image/png': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
+              'image/jpeg': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
+              'image/gif': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
+              'image/webp': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Workspace media stored and ready for post creation',
+              headers: { 'Idempotency-Replayed': { schema: { type: 'boolean' } } },
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(mediaMutationSchema)),
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid content, headers, or idempotency key',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '401': {
+              description: 'Authentication required',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '403': {
+              description: 'Missing content:write capability',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '409': {
+              description: 'Idempotency key reused for different content',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '413': {
+              description: 'Media exceeds 5 MiB',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '429': {
+              description: 'Mutation rate limit exceeded',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+          },
+        },
+      },
       '/api/v1/account': {
         get: {
           operationId: 'getAccount',

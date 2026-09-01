@@ -153,6 +153,8 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   let detailState = 'failed';
   let retryHeaders: Record<string, string> | null = null;
   let retryAttempts = 0;
+  let cancelHeaders: Record<string, string> | null = null;
+  let cancelAttempts = 0;
   let createPayload: Record<string, unknown> | null = null;
   let createHeaders: Record<string, string> | null = null;
   let firstCreateHeaders: Record<string, string> | null = null;
@@ -212,6 +214,21 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
     return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data: { state: detailState }, error: null }),
+    });
+  });
+  await page.route('**/api/workflow/jobs/job-2048/cancel', async (route) => {
+    cancelAttempts += 1;
+    cancelHeaders = route.request().headers();
+    if (cancelAttempts === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Cancel service unavailable' }),
+      });
+    detailState = 'cancelled';
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { state: 'cancelled' }, error: null }),
     });
   });
   await page.route('**/api/workflow/jobs/job-2048', (route) => {
@@ -284,6 +301,17 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   expect(retryHeaders?.['idempotency-key']).toBeTruthy();
   await page.reload();
   await expect(page.getByText('Retry queued')).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel job' }).click();
+  await expect(page.getByRole('button', { name: 'Keep job' })).toBeFocused();
+  await page.getByRole('button', { name: 'Cancel job', exact: true }).last().click();
+  await expect(page.getByText('Cancel service unavailable', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel job' }).click();
+  await page.getByRole('button', { name: 'Cancel job', exact: true }).last().click();
+  await expect(page.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
+  expect(cancelHeaders?.['x-csrf-token']).toBeTruthy();
+  expect(cancelHeaders?.['idempotency-key']).toBeTruthy();
+  await page.reload();
+  await expect(page.locator('.job-status.cancelled')).toContainText('Cancelled');
 });
 
 test('renders truthful queue loading, live states, empty, filtered-empty, and error states', async ({

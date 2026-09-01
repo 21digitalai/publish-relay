@@ -276,6 +276,26 @@ describe('browser workflow read contract', () => {
     await application.close();
   });
 
+  it('returns a retry lifecycle conflict without reporting a queued transition', async () => {
+    getBrowserJobDetail.mockResolvedValue({ ...job(), state: 'failed' });
+    requestOperatorRetry.mockResolvedValue('conflict');
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, { auth: {} as AuthService, database: {} as never });
+    const response = await application.inject({
+      method: 'POST',
+      url: `/api/workflow/jobs/${jobId}/retry`,
+      headers: {
+        'idempotency-key': 'retry-conflict',
+        'x-csrf-token': 'csrf',
+        cookie: 'publish_relay_csrf=csrf',
+      },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ data: null, error: 'This job is not eligible for retry' });
+    expect(requestOperatorRetry).toHaveBeenCalledTimes(1);
+    await application.close();
+  });
+
   it('rejects invalid CSRF and returns lifecycle conflicts without mutating state', async () => {
     verifyCsrfToken.mockReturnValue(false);
     const application = Fastify();

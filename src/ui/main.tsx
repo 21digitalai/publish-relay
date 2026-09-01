@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
+import { CalendarPage, JobDetailPage, QueuePage } from './workflow.js';
 
 interface Account {
   id: string;
@@ -418,7 +419,17 @@ function OnboardingPage() {
   );
 }
 
-function Rail({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function Rail({
+  open,
+  onClose,
+  active = 'accounts',
+  onCreate,
+}: {
+  open: boolean;
+  onClose: () => void;
+  active?: 'queue' | 'calendar' | 'accounts' | 'settings';
+  onCreate?: () => void;
+}) {
   return (
     <aside className={`app-rail ${open ? 'open' : ''}`} aria-label="Primary navigation">
       <div className="rail-header">
@@ -436,20 +447,36 @@ function Rail({ open, onClose }: { open: boolean; onClose: () => void }) {
         </span>
         <span aria-hidden="true">⌄</span>
       </button>
-      <button className="create-post-button">
+      <button className="create-post-button" onClick={onCreate}>
         <span aria-hidden="true">＋</span> Create post
       </button>
       <nav className="rail-nav">
-        <a href="/w/atlas/queue">
+        <a
+          className={active === 'queue' ? 'active' : ''}
+          href="/w/atlas/queue"
+          aria-current={active === 'queue' ? 'page' : undefined}
+        >
           ▤ <span>Queue</span>
         </a>
-        <a href="/w/atlas/calendar">
+        <a
+          className={active === 'calendar' ? 'active' : ''}
+          href="/w/atlas/calendar"
+          aria-current={active === 'calendar' ? 'page' : undefined}
+        >
           ▦ <span>Calendar</span>
         </a>
-        <a className="active" href="/w/atlas/accounts" aria-current="page">
+        <a
+          className={active === 'accounts' ? 'active' : ''}
+          href="/w/atlas/accounts"
+          aria-current={active === 'accounts' ? 'page' : undefined}
+        >
           ◉ <span>Accounts</span>
         </a>
-        <a href="/w/atlas/settings/workspace">
+        <a
+          className={active === 'settings' ? 'active' : ''}
+          href="/w/atlas/settings/workspace"
+          aria-current={active === 'settings' ? 'page' : undefined}
+        >
           ⚙ <span>Settings</span>
         </a>
       </nav>
@@ -826,6 +853,9 @@ export function App() {
   if (path === '/login' || path === '/') return <AuthPage mode="login" />;
   if (path === '/forgot-password') return <ForgotPasswordPage />;
   if (path.startsWith('/onboarding/')) return <OnboardingPage />;
+  if (/\/w\/[^/]+\/queue$/.test(path)) return <QueuePage />;
+  if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;
+  if (/\/w\/[^/]+\/jobs\/[^/]+$/.test(path)) return <JobDetailPage />;
   return <AccountsPage />;
 }
 

@@ -144,3 +144,33 @@ test('uses the mobile navigation drawer', async ({ page }) => {
   await expect(page.getByLabel('Primary navigation')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create post' })).toBeVisible();
 });
+
+test('renders queue, composer, calendar modes, and safe job recovery', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.goto('/w/atlas/queue');
+  await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
+  await expect(page.getByText('The clearest plans')).toBeVisible();
+  const createPost = page.getByRole('button', { name: 'Create post' });
+  if (!(await createPost.isVisible())) {
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  }
+  await createPost.click({ force: true });
+  await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
+  await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
+  await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Close composer' }).click();
+  await page.goto('/w/atlas/calendar');
+  for (const mode of ['Month', 'Week', 'Day', 'Timeline']) {
+    await page.getByRole('button', { name: mode, exact: true }).click();
+    await expect(page.getByLabel(`${mode} calendar`)).toBeVisible();
+  }
+  await page.screenshot({ path: testInfo.outputPath('calendar-timeline.png'), fullPage: true });
+  await page.goto('/w/atlas/jobs/job-2048');
+  await expect(page.getByRole('heading', { name: 'Daily Viber' })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry now' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('preventing a duplicate post');
+  await expect(page.getByRole('button', { name: 'Keep job' })).toBeFocused();
+});

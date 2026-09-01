@@ -161,6 +161,13 @@ Job detail is a route-backed drawer on desktop and a page on mobile. Sections: s
 - Published jobs expose a provider-specific external link.
 - Human error copy is primary; raw codes live under Technical details.
 
+### Canonical workflow UI ownership
+
+- `src/ui/workflow.tsx` owns the shared scheduling workflow primitives: status vocabulary, queue rows, calendar job blocks, composer, job detail, and destructive/retry confirmations.
+- Queue, calendar, and job detail must reuse the same `Job` state contract and `Status` renderer so text, color, links, and recovery semantics cannot drift between surfaces.
+- The composer remains one shared route-independent sheet opened from the rail; success receipts link to both Queue and Calendar.
+- Calendar modes share the same job fixtures/DTO shape and route every block to the canonical deep-link job detail path.
+
 ## Components and states
 
 - Buttons: brand primary, surface secondary, text tertiary, danger outlined until confirmation.

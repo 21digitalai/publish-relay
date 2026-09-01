@@ -69,7 +69,7 @@ function mutationError(request: FastifyRequest, reply: FastifyReply, error: unkn
     return reply.code(400).send({ data: null, error: error.message });
   if (error instanceof PostNotFoundError)
     return reply.code(404).send({ data: null, error: 'Post was not found' });
-  request.log.error({ err: error }, 'Browser post mutation failed');
+  request.log.error({ err: error }, 'Browser mutation failed');
   return reply.code(500).send({ data: null, error: 'Internal server error' });
 }
 
@@ -272,7 +272,12 @@ export function registerBrowserWorkflowRoutes(
   });
 
   application.post('/api/workflow/jobs/:jobId/cancel', async (request, reply) => {
-    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     if (!authorizeMutation(request))
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
@@ -280,26 +285,38 @@ export function registerBrowserWorkflowRoutes(
       return reply.code(400).send({ data: null, error: 'A valid Idempotency-Key is required' });
     const params = jobParamsSchema.safeParse(request.params);
     if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid job' });
-    const existing = await getBrowserJobDetail(
-      dependencies.database,
-      identity.workspaceId,
-      params.data.jobId,
-    );
+    let existing;
+    let cancelled;
+    try {
+      existing = await getBrowserJobDetail(
+        dependencies.database,
+        identity.workspaceId,
+        params.data.jobId,
+      );
+      if (existing && existing.state !== 'cancelled')
+        cancelled = await cancelPendingJob(dependencies.database, {
+          workspaceId: identity.workspaceId,
+          jobId: params.data.jobId,
+          actorId: identity.userId,
+          now: new Date(),
+        });
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (!existing) return reply.code(404).send({ data: null, error: 'Job was not found' });
     if (existing.state === 'cancelled') return { data: { state: 'cancelled' }, error: null };
-    const cancelled = await cancelPendingJob(dependencies.database, {
-      workspaceId: identity.workspaceId,
-      jobId: params.data.jobId,
-      actorId: identity.userId,
-      now: new Date(),
-    });
     return cancelled
       ? { data: { state: 'cancelled' }, error: null }
       : reply.code(409).send({ data: null, error: 'This job can no longer be cancelled' });
   });
 
   application.post('/api/workflow/jobs/:jobId/retry', async (request, reply) => {
-    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     if (!authorizeMutation(request))
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
@@ -307,19 +324,26 @@ export function registerBrowserWorkflowRoutes(
       return reply.code(400).send({ data: null, error: 'A valid Idempotency-Key is required' });
     const params = jobParamsSchema.safeParse(request.params);
     if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid job' });
-    const existing = await getBrowserJobDetail(
-      dependencies.database,
-      identity.workspaceId,
-      params.data.jobId,
-    );
+    let existing;
+    let result;
+    try {
+      existing = await getBrowserJobDetail(
+        dependencies.database,
+        identity.workspaceId,
+        params.data.jobId,
+      );
+      if (existing && existing.state !== 'retry_wait')
+        result = await requestOperatorRetry(dependencies.database, {
+          workspaceId: identity.workspaceId,
+          jobId: params.data.jobId,
+          actorId: identity.userId,
+          now: new Date(),
+        });
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
     if (!existing) return reply.code(404).send({ data: null, error: 'Job was not found' });
     if (existing.state === 'retry_wait') return { data: { state: 'retry_wait' }, error: null };
-    const result = await requestOperatorRetry(dependencies.database, {
-      workspaceId: identity.workspaceId,
-      jobId: params.data.jobId,
-      actorId: identity.userId,
-      now: new Date(),
-    });
     return result === 'scheduled'
       ? { data: { state: 'retry_wait' }, error: null }
       : reply.code(409).send({ data: null, error: 'This job is not eligible for retry' });

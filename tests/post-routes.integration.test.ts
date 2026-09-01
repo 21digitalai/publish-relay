@@ -44,6 +44,7 @@ const foreignProviderAccountId = '00000000-0000-4000-8000-000000000811';
 const foreignPostId = '00000000-0000-4000-8000-000000000814';
 const foreignRevisionId = '00000000-0000-4000-8000-000000000815';
 const foreignJobId = '00000000-0000-4000-8000-000000000816';
+const foreignMediaId = '00000000-0000-4000-8000-000000000817';
 const missingResourceId = '00000000-0000-4000-8000-000000000899';
 let database: PGlite;
 let application: FastifyInstance;
@@ -153,6 +154,8 @@ beforeEach(async () => {
       VALUES ('${foreignRevisionId}', '${foreignWorkspaceId}', '${foreignPostId}', 1, '{"type":"text","text":"Foreign tenant secret"}');
     INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
       VALUES ('${foreignJobId}', '${foreignWorkspaceId}', '${foreignPostId}', '${foreignRevisionId}', '${foreignProviderAccountId}', now());
+    INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+      VALUES ('${foreignMediaId}', '${foreignWorkspaceId}', 'foreign.jpg', 'foreign-hash', 'image/jpeg', 10, 'ready');
     SELECT set_config('app.workspace_id', '${workspaceId}', false);
   `);
   authenticate = vi.fn().mockResolvedValue({
@@ -327,6 +330,65 @@ describe('browser workflow PostgreSQL boundary', () => {
         (SELECT count(*)::int FROM browser_mutation_results WHERE idempotency_key = 'past-edit-1') AS mutations`,
     );
     expect(counts.rows[0]).toEqual({ revisions: 1, jobs: 1, mutations: 0 });
+  });
+
+  it.each([
+    {
+      name: 'duplicate account targets',
+      key: 'edit-duplicate-accounts',
+      payload: { providerAccountIds: [providerAccountId, providerAccountId] },
+    },
+    {
+      name: 'a foreign account target',
+      key: 'edit-foreign-account',
+      payload: { providerAccountIds: [foreignProviderAccountId] },
+    },
+    {
+      name: 'a foreign media target',
+      key: 'edit-foreign-media',
+      payload: { mediaIds: [foreignMediaId] },
+    },
+  ])('rolls back an existing browser post edit with $name', async ({ key, payload }) => {
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+      'x-csrf-token': 'browser-csrf',
+      'idempotency-key': `create-before-${key}`,
+    };
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers,
+      payload: requestPayload('Original atomic edit'),
+    });
+    const postId = created.json<{ data: { id: string } }>().data.id;
+    const before = await database.query<{ revisions: number; jobs: number; scheduled: number }>(
+      `SELECT
+        (SELECT count(*)::int FROM post_revisions WHERE post_id = '${postId}') AS revisions,
+        (SELECT count(*)::int FROM publication_jobs WHERE post_id = '${postId}') AS jobs,
+        (SELECT count(*)::int FROM publication_jobs WHERE post_id = '${postId}' AND state = 'scheduled') AS scheduled`,
+    );
+
+    const rejected = await application.inject({
+      method: 'PATCH',
+      url: `/api/workflow/posts/${postId}`,
+      headers: { ...headers, 'idempotency-key': key },
+      payload: { ...requestPayload('Rejected atomic edit'), ...payload },
+    });
+    expect(rejected.statusCode).toBe(400);
+    const after = await database.query<{
+      revisions: number;
+      jobs: number;
+      scheduled: number;
+      mutations: number;
+    }>(
+      `SELECT
+        (SELECT count(*)::int FROM post_revisions WHERE post_id = '${postId}') AS revisions,
+        (SELECT count(*)::int FROM publication_jobs WHERE post_id = '${postId}') AS jobs,
+        (SELECT count(*)::int FROM publication_jobs WHERE post_id = '${postId}' AND state = 'scheduled') AS scheduled,
+        (SELECT count(*)::int FROM browser_mutation_results WHERE idempotency_key = '${key}') AS mutations`,
+    );
+    expect(after.rows[0]).toEqual({ ...before.rows[0], mutations: 0 });
   });
 
   it('rejects a foreign browser target without post, job, or idempotency residue', async () => {

@@ -326,4 +326,39 @@ describe('browser workflow read contract', () => {
     expect(conflict.statusCode).toBe(409);
     await application.close();
   });
+
+  it.each(['cancel', 'retry'] as const)(
+    'returns bounded authorization and internal failures for job %s',
+    async (action) => {
+      const application = Fastify();
+      registerBrowserWorkflowRoutes(application, {
+        auth: {} as AuthService,
+        database: {} as never,
+      });
+      const request = {
+        method: 'POST' as const,
+        url: `/api/workflow/jobs/${jobId}/${action}`,
+        headers: {
+          'idempotency-key': `${action}-safe-boundary`,
+          'x-csrf-token': 'csrf',
+          cookie: 'publish_relay_csrf=csrf',
+        },
+      };
+
+      authorizeRequest.mockRejectedValueOnce(new WorkspaceAuthorizationError('viewer detail'));
+      const denied = await application.inject(request);
+      expect(denied.statusCode).toBe(403);
+      expect(denied.body).not.toContain('viewer detail');
+
+      authorizeRequest.mockResolvedValue({ workspaceId, userId: 'user', role: 'owner' });
+      getBrowserJobDetail.mockRejectedValueOnce(new Error('database-secret-detail'));
+      const failed = await application.inject(request);
+      expect(failed.statusCode).toBe(500);
+      expect(failed.json()).toEqual({ data: null, error: 'Internal server error' });
+      expect(failed.body).not.toContain('database-secret-detail');
+      expect(cancelPendingJob).not.toHaveBeenCalled();
+      expect(requestOperatorRetry).not.toHaveBeenCalled();
+      await application.close();
+    },
+  );
 });

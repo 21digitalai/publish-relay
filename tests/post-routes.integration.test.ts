@@ -257,6 +257,29 @@ describe('browser workflow PostgreSQL boundary', () => {
     });
   });
 
+  it('rejects a past browser schedule before reserving idempotency state', async () => {
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: {
+        ...browserHeaders,
+        cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+        'x-csrf-token': 'browser-csrf',
+        'idempotency-key': 'browser-past-1',
+      },
+      payload: { ...requestPayload('Past post'), scheduledAt: '2020-01-01T00:00:00.000Z' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      data: null,
+      error: 'Scheduled time must not be in the past',
+    });
+    const rows = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM browser_mutation_results WHERE idempotency_key = 'browser-past-1'`,
+    );
+    expect(rows.rows[0]?.count).toBe(0);
+  });
+
   it('paginates and filters real tenant rows without exposing foreign or private fields', async () => {
     for (const [key, text] of [
       ['browser-one', 'First browser post'],

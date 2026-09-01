@@ -53,6 +53,10 @@ function idempotencyKey(headers: Record<string, unknown>): string | null {
   }
 }
 
+function isPastSchedule(value: string, now = new Date()): boolean {
+  return new Date(value).getTime() < now.getTime() - 60_000;
+}
+
 function serializeJob(job: Awaited<ReturnType<typeof getBrowserJobDetail>>) {
   if (!job) return null;
   return {
@@ -102,6 +106,8 @@ export function registerBrowserWorkflowRoutes(
     const parsed = createPostRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ data: null, error: 'Invalid post' });
     const body = parsed.data;
+    if (isPastSchedule(body.scheduledAt))
+      return reply.code(400).send({ data: null, error: 'Scheduled time must not be in the past' });
     const result = await executeBrowserMutation(
       dependencies.database,
       {
@@ -152,6 +158,8 @@ export function registerBrowserWorkflowRoutes(
     if (!params.success || !parsed.success)
       return reply.code(400).send({ data: null, error: 'Invalid post revision' });
     const body = parsed.data;
+    if (isPastSchedule(body.scheduledAt))
+      return reply.code(400).send({ data: null, error: 'Scheduled time must not be in the past' });
     const result = await executeBrowserMutation(
       dependencies.database,
       {

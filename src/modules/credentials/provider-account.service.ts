@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -39,7 +39,9 @@ export function listProviderAccounts(
           eq(providerConnections.id, providerAccounts.connectionId),
         ),
       )
-      .where(eq(providerAccounts.workspaceId, workspaceId))
+      .where(
+        and(eq(providerAccounts.workspaceId, workspaceId), isNull(providerAccounts.disconnectedAt)),
+      )
       .orderBy(providerConnections.provider, providerAccounts.displayName),
   );
 }
@@ -87,7 +89,8 @@ export async function disconnectProviderAccount(
         .limit(1);
       if (activeJobs[0]) return 'scheduled';
       await transaction
-        .delete(providerAccounts)
+        .update(providerAccounts)
+        .set({ disconnectedAt: new Date(), updatedAt: new Date() })
         .where(
           and(
             eq(providerAccounts.workspaceId, input.workspaceId),
@@ -101,6 +104,7 @@ export async function disconnectProviderAccount(
           and(
             eq(providerAccounts.workspaceId, input.workspaceId),
             eq(providerAccounts.connectionId, account.connectionId),
+            isNull(providerAccounts.disconnectedAt),
           ),
         )
         .limit(1);

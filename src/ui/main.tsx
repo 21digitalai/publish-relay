@@ -1,16 +1,14 @@
-import { StrictMode, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
 
 interface Account {
   id: string;
-  provider: 'X' | 'Instagram';
+  provider: string;
   name: string;
   handle: string;
   health: 'Connected' | 'Reconnect required';
-  capabilities: string;
-  lastSync: string;
 }
 
 function getCsrfToken(): string {
@@ -38,10 +36,11 @@ function formText(fields: FormData, name: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-function Mark({ provider }: { provider: Account['provider'] }) {
+function Mark({ provider }: { provider: string }) {
+  const isX = provider.toLowerCase() === 'x';
   return (
-    <span className={`provider-mark ${provider === 'X' ? 'x' : 'instagram'}`} aria-hidden="true">
-      {provider === 'X' ? 'X' : '◎'}
+    <span className={`provider-mark ${isX ? 'x' : 'generic'}`} aria-hidden="true">
+      {isX ? 'X' : provider.slice(0, 1).toUpperCase()}
     </span>
   );
 }
@@ -296,7 +295,17 @@ function OnboardingPage() {
                 Connect securely through the provider. Publish Relay never asks you to paste account
                 tokens.
               </p>
-              <button className="provider-connect-card" onClick={() => void beginXConnection()}>
+              <button
+                className="provider-connect-card"
+                onClick={() => {
+                  setWorkspaceError(null);
+                  void beginXConnection().catch((error: unknown) => {
+                    setWorkspaceError(
+                      error instanceof Error ? error.message : 'Could not start X connection',
+                    );
+                  });
+                }}
+              >
                 <Mark provider="X" />
                 <span>
                   <strong>Connect X</strong>
@@ -489,8 +498,7 @@ function AccountRow({
         </span>
       </div>
       <div className="account-capabilities">
-        <strong>{account.capabilities}</strong>
-        <span>Last sync {account.lastSync}</span>
+        <span>Connection status is current</span>
       </div>
       <div className="account-actions">
         {needsReconnect && (
@@ -520,7 +528,9 @@ function AccountsPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
-  useEffect(() => {
+  const loadAccounts = useCallback(() => {
+    setLoadState('loading');
+    setActionError(null);
     void fetch('/api/provider-accounts')
       .then(async (response) => {
         if (!response.ok) throw new Error('Accounts could not be loaded');
@@ -542,21 +552,29 @@ function AccountsPage() {
             const handleMatch = /\(@([^)]*)\)$/.exec(account.displayName);
             return {
               id: account.id,
-              provider: account.provider.toLowerCase() === 'x' ? 'X' : 'Instagram',
+              provider: account.provider.toLowerCase() === 'x' ? 'X' : account.provider,
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
               handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
               health: account.status === 'active' ? 'Connected' : 'Reconnect required',
-              capabilities: 'Posts · Media',
-              lastSync: new Date(account.updatedAt).toLocaleString(),
             };
           }),
         );
         setLoadState('ready');
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        setActionError(error instanceof Error ? error.message : 'Accounts could not be loaded');
         setLoadState('error');
       });
   }, []);
+  useEffect(() => {
+    loadAccounts();
+  }, [loadAccounts]);
+  const connectX = () => {
+    setActionError(null);
+    void beginXConnection().catch((error: unknown) => {
+      setActionError(error instanceof Error ? error.message : 'Could not start X connection');
+    });
+  };
   const visible = useMemo(
     () =>
       accounts.filter(
@@ -566,7 +584,7 @@ function AccountsPage() {
       ),
     [accounts, query, health],
   );
-  const groups = ['X', 'Instagram'] as const;
+  const groups = [...new Set(visible.map((account) => account.provider))];
   const previewState = new URLSearchParams(window.location.search).get('state');
   const renderedState = previewState ?? loadState;
   return (
@@ -601,10 +619,7 @@ function AccountsPage() {
             <h1>Connected accounts</h1>
             <p>Manage publishing access and connection health for Atlas Studio.</p>
           </div>
-          <button
-            className="primary-button connect-account"
-            onClick={() => void beginXConnection()}
-          >
+          <button className="primary-button connect-account" onClick={connectX}>
             ＋ Connect account
           </button>
         </div>
@@ -669,14 +684,18 @@ function AccountsPage() {
             <div className="accounts-error" role="alert">
               <h2>Accounts could not be loaded</h2>
               <p>The connection service did not respond. Your schedules are unchanged.</p>
-              <button className="secondary-button">Try again</button>
+              <button className="secondary-button" onClick={loadAccounts}>
+                Try again
+              </button>
             </div>
           )}
           {(renderedState === 'empty' || (renderedState === 'ready' && accounts.length === 0)) && (
             <div className="filter-empty">
               <h2>Connect your first account</h2>
               <p>Add a provider account to start scheduling from this workspace.</p>
-              <button className="primary-button">Connect account</button>
+              <button className="primary-button" onClick={connectX}>
+                Connect account
+              </button>
             </div>
           )}
           {renderedState === 'ready' &&
@@ -696,7 +715,7 @@ function AccountsPage() {
                         </span>
                       </div>
                     </div>
-                    <button className="text-button" onClick={() => void beginXConnection()}>
+                    <button className="text-button" onClick={connectX}>
                       ＋ Connect another
                     </button>
                   </header>
@@ -707,7 +726,7 @@ function AccountsPage() {
                         key={account.id}
                         onDisconnect={setDisconnecting}
                         onReconnect={() => {
-                          void beginXConnection();
+                          connectX();
                         }}
                       />
                     ))}

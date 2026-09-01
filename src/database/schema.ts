@@ -263,6 +263,7 @@ export const providerAccounts = pgTable(
       .references(() => providerConnections.id, { onDelete: 'cascade' }),
     providerAccountId: text('provider_account_id').notNull(),
     displayName: text('display_name').notNull(),
+    disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
     ...timestamps,
   },
   (table) => [

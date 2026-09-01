@@ -44,6 +44,7 @@ const migrations = [
   '0007_add_scheduler_attempt_ledger.sql',
   '0008_handy_shen.sql',
   '0009_generalize_oauth_transaction_secret.sql',
+  '0016_common_barracuda.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -333,15 +334,56 @@ describe('credential and OAuth persistence', () => {
       'status',
       'updatedAt',
     ]);
+    const accountId = accounts[0]?.id ?? '';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id)
+      VALUES ('00000000-0000-4000-8000-000000000201', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+      VALUES (
+        '00000000-0000-4000-8000-000000000202',
+        '${workspaceId}',
+        '00000000-0000-4000-8000-000000000201',
+        1,
+        '{}'
+      );
+      INSERT INTO publication_jobs (
+        id, workspace_id, post_id, revision_id, provider_account_id, state, scheduled_at
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000203',
+        '${workspaceId}',
+        '00000000-0000-4000-8000-000000000201',
+        '00000000-0000-4000-8000-000000000202',
+        '${accountId}',
+        'scheduled',
+        now()
+      );
+    `);
     await expect(
       disconnectProviderAccount(db, {
         workspaceId,
         userId,
-        accountId: accounts[0]?.id ?? '',
+        accountId,
+        requestId: 'req-disconnect-active-account',
+      }),
+    ).resolves.toBe('scheduled');
+    await database.exec(`
+      UPDATE publication_jobs
+      SET state = 'published'
+      WHERE id = '00000000-0000-4000-8000-000000000203';
+    `);
+    await expect(
+      disconnectProviderAccount(db, {
+        workspaceId,
+        userId,
+        accountId,
         requestId: 'req-disconnect-account',
       }),
     ).resolves.toBe('disconnected');
     expect(await listProviderAccounts(db, workspaceId)).toEqual([]);
+    const retainedJobs = await database.query<{ count: number }>(
+      'select count(*)::int as count from publication_jobs',
+    );
+    expect(retainedJobs.rows[0]?.count).toBe(1);
     const revoked = await database.query<{ count: number }>(
       'select count(*)::int as count from credentials where revoked_at is not null',
     );

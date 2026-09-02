@@ -36,7 +36,11 @@ const migrations = [
   '0011_bored_grim_reaper.sql',
   '0012_enable_api_mutation_result_rls.sql',
   '0013_illegal_texas_twister.sql',
+  '0014_great_lethal_legion.sql',
+  '0015_talented_alex_power.sql',
+  '0016_common_barracuda.sql',
   '0017_dark_whizzer.sql',
+  '0018_membership_identity_scope.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';

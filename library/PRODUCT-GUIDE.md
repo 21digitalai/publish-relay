@@ -22,6 +22,7 @@ Users can register, connect multiple social accounts, schedule content through t
 
 - Commercial storefront, billing, pricing, subscriptions, plan names, quotas, and marketing pages are not Core features.
 - Core exposes neutral policy and factual usage boundaries with an allow-all standalone implementation; it does not know why a future injected implementation may deny an action.
+- Every capacity-changing command evaluates the same typed action-policy contract once before mutation. Inputs contain only actor/workspace identity, requested Core facts, current usage facts, request context, and the active transaction. Denials expose stable neutral codes and safe metadata; standalone Core injects the allow-all implementation.
 - Current registration/login remains part of Core. A future local auth mode may enter a default owner/workspace directly without removing tenant identity from the domain.
 
 - Marketing homepage.

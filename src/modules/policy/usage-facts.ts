@@ -44,8 +44,15 @@ export async function getWorkspaceUsageFacts(
   return withTenantTransaction(
     database,
     { workspaceId: request.workspaceId },
-    async (transaction) => {
-      const result = await transaction.execute<FactsRow>(sql`
+    (transaction) => getWorkspaceUsageFactsInTransaction(transaction, request),
+  );
+}
+
+export async function getWorkspaceUsageFactsInTransaction(
+  transaction: NodePgDatabase,
+  request: UsageFactsRequest,
+): Promise<WorkspaceUsageFacts> {
+  const result = await transaction.execute<FactsRow>(sql`
       select
         coalesce((select sum(byte_size) from media_objects where workspace_id = ${request.workspaceId} and state <> 'deleted'), 0)::text as retained_bytes,
         (select count(*) from media_objects where workspace_id = ${request.workspaceId} and state = 'temporary')::text as temporary_media,
@@ -58,9 +65,7 @@ export async function getWorkspaceUsageFacts(
         (select max(scheduled_at) from publication_jobs where workspace_id = ${request.workspaceId} and state in ('scheduled', 'leased', 'dispatching', 'retry_wait')) as furthest_scheduled_at,
         (select count(*) from memberships where workspace_id = ${request.workspaceId})::text as workspace_members
     `);
-      return mapFacts(result.rows[0], new Set(request.requestedProviderAccountIds ?? []).size);
-    },
-  );
+  return mapFacts(result.rows[0], new Set(request.requestedProviderAccountIds ?? []).size);
 }
 
 function mapFacts(

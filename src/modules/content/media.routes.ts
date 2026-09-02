@@ -7,6 +7,7 @@ import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
+import { allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import type { MediaStorage } from './media-storage.js';
@@ -21,6 +22,7 @@ export function registerMediaRoutes(
   storage: MediaStorage,
   apiKeys: ApiKeyService,
   rateLimiter: ApiRateLimiter,
+  actionPolicy: ActionPolicy = allowAllActionPolicy,
 ): void {
   for (const contentType of SUPPORTED_CONTENT_TYPES)
     application.addContentTypeParser(
@@ -90,7 +92,7 @@ export function registerMediaRoutes(
             userId: principal.createdByUserId,
             bytes,
             maxBytes: AGENT_MEDIA_MAX_BYTES,
-          });
+          }, actionPolicy);
           uncommittedStorageKey = `${principal.workspaceId}/${media.mediaId}/${media.sha256}`;
           return {
             statusCode: 201,

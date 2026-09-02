@@ -8,6 +8,11 @@ import {
   publicationJobs,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import {
+  allowAllActionPolicy,
+  enforceWorkspaceAction,
+  type ActionPolicy,
+} from '../policy/action-policy.js';
 
 export interface ClaimedJob extends Record<string, unknown> {
   id: string;
@@ -282,11 +287,18 @@ export async function finishDispatchAttempt(
 export async function requestOperatorRetry(
   database: NodePgDatabase,
   input: { workspaceId: string; jobId: string; actorId: string; now: Date },
+  policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<'scheduled' | 'conflict'> {
   return withTenantTransaction(
     database,
     { workspaceId: input.workspaceId },
     async (transaction) => {
+      await enforceWorkspaceAction(transaction, policy, {
+        workspaceId: input.workspaceId,
+        actor: { type: 'user', id: input.actorId },
+        action: 'publication.retry',
+        request: {},
+      });
       const jobs = await transaction
         .update(publicationJobs)
         .set({ state: 'retry_wait', nextAttemptAt: input.now, updatedAt: input.now })

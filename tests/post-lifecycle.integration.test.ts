@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTemporaryMedia, storeMedia } from '../src/modules/content/media.service.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { createPost, editPost, reschedulePost } from '../src/modules/content/post.service.js';
+import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 import {
   cleanupExpiredStaging,
@@ -32,6 +33,9 @@ const migrations = [
   '0008_handy_shen.sql',
   '0014_great_lethal_legion.sql',
   '0015_talented_alex_power.sql',
+  '0016_common_barracuda.sql',
+  '0017_dark_whizzer.sql',
+  '0018_membership_identity_scope.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';
@@ -102,6 +106,37 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('post revision lifecycle', () => {
+  it('evaluates policy exactly once and leaves no post artifacts when denied', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    let evaluations = 0;
+    const policy: ActionPolicy = {
+      evaluate() {
+        evaluations += 1;
+        return Promise.resolve({
+          allowed: false as const,
+          code: 'action_not_allowed',
+          reason: 'Denied for test',
+        });
+      },
+    };
+    await expect(
+      createPost(
+        db,
+        {
+          workspaceId,
+          userId,
+          content: { type: 'text', text: 'Denied' },
+          mediaIds: [],
+          providerAccountIds: [accountOne],
+          scheduledAt: new Date('2026-09-01T10:00:00Z'),
+        },
+        policy,
+      ),
+    ).rejects.toMatchObject({ code: 'action_not_allowed' });
+    expect(evaluations).toBe(1);
+    const rows = await database.query('SELECT id FROM posts');
+    expect(rows.rows).toHaveLength(0);
+  });
   it('rejects cross-workspace content graph references at the database boundary', async () => {
     const otherWorkspaceId = '00000000-0000-4000-8000-000000000210';
     const otherPostId = '00000000-0000-4000-8000-000000000211';
@@ -318,6 +353,35 @@ describe('post revision lifecycle', () => {
 });
 
 describe('media lifecycle', () => {
+  it('denies ingest before reserving database or storage artifacts', async () => {
+    const storage = new FakeMediaStorage();
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const policy: ActionPolicy = {
+      evaluate() {
+        return Promise.resolve({
+          allowed: false as const,
+          code: 'action_not_allowed',
+          reason: 'Denied for test',
+        });
+      },
+    };
+    await expect(
+      storeMedia(
+        db,
+        storage,
+        {
+          workspaceId,
+          userId,
+          bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          maxBytes: 1024,
+        },
+        policy,
+      ),
+    ).rejects.toMatchObject({ code: 'action_not_allowed' });
+    expect(storage.objects.size).toBe(0);
+    const rows = await database.query('SELECT id FROM media_objects');
+    expect(rows.rows).toHaveLength(0);
+  });
   it('rejects empty, unsupported, and oversized media before reserving storage', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const storage = new FakeMediaStorage();

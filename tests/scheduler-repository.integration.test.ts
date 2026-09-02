@@ -26,6 +26,16 @@ const migrations = [
   '0006_enforce_content_workspace_foreign_keys.sql',
   '0007_add_scheduler_attempt_ledger.sql',
   '0008_handy_shen.sql',
+  '0009_generalize_oauth_transaction_secret.sql',
+  '0010_flashy_nextwave.sql',
+  '0011_bored_grim_reaper.sql',
+  '0012_enable_api_mutation_result_rls.sql',
+  '0013_illegal_texas_twister.sql',
+  '0014_great_lethal_legion.sql',
+  '0015_talented_alex_power.sql',
+  '0016_common_barracuda.sql',
+  '0017_dark_whizzer.sql',
+  '0018_membership_identity_scope.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';
@@ -40,7 +50,7 @@ beforeEach(async () => {
     );
   await database.exec(`
     INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Scheduler', 'scheduler');
-    INSERT INTO users (id, email, password_hash) VALUES ('00000000-0000-4000-8000-000000000302', 'scheduler@example.test', 'redacted');
+    INSERT INTO users (id, email, password_hash, display_name) VALUES ('00000000-0000-4000-8000-000000000302', 'scheduler@example.test', 'redacted', 'Scheduler');
     SELECT set_config('app.workspace_id', '${workspaceId}', false);
     INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
       VALUES ('00000000-0000-4000-8000-000000000303', '${workspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');

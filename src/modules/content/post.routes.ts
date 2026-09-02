@@ -7,6 +7,7 @@ import { InvalidCursorError, errorEnvelope, successEnvelope } from '../api/contr
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
+import { allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { createPostRequestSchema } from './post.contract.js';
@@ -48,6 +49,7 @@ export function registerPostRoutes(
   apiKeys: ApiKeyService,
   rateLimiter: ApiRateLimiter,
   cursorCodec: CursorCodec,
+  actionPolicy: ActionPolicy = allowAllActionPolicy,
 ): void {
   application.get('/api/v1/posts', async (request, reply) => {
     try {
@@ -217,7 +219,7 @@ export function registerPostRoutes(
             mediaIds: body.mediaIds,
             providerAccountIds: body.providerAccountIds,
             scheduledAt: new Date(body.scheduledAt),
-          });
+          }, actionPolicy);
           return { statusCode: 201, body: successEnvelope(resourceLinks(created), request.id) };
         },
       );

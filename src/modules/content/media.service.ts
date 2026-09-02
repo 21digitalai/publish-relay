@@ -3,6 +3,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
+  allowAllActionPolicy,
+  enforceWorkspaceAction,
+  type ActionPolicy,
+} from '../policy/action-policy.js';
+import {
   listExpiredTemporaryMedia,
   markMediaDeleted,
   markMediaReady,
@@ -39,10 +44,19 @@ export async function storeMedia(
   database: NodePgDatabase,
   storage: MediaStorage,
   input: { workspaceId: string; userId: string; bytes: Buffer; maxBytes: number },
+  policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
   if (input.bytes.length === 0) throw new Error('Media content is empty');
   if (input.bytes.length > input.maxBytes)
     throw new Error('Media exceeds the configured size limit');
+  await withTenantTransaction(database, input, (transaction) =>
+    enforceWorkspaceAction(transaction, policy, {
+      workspaceId: input.workspaceId,
+      actor: { type: 'user', id: input.userId },
+      action: 'media.ingest',
+      request: { mediaBytes: input.bytes.length },
+    }),
+  );
   const mediaId = randomUUID();
   const mimeType = detectMimeType(input.bytes);
   const sha256 = createHash('sha256').update(input.bytes).digest('hex');
@@ -58,12 +72,7 @@ export async function storeMedia(
     }),
   );
   try {
-    const stored = await storage.put({
-      workspaceId: input.workspaceId,
-      mediaId,
-      bytes: input.bytes,
-      mimeType,
-    });
+    const stored = await storage.put({ workspaceId: input.workspaceId, mediaId, bytes: input.bytes, mimeType });
     if (stored.storageKey !== storageKey) throw new Error('Storage returned an unexpected key');
     const ready = await withTenantTransaction(database, input, (transaction) =>
       markMediaReady(transaction, input.workspaceId, mediaId),
@@ -83,26 +92,16 @@ export async function storeMedia(
   }
 }
 
-export async function storeMediaInTransaction(
+async function persistMedia(
   transaction: NodePgDatabase,
   storage: MediaStorage,
   input: { workspaceId: string; userId: string; bytes: Buffer; maxBytes: number },
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
-  if (input.bytes.length === 0) throw new Error('Media content is empty');
-  if (input.bytes.length > input.maxBytes)
-    throw new Error('Media exceeds the configured size limit');
   const mediaId = randomUUID();
   const mimeType = detectMimeType(input.bytes);
   const sha256 = createHash('sha256').update(input.bytes).digest('hex');
   const storageKey = `${input.workspaceId}/${mediaId}/${sha256}`;
-  await reserveMedia(transaction, {
-    id: mediaId,
-    workspaceId: input.workspaceId,
-    storageKey,
-    sha256,
-    mimeType,
-    byteSize: input.bytes.length,
-  });
+  await reserveMedia(transaction, { id: mediaId, workspaceId: input.workspaceId, storageKey, sha256, mimeType, byteSize: input.bytes.length });
   try {
     const stored = await storage.put({
       workspaceId: input.workspaceId,
@@ -123,6 +122,24 @@ export async function storeMediaInTransaction(
     }
     throw error;
   }
+}
+
+export async function storeMediaInTransaction(
+  transaction: NodePgDatabase,
+  storage: MediaStorage,
+  input: { workspaceId: string; userId: string; bytes: Buffer; maxBytes: number },
+  policy: ActionPolicy = allowAllActionPolicy,
+): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
+  if (input.bytes.length === 0) throw new Error('Media content is empty');
+  if (input.bytes.length > input.maxBytes)
+    throw new Error('Media exceeds the configured size limit');
+  await enforceWorkspaceAction(transaction, policy, {
+    workspaceId: input.workspaceId,
+    actor: { type: 'user', id: input.userId },
+    action: 'media.ingest',
+    request: { mediaBytes: input.bytes.length },
+  });
+  return persistMedia(transaction, storage, input);
 }
 
 export async function cleanupTemporaryMedia(

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
+import { allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
 import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
@@ -117,8 +118,14 @@ function serializeJobSummary(job: NonNullable<Awaited<ReturnType<typeof getBrows
 
 export function registerBrowserWorkflowRoutes(
   application: FastifyInstance,
-  dependencies: { auth: AuthService; database: NodePgDatabase; now?: () => Date },
+  dependencies: {
+    auth: AuthService;
+    database: NodePgDatabase;
+    now?: () => Date;
+    actionPolicy?: ActionPolicy;
+  },
 ): void {
+  const actionPolicy = dependencies.actionPolicy ?? allowAllActionPolicy;
   application.post('/api/workflow/posts', async (request, reply) => {
     let identity;
     try {
@@ -156,7 +163,7 @@ export function registerBrowserWorkflowRoutes(
             mediaIds: body.mediaIds,
             providerAccountIds: body.providerAccountIds,
             scheduledAt: new Date(body.scheduledAt),
-          });
+          }, actionPolicy);
           return {
             statusCode: 201,
             body: {
@@ -219,7 +226,7 @@ export function registerBrowserWorkflowRoutes(
             mediaIds: body.mediaIds,
             providerAccountIds: body.providerAccountIds,
             scheduledAt: new Date(body.scheduledAt),
-          });
+          }, actionPolicy);
           return { statusCode: 200, body: { data: edited, error: null } };
         },
       );
@@ -264,9 +271,10 @@ export function registerBrowserWorkflowRoutes(
           body: {
             data: await reschedulePostInTransaction(transaction, {
               workspaceId: identity.workspaceId,
+              userId: identity.userId,
               postId: params.data.postId,
               scheduledAt: new Date(parsed.data.scheduledAt),
-            }),
+            }, actionPolicy),
             error: null,
           },
         }),
@@ -407,7 +415,7 @@ export function registerBrowserWorkflowRoutes(
           jobId: params.data.jobId,
           actorId: identity.userId,
           now: new Date(),
-        });
+        }, actionPolicy);
     } catch (error) {
       return mutationError(request, reply, error);
     }

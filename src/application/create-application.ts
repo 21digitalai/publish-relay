@@ -23,6 +23,7 @@ import type { MasterKeyProvider } from '../modules/credentials/envelope.js';
 import type { XHttpClient } from '../modules/providers/x-http-client.js';
 import { registerXOauthRoutes } from '../modules/providers/x-oauth.routes.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
+import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
 
 export function createApplication(
   config: RuntimeConfig,
@@ -32,6 +33,7 @@ export function createApplication(
   database?: NodePgDatabase,
   xOauth?: { keys: MasterKeyProvider; client: XHttpClient; callbackUrl: string },
   mediaStorage?: MediaStorage,
+  actionPolicy: ActionPolicy = allowAllActionPolicy,
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
@@ -88,14 +90,15 @@ export function createApplication(
         apiKeys,
         rateLimiter,
         new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
+        actionPolicy,
       );
       if (mediaStorage)
-        registerMediaRoutes(application, database, mediaStorage, apiKeys, rateLimiter);
+        registerMediaRoutes(application, database, mediaStorage, apiKeys, rateLimiter, actionPolicy);
     }
   }
   if (auth && database) {
     registerProviderAccountRoutes(application, { auth, database });
-    registerBrowserWorkflowRoutes(application, { auth, database });
+    registerBrowserWorkflowRoutes(application, { auth, database, actionPolicy });
   }
   if (auth && database && xOauth) registerXOauthRoutes(application, { auth, database, ...xOauth });
 

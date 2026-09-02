@@ -268,10 +268,10 @@ describe('browser workflow read contract', () => {
     expect((await application.inject(request)).statusCode).toBe(200);
     expect((await application.inject(request)).statusCode).toBe(200);
     expect(requestOperatorRetry).toHaveBeenCalledTimes(1);
-    expect(requestOperatorRetry).toHaveBeenCalledWith(
+    expect(requestOperatorRetry.mock.calls[0]?.slice(0, 2)).toEqual([
       expect.anything(),
       expect.objectContaining({ workspaceId, jobId, actorId: 'user' }),
-    );
+    ]);
     expect(getBrowserJobDetail).toHaveBeenCalledWith(expect.anything(), workspaceId, jobId);
     await application.close();
   });

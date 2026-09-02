@@ -18,6 +18,9 @@ import {
 export interface PostIntentInput extends PostRevisionInput {
   workspaceId: string;
   userId: string;
+  actor?: { type: 'user' | 'api-key'; id: string };
+  requestId?: string;
+  idempotencyKey?: string;
 }
 
 function validatePostIntent(input: PostIntentInput): void {
@@ -73,7 +76,16 @@ export async function editPostInTransaction(
 
 export async function reschedulePostInTransaction(
   transaction: NodePgDatabase,
-  input: { workspaceId: string; userId?: string; postId: string; scheduledAt: Date; now?: Date },
+  input: {
+    workspaceId: string;
+    userId?: string;
+    actor?: { type: 'user' | 'api-key'; id: string };
+    requestId?: string;
+    idempotencyKey?: string;
+    postId: string;
+    scheduledAt: Date;
+    now?: Date;
+  },
   policy: ActionPolicy = allowAllActionPolicy,
 ) {
   if (!Number.isFinite(input.scheduledAt.getTime()))
@@ -89,7 +101,16 @@ export async function reschedulePostInTransaction(
 
 export async function reschedulePost(
   database: NodePgDatabase,
-  input: { workspaceId: string; userId?: string; postId: string; scheduledAt: Date; now?: Date },
+  input: {
+    workspaceId: string;
+    userId?: string;
+    actor?: { type: 'user' | 'api-key'; id: string };
+    requestId?: string;
+    idempotencyKey?: string;
+    postId: string;
+    scheduledAt: Date;
+    now?: Date;
+  },
   policy: ActionPolicy = allowAllActionPolicy,
 ) {
   return withTenantTransaction(database, input, (transaction) =>
@@ -99,7 +120,10 @@ export async function reschedulePost(
 
 async function enforcePostPolicy(
   transaction: NodePgDatabase,
-  input: Pick<PostIntentInput, 'workspaceId' | 'userId' | 'providerAccountIds'> & {
+  input: Pick<
+    PostIntentInput,
+    'workspaceId' | 'userId' | 'providerAccountIds' | 'actor' | 'requestId' | 'idempotencyKey'
+  > & {
     scheduledAt: Date;
   },
   action: ActionName,
@@ -107,12 +131,14 @@ async function enforcePostPolicy(
 ): Promise<void> {
   await enforceWorkspaceAction(transaction, policy, {
     workspaceId: input.workspaceId,
-    actor: { type: 'user', id: input.userId },
+    actor: input.actor ?? { type: 'user', id: input.userId },
     action,
     requestedProviderAccountIds: input.providerAccountIds,
     request: {
       providerAccountIds: input.providerAccountIds,
       scheduledAt: input.scheduledAt,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     },
   });
 }

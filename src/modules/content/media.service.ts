@@ -43,7 +43,7 @@ export function validateMediaContentType(bytes: Buffer, declaredMimeType: string
 export async function storeMedia(
   database: NodePgDatabase,
   storage: MediaStorage,
-  input: { workspaceId: string; userId: string; bytes: Buffer; maxBytes: number },
+  input: { workspaceId: string; userId: string; actor?: { type: 'user' | 'api-key'; id: string }; requestId?: string; idempotencyKey?: string; bytes: Buffer; maxBytes: number },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
   if (input.bytes.length === 0) throw new Error('Media content is empty');
@@ -52,9 +52,13 @@ export async function storeMedia(
   await withTenantTransaction(database, input, (transaction) =>
     enforceWorkspaceAction(transaction, policy, {
       workspaceId: input.workspaceId,
-      actor: { type: 'user', id: input.userId },
+      actor: input.actor ?? { type: 'user', id: input.userId },
       action: 'media.ingest',
-      request: { mediaBytes: input.bytes.length },
+      request: {
+        mediaBytes: input.bytes.length,
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      },
     }),
   );
   const mediaId = randomUUID();
@@ -95,7 +99,7 @@ export async function storeMedia(
 async function persistMedia(
   transaction: NodePgDatabase,
   storage: MediaStorage,
-  input: { workspaceId: string; userId: string; bytes: Buffer; maxBytes: number },
+  input: { workspaceId: string; userId: string; actor?: { type: 'user' | 'api-key'; id: string }; requestId?: string; idempotencyKey?: string; bytes: Buffer; maxBytes: number },
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
   const mediaId = randomUUID();
   const mimeType = detectMimeType(input.bytes);
@@ -127,7 +131,7 @@ async function persistMedia(
 export async function storeMediaInTransaction(
   transaction: NodePgDatabase,
   storage: MediaStorage,
-  input: { workspaceId: string; userId: string; bytes: Buffer; maxBytes: number },
+  input: { workspaceId: string; userId: string; actor?: { type: 'user' | 'api-key'; id: string }; requestId?: string; idempotencyKey?: string; bytes: Buffer; maxBytes: number },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
   if (input.bytes.length === 0) throw new Error('Media content is empty');
@@ -135,9 +139,13 @@ export async function storeMediaInTransaction(
     throw new Error('Media exceeds the configured size limit');
   await enforceWorkspaceAction(transaction, policy, {
     workspaceId: input.workspaceId,
-    actor: { type: 'user', id: input.userId },
+    actor: input.actor ?? { type: 'user', id: input.userId },
     action: 'media.ingest',
-    request: { mediaBytes: input.bytes.length },
+    request: {
+      mediaBytes: input.bytes.length,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    },
   });
   return persistMedia(transaction, storage, input);
 }

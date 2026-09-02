@@ -7,7 +7,7 @@ import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
-import { allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
+import { ActionPolicyDeniedError, allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import type { MediaStorage } from './media-storage.js';
@@ -90,6 +90,9 @@ export function registerMediaRoutes(
           const media = await storeMediaInTransaction(transaction, storage, {
             workspaceId: principal.workspaceId,
             userId: principal.createdByUserId,
+            actor: { type: 'api-key', id: principal.id },
+            requestId: request.id,
+            idempotencyKey,
             bytes,
             maxBytes: AGENT_MEDIA_MAX_BYTES,
           }, actionPolicy);
@@ -128,6 +131,10 @@ export function registerMediaRoutes(
       }
       if (error instanceof ApiKeyAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (error instanceof ActionPolicyDeniedError)
+        return await reply
+          .code(403)
+          .send(errorEnvelope(error.code, error.message, request.id, error.metadata));
       if (
         error instanceof z.ZodError ||
         (error instanceof Error && /Media|Idempotency|Unsupported/.test(error.message))

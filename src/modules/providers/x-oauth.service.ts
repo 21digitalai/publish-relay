@@ -17,6 +17,11 @@ import { hashOauthState } from '../credentials/oauth.service.js';
 import { connectProvider } from '../credentials/provider-connection.service.js';
 import { assertActiveMembership } from '../credentials/provider-connection.repository.js';
 import type { XHttpClient } from './x-http-client.js';
+import {
+  allowAllActionPolicy,
+  enforceWorkspaceAction,
+  type ActionPolicy,
+} from '../policy/action-policy.js';
 
 const X_OAUTH_TTL_MS = 10 * 60 * 1000;
 
@@ -24,8 +29,22 @@ export async function beginXOauthConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   client: XHttpClient,
-  input: { workspaceId: string; userId: string; callbackUrl: string; now?: Date },
+  input: { workspaceId: string; userId: string; callbackUrl: string; requestId?: string; now?: Date },
+  policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ authorizationUrl: string; expiresAt: Date }> {
+  await withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId, userId: input.userId },
+    async (transaction) => {
+      await assertActiveMembership(transaction, input.workspaceId, input.userId);
+      await enforceWorkspaceAction(transaction, policy, {
+        workspaceId: input.workspaceId,
+        actor: { type: 'user', id: input.userId },
+        action: 'provider-account.connect',
+        request: { provider: 'x', ...(input.requestId ? { requestId: input.requestId } : {}) },
+      });
+    },
+  );
   const requestToken = await client.beginConnection(input.callbackUrl);
   const now = input.now ?? new Date();
   const expiresAt = new Date(now.getTime() + X_OAUTH_TTL_MS);
@@ -125,5 +144,6 @@ export async function completeXOauthConnection(
       accessToken: completed.credential,
       requestId: input.requestId,
     },
+    allowAllActionPolicy,
   );
 }

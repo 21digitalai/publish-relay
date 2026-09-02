@@ -7,7 +7,7 @@ import { InvalidCursorError, errorEnvelope, successEnvelope } from '../api/contr
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
-import { allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
+import { ActionPolicyDeniedError, allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { createPostRequestSchema } from './post.contract.js';
@@ -98,6 +98,10 @@ export function registerPostRoutes(
     } catch (error) {
       if (error instanceof ApiKeyAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (error instanceof ActionPolicyDeniedError)
+        return await reply
+          .code(403)
+          .send(errorEnvelope(error.code, error.message, request.id, error.metadata));
       if (
         error instanceof InvalidCursorError ||
         error instanceof z.ZodError ||
@@ -215,6 +219,9 @@ export function registerPostRoutes(
           const created = await createPostInTransaction(transaction, {
             workspaceId: principal.workspaceId,
             userId: principal.createdByUserId,
+            actor: { type: 'api-key', id: principal.id },
+            requestId: request.id,
+            idempotencyKey,
             content: body.content,
             mediaIds: body.mediaIds,
             providerAccountIds: body.providerAccountIds,

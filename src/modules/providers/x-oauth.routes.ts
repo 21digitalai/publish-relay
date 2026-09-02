@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { authenticateRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
+import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-policy.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import type { XHttpClient } from './x-http-client.js';
 import { beginXOauthConnection, completeXOauthConnection } from './x-oauth.service.js';
@@ -22,6 +23,7 @@ export function registerXOauthRoutes(
     keys: MasterKeyProvider;
     client: XHttpClient;
     callbackUrl: string;
+    actionPolicy: ActionPolicy;
   },
 ): void {
   application.post('/api/oauth/x', async (request, reply) => {
@@ -34,17 +36,25 @@ export function registerXOauthRoutes(
       )
     )
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
-    const result = await beginXOauthConnection(
-      dependencies.database,
-      dependencies.keys,
-      dependencies.client,
-      {
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
-        callbackUrl: dependencies.callbackUrl,
-      },
-    );
-    return { data: result, error: null };
+    try {
+      const result = await beginXOauthConnection(
+        dependencies.database,
+        dependencies.keys,
+        dependencies.client,
+        {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          callbackUrl: dependencies.callbackUrl,
+          requestId: request.id,
+        },
+        dependencies.actionPolicy,
+      );
+      return { data: result, error: null };
+    } catch (error) {
+      if (error instanceof ActionPolicyDeniedError)
+        return reply.code(403).send({ data: null, error: error.message, code: error.code });
+      throw error;
+    }
   });
 
   application.get('/api/oauth/x/callback', async (request, reply) => {

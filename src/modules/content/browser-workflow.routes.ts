@@ -5,7 +5,11 @@ import { z } from 'zod';
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
-import { allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
+import {
+  ActionPolicyDeniedError,
+  allowAllActionPolicy,
+  type ActionPolicy,
+} from '../policy/action-policy.js';
 import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
@@ -74,6 +78,14 @@ function mutationError(request: FastifyRequest, reply: FastifyReply, error: unkn
     return reply
       .code(403)
       .send({ data: null, error: 'You cannot change content in this workspace' });
+  if (error instanceof ActionPolicyDeniedError)
+    return reply.code(403).send({
+      data: null,
+      error: error.message,
+      code: error.code,
+      metadata: error.metadata,
+      requestId: request.id,
+    });
   if (error instanceof z.ZodError || error instanceof PostValidationError)
     return reply.code(400).send({ data: null, error: error.message });
   if (error instanceof PostNotFoundError)
@@ -159,6 +171,8 @@ export function registerBrowserWorkflowRoutes(
           const created = await createPostInTransaction(transaction, {
             workspaceId: identity.workspaceId,
             userId: identity.userId,
+            requestId: request.id,
+            idempotencyKey: key,
             content: body.content,
             mediaIds: body.mediaIds,
             providerAccountIds: body.providerAccountIds,
@@ -221,6 +235,8 @@ export function registerBrowserWorkflowRoutes(
           const edited = await editPostInTransaction(transaction, {
             workspaceId: identity.workspaceId,
             userId: identity.userId,
+            requestId: request.id,
+            idempotencyKey: key,
             postId: params.data.postId,
             content: body.content,
             mediaIds: body.mediaIds,
@@ -272,6 +288,8 @@ export function registerBrowserWorkflowRoutes(
             data: await reschedulePostInTransaction(transaction, {
               workspaceId: identity.workspaceId,
               userId: identity.userId,
+              requestId: request.id,
+              idempotencyKey: key,
               postId: params.data.postId,
               scheduledAt: new Date(parsed.data.scheduledAt),
             }, actionPolicy),

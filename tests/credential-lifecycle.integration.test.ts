@@ -32,6 +32,7 @@ import {
   beginXOauthConnection,
   completeXOauthConnection,
 } from '../src/modules/providers/x-oauth.service.js';
+import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -223,6 +224,64 @@ describe('credential and OAuth persistence', () => {
       'provider.reconnected',
     ]);
     expect(auditRows.rows[1]?.metadata).toEqual({ provider: 'fake', accountCount: 2 });
+  });
+
+  it('denies X connection before provider, OAuth, credential, or idempotency artifacts', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    let providerCalls = 0;
+    let policyCalls = 0;
+    const policy: ActionPolicy = {
+      evaluate(context) {
+        policyCalls += 1;
+        expect(context).toMatchObject({
+          workspaceId,
+          actor: { type: 'user', id: userId },
+          action: 'provider-account.connect',
+          request: { provider: 'x', requestId: 'oauth-start' },
+        });
+        return Promise.resolve({ allowed: false, code: 'action_denied', reason: 'Not allowed' });
+      },
+    };
+    const client = new XHttpClient({
+      consumerKey: 'consumer-key',
+      consumerSecret: 'consumer-secret',
+      fetch: () => {
+        providerCalls += 1;
+        throw new Error('Provider must not be called');
+      },
+    });
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(randomBytes(32)),
+    };
+
+    await expect(
+      beginXOauthConnection(
+        db,
+        keys,
+        client,
+        { workspaceId, userId, callbackUrl: 'https://app.test/callback', requestId: 'oauth-start' },
+        policy,
+      ),
+    ).rejects.toMatchObject({ code: 'action_denied' });
+    expect(policyCalls).toBe(1);
+    expect(providerCalls).toBe(0);
+    const counts = await database.query<{
+      oauth_transactions: number;
+      credentials: number;
+      connections: number;
+      accounts: number;
+    }>(`select
+      (select count(*)::int from oauth_transactions) oauth_transactions,
+      (select count(*)::int from credentials) credentials,
+      (select count(*)::int from provider_connections) connections,
+      (select count(*)::int from provider_accounts) accounts`);
+    expect(counts.rows[0]).toEqual({
+      oauth_transactions: 0,
+      credentials: 0,
+      connections: 0,
+      accounts: 0,
+    });
   });
 
   it('consumes an encrypted X request-token secret once and creates the canonical connection', async () => {

@@ -15,6 +15,21 @@ const outcomes: PublishOutcome[] = [
 ];
 
 describe('provider adapter contract', () => {
+  it('exposes adapter-owned technical metadata without commercial dimensions', () => {
+    const adapter = new DeterministicFakeProviderAdapter([], {
+      status: 'failed', code: 'validation', message: 'unused',
+    });
+    expect(adapter.capabilities).toEqual({
+      providerFamily: 'fake',
+      contentKinds: ['text', 'quote', 'article'],
+      supportedMediaTypes: ['image/*'],
+      accountTargetMode: 'single_account',
+      dispatchMode: 'immediate_or_scheduled',
+      verifiedLimits: {},
+    });
+    expect(JSON.stringify(adapter.capabilities)).not.toMatch(/plan|price|tier|entitlement/i);
+  });
+
   it.each(outcomes)('returns typed $status outcomes without translation', async (outcome) => {
     const adapter = new DeterministicFakeProviderAdapter(
       [{ id: 'account-1', displayName: 'One' }],

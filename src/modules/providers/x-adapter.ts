@@ -53,6 +53,14 @@ function failedOutcome(error: unknown): PublishOutcome {
 
 export class XProviderAdapter implements ProviderAdapter {
   public readonly version = PROVIDER_ADAPTER_VERSION;
+  public readonly capabilities = {
+    providerFamily: 'x',
+    contentKinds: ['text', 'quote'],
+    supportedMediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'],
+    accountTargetMode: 'single_account',
+    dispatchMode: 'immediate_or_scheduled',
+    verifiedLimits: { maxMediaPerPost: X_MAX_MEDIA_PER_POST },
+  } as const;
   private readonly staged = new Map<string, StagedPublish>();
 
   public constructor(private readonly client: XClient) {}

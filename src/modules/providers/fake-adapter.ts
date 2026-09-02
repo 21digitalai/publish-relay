@@ -9,6 +9,14 @@ import {
 
 export class DeterministicFakeProviderAdapter implements ProviderAdapter {
   public readonly version = PROVIDER_ADAPTER_VERSION;
+  public readonly capabilities = {
+    providerFamily: 'fake',
+    contentKinds: ['text', 'quote', 'article'],
+    supportedMediaTypes: ['image/*'],
+    accountTargetMode: 'single_account',
+    dispatchMode: 'immediate_or_scheduled',
+    verifiedLimits: {},
+  } as const;
   private readonly staged = new Map<string, StagedPublish>();
 
   public constructor(

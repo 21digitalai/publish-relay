@@ -1,5 +1,14 @@
 export const PROVIDER_ADAPTER_VERSION = '1.0' as const;
 
+export interface ProviderTechnicalCapabilities {
+  readonly providerFamily: string;
+  readonly contentKinds: readonly PublishContent['kind'][];
+  readonly supportedMediaTypes: readonly string[];
+  readonly accountTargetMode: 'single_account';
+  readonly dispatchMode: 'immediate_or_scheduled';
+  readonly verifiedLimits: Readonly<Record<string, number>>;
+}
+
 export interface MediaReference {
   id: string;
   mimeType: string;
@@ -33,6 +42,7 @@ export interface StagedPublish {
 
 export interface ProviderAdapter {
   readonly version: typeof PROVIDER_ADAPTER_VERSION;
+  readonly capabilities: ProviderTechnicalCapabilities;
   connect(authorizationCode: string): Promise<{ credential: string }>;
   discover(credential: string): Promise<ProviderAccount[]>;
   validate(accountId: string, content: PublishContent): Promise<void>;

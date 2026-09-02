@@ -1,8 +1,7 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
-  mediaObjects,
   postRevisions,
   posts,
   providerAccounts,
@@ -34,17 +33,30 @@ async function validateTargetOwnership(
   if (accounts.length !== input.providerAccountIds.length)
     throw new PostValidationError('One or more provider accounts do not belong to the workspace');
   if (input.mediaIds.length === 0) return;
-  const media = await database
-    .select({ id: mediaObjects.id })
-    .from(mediaObjects)
-    .where(
-      and(
-        eq(mediaObjects.workspaceId, input.workspaceId),
-        inArray(mediaObjects.id, input.mediaIds),
-      ),
-    );
-  if (media.length !== input.mediaIds.length)
+  const media = await database.execute<{ id: string }>(sql`
+    select id from media_objects
+    where workspace_id = ${input.workspaceId}
+      and id in (${sql.join(
+        input.mediaIds.map((mediaId) => sql`${mediaId}`),
+        sql`, `,
+      )})
+      and state in ('ready', 'cleanup_eligible', 'cleanup_failed')
+    order by id
+    for update
+  `);
+  if (media.rows.length !== input.mediaIds.length)
     throw new PostValidationError('One or more media objects do not belong to the workspace');
+  await database.execute(sql`
+    update media_objects
+    set state = 'ready', cleanup_eligible_at = null, cleanup_started_at = null,
+      cleanup_retry_at = null, updated_at = now()
+    where workspace_id = ${input.workspaceId}
+      and id in (${sql.join(
+        input.mediaIds.map((mediaId) => sql`${mediaId}`),
+        sql`, `,
+      )})
+      and state in ('cleanup_eligible', 'cleanup_failed')
+  `);
 }
 
 async function createRevisionTargets(

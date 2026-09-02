@@ -45,7 +45,7 @@ async function hasRequiredJobReference(
 
 export async function evaluateMediaRetention(
   database: NodePgDatabase,
-  input: { workspaceId: string; now: Date; policy?: MediaRetentionPolicy },
+  input: { workspaceId: string; now: Date; policy?: MediaRetentionPolicy; limit?: number },
 ): Promise<number> {
   const policy = input.policy ?? retainForeverMediaPolicy;
   return withTenantTransaction(database, input, async (transaction) => {
@@ -53,6 +53,7 @@ export async function evaluateMediaRetention(
       select id, storage_key, retained_at from media_objects
       where workspace_id = ${input.workspaceId} and state = 'ready' and retained_at is not null
       order by retained_at, id
+      limit ${input.limit ?? 100}
     `);
     let eligible = 0;
     for (const media of candidates.rows) {
@@ -76,7 +77,13 @@ export async function evaluateMediaRetention(
 export async function cleanupRetainedMedia(
   database: NodePgDatabase,
   storage: MediaStorage,
-  input: { workspaceId: string; now: Date; retryDelayMs: number; staleClaimBefore: Date },
+  input: {
+    workspaceId: string;
+    now: Date;
+    retryDelayMs: number;
+    staleClaimBefore: Date;
+    limit?: number;
+  },
 ): Promise<{ deleted: number; failed: number }> {
   const candidates = await withTenantTransaction(database, input, async (transaction) => {
     await transaction.execute(sql`
@@ -86,11 +93,30 @@ export async function cleanupRetainedMedia(
         and (cleanup_started_at is null or cleanup_started_at < ${input.staleClaimBefore})
     `);
     const result = await transaction.execute<{ id: string; storage_key: string }>(sql`
-      update media_objects set state = 'deleting', cleanup_started_at = ${input.now},
-        deletion_attempts = deletion_attempts + 1, updated_at = ${input.now}
-      where workspace_id = ${input.workspaceId}
-        and (state = 'cleanup_eligible' or (state = 'cleanup_failed' and cleanup_retry_at <= ${input.now}))
-      returning id, storage_key
+      with candidates as (
+        select media.id
+        from media_objects media
+        where media.workspace_id = ${input.workspaceId}
+          and (media.state = 'cleanup_eligible'
+            or (media.state = 'cleanup_failed' and media.cleanup_retry_at <= ${input.now}))
+          and not exists (
+            select 1 from revision_media rm
+            join publication_jobs pj
+              on pj.workspace_id = rm.workspace_id and pj.revision_id = rm.revision_id
+            where rm.workspace_id = media.workspace_id and rm.media_id = media.id
+              and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending')
+                or pj.reconciliation_required = true)
+          )
+        order by media.cleanup_eligible_at, media.id
+        limit ${input.limit ?? 100}
+        for update of media skip locked
+      )
+      update media_objects media
+      set state = 'deleting', cleanup_started_at = ${input.now},
+        deletion_attempts = media.deletion_attempts + 1, updated_at = ${input.now}
+      from candidates
+      where media.workspace_id = ${input.workspaceId} and media.id = candidates.id
+      returning media.id, media.storage_key
     `);
     return result.rows;
   });

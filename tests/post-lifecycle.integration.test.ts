@@ -11,6 +11,7 @@ import {
   createFixedMediaRetentionPolicy,
   evaluateMediaRetention,
 } from '../src/modules/content/media-retention.service.js';
+import { runMediaRetentionCycle } from '../src/modules/content/media-retention.worker.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { createPost, editPost, reschedulePost } from '../src/modules/content/post.service.js';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
@@ -199,6 +200,62 @@ describe('media retention lifecycle', () => {
       `SELECT state, deletion_attempts FROM media_objects WHERE id = '${mediaId}'`,
     );
     expect(row.rows[0]).toEqual({ state: 'deleted', deletion_attempts: 2 });
+  });
+
+  it('revives eligible media when a new scheduled job starts requiring it', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    const mediaId = '00000000-0000-4000-8000-000000000216';
+    await database.exec(`INSERT INTO media_objects
+      (id, workspace_id, storage_key, sha256, mime_type, byte_size, state, retained_at, cleanup_eligible_at)
+      VALUES ('${mediaId}', '${workspaceId}', 'revived-key', 'revived-hash', 'image/png', 19,
+        'cleanup_eligible', '2026-08-01', '2026-09-01')`);
+    storage.objects.set('revived-key', Buffer.from('retained'));
+    await createPost(db, {
+      workspaceId,
+      userId,
+      content: { type: 'text', text: 'Use retained media' },
+      mediaIds: [mediaId],
+      providerAccountIds: [accountOne],
+      scheduledAt: new Date('2026-09-03T10:00:00Z'),
+    });
+    await expect(
+      cleanupRetainedMedia(db, storage, {
+        workspaceId,
+        now: new Date('2026-09-02'),
+        retryDelayMs: 1000,
+        staleClaimBefore: new Date('2026-09-01'),
+      }),
+    ).resolves.toEqual({ deleted: 0, failed: 0 });
+    const row = await database.query<{ state: string; cleanup_eligible_at: Date | null }>(
+      `SELECT state, cleanup_eligible_at FROM media_objects WHERE id = '${mediaId}'`,
+    );
+    expect(row.rows[0]).toEqual({ state: 'ready', cleanup_eligible_at: null });
+    expect(storage.objects.has('revived-key')).toBe(true);
+  });
+
+  it('runs a bounded worker cycle and reports cleanup outcomes', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    const mediaId = '00000000-0000-4000-8000-000000000217';
+    await database.exec(`INSERT INTO media_objects
+      (id, workspace_id, storage_key, sha256, mime_type, byte_size, state, retained_at)
+      VALUES ('${mediaId}', '${workspaceId}', 'worker-key', 'worker-hash', 'image/png', 23,
+        'ready', '2026-08-01')`);
+    storage.objects.set('worker-key', Buffer.from('worker'));
+    await expect(
+      runMediaRetentionCycle(
+        db,
+        storage,
+        createFixedMediaRetentionPolicy(0),
+        {
+          batchSize: 10,
+          retryDelayMs: 1000,
+          staleClaimMs: 60_000,
+        },
+        new Date('2026-09-02'),
+      ),
+    ).resolves.toEqual({ workspaces: 1, eligible: 1, deleted: 1, failed: 0 });
   });
 });
 

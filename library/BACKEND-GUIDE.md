@@ -109,6 +109,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `posts` owns mutable publication intent while `post_revisions` records immutable, numbered content snapshots. The database rejects revision update and deletion.
 - `revision_media` links ordered workspace media to a revision. `publication_jobs` creates one independent account target per revision, and `provider_staging_artifacts` records temporary provider-side resources that require deterministic cleanup.
 - Every content/media table is workspace-scoped with explicit repository predicates and forced RLS. Media identity records a storage key plus byte-derived SHA-256, MIME type, and byte size; application services must not trust client metadata for those fields.
+- The durable worker runs bounded media-retention cycles across workspaces. `MEDIA_RETENTION_DAYS` is an optional neutral self-hosted policy (omission retains forever); cadence, retry, stale-claim recovery and batch size are operator configuration. Revision creation locks referenced media and revives eligible/failed retained bytes, while cleanup locks candidates and atomically rechecks active job references before physical deletion.
 
 ## Usage facts and provider capabilities
 

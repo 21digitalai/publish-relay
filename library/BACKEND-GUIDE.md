@@ -19,6 +19,16 @@
 
 Concrete architecture, security, persistence, job, and deployment decisions are frozen in `projects/publish-relay/library/decisions.md` ADR-001 through ADR-007.
 
+## Core policy and commercial boundary
+
+- Core contains no commercial product concepts or schema. Never add Stripe, plans, prices, tier names, quota thresholds, marketing/storefront code, or Cloud-owned migrations.
+- Commercially restrictable mutations call one injected neutral action-policy port from the command/application layer before mutation. The standalone implementation allows every commercial dimension; existing authentication, authorization, technical validation and provider safety constraints remain mandatory.
+- Do not add an HTTP policy adapter without a later proven deployment requirement. The intended future private composition injects an in-process implementation that may participate in the same database transaction without Core importing private code.
+- Policy inputs and denials use neutral facts and stable codes. UI routes, agent routes and CLI commands must not implement independent policy logic or bypass the application service.
+- Core provides one authoritative workspace-scoped facts contract for retained bytes/media lifecycle, distinct provider families, connected provider accounts, publication targets, queued/scheduled targets and scheduling horizon. Future policy consumers do not duplicate queries.
+- Provider capability metadata describes verified technical behavior and limits only. Provider adapters publish and reconcile; they never inspect commercial policy.
+- Media byte deletion is Core lifecycle mechanics. Physical deletion is confirmed before tombstoning; audit identity/provenance remains; retained-byte facts exclude bytes actually deleted. Retention eligibility/deadline may be injected neutrally, but commercial durations never live in Core.
+
 ## Agent API v1 contract
 
 Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It generates host-specific launchd plists and Vault-injected wrappers below the local state directory, runs isolated PostgreSQL on 55436 and web on 3106, preserves separate migration/web/worker authorities, and keeps runtime data outside source control.

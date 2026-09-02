@@ -20,6 +20,10 @@ Users can register, connect multiple social accounts, schedule content through t
 
 ## Explicit non-goals for the first release
 
+- Commercial storefront, billing, pricing, subscriptions, plan names, quotas, and marketing pages are not Core features.
+- Core exposes neutral policy and factual usage boundaries with an allow-all standalone implementation; it does not know why a future injected implementation may deny an action.
+- Current registration/login remains part of Core. A future local auth mode may enter a default owner/workspace directly without removing tenant identity from the domain.
+
 - Marketing homepage.
 - Thirty-provider parity with Postiz.
 - Social inbox/community management.

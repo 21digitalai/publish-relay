@@ -137,6 +137,56 @@ describe('post revision lifecycle', () => {
     const rows = await database.query('SELECT id FROM posts');
     expect(rows.rows).toHaveLength(0);
   });
+  it('denies revise and reschedule exactly once without revision or job residue', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const created = await createPost(db, {
+      workspaceId,
+      userId,
+      content: { type: 'text', text: 'Original' },
+      mediaIds: [],
+      providerAccountIds: [accountOne],
+      scheduledAt: new Date('2026-09-01T10:00:00Z'),
+    });
+    const actions: string[] = [];
+    const policy: ActionPolicy = {
+      evaluate(context) {
+        actions.push(context.action);
+        return Promise.resolve({ allowed: false, code: 'action_not_allowed', reason: 'Denied' });
+      },
+    };
+    await expect(
+      editPost(
+        db,
+        {
+          workspaceId,
+          userId,
+          postId: created.postId,
+          content: { type: 'text', text: 'Rejected revision' },
+          mediaIds: [],
+          providerAccountIds: [accountOne],
+          scheduledAt: new Date('2026-09-01T11:00:00Z'),
+        },
+        policy,
+      ),
+    ).rejects.toMatchObject({ code: 'action_not_allowed' });
+    await expect(
+      reschedulePost(
+        db,
+        {
+          workspaceId,
+          userId,
+          postId: created.postId,
+          scheduledAt: new Date('2026-09-01T12:00:00Z'),
+        },
+        policy,
+      ),
+    ).rejects.toMatchObject({ code: 'action_not_allowed' });
+    expect(actions).toEqual(['publication.revise', 'publication.reschedule']);
+    const counts = await database.query<{ revisions: number; jobs: number }>(`select
+      (select count(*)::int from post_revisions) revisions,
+      (select count(*)::int from publication_jobs) jobs`);
+    expect(counts.rows[0]).toEqual({ revisions: 1, jobs: 1 });
+  });
   it('rejects cross-workspace content graph references at the database boundary', async () => {
     const otherWorkspaceId = '00000000-0000-4000-8000-000000000210';
     const otherPostId = '00000000-0000-4000-8000-000000000211';

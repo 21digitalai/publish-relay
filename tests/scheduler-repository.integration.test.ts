@@ -3,6 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 
 import {
   claimDueJobs,
@@ -201,6 +202,31 @@ describe('scheduler repository', () => {
       'attempt_transient',
       'operator_retry',
     ]);
+  });
+
+  it('denies operator retry exactly once without changing job or event state', async () => {
+    const now = new Date('2026-08-31T16:00:00Z');
+    await database.exec(
+      `UPDATE publication_jobs SET state = 'failed', next_attempt_at = null WHERE id = '${jobId}'`,
+    );
+    let evaluations = 0;
+    const policy: ActionPolicy = {
+      evaluate(context) {
+        evaluations += 1;
+        expect(context.action).toBe('publication.retry');
+        return Promise.resolve({ allowed: false, code: 'action_not_allowed', reason: 'Denied' });
+      },
+    };
+    await expect(
+      requestOperatorRetry(db, { workspaceId, jobId, actorId: 'operator', now }, policy),
+    ).rejects.toMatchObject({ code: 'action_not_allowed' });
+    expect(evaluations).toBe(1);
+    const rows = await database.query<{ state: string; event_count: number }>(`select
+      job.state,
+      (select count(*)::int from publication_job_events event
+       where event.job_id = job.id and event.reason = 'operator_retry') event_count
+      from publication_jobs job where job.id = '${jobId}'`);
+    expect(rows.rows[0]).toEqual({ state: 'failed', event_count: 0 });
   });
 
   it('allows cancellation only before the dispatch boundary', async () => {

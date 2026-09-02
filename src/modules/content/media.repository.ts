@@ -24,7 +24,7 @@ export async function markMediaReady(
 ): Promise<boolean> {
   const rows = await database
     .update(mediaObjects)
-    .set({ state: 'ready', updatedAt: new Date() })
+    .set({ state: 'ready', retainedAt: new Date(), updatedAt: new Date() })
     .where(
       and(
         eq(mediaObjects.workspaceId, workspaceId),
@@ -43,7 +43,7 @@ export async function markMediaDeleted(
 ): Promise<void> {
   await database
     .update(mediaObjects)
-    .set({ state: 'deleted', updatedAt: new Date() })
+    .set({ state: 'deleted', deletedAt: new Date(), updatedAt: new Date() })
     .where(and(eq(mediaObjects.workspaceId, workspaceId), eq(mediaObjects.id, mediaId)));
 }
 

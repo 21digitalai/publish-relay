@@ -43,7 +43,15 @@ export function validateMediaContentType(bytes: Buffer, declaredMimeType: string
 export async function storeMedia(
   database: NodePgDatabase,
   storage: MediaStorage,
-  input: { workspaceId: string; userId: string; actor?: { type: 'user' | 'api-key'; id: string }; requestId?: string; idempotencyKey?: string; bytes: Buffer; maxBytes: number },
+  input: {
+    workspaceId: string;
+    userId: string;
+    actor?: { type: 'user' | 'api-key'; id: string };
+    requestId?: string;
+    idempotencyKey?: string;
+    bytes: Buffer;
+    maxBytes: number;
+  },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
   if (input.bytes.length === 0) throw new Error('Media content is empty');
@@ -76,7 +84,12 @@ export async function storeMedia(
     }),
   );
   try {
-    const stored = await storage.put({ workspaceId: input.workspaceId, mediaId, bytes: input.bytes, mimeType });
+    const stored = await storage.put({
+      workspaceId: input.workspaceId,
+      mediaId,
+      bytes: input.bytes,
+      mimeType,
+    });
     if (stored.storageKey !== storageKey) throw new Error('Storage returned an unexpected key');
     const ready = await withTenantTransaction(database, input, (transaction) =>
       markMediaReady(transaction, input.workspaceId, mediaId),
@@ -99,13 +112,28 @@ export async function storeMedia(
 async function persistMedia(
   transaction: NodePgDatabase,
   storage: MediaStorage,
-  input: { workspaceId: string; userId: string; actor?: { type: 'user' | 'api-key'; id: string }; requestId?: string; idempotencyKey?: string; bytes: Buffer; maxBytes: number },
+  input: {
+    workspaceId: string;
+    userId: string;
+    actor?: { type: 'user' | 'api-key'; id: string };
+    requestId?: string;
+    idempotencyKey?: string;
+    bytes: Buffer;
+    maxBytes: number;
+  },
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
   const mediaId = randomUUID();
   const mimeType = detectMimeType(input.bytes);
   const sha256 = createHash('sha256').update(input.bytes).digest('hex');
   const storageKey = `${input.workspaceId}/${mediaId}/${sha256}`;
-  await reserveMedia(transaction, { id: mediaId, workspaceId: input.workspaceId, storageKey, sha256, mimeType, byteSize: input.bytes.length });
+  await reserveMedia(transaction, {
+    id: mediaId,
+    workspaceId: input.workspaceId,
+    storageKey,
+    sha256,
+    mimeType,
+    byteSize: input.bytes.length,
+  });
   try {
     const stored = await storage.put({
       workspaceId: input.workspaceId,
@@ -131,7 +159,15 @@ async function persistMedia(
 export async function storeMediaInTransaction(
   transaction: NodePgDatabase,
   storage: MediaStorage,
-  input: { workspaceId: string; userId: string; actor?: { type: 'user' | 'api-key'; id: string }; requestId?: string; idempotencyKey?: string; bytes: Buffer; maxBytes: number },
+  input: {
+    workspaceId: string;
+    userId: string;
+    actor?: { type: 'user' | 'api-key'; id: string };
+    requestId?: string;
+    idempotencyKey?: string;
+    bytes: Buffer;
+    maxBytes: number;
+  },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ mediaId: string; mimeType: string; sha256: string; byteSize: number }> {
   if (input.bytes.length === 0) throw new Error('Media content is empty');

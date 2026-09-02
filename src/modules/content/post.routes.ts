@@ -7,7 +7,11 @@ import { InvalidCursorError, errorEnvelope, successEnvelope } from '../api/contr
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
-import { ActionPolicyDeniedError, allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
+import {
+  ActionPolicyDeniedError,
+  allowAllActionPolicy,
+  type ActionPolicy,
+} from '../policy/action-policy.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { createPostRequestSchema } from './post.contract.js';
@@ -216,17 +220,21 @@ export function registerPostRoutes(
           requestFingerprint: mutationFingerprint(body),
         },
         async (transaction) => {
-          const created = await createPostInTransaction(transaction, {
-            workspaceId: principal.workspaceId,
-            userId: principal.createdByUserId,
-            actor: { type: 'api-key', id: principal.id },
-            requestId: request.id,
-            idempotencyKey,
-            content: body.content,
-            mediaIds: body.mediaIds,
-            providerAccountIds: body.providerAccountIds,
-            scheduledAt: new Date(body.scheduledAt),
-          }, actionPolicy);
+          const created = await createPostInTransaction(
+            transaction,
+            {
+              workspaceId: principal.workspaceId,
+              userId: principal.createdByUserId,
+              actor: { type: 'api-key', id: principal.id },
+              requestId: request.id,
+              idempotencyKey,
+              content: body.content,
+              mediaIds: body.mediaIds,
+              providerAccountIds: body.providerAccountIds,
+              scheduledAt: new Date(body.scheduledAt),
+            },
+            actionPolicy,
+          );
           return { statusCode: 201, body: successEnvelope(resourceLinks(created), request.id) };
         },
       );

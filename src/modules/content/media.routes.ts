@@ -7,7 +7,11 @@ import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
-import { ActionPolicyDeniedError, allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
+import {
+  ActionPolicyDeniedError,
+  allowAllActionPolicy,
+  type ActionPolicy,
+} from '../policy/action-policy.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import type { MediaStorage } from './media-storage.js';
@@ -87,15 +91,20 @@ export function registerMediaRoutes(
           requestFingerprint: fingerprint,
         },
         async (transaction) => {
-          const media = await storeMediaInTransaction(transaction, storage, {
-            workspaceId: principal.workspaceId,
-            userId: principal.createdByUserId,
-            actor: { type: 'api-key', id: principal.id },
-            requestId: request.id,
-            idempotencyKey,
-            bytes,
-            maxBytes: AGENT_MEDIA_MAX_BYTES,
-          }, actionPolicy);
+          const media = await storeMediaInTransaction(
+            transaction,
+            storage,
+            {
+              workspaceId: principal.workspaceId,
+              userId: principal.createdByUserId,
+              actor: { type: 'api-key', id: principal.id },
+              requestId: request.id,
+              idempotencyKey,
+              bytes,
+              maxBytes: AGENT_MEDIA_MAX_BYTES,
+            },
+            actionPolicy,
+          );
           uncommittedStorageKey = `${principal.workspaceId}/${media.mediaId}/${media.sha256}`;
           return {
             statusCode: 201,

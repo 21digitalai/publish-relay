@@ -29,7 +29,13 @@ export async function beginXOauthConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   client: XHttpClient,
-  input: { workspaceId: string; userId: string; callbackUrl: string; requestId?: string; now?: Date },
+  input: {
+    workspaceId: string;
+    userId: string;
+    callbackUrl: string;
+    requestId?: string;
+    now?: Date;
+  },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ authorizationUrl: string; expiresAt: Date }> {
   await withTenantTransaction(

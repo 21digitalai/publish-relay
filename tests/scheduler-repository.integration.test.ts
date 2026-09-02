@@ -37,6 +37,7 @@ const migrations = [
   '0016_common_barracuda.sql',
   '0017_dark_whizzer.sql',
   '0018_membership_identity_scope.sql',
+  '0019_media_retention_lifecycle.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';

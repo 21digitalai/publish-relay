@@ -19,7 +19,11 @@ describe('action policy module boundaries', () => {
     const application = await source('application/create-application.ts');
     expect(application).toContain('registerPostRoutes(');
     expect(application).toContain('registerMediaRoutes(');
-    expect(application).toContain('registerBrowserWorkflowRoutes(application, { auth, database, actionPolicy })');
-    expect(application).toContain('registerXOauthRoutes(application, { auth, database, actionPolicy, ...xOauth })');
+    expect(application).toContain(
+      'registerBrowserWorkflowRoutes(application, { auth, database, actionPolicy })',
+    );
+    expect(application).toContain(
+      'registerXOauthRoutes(application, { auth, database, actionPolicy, ...xOauth })',
+    );
   });
 });

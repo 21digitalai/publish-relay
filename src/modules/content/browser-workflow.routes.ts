@@ -168,16 +168,20 @@ export function registerBrowserWorkflowRoutes(
           requestFingerprint: mutationFingerprint(body),
         },
         async (transaction) => {
-          const created = await createPostInTransaction(transaction, {
-            workspaceId: identity.workspaceId,
-            userId: identity.userId,
-            requestId: request.id,
-            idempotencyKey: key,
-            content: body.content,
-            mediaIds: body.mediaIds,
-            providerAccountIds: body.providerAccountIds,
-            scheduledAt: new Date(body.scheduledAt),
-          }, actionPolicy);
+          const created = await createPostInTransaction(
+            transaction,
+            {
+              workspaceId: identity.workspaceId,
+              userId: identity.userId,
+              requestId: request.id,
+              idempotencyKey: key,
+              content: body.content,
+              mediaIds: body.mediaIds,
+              providerAccountIds: body.providerAccountIds,
+              scheduledAt: new Date(body.scheduledAt),
+            },
+            actionPolicy,
+          );
           return {
             statusCode: 201,
             body: {
@@ -232,17 +236,21 @@ export function registerBrowserWorkflowRoutes(
           requestFingerprint: mutationFingerprint(body),
         },
         async (transaction) => {
-          const edited = await editPostInTransaction(transaction, {
-            workspaceId: identity.workspaceId,
-            userId: identity.userId,
-            requestId: request.id,
-            idempotencyKey: key,
-            postId: params.data.postId,
-            content: body.content,
-            mediaIds: body.mediaIds,
-            providerAccountIds: body.providerAccountIds,
-            scheduledAt: new Date(body.scheduledAt),
-          }, actionPolicy);
+          const edited = await editPostInTransaction(
+            transaction,
+            {
+              workspaceId: identity.workspaceId,
+              userId: identity.userId,
+              requestId: request.id,
+              idempotencyKey: key,
+              postId: params.data.postId,
+              content: body.content,
+              mediaIds: body.mediaIds,
+              providerAccountIds: body.providerAccountIds,
+              scheduledAt: new Date(body.scheduledAt),
+            },
+            actionPolicy,
+          );
           return { statusCode: 200, body: { data: edited, error: null } };
         },
       );
@@ -285,14 +293,18 @@ export function registerBrowserWorkflowRoutes(
         async (transaction) => ({
           statusCode: 200,
           body: {
-            data: await reschedulePostInTransaction(transaction, {
-              workspaceId: identity.workspaceId,
-              userId: identity.userId,
-              requestId: request.id,
-              idempotencyKey: key,
-              postId: params.data.postId,
-              scheduledAt: new Date(parsed.data.scheduledAt),
-            }, actionPolicy),
+            data: await reschedulePostInTransaction(
+              transaction,
+              {
+                workspaceId: identity.workspaceId,
+                userId: identity.userId,
+                requestId: request.id,
+                idempotencyKey: key,
+                postId: params.data.postId,
+                scheduledAt: new Date(parsed.data.scheduledAt),
+              },
+              actionPolicy,
+            ),
             error: null,
           },
         }),
@@ -428,12 +440,16 @@ export function registerBrowserWorkflowRoutes(
         params.data.jobId,
       );
       if (existing && existing.state !== 'retry_wait')
-        result = await requestOperatorRetry(dependencies.database, {
-          workspaceId: identity.workspaceId,
-          jobId: params.data.jobId,
-          actorId: identity.userId,
-          now: new Date(),
-        }, actionPolicy);
+        result = await requestOperatorRetry(
+          dependencies.database,
+          {
+            workspaceId: identity.workspaceId,
+            jobId: params.data.jobId,
+            actorId: identity.userId,
+            now: new Date(),
+          },
+          actionPolicy,
+        );
     } catch (error) {
       return mutationError(request, reply, error);
     }

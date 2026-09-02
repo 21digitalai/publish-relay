@@ -41,10 +41,8 @@ export async function getWorkspaceUsageFacts(
   database: NodePgDatabase,
   request: UsageFactsRequest,
 ): Promise<WorkspaceUsageFacts> {
-  return withTenantTransaction(
-    database,
-    { workspaceId: request.workspaceId },
-    (transaction) => getWorkspaceUsageFactsInTransaction(transaction, request),
+  return withTenantTransaction(database, { workspaceId: request.workspaceId }, (transaction) =>
+    getWorkspaceUsageFactsInTransaction(transaction, request),
   );
 }
 
@@ -54,7 +52,7 @@ export async function getWorkspaceUsageFactsInTransaction(
 ): Promise<WorkspaceUsageFacts> {
   const result = await transaction.execute<FactsRow>(sql`
       select
-        coalesce((select sum(byte_size) from media_objects where workspace_id = ${request.workspaceId} and state <> 'deleted'), 0)::text as retained_bytes,
+        coalesce((select sum(byte_size) from media_objects where workspace_id = ${request.workspaceId} and state <> 'deleted' and deleted_at is null), 0)::text as retained_bytes,
         (select count(*) from media_objects where workspace_id = ${request.workspaceId} and state = 'temporary')::text as temporary_media,
         (select count(*) from media_objects where workspace_id = ${request.workspaceId} and state = 'ready')::text as ready_media,
         (select count(*) from media_objects where workspace_id = ${request.workspaceId} and state = 'deleted')::text as deleted_media,

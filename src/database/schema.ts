@@ -28,7 +28,14 @@ const bytea = customType<{ data: Buffer }>({
 
 export const membershipRole = pgEnum('membership_role', ['owner', 'admin', 'editor', 'viewer']);
 export const actorType = pgEnum('audit_actor_type', ['user', 'api_key', 'system']);
-export const mediaState = pgEnum('media_state', ['temporary', 'ready', 'deleted']);
+export const mediaState = pgEnum('media_state', [
+  'temporary',
+  'ready',
+  'cleanup_eligible',
+  'deleting',
+  'cleanup_failed',
+  'deleted',
+]);
 export const publicationJobState = pgEnum('publication_job_state', [
   'scheduled',
   'leased',
@@ -339,6 +346,13 @@ export const mediaObjects = pgTable(
     mimeType: text('mime_type').notNull(),
     byteSize: integer('byte_size').notNull(),
     state: mediaState('state').notNull().default('temporary'),
+    retainedAt: timestamp('retained_at', { withTimezone: true }),
+    cleanupEligibleAt: timestamp('cleanup_eligible_at', { withTimezone: true }),
+    cleanupStartedAt: timestamp('cleanup_started_at', { withTimezone: true }),
+    cleanupFailedAt: timestamp('cleanup_failed_at', { withTimezone: true }),
+    cleanupRetryAt: timestamp('cleanup_retry_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletionAttempts: integer('deletion_attempts').notNull().default(0),
     ...timestamps,
   },
   (table) => [

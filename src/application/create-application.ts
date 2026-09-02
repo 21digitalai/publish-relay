@@ -93,7 +93,14 @@ export function createApplication(
         actionPolicy,
       );
       if (mediaStorage)
-        registerMediaRoutes(application, database, mediaStorage, apiKeys, rateLimiter, actionPolicy);
+        registerMediaRoutes(
+          application,
+          database,
+          mediaStorage,
+          apiKeys,
+          rateLimiter,
+          actionPolicy,
+        );
     }
   }
   if (auth && database) {

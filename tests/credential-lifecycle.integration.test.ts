@@ -46,6 +46,7 @@ const migrations = [
   '0008_handy_shen.sql',
   '0009_generalize_oauth_transaction_secret.sql',
   '0016_common_barracuda.sql',
+  '0019_media_retention_lifecycle.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

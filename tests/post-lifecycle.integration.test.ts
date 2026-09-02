@@ -234,6 +234,41 @@ describe('media retention lifecycle', () => {
     expect(storage.objects.has('revived-key')).toBe(true);
   });
 
+  it('serializes concurrent scheduling against cleanup without deleting required bytes', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    const mediaId = '00000000-0000-4000-8000-000000000218';
+    await database.exec(`INSERT INTO media_objects
+      (id, workspace_id, storage_key, sha256, mime_type, byte_size, state, retained_at, cleanup_eligible_at)
+      VALUES ('${mediaId}', '${workspaceId}', 'race-key', 'race-hash', 'image/png', 29,
+        'cleanup_eligible', '2026-08-01', '2026-09-01')`);
+    storage.objects.set('race-key', Buffer.from('race'));
+    await Promise.allSettled([
+      createPost(db, {
+        workspaceId,
+        userId,
+        content: { type: 'text', text: 'Concurrent media use' },
+        mediaIds: [mediaId],
+        providerAccountIds: [accountOne],
+        scheduledAt: new Date('2026-09-03T10:00:00Z'),
+      }),
+      cleanupRetainedMedia(db, storage, {
+        workspaceId,
+        now: new Date('2026-09-02'),
+        retryDelayMs: 1000,
+        staleClaimBefore: new Date('2026-09-01'),
+      }),
+    ]);
+    const result = await database.query<{ state: string; active_references: number }>(`
+      SELECT media.state,
+        (SELECT count(*)::int FROM revision_media rm
+          JOIN publication_jobs job ON job.revision_id = rm.revision_id
+          WHERE rm.media_id = media.id AND job.state = 'scheduled') active_references
+      FROM media_objects media WHERE media.id = '${mediaId}'
+    `);
+    expect(result.rows[0]?.state === 'deleted' && result.rows[0].active_references > 0).toBe(false);
+  });
+
   it('runs a bounded worker cycle and reports cleanup outcomes', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const storage = new FakeMediaStorage();

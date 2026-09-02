@@ -17,7 +17,9 @@ const outcomes: PublishOutcome[] = [
 describe('provider adapter contract', () => {
   it('exposes adapter-owned technical metadata without commercial dimensions', () => {
     const adapter = new DeterministicFakeProviderAdapter([], {
-      status: 'failed', code: 'validation', message: 'unused',
+      status: 'failed',
+      code: 'validation',
+      message: 'unused',
     });
     expect(adapter.capabilities).toEqual({
       providerFamily: 'fake',

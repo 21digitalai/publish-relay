@@ -106,3 +106,9 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `posts` owns mutable publication intent while `post_revisions` records immutable, numbered content snapshots. The database rejects revision update and deletion.
 - `revision_media` links ordered workspace media to a revision. `publication_jobs` creates one independent account target per revision, and `provider_staging_artifacts` records temporary provider-side resources that require deterministic cleanup.
 - Every content/media table is workspace-scoped with explicit repository predicates and forced RLS. Media identity records a storage key plus byte-derived SHA-256, MIME type, and byte size; application services must not trust client metadata for those fields.
+
+## Usage facts and provider capabilities
+
+- `getWorkspaceUsageFacts` is the sole transactional owner of workspace usage facts for policy and application consumers. It derives retained media bytes and lifecycle counts, active connected accounts/provider families, publication-job target rows, active queued targets, scheduling horizon, and membership count from canonical Core tables under tenant RLS.
+- A publication target fact is one `publication_jobs` row, including historical rows; multiple jobs aimed at one connected account remain multiple targets. Connected-account facts require both a non-disconnected account and an active parent connection. Deleted media remains visible in lifecycle counts but contributes no retained bytes.
+- Provider capability metadata stays adapter-owned and describes technical content/media shapes, target behavior, dispatch mode, and verified provider limits only. It must not contain plan names, prices, entitlements, or commercial admission rules. Neutral action policy consumes these facts rather than re-querying tables or teaching adapters about commercial policy.

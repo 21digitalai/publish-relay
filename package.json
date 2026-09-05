@@ -22,6 +22,7 @@
     "cli": "tsx src/entrypoints/cli.ts",
     "parity:social-god": "tsx src/entrypoints/social-god-parity.ts",
     "schedule:social-god": "tsx src/entrypoints/social-god-schedule.ts",
+    "remediate:x": "tsx src/entrypoints/x-remediation.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

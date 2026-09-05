@@ -85,7 +85,7 @@ function contentFor(pkg: SocialGodSnapshot['packages'][number], platform: string
         ? render.quote_url
         : '';
   if (quotedPostId) return { kind: 'quote', text, quotedPostId };
-  if (posts.length > 1) return { kind: 'thread', posts };
+  if (posts.length > 1) return { kind: 'text', text: posts.join('\n\n') };
   const articleBody = pkg.article.body ?? pkg.article.body_text ?? '';
   if (platform.includes('article'))
     return { kind: 'article', title: pkg.article.title, body: articleBody };

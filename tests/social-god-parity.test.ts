@@ -8,6 +8,32 @@ import {
 } from '../src/modules/parity/social-god.js';
 
 describe('Social God dry-run parity', () => {
+  it('maps legacy Postiz thread parts into the provider-supported X Premium text contract', () => {
+    const report = buildSocialGodParity({
+      packages: [
+        {
+          package_id: 'thread-1',
+          article: { title: '' },
+          platform_renders: { x_premium_long: { posts: ['Opening', 'Closing'] } },
+        },
+      ],
+      schedule_records: [
+        {
+          id: 6,
+          package_id: 'thread-1',
+          platform: 'x_premium_long',
+          scheduled_for_utc: '2026-09-02T12:00:00.000Z',
+        },
+      ],
+      account_map: { x_premium_long: randomUUID() },
+    });
+
+    expect(report.records[0]?.request?.body.content).toEqual({
+      kind: 'text',
+      text: 'Opening\n\nClosing',
+    });
+  });
+
   it('maps text, quote, thread, media, account, schedule and result fields without credentials', () => {
     const accountId = randomUUID();
     const mediaId = randomUUID();

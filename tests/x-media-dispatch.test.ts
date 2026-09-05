@@ -6,6 +6,7 @@ import type {
 } from '../src/modules/providers/x-media-staging.service.js';
 import {
   dispatchDueXMedia,
+  normalizeStoredXContent,
   reconcileXJobs,
   stageXJobMedia,
 } from '../src/modules/providers/x-media-dispatch.service.js';
@@ -66,6 +67,18 @@ const databaseTransaction = {
 
 describe('X media dispatch composition', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('preserves migrated thread order as one X Premium text payload', () => {
+    expect(
+      normalizeStoredXContent({ kind: 'thread', posts: ['Opening', 'Middle', 'Closing'] }),
+    ).toEqual({ kind: 'text', text: 'Opening\n\nMiddle\n\nClosing' });
+  });
+
+  it('rejects malformed migrated thread content instead of publishing media by itself', () => {
+    expect(() => normalizeStoredXContent({ kind: 'thread', posts: [] })).toThrow(
+      'Stored X thread content is empty',
+    );
+  });
 
   it('binds one credential-scoped client and stages every scheduled job media item', async () => {
     const client = {} as XMediaUploadClient;
@@ -154,6 +167,49 @@ describe('X media dispatch composition', () => {
         mediaId: 'media-1',
         idempotencyKey: 'job-key:media-1',
       },
+    );
+  });
+
+  it('sends migrated thread text and staged media together in the provider request', async () => {
+    vi.mocked(claimDueJobs).mockResolvedValue([
+      {
+        id: 'job-thread',
+        workspaceId: 'workspace-1',
+        revisionId: 'revision-thread',
+        providerAccountId: 'account-1',
+        state: 'leased',
+        attemptNumber: 1,
+        leaseOwner: 'worker-1',
+        leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
+      },
+    ]);
+    databaseTransaction.orderBy.mockResolvedValueOnce([
+      {
+        credentialId: 'credential-1',
+        accountId: 'x-account-1',
+        content: { kind: 'thread', posts: ['Opening', 'Closing'] } as never,
+        mediaId: 'media-1',
+        mimeType: 'image/png',
+      },
+    ]);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
+    vi.mocked(stageXMedia).mockResolvedValue({ mediaId: 'x-media-1', state: 'succeeded' });
+    const createPost = vi.fn(() => Promise.resolve({ id: 'post-1', username: 'dailyviber' }));
+
+    await expect(
+      dispatchDueXMedia({
+        database: {} as never,
+        keys: {} as never,
+        source: {} as XMediaSource,
+        createClient: vi.fn(() => ({ createPost }) as unknown as XMediaUploadClient),
+        workerId: 'worker-1',
+        leaseMs: 30_000,
+      }),
+    ).resolves.toBe(1);
+
+    expect(createPost).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Opening\n\nClosing', mediaIds: ['x-media-1'] }),
     );
   });
 

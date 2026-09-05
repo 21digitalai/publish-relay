@@ -52,6 +52,37 @@ export interface XDispatchRuntime {
   leaseMs: number;
 }
 
+interface StoredXContent {
+  kind?: unknown;
+  type?: unknown;
+  text?: unknown;
+  posts?: unknown;
+  quotedPostId?: unknown;
+}
+
+export function normalizeStoredXContent(content: StoredXContent): {
+  kind: 'text' | 'quote';
+  text: string;
+  quotedPostId?: string;
+} {
+  const kind = typeof content.kind === 'string' ? content.kind : content.type;
+  if (kind === 'thread') {
+    if (!Array.isArray(content.posts) || content.posts.some((post) => typeof post !== 'string'))
+      throw new Error('Stored X thread content is invalid');
+    const posts = (content.posts as string[]).map((post) => post.trim()).filter(Boolean);
+    if (posts.length === 0) throw new Error('Stored X thread content is empty');
+    return { kind: 'text', text: posts.join('\n\n') };
+  }
+  const text = typeof content.text === 'string' ? content.text : '';
+  if (kind === 'quote') {
+    if (typeof content.quotedPostId !== 'string' || !content.quotedPostId)
+      throw new Error('Stored X quote content is missing its quoted post');
+    return { kind: 'quote', text, quotedPostId: content.quotedPostId };
+  }
+  if (kind !== 'text') throw new Error(`Stored X content kind is unsupported: ${String(kind)}`);
+  return { kind: 'text', text };
+}
+
 export function createLocalXMediaSource(
   database: NodePgDatabase,
   storageRoot: string,
@@ -141,7 +172,7 @@ async function loadXJobContext(database: NodePgDatabase, workspaceId: string, jo
     return {
       credentialId: first.credentialId,
       accountId: first.accountId,
-      content: first.content as { type?: string; text?: string; quotedPostId?: string },
+      content: first.content as StoredXContent,
       media: rows.flatMap((row) =>
         row.mediaId && row.mimeType ? [{ id: row.mediaId, mimeType: row.mimeType }] : [],
       ),
@@ -191,13 +222,14 @@ export async function dispatchDueXJobs(
         },
       );
       if (stagedMedia.state === 'pending') continue;
-      const text = context.content.text ?? '';
+      const normalized = normalizeStoredXContent(context.content);
+      const text = normalized.text;
       const content =
-        context.content.type === 'quote' && context.content.quotedPostId
+        normalized.kind === 'quote' && normalized.quotedPostId
           ? {
               kind: 'quote' as const,
               text,
-              quotedPostId: context.content.quotedPostId,
+              quotedPostId: normalized.quotedPostId,
               media: context.media,
             }
           : { kind: 'text' as const, text, media: context.media };

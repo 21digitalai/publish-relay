@@ -199,6 +199,17 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     return { id: response.data.id, username: author.username };
   }
 
+  public async deletePost(id: string): Promise<void> {
+    if (!id) throw new Error('X post ID is required for deletion');
+    const credential = this.activeCredential;
+    if (!credential) throw new Error('X credential must be bound before deletion');
+    await this.call<{ data: { deleted: boolean } }>(
+      'DELETE',
+      `https://api.x.com/2/tweets/${encodeURIComponent(id)}`,
+      credential,
+    );
+  }
+
   public revoke(credentialValue: string): Promise<void> {
     parseCredential(credentialValue);
     return Promise.reject(new Error('X OAuth 1.0a revocation endpoint is not verified'));
@@ -325,7 +336,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
   }
 
   private async call<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     url: string,
     credentialValue: string,
     body?: object,

@@ -83,6 +83,21 @@ describe('X OAuth 1.0a HTTP client', () => {
     });
   });
 
+  it('deletes only the explicitly bound X post ID', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(response({ data: { deleted: true } }));
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+    }).bindCredential(credential);
+
+    await expect(client.deletePost('2095509881344176536')).resolves.toBeUndefined();
+    expect(request).toHaveBeenCalledWith(
+      'https://api.x.com/2/tweets/2095509881344176536',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
   it('treats the sanitized live X body-level not-found response as missing', async () => {
     const fixture = JSON.parse(
       await readFile(new URL('./fixtures/x-lookup-oauth1.json', import.meta.url), 'utf8'),

@@ -498,6 +498,7 @@ export const publicationAttempts = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    uniqueIndex('publication_attempts_workspace_id_unique').on(table.workspaceId, table.id),
     uniqueIndex('publication_attempts_job_number_unique').on(table.jobId, table.attemptNumber),
     index('publication_attempts_idempotency_idx').on(table.workspaceId, table.idempotencyKey),
     index('publication_attempts_reconciliation_idx').on(table.workspaceId, table.reconciliationKey),
@@ -506,6 +507,45 @@ export const publicationAttempts = pgTable(
       foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
       name: 'publication_attempts_workspace_job_fk',
     }).onDelete('cascade'),
+  ],
+);
+
+export const xRemediationJournals = pgTable(
+  'x_remediation_journals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'restrict' }),
+    sourceJobId: uuid('source_job_id').notNull(),
+    sourceAttemptId: uuid('source_attempt_id').notNull(),
+    sourceExternalPostId: text('source_external_post_id').notNull(),
+    sourceRevisionId: uuid('source_revision_id').notNull(),
+    sourceContentHash: text('source_content_hash').notNull(),
+    sourceMediaHashes: jsonb('source_media_hashes').notNull(),
+    phase: text('phase').notNull(),
+    deleteConfirmedAt: timestamp('delete_confirmed_at', { withTimezone: true }),
+    replacementJobId: uuid('replacement_job_id'),
+    replacementAttemptId: uuid('replacement_attempt_id'),
+    replacementExternalPostId: text('replacement_external_post_id'),
+    replacementExternalUrl: text('replacement_external_url'),
+    replacementConfirmedAt: timestamp('replacement_confirmed_at', { withTimezone: true }),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('x_remediation_journals_source_job_unique').on(table.sourceJobId),
+    index('x_remediation_journals_workspace_phase_idx').on(table.workspaceId, table.phase),
+    foreignKey({
+      columns: [table.workspaceId, table.sourceJobId],
+      foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
+      name: 'x_remediation_journals_source_job_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.sourceAttemptId],
+      foreignColumns: [publicationAttempts.workspaceId, publicationAttempts.id],
+      name: 'x_remediation_journals_source_attempt_fk',
+    }).onDelete('restrict'),
   ],
 );
 

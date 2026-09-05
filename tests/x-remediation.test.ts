@@ -14,6 +14,7 @@ import {
 function source(jobId: string, externalPostId: string): RemediationSource {
   return {
     jobId,
+    attemptId: `attempt-${jobId}`,
     externalPostId,
     revisionId: `revision-${jobId}`,
     text: `Exact source text for ${jobId}`,

@@ -12,6 +12,7 @@ export const LIVE_CONFIRMATION = 'REMEDIATE-DAILY-VIBER-9807';
 
 export interface RemediationSource {
   jobId: string;
+  attemptId: string;
   externalPostId: string;
   revisionId: string;
   text: string;

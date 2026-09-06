@@ -307,8 +307,12 @@ describe('X media dispatch composition', () => {
     };
     const exact = { workspaceId: 'workspace-1', jobId: 'canary-job' };
 
-    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:00:00Z'), exact)).resolves.toBe(1);
-    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:02:00Z'), exact)).resolves.toBe(0);
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:00:00Z'), exact)).resolves.toBe(
+      1,
+    );
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:02:00Z'), exact)).resolves.toBe(
+      0,
+    );
 
     expect(createPost).toHaveBeenCalledTimes(1);
     expect(finishDispatchAttempt).toHaveBeenCalledWith(

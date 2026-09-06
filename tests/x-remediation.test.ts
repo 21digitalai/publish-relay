@@ -28,6 +28,7 @@ function gateway(): XRemediationGateway & { journal: RemediationJournal | null }
     loadSource: vi.fn(async (jobId, externalPostId) => source(jobId, externalPostId)),
     lookup: vi.fn(async (id) => ({ id, username: 'TheDailyViber' })),
     readJournal: vi.fn(async () => value.journal),
+    assertMediaReady: vi.fn(async () => undefined),
     prepareJournal: vi.fn(async (journal) => (value.journal = journal)),
     markDeleteStarted: vi.fn(
       async () => (value.journal = { ...value.journal!, phase: 'delete_started' }),
@@ -101,7 +102,7 @@ describe('Daily Viber X remediation', () => {
     expect(vi.mocked(target.publishReplacement)).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects a non-canary allowlisted item and invalid confirmation', async () => {
+  it('requires every preceding allowlisted item to be verified', async () => {
     const target = gateway();
     const second = DAILY_VIBER_REMEDIATION[1];
     await expect(
@@ -110,7 +111,19 @@ describe('Daily Viber X remediation', () => {
         jobId: second[0],
         externalPostId: second[1],
       }),
-    ).rejects.toThrow('Only the first');
+    ).rejects.toThrow('is not verified');
+    target.readJournal = vi.fn(async (jobId) =>
+      jobId === DAILY_VIBER_REMEDIATION[0][0]
+        ? ({ ...source(jobId, DAILY_VIBER_REMEDIATION[0][1]), phase: 'verified' } as never)
+        : target.journal,
+    );
+    await expect(
+      executeDailyViberCanary(target, {
+        confirmation: LIVE_CONFIRMATION,
+        jobId: second[0],
+        externalPostId: second[1],
+      }),
+    ).rejects.toThrow('Deleted X post still resolves');
     await expect(
       executeDailyViberCanary(target, {
         confirmation: 'wrong',
@@ -119,6 +132,26 @@ describe('Daily Viber X remediation', () => {
       }),
     ).rejects.toThrow('confirmation');
   });
+
+  it.each(['Scheduled media is unavailable', 'Media content hash mismatch'])(
+    'fails before deletion when retained media validation reports: %s',
+    async (failure) => {
+      const target = gateway();
+      const first = DAILY_VIBER_REMEDIATION[0];
+      target.assertMediaReady = vi.fn(async () => {
+        throw new Error(failure);
+      });
+      await expect(
+        executeDailyViberCanary(target, {
+          confirmation: LIVE_CONFIRMATION,
+          jobId: first[0],
+          externalPostId: first[1],
+        }),
+      ).rejects.toThrow(failure);
+      expect(target.markDeleteStarted).not.toHaveBeenCalled();
+      expect(target.deletePost).not.toHaveBeenCalled();
+    },
+  );
 
   it('reuses the durably prepared replacement after an uncertain dispatch', async () => {
     const target = gateway();

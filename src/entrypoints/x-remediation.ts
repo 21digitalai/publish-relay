@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
+
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -35,8 +37,11 @@ function argument(name: string): string {
   return value;
 }
 
-async function credentialId(database: NodePgDatabase, workspaceId: string): Promise<string> {
-  const jobId = DAILY_VIBER_REMEDIATION[0][0];
+async function credentialId(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+): Promise<string> {
   const id = await withTenantTransaction(database, { workspaceId }, async (transaction) => {
     const result = await transaction.execute<{ credentialId: string }>(sql`
       SELECT connection.credential_id AS "credentialId"
@@ -62,10 +67,14 @@ async function main(): Promise<void> {
     throw new Error('Unknown remediation mode');
   const workspaceId = argument('workspace-id');
   if (command === 'live-canary') {
-    if (argument('job-id') !== DAILY_VIBER_REMEDIATION[0][0])
-      throw new Error('Job is not allowlisted');
-    if (argument('post-id') !== DAILY_VIBER_REMEDIATION[0][1])
-      throw new Error('Post is not allowlisted');
+    const jobId = argument('job-id');
+    const postId = argument('post-id');
+    if (
+      !DAILY_VIBER_REMEDIATION.some(
+        ([allowedJob, allowedPost]) => allowedJob === jobId && allowedPost === postId,
+      )
+    )
+      throw new Error('Job and post pair is not allowlisted');
     if (argument('confirmation') !== LIVE_CONFIRMATION)
       throw new Error('Live confirmation is invalid');
   }
@@ -90,7 +99,9 @@ async function main(): Promise<void> {
   });
   const database = drizzle(pool);
   try {
-    const id = await credentialId(database, workspaceId);
+    const selectedJobId =
+      command === 'live-canary' ? argument('job-id') : DAILY_VIBER_REMEDIATION[0][0];
+    const id = await credentialId(database, workspaceId, selectedJobId);
     const stored = await withTenantTransaction(database, { workspaceId }, (transaction) =>
       getActiveCredential(transaction, workspaceId, id),
     );
@@ -104,11 +115,20 @@ async function main(): Promise<void> {
         plaintext.toString('utf8'),
       );
       const journal = new XRemediationJournalRepository(database, workspaceId);
+      const mediaSource = createLocalXMediaSource(database, mediaStorageRoot ?? '');
       const gateway: XRemediationGateway = {
         loadSource: (jobId: string, externalPostId: string) =>
           loadRemediationSource(database, workspaceId, jobId, externalPostId),
         lookup: (externalPostId: string) => client.getPost(externalPostId),
         readJournal: (jobId: string) => journal.read(jobId),
+        assertMediaReady: async (source) => {
+          for (const media of source.media) {
+            const loaded = await mediaSource.load({ workspaceId, mediaId: media.id });
+            const actual = createHash('sha256').update(loaded.bytes).digest('hex');
+            loaded.bytes.fill(0);
+            if (actual !== media.sha256) throw new Error(`Media ${media.id} content hash mismatch`);
+          }
+        },
         prepareJournal: (value: Parameters<typeof journal.prepare>[0]) => journal.prepare(value),
         markDeleteStarted: (jobId: string) => journal.markDeleteStarted(jobId),
         markDeleted: (jobId: string) => journal.markDeleted(jobId),
@@ -139,7 +159,7 @@ async function main(): Promise<void> {
                   {
                     database,
                     keys: new RuntimeMasterKeyProvider(masterKeyVersion),
-                    source: createLocalXMediaSource(database, mediaStorageRoot ?? ''),
+                    source: mediaSource,
                     createClient: createXMediaClientFactory({ consumerKey, consumerSecret }),
                     workerId: 'x-remediation-canary',
                     leaseMs: 60_000,

@@ -36,6 +36,7 @@ export interface XRemediationGateway {
   loadSource(jobId: string, externalPostId: string): Promise<RemediationSource>;
   lookup(externalPostId: string): Promise<{ id: string; username: string } | null>;
   readJournal(jobId: string): Promise<RemediationJournal | null>;
+  assertMediaReady(source: RemediationSource): Promise<void>;
   prepareJournal(journal: RemediationJournal): Promise<RemediationJournal>;
   markDeleteStarted(jobId: string): Promise<RemediationJournal>;
   markDeleted(jobId: string): Promise<RemediationJournal>;
@@ -99,9 +100,16 @@ export async function executeDailyViberCanary(
   input: { confirmation: string; jobId: string; externalPostId: string },
 ): Promise<RemediationJournal> {
   if (input.confirmation !== LIVE_CONFIRMATION) throw new Error('Live confirmation is invalid');
-  const allowed = DAILY_VIBER_REMEDIATION[0];
-  if (input.jobId !== allowed[0] || input.externalPostId !== allowed[1])
-    throw new Error('Only the first allowlisted item is authorized for the canary');
+  const allowlistIndex = DAILY_VIBER_REMEDIATION.findIndex(
+    ([jobId, externalPostId]) => jobId === input.jobId && externalPostId === input.externalPostId,
+  );
+  if (allowlistIndex < 0) throw new Error('Job and post pair is not allowlisted');
+  for (const [precedingJobId] of DAILY_VIBER_REMEDIATION.slice(0, allowlistIndex)) {
+    const preceding = await gateway.readJournal(precedingJobId);
+    if (preceding?.phase !== 'verified') {
+      throw new Error(`Preceding remediation ${precedingJobId} is not verified`);
+    }
+  }
 
   let journal = await gateway.readJournal(input.jobId);
   if (!journal) {
@@ -116,6 +124,7 @@ export async function executeDailyViberCanary(
       contentHash: hashSource(source),
     });
   }
+  if (journal.phase === 'prepared') await gateway.assertMediaReady(journal.source);
   if (journal.phase === 'prepared') journal = await gateway.markDeleteStarted(input.jobId);
   if (journal.phase === 'delete_started') {
     const existing = await gateway.lookup(journal.source.externalPostId);

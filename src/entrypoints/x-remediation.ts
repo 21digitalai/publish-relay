@@ -84,7 +84,9 @@ async function main(): Promise<void> {
       command === 'live-canary' ? resolveWorkerDatabaseUrl(config) : config.DATABASE_URL,
     options:
       command === 'live-canary' ? '-c role=publish_relay_worker' : '-c role=publish_relay_web',
-    max: 1,
+    // Media staging holds a dedicated advisory-lock connection while its
+    // tenant-scoped progress transactions use another pool connection.
+    max: command === 'live-canary' ? 2 : 1,
   });
   const database = drizzle(pool);
   try {

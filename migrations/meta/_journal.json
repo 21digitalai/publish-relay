@@ -134,6 +134,27 @@
       "when": 1788238940000,
       "tag": "0018_membership_identity_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788337663000,
+      "tag": "0019_media_retention_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788645330000,
+      "tag": "0020_x_remediation_journal",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788733102000,
+      "tag": "0021_x_remediation_started_phases",
+      "breakpoints": true
     }
   ]
 }

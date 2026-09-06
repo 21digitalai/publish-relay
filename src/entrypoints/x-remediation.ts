@@ -26,7 +26,7 @@ function argument(name: string): string {
 
 async function credentialId(database: NodePgDatabase, workspaceId: string): Promise<string> {
   const jobId = DAILY_VIBER_REMEDIATION[0][0];
-  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
+  const id = await withTenantTransaction(database, { workspaceId }, async (transaction) => {
     const result = await transaction.execute<{ credentialId: string }>(sql`
       SELECT connection.credential_id AS "credentialId"
       FROM publication_jobs job
@@ -37,10 +37,12 @@ async function credentialId(database: NodePgDatabase, workspaceId: string): Prom
       WHERE job.workspace_id = ${workspaceId} AND job.id = ${jobId}
         AND connection.provider = 'x'
     `);
-    const row = (Array.isArray(result) ? result : result.rows)[0];
+    const rows = (Array.isArray(result) ? result : result.rows) as { credentialId: string }[];
+    const row = rows[0];
     if (!row) throw new Error('Allowlisted X credential was not found');
     return row.credentialId;
   });
+  return id;
 }
 
 async function main(): Promise<void> {

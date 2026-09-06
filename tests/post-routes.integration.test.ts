@@ -146,7 +146,7 @@ function requestPayload(text = 'Scheduled through the API') {
 beforeEach(async () => {
   storedMedia.clear();
   mediaPutError = undefined;
-  browserNow = undefined;
+  browserNow = new Date('2026-09-01T10:00:00.000Z');
   database = new PGlite();
   for (const migration of migrations)
     await database.exec(

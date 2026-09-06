@@ -103,7 +103,7 @@ describe('browser workflow read contract', () => {
     const payload = {
       content: { type: 'text', text: 'Safe browser post' },
       providerAccountIds: ['00000000-0000-4000-8000-000000000804'],
-      scheduledAt: '2026-09-02T10:00:00.000Z',
+      scheduledAt: '2030-09-02T10:00:00.000Z',
     };
     const headers = {
       'idempotency-key': 'safe-create',

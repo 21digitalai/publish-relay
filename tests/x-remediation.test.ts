@@ -34,8 +34,11 @@ function gateway(): XRemediationGateway & { journal: RemediationJournal | null }
     ),
     markDeleted: vi.fn(async () => (value.journal = { ...value.journal!, phase: 'deleted' })),
     deletePost: vi.fn(async () => undefined),
-    publishReplacement: vi.fn(async () => ({
-      jobId: 'replacement-job',
+    prepareReplacement: vi.fn(
+      async () => (value.journal = { ...value.journal!, replacementJobId: 'replacement-job' }),
+    ),
+    publishReplacement: vi.fn(async (_source, jobId) => ({
+      jobId,
       attemptId: 'replacement-attempt',
       externalPostId: 'replacement-post',
       externalUrl: 'https://x.com/TheDailyViber/status/replacement-post',
@@ -117,7 +120,7 @@ describe('Daily Viber X remediation', () => {
     ).rejects.toThrow('confirmation');
   });
 
-  it('fails closed instead of duplicating a replacement after an uncertain publish', async () => {
+  it('reuses the durably prepared replacement after an uncertain dispatch', async () => {
     const target = gateway();
     const first = DAILY_VIBER_REMEDIATION[0];
     let sourceLookupCount = 0;
@@ -126,8 +129,16 @@ describe('Daily Viber X remediation', () => {
       sourceLookupCount += 1;
       return sourceLookupCount === 1 ? { id, username: 'TheDailyViber' } : null;
     });
-    target.publishReplacement = vi.fn(async () => {
-      throw new Error('connection lost after request');
+    let dispatches = 0;
+    target.publishReplacement = vi.fn(async (_source, jobId) => {
+      dispatches += 1;
+      if (dispatches === 1) throw new Error('crash after replacement job creation');
+      return {
+        jobId,
+        attemptId: 'replacement-attempt',
+        externalPostId: 'replacement-post',
+        externalUrl: 'https://x.com/TheDailyViber/status/replacement-post',
+      };
     });
     await expect(
       executeDailyViberCanary(target, {
@@ -135,14 +146,16 @@ describe('Daily Viber X remediation', () => {
         jobId: first[0],
         externalPostId: first[1],
       }),
-    ).rejects.toThrow('connection lost');
+    ).rejects.toThrow('crash after replacement job creation');
     await expect(
       executeDailyViberCanary(target, {
         confirmation: LIVE_CONFIRMATION,
         jobId: first[0],
         externalPostId: first[1],
       }),
-    ).rejects.toThrow('requires reconciliation');
-    expect(target.publishReplacement).toHaveBeenCalledTimes(1);
+    ).resolves.toMatchObject({ phase: 'verified', replacementJobId: 'replacement-job' });
+    expect(target.prepareReplacement).toHaveBeenCalledTimes(1);
+    expect(target.publishReplacement).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(target.publishReplacement).mock.calls[1]?.[1]).toBe('replacement-job');
   });
 });

@@ -2,6 +2,7 @@ import { sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { createPostInTransaction } from '../content/post.service.js';
 import { normalizeStoredXContent } from './x-media-dispatch.service.js';
 import type { RemediationJournal, RemediationSource } from './x-remediation.service.js';
 
@@ -153,6 +154,45 @@ export class XRemediationJournalRepository {
       'replacement_started',
       sql`replacement_started_at = now()`,
     );
+  }
+
+  public async prepareReplacement(source: RemediationSource): Promise<RemediationJournal> {
+    await withTenantTransaction(
+      this.database,
+      { workspaceId: this.workspaceId },
+      async (transaction) => {
+        const current = await transaction.execute<{ replacementJobId: string | null }>(sql`
+        SELECT replacement_job_id AS "replacementJobId"
+        FROM x_remediation_journals
+        WHERE workspace_id = ${this.workspaceId} AND source_job_id = ${source.jobId}
+          AND phase = 'replacement_started'
+        FOR UPDATE
+      `);
+        if (rows(current)[0]?.replacementJobId) return;
+        if (!source.providerAccountId || !source.createdByUserId)
+          throw new Error('Replacement source authority is incomplete');
+        const created = await createPostInTransaction(transaction, {
+          workspaceId: this.workspaceId,
+          userId: source.createdByUserId,
+          content: { kind: 'text', text: source.text },
+          mediaIds: source.media.map((item) => item.id),
+          providerAccountIds: [source.providerAccountId],
+          scheduledAt: new Date(),
+          idempotencyKey: `x-remediation:${source.jobId}`,
+        });
+        const replacementJobId = created.jobIds[0];
+        if (!replacementJobId) throw new Error('Replacement job was not created');
+        await transaction.execute(sql`
+        UPDATE x_remediation_journals
+        SET replacement_job_id = ${replacementJobId}, updated_at = now()
+        WHERE workspace_id = ${this.workspaceId} AND source_job_id = ${source.jobId}
+          AND phase = 'replacement_started' AND replacement_job_id IS NULL
+      `);
+      },
+    );
+    const journal = await this.read(source.jobId);
+    if (!journal) throw new Error(`Remediation journal ${source.jobId} was not found`);
+    return journal;
   }
 
   public async markReplaced(

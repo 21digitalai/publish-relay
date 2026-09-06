@@ -40,7 +40,11 @@ export interface XRemediationGateway {
   markDeleteStarted(jobId: string): Promise<RemediationJournal>;
   markDeleted(jobId: string): Promise<RemediationJournal>;
   deletePost(externalPostId: string): Promise<void>;
-  publishReplacement(source: RemediationSource): Promise<{
+  prepareReplacement(source: RemediationSource): Promise<RemediationJournal>;
+  publishReplacement(
+    source: RemediationSource,
+    replacementJobId: string,
+  ): Promise<{
     jobId: string;
     attemptId: string;
     externalPostId: string;
@@ -118,11 +122,14 @@ export async function executeDailyViberCanary(
     if (existing) await gateway.deletePost(journal.source.externalPostId);
     journal = await gateway.markDeleted(input.jobId);
   }
-  if (journal.phase === 'replacement_started')
-    throw new Error('Replacement outcome requires reconciliation; refusing to publish again');
   if (journal.phase === 'deleted') {
     journal = await gateway.markReplacementStarted(input.jobId);
-    const replacement = await gateway.publishReplacement(journal.source);
+  }
+  if (journal.phase === 'replacement_started') {
+    if (!journal.replacementJobId) journal = await gateway.prepareReplacement(journal.source);
+    if (!journal.replacementJobId)
+      throw new Error('Replacement preparation did not persist a replacement job');
+    const replacement = await gateway.publishReplacement(journal.source, journal.replacementJobId);
     journal = await gateway.markReplaced(input.jobId, replacement);
   }
   if (journal.phase === 'replaced') {

@@ -9,7 +9,6 @@ import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import { withTenantTransaction } from '../database/tenant-transaction.js';
 import { decryptCredential } from '../modules/credentials/envelope.js';
 import { getActiveCredential } from '../modules/credentials/credential.repository.js';
-import { createPost } from '../modules/content/post.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
 import {
   createLocalXMediaSource,
@@ -112,23 +111,31 @@ async function main(): Promise<void> {
         markDeleted: (jobId: string) => journal.markDeleted(jobId),
         deletePost: (externalPostId: string) => client.deletePost(externalPostId),
         markReplacementStarted: (jobId: string) => journal.markReplacementStarted(jobId),
+        prepareReplacement: (source: Awaited<ReturnType<typeof loadRemediationSource>>) =>
+          journal.prepareReplacement(source),
         markReplaced: (jobId: string, replacement: Parameters<typeof journal.markReplaced>[1]) =>
           journal.markReplaced(jobId, replacement),
         markVerified: (jobId: string) => journal.markVerified(jobId),
-        publishReplacement: async (source: Awaited<ReturnType<typeof loadRemediationSource>>) => {
-          if (!source.providerAccountId || !source.createdByUserId)
-            throw new Error('Replacement source authority is incomplete');
-          const created = await createPost(database, {
-            workspaceId,
-            userId: source.createdByUserId,
-            content: { kind: 'text', text: source.text },
-            mediaIds: source.media.map((item) => item.id),
-            providerAccountIds: [source.providerAccountId],
-            scheduledAt: new Date(),
-            idempotencyKey: `x-remediation:${source.jobId}`,
-          });
-          const replacementJobId = created.jobIds[0];
-          if (!replacementJobId) throw new Error('Replacement job was not created');
+        publishReplacement: async (_source, replacementJobId) => {
+          const publishedAttempt = async () => {
+            const result = await withTenantTransaction(database, { workspaceId }, (transaction) =>
+              transaction.execute<{ attemptId: string; externalPostId: string }>(sql`
+                SELECT id AS "attemptId", external_post_id AS "externalPostId"
+                FROM publication_attempts WHERE workspace_id = ${workspaceId}
+                  AND job_id = ${replacementJobId} AND outcome = 'published'
+                ORDER BY attempt_number DESC LIMIT 1
+              `),
+            );
+            return result.rows[0];
+          };
+          const existingAttempt = await publishedAttempt();
+          if (existingAttempt?.externalPostId)
+            return {
+              jobId: replacementJobId,
+              attemptId: existingAttempt.attemptId,
+              externalPostId: existingAttempt.externalPostId,
+              externalUrl: `https://x.com/TheDailyViber/status/${existingAttempt.externalPostId}`,
+            };
           const dispatched = await dispatchDueXJobs(
             {
               database,
@@ -142,15 +149,7 @@ async function main(): Promise<void> {
             { workspaceId, jobId: replacementJobId },
           );
           if (dispatched !== 1) throw new Error('Exact replacement job was not dispatched');
-          const result = await withTenantTransaction(database, { workspaceId }, (transaction) =>
-            transaction.execute<{ attemptId: string; externalPostId: string }>(sql`
-              SELECT id AS "attemptId", external_post_id AS "externalPostId"
-              FROM publication_attempts WHERE workspace_id = ${workspaceId}
-                AND job_id = ${replacementJobId} AND outcome = 'published'
-              ORDER BY attempt_number DESC LIMIT 1
-            `),
-          );
-          const attempt = result.rows[0];
+          const attempt = await publishedAttempt();
           if (!attempt?.externalPostId) throw new Error('Replacement publish did not complete');
           return {
             jobId: replacementJobId,

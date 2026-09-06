@@ -88,6 +88,11 @@ describe('X remediation PostgreSQL repository', () => {
     };
     expect((await repository.markReplacementStarted(jobId)).phase).toBe('replacement_started');
     expect((await repository.markReplacementStarted(jobId)).phase).toBe('replacement_started');
+    const preparedReplacement = await repository.prepareReplacement(source);
+    expect(preparedReplacement.replacementJobId).toBeTruthy();
+    expect((await repository.prepareReplacement(source)).replacementJobId).toBe(
+      preparedReplacement.replacementJobId,
+    );
     expect((await repository.markReplaced(jobId, replacement)).phase).toBe('replaced');
     expect((await repository.markReplaced(jobId, replacement)).replacementExternalPostId).toBe(
       'replacement-post',

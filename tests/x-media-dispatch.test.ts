@@ -269,6 +269,59 @@ describe('X media dispatch composition', () => {
     );
   });
 
+  it('does not call the provider again when an exact canary dispatch has an uncertain outcome', async () => {
+    vi.mocked(claimExactDueJob)
+      .mockResolvedValueOnce({
+        id: 'canary-job',
+        workspaceId: 'workspace-1',
+        revisionId: 'revision-1',
+        providerAccountId: 'account-1',
+        state: 'leased',
+        attemptNumber: 1,
+        leaseOwner: 'x-remediation-canary',
+        leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
+      })
+      .mockResolvedValueOnce(null);
+    databaseTransaction.orderBy.mockResolvedValueOnce([
+      {
+        credentialId: 'credential-1',
+        accountId: 'x-account-1',
+        content: { kind: 'text', text: 'Exact Daily Viber source text' } as never,
+        mediaId: 'source-media-1',
+        mimeType: 'image/png',
+      },
+    ]);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
+    vi.mocked(stageXMedia).mockResolvedValue({ mediaId: 'x-staged-media-1', state: 'succeeded' });
+    const createPost = vi.fn(() =>
+      Promise.reject(Object.assign(new Error('sanitized timeout'), { outcomeUnknown: true })),
+    );
+    const runtime = {
+      database: {} as never,
+      keys: {} as never,
+      source: {} as XMediaSource,
+      createClient: vi.fn(() => ({ createPost }) as unknown as XMediaUploadClient),
+      workerId: 'x-remediation-canary',
+      leaseMs: 30_000,
+    };
+    const exact = { workspaceId: 'workspace-1', jobId: 'canary-job' };
+
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:00:00Z'), exact)).resolves.toBe(1);
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:02:00Z'), exact)).resolves.toBe(0);
+
+    expect(createPost).toHaveBeenCalledTimes(1);
+    expect(finishDispatchAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        jobId: 'canary-job',
+        outcome: 'unknown',
+        reconciliationKey: 'x:manual:job-key',
+      }),
+    );
+    expect(claimDueJobs).not.toHaveBeenCalled();
+  });
+
   it('resumes idempotent staging on a later worker pass after a staging failure', async () => {
     const claimedJob = {
       id: 'job-1',

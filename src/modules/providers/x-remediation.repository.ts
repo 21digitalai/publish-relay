@@ -161,14 +161,18 @@ export class XRemediationJournalRepository {
       this.database,
       { workspaceId: this.workspaceId },
       async (transaction) => {
-        const current = await transaction.execute<{ replacementJobId: string | null }>(sql`
-        SELECT replacement_job_id AS "replacementJobId"
+        const current = await transaction.execute<{
+          phase: RemediationJournal['phase'];
+          replacementJobId: string | null;
+        }>(sql`
+        SELECT phase, replacement_job_id AS "replacementJobId"
         FROM x_remediation_journals
         WHERE workspace_id = ${this.workspaceId} AND source_job_id = ${source.jobId}
-          AND phase = 'replacement_started'
         FOR UPDATE
       `);
-        if (rows(current)[0]?.replacementJobId) return;
+        const locked = rows(current)[0];
+        if (!locked) throw new Error(`Remediation journal ${source.jobId} was not found`);
+        if (locked.replacementJobId || locked.phase !== 'replacement_started') return;
         if (!source.providerAccountId || !source.createdByUserId)
           throw new Error('Replacement source authority is incomplete');
         const created = await createPostInTransaction(transaction, {
@@ -182,12 +186,15 @@ export class XRemediationJournalRepository {
         });
         const replacementJobId = created.jobIds[0];
         if (!replacementJobId) throw new Error('Replacement job was not created');
-        await transaction.execute(sql`
+        const updated = await transaction.execute<{ replacementJobId: string }>(sql`
         UPDATE x_remediation_journals
         SET replacement_job_id = ${replacementJobId}, updated_at = now()
         WHERE workspace_id = ${this.workspaceId} AND source_job_id = ${source.jobId}
           AND phase = 'replacement_started' AND replacement_job_id IS NULL
+        RETURNING replacement_job_id AS "replacementJobId"
       `);
+        if (rows(updated).length !== 1)
+          throw new Error(`Remediation replacement ${source.jobId} was not persisted`);
       },
     );
     const journal = await this.read(source.jobId);

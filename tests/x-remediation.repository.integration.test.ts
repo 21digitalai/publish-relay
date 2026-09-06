@@ -93,11 +93,27 @@ describe('X remediation PostgreSQL repository', () => {
     expect((await repository.prepareReplacement(source)).replacementJobId).toBe(
       preparedReplacement.replacementJobId,
     );
+    const concurrent = await Promise.all([
+      repository.prepareReplacement(source),
+      repository.prepareReplacement(source),
+    ]);
+    expect(new Set(concurrent.map((item) => item.replacementJobId))).toEqual(
+      new Set([preparedReplacement.replacementJobId]),
+    );
+    const jobs = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM publication_jobs WHERE workspace_id = '${workspaceId}'`,
+    );
+    expect(jobs.rows[0]?.count).toBe(2);
     expect((await repository.markReplaced(jobId, replacement)).phase).toBe('replaced');
     expect((await repository.markReplaced(jobId, replacement)).replacementExternalPostId).toBe(
       'replacement-post',
     );
     expect((await repository.markVerified(jobId)).phase).toBe('verified');
     expect((await repository.markVerified(jobId)).phase).toBe('verified');
+    expect((await repository.prepareReplacement(source)).replacementJobId).toBe(replacement.jobId);
+    const jobsAfterStaleReplay = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM publication_jobs WHERE workspace_id = '${workspaceId}'`,
+    );
+    expect(jobsAfterStaleReplay.rows[0]?.count).toBe(2);
   });
 });

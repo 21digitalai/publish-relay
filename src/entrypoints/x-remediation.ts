@@ -19,6 +19,7 @@ import {
   loadRemediationSource,
   XRemediationJournalRepository,
 } from '../modules/providers/x-remediation.repository.js';
+import { publishPersistedReplacement } from '../modules/providers/x-remediation-dispatch.service.js';
 import {
   DAILY_VIBER_REMEDIATION,
   executeDailyViberCanary,
@@ -128,35 +129,27 @@ async function main(): Promise<void> {
             );
             return result.rows[0];
           };
-          const existingAttempt = await publishedAttempt();
-          if (existingAttempt?.externalPostId)
-            return {
-              jobId: replacementJobId,
-              attemptId: existingAttempt.attemptId,
-              externalPostId: existingAttempt.externalPostId,
-              externalUrl: `https://x.com/TheDailyViber/status/${existingAttempt.externalPostId}`,
-            };
-          const dispatched = await dispatchDueXJobs(
+          return publishPersistedReplacement(
             {
-              database,
-              keys: new RuntimeMasterKeyProvider(masterKeyVersion),
-              source: createLocalXMediaSource(database, mediaStorageRoot ?? ''),
-              createClient: createXMediaClientFactory({ consumerKey, consumerSecret }),
-              workerId: 'x-remediation-canary',
-              leaseMs: 60_000,
+              findPublishedAttempt: publishedAttempt,
+              dispatchExact: (jobId) =>
+                dispatchDueXJobs(
+                  {
+                    database,
+                    keys: new RuntimeMasterKeyProvider(masterKeyVersion),
+                    source: createLocalXMediaSource(database, mediaStorageRoot ?? ''),
+                    createClient: createXMediaClientFactory({ consumerKey, consumerSecret }),
+                    workerId: 'x-remediation-canary',
+                    leaseMs: 60_000,
+                  },
+                  new Date(),
+                  { workspaceId, jobId },
+                ),
+              externalUrl: (externalPostId) =>
+                `https://x.com/TheDailyViber/status/${externalPostId}`,
             },
-            new Date(),
-            { workspaceId, jobId: replacementJobId },
+            replacementJobId,
           );
-          if (dispatched !== 1) throw new Error('Exact replacement job was not dispatched');
-          const attempt = await publishedAttempt();
-          if (!attempt?.externalPostId) throw new Error('Replacement publish did not complete');
-          return {
-            jobId: replacementJobId,
-            attemptId: attempt.attemptId,
-            externalPostId: attempt.externalPostId,
-            externalUrl: `https://x.com/TheDailyViber/status/${attempt.externalPostId}`,
-          };
         },
       };
       const result =

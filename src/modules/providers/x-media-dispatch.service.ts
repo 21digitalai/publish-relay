@@ -18,6 +18,7 @@ import { getActiveCredential } from '../credentials/credential.repository.js';
 import { decryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
 import {
   claimDueJobs,
+  claimExactDueJob,
   claimReconciliationJobs,
   deriveJobIdempotencyKey,
   finishDispatchAttempt,
@@ -183,15 +184,29 @@ async function loadXJobContext(database: NodePgDatabase, workspaceId: string, jo
 export async function dispatchDueXJobs(
   runtime: XDispatchRuntime,
   now = new Date(),
+  exactJob?: { workspaceId: string; jobId: string },
 ): Promise<number> {
-  const jobs = await claimDueJobs(runtime.database, {
-    workerId: runtime.workerId,
-    now,
-    leaseMs: runtime.leaseMs,
-    limit: 10,
-    provider: 'x',
-    requireMedia: false,
-  });
+  const claimedExact = exactJob
+    ? await claimExactDueJob(runtime.database, {
+        jobId: exactJob.jobId,
+        workspaceId: exactJob.workspaceId,
+        workerId: runtime.workerId,
+        now,
+        leaseMs: runtime.leaseMs,
+      })
+    : null;
+  const jobs = exactJob
+    ? claimedExact
+      ? [claimedExact]
+      : []
+    : await claimDueJobs(runtime.database, {
+        workerId: runtime.workerId,
+        now,
+        leaseMs: runtime.leaseMs,
+        limit: 10,
+        provider: 'x',
+        requireMedia: false,
+      });
   let dispatched = 0;
   for (const job of jobs) {
     const context = await loadXJobContext(runtime.database, job.workspaceId, job.id);

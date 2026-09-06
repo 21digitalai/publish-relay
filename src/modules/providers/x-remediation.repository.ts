@@ -50,12 +50,16 @@ export async function loadRemediationSource(
       attemptId: string;
       mediaId: string | null;
       sha256: string | null;
+      providerAccountId: string;
+      createdByUserId: string;
     }>(sql`
       SELECT revision.id AS "revisionId", revision.content,
-        attempt.id AS "attemptId", media.id AS "mediaId", media.sha256
+      attempt.id AS "attemptId", media.id AS "mediaId", media.sha256
+        , job.provider_account_id AS "providerAccountId", post.created_by_user_id AS "createdByUserId"
       FROM publication_jobs job
       JOIN post_revisions revision ON revision.workspace_id = job.workspace_id
         AND revision.id = job.revision_id
+      JOIN posts post ON post.workspace_id = job.workspace_id AND post.id = job.post_id
       JOIN publication_attempts attempt ON attempt.workspace_id = job.workspace_id
         AND attempt.job_id = job.id AND attempt.external_post_id = ${externalPostId}
       LEFT JOIN revision_media link ON link.workspace_id = revision.workspace_id
@@ -78,6 +82,8 @@ export async function loadRemediationSource(
       media: found.flatMap((item) =>
         item.mediaId && item.sha256 ? [{ id: item.mediaId, sha256: item.sha256 }] : [],
       ),
+      providerAccountId: first.providerAccountId,
+      createdByUserId: first.createdByUserId,
     };
   });
 }

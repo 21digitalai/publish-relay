@@ -14,6 +14,7 @@ import {
 vi.mock('../src/modules/providers/x-media-staging.service.js', () => ({ stageXMedia: vi.fn() }));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   claimDueJobs: vi.fn(),
+  claimExactDueJob: vi.fn(),
   deriveJobIdempotencyKey: vi.fn(() => 'job-key'),
   startDispatchAttempt: vi.fn(() =>
     Promise.resolve({ attemptId: 'attempt-1', attemptNumber: 1, idempotencyKey: 'job-key' }),
@@ -37,7 +38,7 @@ vi.mock('../src/modules/credentials/envelope.js', () => ({ decryptCredential: vi
 import { stageXMedia } from '../src/modules/providers/x-media-staging.service.js';
 import { getActiveCredential } from '../src/modules/credentials/credential.repository.js';
 import { decryptCredential } from '../src/modules/credentials/envelope.js';
-import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
+import { claimDueJobs, claimExactDueJob } from '../src/modules/scheduler/job.repository.js';
 import {
   finishDispatchAttempt,
   claimReconciliationJobs,
@@ -210,6 +211,61 @@ describe('X media dispatch composition', () => {
 
     expect(createPost).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'Opening\n\nClosing', mediaIds: ['x-media-1'] }),
+    );
+  });
+
+  it('dispatches only the explicitly claimed canary job with exact text and staged media', async () => {
+    vi.mocked(claimExactDueJob).mockResolvedValue({
+      id: 'canary-job',
+      workspaceId: 'workspace-1',
+      revisionId: 'revision-1',
+      providerAccountId: 'account-1',
+      state: 'leased',
+      attemptNumber: 1,
+      leaseOwner: 'x-remediation-canary',
+      leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
+    });
+    databaseTransaction.orderBy.mockResolvedValueOnce([
+      {
+        credentialId: 'credential-1',
+        accountId: 'x-account-1',
+        content: { kind: 'text', text: 'Exact Daily Viber source text' } as never,
+        mediaId: 'source-media-1',
+        mimeType: 'image/png',
+      },
+    ]);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
+    vi.mocked(stageXMedia).mockResolvedValue({ mediaId: 'x-staged-media-1', state: 'succeeded' });
+    const createPost = vi.fn(() =>
+      Promise.resolve({ id: 'replacement-post', username: 'TheDailyViber' }),
+    );
+
+    await expect(
+      dispatchDueXMedia(
+        {
+          database: {} as never,
+          keys: {} as never,
+          source: {} as XMediaSource,
+          createClient: vi.fn(() => ({ createPost }) as unknown as XMediaUploadClient),
+          workerId: 'x-remediation-canary',
+          leaseMs: 30_000,
+        },
+        new Date('2026-09-01T00:00:00Z'),
+        { workspaceId: 'workspace-1', jobId: 'canary-job' },
+      ),
+    ).resolves.toBe(1);
+
+    expect(claimDueJobs).not.toHaveBeenCalled();
+    expect(claimExactDueJob).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ jobId: 'canary-job' }),
+    );
+    expect(createPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Exact Daily Viber source text',
+        mediaIds: ['x-staged-media-1'],
+      }),
     );
   });
 

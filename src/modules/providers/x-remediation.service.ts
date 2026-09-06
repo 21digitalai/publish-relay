@@ -17,6 +17,8 @@ export interface RemediationSource {
   revisionId: string;
   text: string;
   media: readonly { id: string; sha256: string }[];
+  providerAccountId?: string;
+  createdByUserId?: string;
 }
 
 export interface RemediationJournal {

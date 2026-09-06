@@ -104,6 +104,36 @@ export async function claimDueJobs(
   return resultRows(result);
 }
 
+export async function claimExactDueJob(
+  database: NodePgDatabase,
+  input: { jobId: string; workspaceId: string; workerId: string; now: Date; leaseMs: number },
+): Promise<ClaimedJob | null> {
+  const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
+  const result = await database.execute<ClaimedJob>(sql`
+    WITH candidate AS (
+      SELECT id, state AS from_state FROM publication_jobs
+      WHERE id = ${input.jobId} AND workspace_id = ${input.workspaceId}
+        AND ((state = 'scheduled' AND scheduled_at <= ${input.now})
+          OR (state = 'retry_wait' AND next_attempt_at <= ${input.now})
+          OR (state = 'leased' AND lease_expires_at <= ${input.now}))
+      FOR UPDATE
+    ), claimed AS (
+      UPDATE publication_jobs AS job
+      SET state = 'leased', lease_owner = ${input.workerId}, lease_expires_at = ${leaseExpiresAt},
+          attempt_number = job.attempt_number + 1, updated_at = ${input.now}
+      FROM candidate WHERE job.id = candidate.id
+      RETURNING job.*, candidate.from_state
+    ), events AS (
+      INSERT INTO publication_job_events (workspace_id, job_id, from_state, to_state, reason)
+      SELECT workspace_id, id, from_state, 'leased', 'exact_worker_claim' FROM claimed
+    )
+    SELECT id, workspace_id AS "workspaceId", revision_id AS "revisionId",
+      provider_account_id AS "providerAccountId", state, attempt_number AS "attemptNumber",
+      lease_owner AS "leaseOwner", lease_expires_at AS "leaseExpiresAt" FROM claimed
+  `);
+  return resultRows(result)[0] ?? null;
+}
+
 export async function recoverExpiredDispatches(
   database: NodePgDatabase,
   now: Date,

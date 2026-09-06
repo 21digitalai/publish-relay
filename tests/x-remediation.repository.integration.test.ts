@@ -76,6 +76,8 @@ describe('X remediation PostgreSQL repository', () => {
       contentHash: 'source-hash',
     });
     expect(await repository.prepare(prepared)).toEqual(prepared);
+    expect((await repository.markDeleteStarted(jobId)).phase).toBe('delete_started');
+    expect((await repository.markDeleteStarted(jobId)).phase).toBe('delete_started');
     expect((await repository.markDeleted(jobId)).phase).toBe('deleted');
     expect((await repository.markDeleted(jobId)).phase).toBe('deleted');
     const replacement = {
@@ -84,6 +86,8 @@ describe('X remediation PostgreSQL repository', () => {
       externalPostId: 'replacement-post',
       externalUrl: 'https://x.com/TheDailyViber/status/replacement-post',
     };
+    expect((await repository.markReplacementStarted(jobId)).phase).toBe('replacement_started');
+    expect((await repository.markReplacementStarted(jobId)).phase).toBe('replacement_started');
     expect((await repository.markReplaced(jobId, replacement)).phase).toBe('replaced');
     expect((await repository.markReplaced(jobId, replacement)).replacementExternalPostId).toBe(
       'replacement-post',

@@ -20,7 +20,8 @@ export interface RemediationSource {
 }
 
 export interface RemediationJournal {
-  phase: 'prepared' | 'deleted' | 'replaced' | 'verified';
+  phase:
+    'prepared' | 'delete_started' | 'deleted' | 'replacement_started' | 'replaced' | 'verified';
   source: RemediationSource;
   contentHash: string;
   replacementJobId?: string;
@@ -34,6 +35,7 @@ export interface XRemediationGateway {
   lookup(externalPostId: string): Promise<{ id: string; username: string } | null>;
   readJournal(jobId: string): Promise<RemediationJournal | null>;
   prepareJournal(journal: RemediationJournal): Promise<RemediationJournal>;
+  markDeleteStarted(jobId: string): Promise<RemediationJournal>;
   markDeleted(jobId: string): Promise<RemediationJournal>;
   deletePost(externalPostId: string): Promise<void>;
   publishReplacement(source: RemediationSource): Promise<{
@@ -42,6 +44,7 @@ export interface XRemediationGateway {
     externalPostId: string;
     externalUrl: string;
   }>;
+  markReplacementStarted(jobId: string): Promise<RemediationJournal>;
   markReplaced(
     jobId: string,
     replacement: Awaited<ReturnType<XRemediationGateway['publishReplacement']>>,
@@ -107,11 +110,16 @@ export async function executeDailyViberCanary(
       contentHash: hashSource(source),
     });
   }
-  if (journal.phase === 'prepared') {
-    await gateway.deletePost(journal.source.externalPostId);
+  if (journal.phase === 'prepared') journal = await gateway.markDeleteStarted(input.jobId);
+  if (journal.phase === 'delete_started') {
+    const existing = await gateway.lookup(journal.source.externalPostId);
+    if (existing) await gateway.deletePost(journal.source.externalPostId);
     journal = await gateway.markDeleted(input.jobId);
   }
+  if (journal.phase === 'replacement_started')
+    throw new Error('Replacement outcome requires reconciliation; refusing to publish again');
   if (journal.phase === 'deleted') {
+    journal = await gateway.markReplacementStarted(input.jobId);
     const replacement = await gateway.publishReplacement(journal.source);
     journal = await gateway.markReplaced(input.jobId, replacement);
   }

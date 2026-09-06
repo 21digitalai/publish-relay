@@ -133,7 +133,20 @@ export class XRemediationJournalRepository {
   }
 
   public async markDeleted(jobId: string): Promise<RemediationJournal> {
-    return this.transition(jobId, 'prepared', 'deleted', sql`delete_confirmed_at = now()`);
+    return this.transition(jobId, 'delete_started', 'deleted', sql`delete_confirmed_at = now()`);
+  }
+
+  public async markDeleteStarted(jobId: string): Promise<RemediationJournal> {
+    return this.transition(jobId, 'prepared', 'delete_started', sql`delete_started_at = now()`);
+  }
+
+  public async markReplacementStarted(jobId: string): Promise<RemediationJournal> {
+    return this.transition(
+      jobId,
+      'deleted',
+      'replacement_started',
+      sql`replacement_started_at = now()`,
+    );
   }
 
   public async markReplaced(
@@ -147,7 +160,7 @@ export class XRemediationJournalRepository {
   ): Promise<RemediationJournal> {
     return this.transition(
       jobId,
-      'deleted',
+      'replacement_started',
       'replaced',
       sql`
       replacement_job_id = ${replacement.jobId},

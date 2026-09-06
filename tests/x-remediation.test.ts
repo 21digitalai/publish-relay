@@ -29,6 +29,9 @@ function gateway(): XRemediationGateway & { journal: RemediationJournal | null }
     lookup: vi.fn(async (id) => ({ id, username: 'TheDailyViber' })),
     readJournal: vi.fn(async () => value.journal),
     prepareJournal: vi.fn(async (journal) => (value.journal = journal)),
+    markDeleteStarted: vi.fn(
+      async () => (value.journal = { ...value.journal!, phase: 'delete_started' }),
+    ),
     markDeleted: vi.fn(async () => (value.journal = { ...value.journal!, phase: 'deleted' })),
     deletePost: vi.fn(async () => undefined),
     publishReplacement: vi.fn(async () => ({
@@ -37,6 +40,9 @@ function gateway(): XRemediationGateway & { journal: RemediationJournal | null }
       externalPostId: 'replacement-post',
       externalUrl: 'https://x.com/TheDailyViber/status/replacement-post',
     })),
+    markReplacementStarted: vi.fn(
+      async () => (value.journal = { ...value.journal!, phase: 'replacement_started' }),
+    ),
     markReplaced: vi.fn(
       async (_jobId, replacement) =>
         (value.journal = {
@@ -109,5 +115,34 @@ describe('Daily Viber X remediation', () => {
         externalPostId: DAILY_VIBER_REMEDIATION[0][1],
       }),
     ).rejects.toThrow('confirmation');
+  });
+
+  it('fails closed instead of duplicating a replacement after an uncertain publish', async () => {
+    const target = gateway();
+    const first = DAILY_VIBER_REMEDIATION[0];
+    let sourceLookupCount = 0;
+    target.lookup = vi.fn(async (id) => {
+      if (id !== first[1]) return { id, username: 'TheDailyViber' };
+      sourceLookupCount += 1;
+      return sourceLookupCount === 1 ? { id, username: 'TheDailyViber' } : null;
+    });
+    target.publishReplacement = vi.fn(async () => {
+      throw new Error('connection lost after request');
+    });
+    await expect(
+      executeDailyViberCanary(target, {
+        confirmation: LIVE_CONFIRMATION,
+        jobId: first[0],
+        externalPostId: first[1],
+      }),
+    ).rejects.toThrow('connection lost');
+    await expect(
+      executeDailyViberCanary(target, {
+        confirmation: LIVE_CONFIRMATION,
+        jobId: first[0],
+        externalPostId: first[1],
+      }),
+    ).rejects.toThrow('requires reconciliation');
+    expect(target.publishReplacement).toHaveBeenCalledTimes(1);
   });
 });

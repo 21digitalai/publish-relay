@@ -97,6 +97,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 ## Social God shadow parity
 
 - `npm run remediate:x -- dry-run --workspace-id <uuid>` is the bounded Daily Viber incident verifier. It is hard-limited to the five approved job/post pairs, loads normalized revisions and media hashes under tenant RLS, decrypts the job-bound X credential only in memory, and performs read-only X ownership lookups. Live mutation remains unavailable until Oracle and Overseer authorize the canary.
+- Live remediation journals intent phases before each provider mutation. Delete replay first looks up the old provider ID and may safely finish an already-applied delete. A replacement left in `replacement_started` is reconciliation-required and must never be published again automatically, because X has no proven create idempotency key.
 
 - `src/modules/parity/social-god.ts` is the credential-free boundary for Social God Daily Vibe snapshots. It accepts bounded package, `schedule_records`, account-map, media-map, and explicit item-to-package-map JSON; it never reads either product database or provider configuration. Current raw schedule rows join through `item_id` to either the package's `postiz_notes.cms_item_id` or the explicit map; synthetic `package_id` fields are not required.
 - `npm run parity:social-god -- <snapshot.json>` emits the Publish Relay v1 request/CLI, fake-provider outcome, source result, and exact unresolved gaps. Output is always marked dry-run with credentials unused and external writes blocked.

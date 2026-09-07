@@ -59,7 +59,13 @@ const ENVELOPE_OUTPUT_KEYS = [
 ] as const;
 const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
-  'posts:create': new Set([...ENVELOPE_OUTPUT_KEYS, 'self', 'jobs']),
+  'posts:create': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'self',
+    'jobs',
+    'mediaCount',
+    'previewMediaId',
+  ]),
   'posts:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'items',
@@ -114,6 +120,8 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'displayName',
     'handle',
     'provider',
+    'mediaCount',
+    'previewMediaId',
   ]),
   'publishes:poll': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
@@ -121,6 +129,8 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'updatedAt',
     'scheduledAt',
     'self',
+    'mediaCount',
+    'previewMediaId',
   ]),
 };
 const DEFAULT_OUTPUT_KEYS = new Set(ENVELOPE_OUTPUT_KEYS);

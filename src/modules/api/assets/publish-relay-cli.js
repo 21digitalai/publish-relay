@@ -49,7 +49,13 @@ const ENVELOPE_OUTPUT_KEYS = [
 ];
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
-  'posts:create': new Set([...ENVELOPE_OUTPUT_KEYS, 'self', 'jobs']),
+  'posts:create': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'self',
+    'jobs',
+    'mediaCount',
+    'previewMediaId',
+  ]),
   'posts:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'items',
@@ -104,6 +110,8 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'displayName',
     'handle',
     'provider',
+    'mediaCount',
+    'previewMediaId',
   ]),
   'publishes:poll': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
@@ -111,6 +119,8 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'updatedAt',
     'scheduledAt',
     'self',
+    'mediaCount',
+    'previewMediaId',
   ]),
 };
 const DEFAULT_OUTPUT_KEYS = new Set(ENVELOPE_OUTPUT_KEYS);

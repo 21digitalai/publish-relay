@@ -440,6 +440,10 @@ describe('X media dispatch composition', () => {
     await expect(reconcileXJobs(runtime, new Date('2026-09-01T00:02:00Z'))).resolves.toBe(0);
 
     expect(recoverExpiredDispatches).toHaveBeenCalled();
+    expect(claimReconciliationJobs).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ provider: 'x' }),
+    );
     expect(getPost).not.toHaveBeenCalled();
     expect(resolveReconciliation).not.toHaveBeenCalled();
   });

@@ -152,7 +152,7 @@ export async function recoverExpiredDispatches(
 
 export async function claimReconciliationJobs(
   database: NodePgDatabase,
-  input: { workerId: string; now: Date; leaseMs: number; limit: number },
+  input: { workerId: string; now: Date; leaseMs: number; limit: number; provider?: string },
 ): Promise<string[]> {
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
   const result = await database.execute<{ id: string }>(sql`
@@ -161,6 +161,13 @@ export async function claimReconciliationJobs(
       WHERE reconciliation_required = true
         AND state IN ('dispatching', 'accepted_pending')
         AND (lease_expires_at IS NULL OR lease_expires_at <= ${input.now})
+        AND (${input.provider ?? null}::text IS NULL OR EXISTS (
+          SELECT 1 FROM provider_accounts account
+          JOIN provider_connections connection ON connection.id = account.connection_id
+          WHERE account.id = publication_jobs.provider_account_id
+            AND account.workspace_id = publication_jobs.workspace_id
+            AND connection.provider = ${input.provider ?? null}
+        ))
       ORDER BY updated_at, id
       FOR UPDATE SKIP LOCKED
       LIMIT ${input.limit}

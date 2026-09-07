@@ -343,6 +343,7 @@ export async function reconcileXJobs(runtime: XDispatchRuntime, now = new Date()
     now,
     leaseMs: runtime.leaseMs,
     limit: 10,
+    provider: 'x',
   });
   let resolved = 0;
   for (const jobId of jobIds) {

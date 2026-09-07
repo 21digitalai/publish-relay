@@ -174,6 +174,12 @@ function addDays(value: Date, days: number): Date {
   return result;
 }
 
+function addMonths(value: Date, months: number): Date {
+  const targetMonth = value.getMonth() + months;
+  const lastTargetDay = new Date(value.getFullYear(), targetMonth + 1, 0).getDate();
+  return new Date(value.getFullYear(), targetMonth, Math.min(value.getDate(), lastTargetDay));
+}
+
 function startOfWeek(value: Date): Date {
   const day = value.getDay() || 7;
   return addDays(startOfDay(value), 1 - day);
@@ -614,6 +620,10 @@ export function QueuePage() {
   const initialParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const [query, setQuery] = useState(initialParams.get('q') ?? '');
   const [view, setView] = useState(initialParams.get('view') ?? 'All');
+  const [status, setStatus] = useState(initialParams.get('status') ?? 'any');
+  const [provider, setProvider] = useState(initialParams.get('provider') ?? 'any');
+  const [dateRange, setDateRange] = useState(initialParams.get('date') ?? 'any');
+  const [sort, setSort] = useState(initialParams.get('sort') ?? 'priority');
   const [queueJobs, setQueueJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
@@ -642,12 +652,16 @@ export function QueuePage() {
     const params = new URLSearchParams();
     if (query) params.set('q', query);
     if (view !== 'All') params.set('view', view);
+    if (status !== 'any') params.set('status', status);
+    if (provider !== 'any') params.set('provider', provider);
+    if (dateRange !== 'any') params.set('date', dateRange);
+    if (sort !== 'priority') params.set('sort', sort);
     window.history.replaceState(
       null,
       '',
       `${window.location.pathname}${params.size ? `?${params}` : ''}`,
     );
-  }, [query, view]);
+  }, [dateRange, provider, query, sort, status, view]);
   const jobs = useMemo(
     () =>
       (queueJobs ?? [])
@@ -657,9 +671,18 @@ export function QueuePage() {
             (view === 'All' ||
               (view === 'Needs attention'
                 ? ['failed', 'retrying'].includes(job.state)
-                : STATE_LABELS[job.state] === view)),
+                : STATE_LABELS[job.state] === view)) &&
+            (status === 'any' || job.state === status) &&
+            (provider === 'any' || job.provider.toLowerCase() === provider) &&
+            (dateRange === 'any' ||
+              (dateRange === 'upcoming'
+                ? new Date(job.scheduledAt).getTime() >= Date.now()
+                : sameDay(new Date(job.scheduledAt), new Date()))),
         )
         .sort((left, right) => {
+          const time = new Date(left.scheduledAt).getTime() - new Date(right.scheduledAt).getTime();
+          if (sort === 'oldest') return time;
+          if (sort === 'newest') return -time;
           const group = (job: Job) =>
             ['failed', 'retrying'].includes(job.state)
               ? 0
@@ -668,10 +691,9 @@ export function QueuePage() {
                 : 2;
           const difference = group(left) - group(right);
           if (difference) return difference;
-          const time = new Date(left.scheduledAt).getTime() - new Date(right.scheduledAt).getTime();
           return group(left) === 2 ? -time : time;
         }),
-    [query, queueJobs, view],
+    [dateRange, provider, query, queueJobs, sort, status, view],
   );
   return (
     <WorkspaceLayout active="queue">
@@ -716,9 +738,54 @@ export function QueuePage() {
                   placeholder="Search posts or accounts"
                 />
               </label>
-              <button className="filter-button">Status: Any</button>
-              <button className="filter-button">Provider: Any</button>
-              <button className="filter-button">Date: This week</button>
+              <select
+                aria-label="Status filter"
+                className="filter-button"
+                value={status}
+                onChange={(event) => setStatus(event.target.value)}
+              >
+                <option value="any">Status: Any</option>
+                {Object.entries(STATE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Provider filter"
+                className="filter-button"
+                value={provider}
+                onChange={(event) => setProvider(event.target.value)}
+              >
+                <option value="any">Provider: Any</option>
+                {[...new Set((queueJobs ?? []).map((job) => job.provider.toLowerCase()))].map(
+                  (value) => (
+                    <option key={value} value={value}>
+                      {value.toUpperCase()}
+                    </option>
+                  ),
+                )}
+              </select>
+              <select
+                aria-label="Date filter"
+                className="filter-button"
+                value={dateRange}
+                onChange={(event) => setDateRange(event.target.value)}
+              >
+                <option value="any">Date: Any</option>
+                <option value="today">Today</option>
+                <option value="upcoming">Upcoming</option>
+              </select>
+              <select
+                aria-label="Sort order"
+                className="filter-button"
+                value={sort}
+                onChange={(event) => setSort(event.target.value)}
+              >
+                <option value="priority">Sort: Priority</option>
+                <option value="oldest">Oldest first</option>
+                <option value="newest">Newest first</option>
+              </select>
             </div>
             {loadError ? (
               <div className="filter-empty" role="alert">
@@ -770,6 +837,10 @@ export function QueuePage() {
                   onClick={() => {
                     setQuery('');
                     setView('All');
+                    setStatus('any');
+                    setProvider('any');
+                    setDateRange('any');
+                    setSort('priority');
                   }}
                 >
                   Clear filters
@@ -820,7 +891,10 @@ export function CalendarPage() {
     });
     window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
   }, [mode, visibleDate]);
-  const step = mode === 'Month' ? 30 : mode === 'Week' ? 7 : 1;
+  const moveVisibleDate = (date: Date, direction: number) =>
+    mode === 'Month'
+      ? addMonths(date, direction)
+      : addDays(date, direction * (mode === 'Week' ? 7 : 1));
   return (
     <WorkspaceLayout active="calendar">
       <div className="calendar-heading">
@@ -838,14 +912,14 @@ export function CalendarPage() {
           <button
             className="icon-button"
             aria-label="Previous date"
-            onClick={() => setVisibleDate((date) => addDays(date, -step))}
+            onClick={() => setVisibleDate((date) => moveVisibleDate(date, -1))}
           >
             ←
           </button>
           <button
             className="icon-button"
             aria-label="Next date"
-            onClick={() => setVisibleDate((date) => addDays(date, step))}
+            onClick={() => setVisibleDate((date) => moveVisibleDate(date, 1))}
           >
             →
           </button>

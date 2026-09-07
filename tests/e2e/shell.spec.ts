@@ -648,6 +648,15 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   await page.screenshot({ path: testInfo.outputPath('queue-loading.png'), fullPage: true });
   await expect(page.getByRole('link', { name: /^Dispatching / })).toBeVisible();
   await expect(page.getByRole('link', { name: /^Retrying / })).toBeVisible();
+  await page.getByLabel('Status filter').selectOption('retrying');
+  await expect(page.getByRole('link', { name: /^Dispatching / })).toBeHidden();
+  await expect(page).toHaveURL(/status=retrying/);
+  await page.getByLabel('Sort order').selectOption('newest');
+  await page.reload();
+  await expect(page.getByLabel('Status filter')).toHaveValue('retrying');
+  await expect(page.getByLabel('Sort order')).toHaveValue('newest');
+  await page.getByLabel('Status filter').selectOption('any');
+  await page.getByLabel('Sort order').selectOption('priority');
   await page.getByPlaceholder('Search posts or accounts').fill('no-match');
   await expect(page.getByText('No jobs match these filters')).toBeVisible();
 
@@ -656,6 +665,9 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
     route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
   );
   await page.reload();
+  await expect(page).toHaveURL(/q=no-match/);
+  await expect(page.getByText('No jobs match these filters')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters' }).click();
   await expect(page.getByText('Nothing scheduled yet')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('queue-empty.png'), fullPage: true });
 
@@ -674,7 +686,7 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
 
 test('projects live calendar jobs by date, time, account lane, and active workspace', async ({
   page,
-}) => {
+}, testInfo) => {
   await establishWorkspaceSession(page);
   await page.route('**/api/workflow/jobs?limit=100', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -717,11 +729,13 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
       }),
     });
   });
-  await page.goto('/w/mira-studio/calendar');
+  await page.goto('/w/mira-studio/calendar?mode=Week&date=2026-09-01');
   await expect(page.getByRole('status')).toContainText('Loading publication calendar');
   await expect(page.getByRole('button', { name: '2 accounts' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('calendar-week.png'), fullPage: true });
 
   await page.getByRole('button', { name: 'Month', exact: true }).click();
+  await expect(page).toHaveURL(/mode=Month&date=2026-09-01/);
   const septemberFirst = page.getByRole('gridcell', { name: /Tuesday, September 1, 2026/ });
   const septemberSecond = page.getByRole('gridcell', { name: /Wednesday, September 2, 2026/ });
   await expect(septemberFirst.getByRole('link')).toHaveCount(2);
@@ -730,8 +744,15 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
     'href',
     '/w/mira-studio/jobs/mira-morning',
   );
+  await page.getByRole('button', { name: 'Previous date' }).click();
+  await expect(page).toHaveURL(/mode=Month&date=2026-08-01/);
+  await page.getByRole('button', { name: 'Next date' }).click();
+  await expect(page).toHaveURL(/mode=Month&date=2026-09-01/);
 
   await page.getByRole('button', { name: 'Week', exact: true }).click();
+  await page.getByRole('button', { name: 'Next date' }).click();
+  await expect(page).toHaveURL(/mode=Week&date=2026-09-08/);
+  await page.getByRole('button', { name: 'Previous date' }).click();
   const morning = page.getByRole('link', { name: /Mira Editorial, Dispatching/ });
   const lunch = page.getByRole('link', { name: /Mira Editorial, Retrying/ });
   await expect(morning).toHaveAttribute('style', /top: 53\.75px/);
@@ -740,15 +761,25 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await expect(page.getByRole('link', { name: /Studio Notes, Scheduled/ })).toBeVisible();
 
   await page.getByRole('button', { name: 'Day', exact: true }).click();
+  await page.getByRole('button', { name: 'Next date' }).click();
+  await expect(page).toHaveURL(/mode=Day&date=2026-09-02/);
+  await page.getByRole('button', { name: 'Previous date' }).click();
   await expect(page.getByLabel('Day calendar').getByRole('link')).toHaveCount(2);
 
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await page.getByRole('button', { name: 'Next date' }).click();
+  await expect(page).toHaveURL(/mode=Timeline&date=2026-09-02/);
+  await page.getByRole('button', { name: 'Previous date' }).click();
   await expect(page.locator('.timeline-lane')).toHaveCount(1);
   await expect(page.locator('.timeline-lane').getByRole('link')).toHaveCount(2);
   await expect(page.locator('.timeline-lane').getByRole('link').first()).toHaveAttribute(
     'style',
     /grid-area: 1 \/ 3 \/ auto \/ span 2/,
   );
+  await page.clock.setFixedTime(new Date('2026-09-01T05:00:00.000Z'));
+  await page.getByRole('button', { name: 'Next date' }).click();
+  await page.getByRole('button', { name: 'Today' }).click();
+  await expect(page).toHaveURL(/mode=Timeline&date=2026-09-01/);
   await expect(page.locator('.timeline-lane').getByRole('link').nth(1)).toHaveAttribute(
     'style',
     /grid-area: 2 \/ 4 \/ auto \/ span 2/,
@@ -764,7 +795,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   );
   await page.reload();
   await expect(page.getByRole('button', { name: '0 accounts' })).toBeVisible();
-  await expect(page.locator('.time-calendar')).toBeVisible();
+  await expect(page.locator('.timeline-calendar')).toBeVisible();
 
   await page.unroute('**/api/workflow/jobs?limit=100');
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
@@ -776,6 +807,21 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   );
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Calendar offline');
+});
+
+test('navigates calendar months across month-end and leap-year boundaries', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+    route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
+  );
+  await page.goto('/w/atlas/calendar?mode=Month&date=2027-01-31');
+  await page.getByRole('button', { name: 'Next date' }).click();
+  await expect(page).toHaveURL(/mode=Month&date=2027-02-28/);
+  await page.goto('/w/atlas/calendar?mode=Month&date=2028-01-31');
+  await page.getByRole('button', { name: 'Next date' }).click();
+  await expect(page).toHaveURL(/mode=Month&date=2028-02-29/);
+  await page.getByRole('button', { name: 'Previous date' }).click();
+  await expect(page).toHaveURL(/mode=Month&date=2028-01-29/);
 });
 
 test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({

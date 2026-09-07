@@ -331,16 +331,12 @@ describe('stageYouTubeMedia', () => {
     expect(transactionState.credentialIds).toEqual(['credential-1']);
   });
 
-  it('zeroes media and decrypted session bytes when decryption rejects', async () => {
+  it('zeroes loaded media when session decryption rejects', async () => {
     const mediaBytes = Buffer.from('video');
-    const partialSession = Buffer.from('sensitive-session');
     vi.mocked(findStagingArtifact).mockResolvedValue(artifact);
     vi.mocked(getStagingArtifactById).mockResolvedValue(artifact);
     vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
-    vi.mocked(decryptCredential).mockImplementation(() => {
-      partialSession.fill(0);
-      return Promise.reject(new Error('decrypt failed'));
-    });
+    vi.mocked(decryptCredential).mockRejectedValue(new Error('decrypt failed'));
 
     await expect(stageYouTubeMedia(
       {} as never,
@@ -354,6 +350,5 @@ describe('stageYouTubeMedia', () => {
     )).rejects.toThrow('decrypt failed');
 
     expect(mediaBytes.every((byte) => byte === 0)).toBe(true);
-    expect(partialSession.every((byte) => byte === 0)).toBe(true);
   });
 });

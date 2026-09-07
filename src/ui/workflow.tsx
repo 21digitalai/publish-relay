@@ -24,6 +24,40 @@ interface Job {
   account: string;
   handle: string;
   provider: string;
+  media?: { count: number; previewUrl: string | null } | undefined;
+  creator?: ActorDto | undefined;
+}
+
+interface ActorDto {
+  type: 'user' | 'api_key' | 'legacy_unknown';
+  id: string | null;
+  label: string | null;
+}
+
+interface DetailMediaDto {
+  id: string;
+  position: number;
+  mimeType: string;
+  state: string;
+  previewUrl: string | null;
+}
+
+interface AttemptDto {
+  id: string;
+  attemptNumber: number;
+  startedAt: string;
+  finishedAt: string | null;
+  outcome: string | null;
+  retryAt: string | null;
+  error: string | null;
+}
+
+interface ActivityDto {
+  id: string;
+  fromState: string | null;
+  toState: string;
+  reason: string | null;
+  createdAt: string;
 }
 
 const STATE_LABELS: Record<JobState, string> = {
@@ -45,10 +79,18 @@ interface QueueJobDto {
   scheduledAt: string;
   contentPreview: string;
   providerAccount: { id?: string; displayName: string; handle: string; provider: string };
+  media?: { count: number; previewUrl: string | null };
+  creator?: ActorDto;
 }
 
-interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview'> {
-  content: { text?: string };
+interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview' | 'media'> {
+  content: { text?: string; kind?: string; posts?: string[] };
+  media?: DetailMediaDto[];
+  attempts?: AttemptDto[];
+  activity?: ActivityDto[];
+  providerResult?: { id: string; url: string | null } | null;
+  creator?: ActorDto;
+  lastMutator?: ActorDto;
 }
 
 const COLLISION_SPACING_MS = 15 * 60_000;
@@ -133,7 +175,7 @@ function toJob(dto: QueueJobDto): Job {
         : 'failed';
   return {
     id: dto.id,
-    postId: dto.postId,
+    ...(dto.postId ? { postId: dto.postId } : {}),
     providerAccountId: dto.providerAccount.id,
     state,
     scheduledAt: dto.scheduledAt,
@@ -143,11 +185,36 @@ function toJob(dto: QueueJobDto): Job {
       ? dto.providerAccount.handle
       : `@${dto.providerAccount.handle}`,
     provider: dto.providerAccount.provider.toUpperCase(),
+    media: dto.media,
+    creator: dto.creator,
   };
 }
 
 function detailToJob(dto: JobDetailDto): Job {
-  return toJob({ ...dto, contentPreview: dto.content.text ?? '' });
+  return toJob({
+    id: dto.id,
+    ...(dto.postId ? { postId: dto.postId } : {}),
+    state: dto.state,
+    scheduledAt: dto.scheduledAt,
+    contentPreview: contentParts(dto.content).join('\n\n'),
+    providerAccount: dto.providerAccount,
+    media: {
+      count: dto.media?.length ?? 0,
+      previewUrl: dto.media?.find((item) => item.previewUrl)?.previewUrl ?? null,
+    },
+    ...(dto.creator ? { creator: dto.creator } : {}),
+  });
+}
+
+function contentParts(content: JobDetailDto['content']): string[] {
+  if (Array.isArray(content.posts)) return content.posts.filter((part) => part.trim());
+  return content.text?.trim() ? [content.text] : [];
+}
+
+function actorLabel(actor?: ActorDto): string {
+  if (!actor || actor.type === 'legacy_unknown') return 'Legacy import · creator unknown';
+  const kind = actor.type === 'api_key' ? 'API key' : 'User';
+  return `${kind} · ${actor.label ?? 'Unknown'}`;
 }
 
 function formatTime(value: string): string {
@@ -853,10 +920,25 @@ export function QueuePage() {
                   <a className="queue-row" href={`${workspacePath()}/jobs/${job.id}`} key={job.id}>
                     <Status state={job.state} />
                     <time dateTime={job.scheduledAt}>{formatTime(job.scheduledAt)}</time>
-                    <span className="post-excerpt">{job.text}</span>
+                    <span className="post-excerpt">
+                      <span>
+                        {job.text || (job.media?.count ? 'Media-only post' : 'Content unavailable')}
+                      </span>
+                      {job.media && job.media.count > 0 && (
+                        <span className="queue-media">
+                          {job.media.previewUrl ? (
+                            <img src={job.media.previewUrl} alt="" loading="lazy" />
+                          ) : (
+                            <span aria-hidden="true">▧</span>
+                          )}
+                          <small>{job.media.count} media</small>
+                        </span>
+                      )}
+                    </span>
                     <span className="queue-account">
                       <strong>{job.account}</strong>
                       <small>{job.handle}</small>
+                      <small>{actorLabel(job.creator)}</small>
                     </span>
                     <span className="provider-chip">{job.provider}</span>
                     <span className="row-action" aria-label={`Open ${job.id}`}>
@@ -1174,6 +1256,7 @@ export function JobDetailPage() {
   const jobId = window.location.pathname.split('/').at(-1) ?? '';
   const workspacePath = window.location.pathname.split('/').slice(0, 3).join('/');
   const [job, setJob] = useState<Job | null>(null);
+  const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
@@ -1192,6 +1275,7 @@ export function JobDetailPage() {
         };
         if (!response.ok || !result.data)
           throw new Error(result.error ?? 'Could not load publication job');
+        setDetail(result.data);
         setJob(detailToJob(result.data));
       })
       .catch((error: unknown) => {
@@ -1242,7 +1326,35 @@ export function JobDetailPage() {
           <div className="detail-grid">
             <section>
               <h2>Content</h2>
-              <p className="detail-content">{job.text}</p>
+              {detail && contentParts(detail.content).length > 0 ? (
+                <ol className="detail-content-parts">
+                  {contentParts(detail.content).map((part, index) => (
+                    <li key={`${String(index)}-${part.slice(0, 20)}`}>
+                      <span>Part {String(index + 1)}</span>
+                      <p className="detail-content">{part}</p>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="detail-content">No text · media-only post</p>
+              )}
+              {detail && (detail.media?.length ?? 0) > 0 && (
+                <div className="detail-media-gallery" aria-label="Post media">
+                  {(detail.media ?? []).map((media) =>
+                    media.previewUrl ? (
+                      <img
+                        key={media.id}
+                        src={media.previewUrl}
+                        alt={`Post media ${String(media.position + 1)}`}
+                      />
+                    ) : (
+                      <div className="missing-media" key={media.id}>
+                        Media {String(media.position + 1)} unavailable ({media.state})
+                      </div>
+                    ),
+                  )}
+                </div>
+              )}
               <div className="detail-meta">
                 <span>
                   Account
@@ -1256,19 +1368,51 @@ export function JobDetailPage() {
                 <span>
                   Timezone<strong>Shown in your workspace timezone</strong>
                 </span>
+                <span>
+                  Created by<strong>{actorLabel(detail?.creator)}</strong>
+                </span>
+                {detail?.lastMutator && (
+                  <span>
+                    Last changed by<strong>{actorLabel(detail.lastMutator)}</strong>
+                  </span>
+                )}
               </div>
             </section>
             <aside>
               <h2>Execution timeline</h2>
               <ol className="execution-timeline">
-                <li className="complete">
-                  <strong>Post created</strong>
-                  <span>Recorded by Publish Relay</span>
-                </li>
-                <li className="complete">
-                  <strong>Scheduled</strong>
-                  <span>{formatTime(job.scheduledAt)}</span>
-                </li>
+                {(detail?.activity ?? []).map((event) => (
+                  <li className={event.toState === 'failed' ? 'failed' : 'complete'} key={event.id}>
+                    <strong>
+                      {event.toState in STATE_LABELS
+                        ? STATE_LABELS[event.toState as JobState]
+                        : event.toState}
+                    </strong>
+                    <span>
+                      {formatTime(event.createdAt)}
+                      {event.reason ? ` · ${event.reason}` : ''}
+                    </span>
+                  </li>
+                ))}
+                {(detail?.activity?.length ?? 0) === 0 && (
+                  <li className="complete">
+                    <strong>Scheduled</strong>
+                    <span>{formatTime(job.scheduledAt)}</span>
+                  </li>
+                )}
+                {(detail?.attempts ?? []).map((attempt) => (
+                  <li
+                    className={attempt.outcome === 'failed' ? 'failed' : 'complete'}
+                    key={attempt.id}
+                  >
+                    <strong>Delivery attempt {String(attempt.attemptNumber)}</strong>
+                    <span>
+                      {attempt.outcome ?? 'In progress'}
+                      {attempt.error ? ` · ${attempt.error}` : ''}
+                      {attempt.retryAt ? ` · Retry ${formatTime(attempt.retryAt)}` : ''}
+                    </span>
+                  </li>
+                ))}
                 {job.state === 'failed' && (
                   <li className="failed">
                     <strong>Dispatch failed</strong>
@@ -1284,6 +1428,11 @@ export function JobDetailPage() {
               </ol>
             </aside>
           </div>
+          {detail?.providerResult?.url && (
+            <a className="primary-button external-result-link" href={detail.providerResult.url}>
+              View on X
+            </a>
+          )}
           {job.state === 'failed' && (
             <div className="recovery-panel" role="alert">
               <div>

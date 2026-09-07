@@ -1139,6 +1139,55 @@ select:focus-visible {
 .api-key-row small {
   color: var(--muted);
 }
+.queue-media {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.queue-media img {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.detail-content-parts {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+.detail-content-parts > li > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.detail-media-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+.detail-media-gallery img,
+.missing-media {
+  width: 100%;
+  min-height: 140px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+.missing-media {
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  text-align: center;
+}
+.external-result-link {
+  display: inline-flex;
+  margin-top: 16px;
+  text-decoration: none;
+}
 .inline-confirm {
   display: flex;
   flex-wrap: wrap;

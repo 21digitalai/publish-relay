@@ -962,7 +962,39 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
           postId: 'pending-post',
           state: 'accepted_pending',
           scheduledAt: '2026-09-01T09:30:00+03:00',
-          content: { type: 'text', text: 'Waiting for provider confirmation.' },
+          content: { kind: 'thread', posts: ['Opening post', 'Closing post'] },
+          creator: { type: 'api_key', id: 'key-1', label: 'Editorial agent' },
+          lastMutator: { type: 'user', id: 'user-1', label: 'Mira' },
+          media: [
+            {
+              id: 'media-1',
+              position: 0,
+              mimeType: 'image/png',
+              state: 'missing',
+              previewUrl: null,
+            },
+          ],
+          activity: [
+            {
+              id: 'event-1',
+              fromState: 'dispatching',
+              toState: 'accepted_pending',
+              reason: 'Provider accepted delivery',
+              createdAt: '2026-09-01T09:31:00+03:00',
+            },
+          ],
+          attempts: [
+            {
+              id: 'attempt-1',
+              attemptNumber: 1,
+              startedAt: '2026-09-01T09:30:00+03:00',
+              finishedAt: null,
+              outcome: null,
+              retryAt: null,
+              error: null,
+            },
+          ],
+          providerResult: { id: 'post-1', url: 'https://x.com/miraeditorial/status/post-1' },
           providerAccount: {
             displayName: 'Mira Editorial',
             handle: 'miraeditorial',
@@ -976,8 +1008,16 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
   await page.goto('/w/mira-studio/jobs/pending-job');
   await expect(page.getByRole('status')).toContainText('Loading publication job');
   await expect(page.getByRole('heading', { name: 'Mira Editorial' })).toBeVisible();
-  await expect(page.getByText('Provider processing')).toBeVisible();
-  await expect(page.getByText('Waiting for provider confirmation.')).toBeVisible();
+  await expect(page.getByText('Provider processing', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Opening post')).toBeVisible();
+  await expect(page.getByText('Closing post')).toBeVisible();
+  await expect(page.getByText('API key · Editorial agent')).toBeVisible();
+  await expect(page.getByText(/Media 1 unavailable/)).toBeVisible();
+  await expect(page.getByText('Delivery attempt 1')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'View on X' })).toHaveAttribute(
+    'href',
+    'https://x.com/miraeditorial/status/post-1',
+  );
   await expect(page.getByRole('link', { name: /Back to queue/ })).toHaveAttribute(
     'href',
     '/w/mira-studio/queue',

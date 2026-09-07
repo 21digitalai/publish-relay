@@ -47,6 +47,23 @@ const browserJobProjection = {
   updatedAt: publicationJobs.updatedAt,
   content: postRevisions.content,
   revisionId: postRevisions.id,
+  mediaCount: sql<number>`(
+    select count(*)::int from revision_media summary_media
+    where summary_media.workspace_id = ${publicationJobs.workspaceId}
+      and summary_media.revision_id = ${postRevisions.id}
+  )`,
+  previewMediaId: sql<string | null>`(
+    select summary_object.id::text
+    from revision_media summary_media
+    inner join media_objects summary_object
+      on summary_object.workspace_id = summary_media.workspace_id
+      and summary_object.id = summary_media.media_id
+    where summary_media.workspace_id = ${publicationJobs.workspaceId}
+      and summary_media.revision_id = ${postRevisions.id}
+      and summary_object.state = 'ready'
+    order by summary_media.position asc
+    limit 1
+  )`,
   creator: {
     type: posts.createdActorType,
     id: posts.createdActorId,

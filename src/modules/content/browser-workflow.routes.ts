@@ -132,6 +132,11 @@ function serializeJobSummary(job: Awaited<ReturnType<typeof listBrowserJobSummar
     scheduledAt: job.scheduledAt,
     updatedAt: job.updatedAt,
     contentPreview: contentPreview(job.content),
+    media: {
+      count: job.mediaCount,
+      previewUrl: job.previewMediaId ? `/api/workflow/media/${job.previewMediaId}` : null,
+    },
+    creator: job.creator,
     providerAccount: job.providerAccount,
     links: { self: `/api/workflow/jobs/${job.id}` },
   };

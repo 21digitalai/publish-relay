@@ -47,6 +47,10 @@ function job() {
     createdAt: new Date('2026-09-01T10:00:00.000Z'),
     updatedAt: new Date('2026-09-01T11:00:00.000Z'),
     content: { type: 'text', text: 'Hello' },
+    mediaCount: 2,
+    previewMediaId: '00000000-0000-4000-8000-000000000805',
+    creator: { type: 'api_key', id: 'key-1', label: 'Editorial agent' },
+    lastMutator: { type: 'user', id: 'user-1', label: 'Mira' },
     providerAccount: {
       id: '00000000-0000-4000-8000-000000000804',
       displayName: 'Daily Viber',
@@ -89,6 +93,11 @@ describe('browser workflow read contract', () => {
           {
             id: jobId,
             contentPreview: 'Hello',
+            media: {
+              count: 2,
+              previewUrl: '/api/workflow/media/00000000-0000-4000-8000-000000000805',
+            },
+            creator: { type: 'api_key', label: 'Editorial agent' },
             providerAccount: { displayName: 'Daily Viber' },
           },
         ],

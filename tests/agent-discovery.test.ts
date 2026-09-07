@@ -67,8 +67,11 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.0.0');
-    expect(manifest.data.cliVersion).toBe('1.0.0');
+    expect(manifest.data.contractVersion).toBe('1.1.0');
+    expect(manifest.data.cliVersion).toBe('1.1.0');
+    const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
+    expect(skill.body).toContain('destinations list');
+    expect(skill.body).toContain('publishes retry <job-id>');
     expect(manifest.data.cli.path).toBe('/publish-relay-skill/publish-relay-cli.js');
     expect(manifest.data.cli.updatePolicy).toBe('warn-only');
     expect(manifest.data.assets.map(({ path }) => path)).toEqual([

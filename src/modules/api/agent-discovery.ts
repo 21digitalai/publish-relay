@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.0.0';
-const CLI_VERSION = '1.0.0';
+const CONTRACT_VERSION = '1.1.0';
+const CLI_VERSION = '1.1.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -31,7 +31,9 @@ Read the manifest and API contract first. Authenticate with a workspace service 
 - posts list/show and publishes show/poll: schedules:read.
 - posts create: schedules:write. Live provider submission also requires publishes:submit on the server-side operation.
 - media upload: content:write. Send exact local bytes with --file, an explicit --content-type, and a unique idempotency key. Remote URL fetching is not supported.
-- Retry and audit operations require publishes:retry and audit:read respectively when those commands become available. Do not infer capabilities from CLI command visibility.
+- destinations list: destinations:read.
+- publishes retry: publishes:retry. Retry only a failed job after inspection; Relay rejects jobs whose outcome still requires reconciliation.
+- Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
 
 Set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE. Profiles may name the API-key environment variable but must never contain its value. Before a mutation, run account current and require the expected workspace with --require-workspace.
 
@@ -58,9 +60,11 @@ Use the shipped non-interactive CLI for scripts. Read command help before execut
 - 10 poll timeout: the job remains durable; resume bounded polling from its direct job link.
 
 Read-only example: PUBLISH_RELAY_API_KEY=<workspace-service-key> node publish-relay-cli.js account current --base-url https://relay.example --require-workspace <workspace-id>.
+Destination discovery example: add destinations list with the same --base-url and --require-workspace, then use the returned destination id in providerAccountIds. The list never returns credentials or provider defaults.
 Mutation example: add posts create with --body-file <request.json> and --idempotency-key <unique-operation-key> only after the read-first workspace check.
 Media example: add media upload with --file <image-path> --content-type image/png and --idempotency-key <unique-operation-key>.
 YouTube scheduling example: set title and any sparse provider override in the posts create body, select the connected destination, then retain data.jobs[].effectiveProviderSettings from the response. Do not repeat unchanged privacy, Made for Kids, notification, tags, or category defaults on every request.
+Retry example: after publishes show confirms state=failed and no reconciliation is required, run publishes retry <job-id> with a unique --idempotency-key. Poll the same job link afterward; never retry accepted_pending or unknown outcomes blindly.
 
 X live publish, credential migration, reconnect, revocation, and capability canaries require a separate explicitly authorized ticket with rollback criteria.
 `;

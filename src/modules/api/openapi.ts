@@ -50,7 +50,7 @@ const mediaMutationSchema = z.object({
 export function apiV1OpenApiDocument(): Record<string, unknown> {
   return {
     openapi: '3.1.0',
-    info: { title: 'Publish Relay API', version: '1.0.0' },
+    info: { title: 'Publish Relay API', version: '1.1.0' },
     paths: {
       '/api/v1/destinations': {
         get: {

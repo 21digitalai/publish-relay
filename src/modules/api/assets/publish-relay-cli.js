@@ -15,6 +15,7 @@ const EXIT = {
 const MUTATIONS = new Set(['posts:create', 'media:upload']);
 const ROUTES = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
+  'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
   'posts:list': { method: 'GET', path: '/api/v1/posts' },
   'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
@@ -49,6 +50,13 @@ const ENVELOPE_OUTPUT_KEYS = [
 ];
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
+  'destinations:list': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'items',
+    'provider',
+    'displayName',
+    'updatedAt',
+  ]),
   'posts:create': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'self',

@@ -18,6 +18,17 @@ const accountSchema = z.object({
   capabilities: z.array(z.string()),
   expiresAt: z.date().nullable(),
 });
+const destinationCollectionSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.uuid(),
+      provider: z.string().min(1),
+      displayName: z.string().min(1),
+      status: z.string().min(1),
+      updatedAt: z.iso.datetime(),
+    }),
+  ),
+});
 const mediaMutationSchema = z.object({
   id: z.uuid(),
   mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4']),
@@ -41,6 +52,34 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
     openapi: '3.1.0',
     info: { title: 'Publish Relay API', version: '1.0.0' },
     paths: {
+      '/api/v1/destinations': {
+        get: {
+          operationId: 'listDestinations',
+          security: [{ bearerAuth: [], workspace: [] }],
+          responses: {
+            '200': {
+              description: 'Connected destination summaries',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(destinationCollectionSchema)),
+                },
+              },
+            },
+            '401': {
+              description: 'Authentication required',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '403': {
+              description: 'Missing destinations:read capability',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '429': {
+              description: 'Read rate limit exceeded',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+          },
+        },
+      },
       '/api/v1/media': {
         post: {
           operationId: 'uploadMedia',

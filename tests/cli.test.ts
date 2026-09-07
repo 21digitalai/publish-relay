@@ -338,10 +338,39 @@ describe('Publish Relay CLI', () => {
     expect(result.stderr).toContain('load secrets from the environment');
   });
 
-  it('does not advertise commands without a live API contract', async () => {
-    const result = await cli(['destinations', 'list']);
-    expect(result.code).toBe(2);
-    expect(result.stderr).toContain('Unknown command destinations list');
+  it('lists destination summaries while redacting unexpected provider fields', async () => {
+    const baseUrl = await fixture(200, {
+      success: true,
+      data: {
+        items: [
+          {
+            id: 'destination-1',
+            provider: 'youtube',
+            displayName: 'Studio',
+            status: 'active',
+            updatedAt: '2026-09-07T20:00:00.000Z',
+            credentialId: 'private',
+          },
+        ],
+      },
+      meta: { requestId: 'request-destinations' },
+    });
+    const result = await cli(['destinations', 'list', '--base-url', baseUrl], {
+      PUBLISH_RELAY_API_KEY: 'test-key',
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: {
+        items: [
+          {
+            id: 'destination-1',
+            provider: 'youtube',
+            displayName: 'Studio',
+            credentialId: '[REDACTED]',
+          },
+        ],
+      },
+    });
   });
 
   it('returns exit 10 and the durable job ID when bounded polling times out', async () => {

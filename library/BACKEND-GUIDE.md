@@ -136,3 +136,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `getWorkspaceUsageFacts` is the sole transactional owner of workspace usage facts for policy and application consumers. It derives retained media bytes and lifecycle counts, active connected accounts/provider families, publication-job target rows, active queued targets, scheduling horizon, and membership count from canonical Core tables under tenant RLS.
 - A publication target fact is one `publication_jobs` row, including historical rows; multiple jobs aimed at one connected account remain multiple targets. Connected-account facts require both a non-disconnected account and an active parent connection. Deleted media remains visible in lifecycle counts but contributes no retained bytes.
 - Provider capability metadata stays adapter-owned and describes technical content/media shapes, target behavior, dispatch mode, and verified provider limits only. It must not contain plan names, prices, entitlements, or commercial admission rules. Neutral action policy consumes these facts rather than re-querying tables or teaching adapters about commercial policy.
+
+# Agent destination discovery
+
+`GET /api/v1/destinations` is the canonical account-scoped discovery surface for API customers. It requires `destinations:read` and returns only the provider-account ID, provider, display name, connection status, and update timestamp. Credential IDs, connection IDs, provider metadata, defaults, ownership fields, and secret material are never exposed by this collection contract.

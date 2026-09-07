@@ -46,6 +46,9 @@ describe('API v1 contract', () => {
     expect(apiV1OpenApiDocument()).toMatchObject({
       openapi: '3.1.0',
       paths: {
+        '/api/v1/destinations': {
+          get: { operationId: 'listDestinations', responses: { '200': {}, '403': {} } },
+        },
         '/api/v1/account': {
           get: {
             operationId: 'getAccount',

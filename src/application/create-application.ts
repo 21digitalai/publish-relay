@@ -27,6 +27,7 @@ import type { MasterKeyProvider } from '../modules/credentials/envelope.js';
 import type { XHttpClient } from '../modules/providers/x-http-client.js';
 import { registerXOauthRoutes } from '../modules/providers/x-oauth.routes.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
+import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
 
 export function createApplication(
@@ -86,6 +87,7 @@ export function createApplication(
     });
     registerApiKeyRoutes(application, apiKeys, rateLimiter, auth);
     if (database) {
+      registerDestinationRoutes(application, database, apiKeys, rateLimiter);
       if (!config.CURSOR_SIGNING_SECRET)
         throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
       registerPostRoutes(

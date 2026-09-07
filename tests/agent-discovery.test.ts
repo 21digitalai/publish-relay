@@ -44,6 +44,17 @@ describe('agent discovery', () => {
     expect(contract.json()).toMatchObject({ openapi: '3.1.0' });
   });
 
+  it('documents sparse destination overrides and authoritative effective settings', async () => {
+    const application = createTestApplication();
+    const skill = await application.inject({
+      method: 'GET',
+      url: '/publish-relay-skill/SKILL.md',
+    });
+    expect(skill.body).toContain('Send only per-job overrides');
+    expect(skill.body).toContain('complete persisted effectiveProviderSettings snapshot');
+    expect(skill.body).toContain('do not reconstruct effective settings from the sparse request');
+  });
+
   it('publishes checksums that match the exact served assets', async () => {
     const application = createTestApplication();
     const manifest = (

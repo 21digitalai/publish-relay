@@ -39,6 +39,8 @@ Use a unique idempotency key for every intended mutation. Reuse it only to repla
 
 For accepted or unknown publication outcomes, poll the returned job link with bounded --poll-timeout-ms and --poll-interval-ms values. A timeout leaves the durable job intact: inspect it again before deciding what to do. Reconcile unknown X outcomes through lookup; never retry a publish blindly.
 
+Destination settings are account-scoped defaults. Send only per-job overrides that differ from the selected destination. Create/schedule success and job detail return the complete persisted effectiveProviderSettings snapshot, including values resolved from destination defaults; treat that response as authoritative and do not reconstruct effective settings from the sparse request.
+
 Treat workspace boundaries as absolute. A missing resource may represent an absent or foreign-workspace ID; do not probe across workspaces.
 
 Use the shipped non-interactive CLI for scripts. Read command help before execution, use placeholder credentials in examples, and handle non-zero exits and structured API errors. Update checks may warn about a newer manifest version but must never self-update.
@@ -58,6 +60,7 @@ Use the shipped non-interactive CLI for scripts. Read command help before execut
 Read-only example: PUBLISH_RELAY_API_KEY=<workspace-service-key> node publish-relay-cli.js account current --base-url https://relay.example --require-workspace <workspace-id>.
 Mutation example: add posts create with --body-file <request.json> and --idempotency-key <unique-operation-key> only after the read-first workspace check.
 Media example: add media upload with --file <image-path> --content-type image/png and --idempotency-key <unique-operation-key>.
+YouTube scheduling example: set title and any sparse provider override in the posts create body, select the connected destination, then retain data.jobs[].effectiveProviderSettings from the response. Do not repeat unchanged privacy, Made for Kids, notification, tags, or category defaults on every request.
 
 X live publish, credential migration, reconnect, revocation, and capability canaries require a separate explicitly authorized ticket with rollback criteria.
 `;

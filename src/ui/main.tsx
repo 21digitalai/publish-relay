@@ -107,7 +107,7 @@ function DefaultsSelect({
               type="button"
               role="option"
               aria-selected={option === value}
-              className={option === value ? 'selected' : ''}
+              className={`defaults-select-option${option === value ? ' selected' : ''}`}
               key={option}
               onClick={() => {
                 onChange(option);

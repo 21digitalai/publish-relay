@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, lte, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, lte, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -6,7 +6,11 @@ import {
   posts,
   providerAccounts,
   providerConnections,
+  publicationAttempts,
+  publicationJobEvents,
   publicationJobs,
+  mediaObjects,
+  revisionMedia,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
@@ -42,6 +46,27 @@ const browserJobProjection = {
   createdAt: publicationJobs.createdAt,
   updatedAt: publicationJobs.updatedAt,
   content: postRevisions.content,
+  revisionId: postRevisions.id,
+  creator: {
+    type: posts.createdActorType,
+    id: posts.createdActorId,
+    label: sql<string | null>`case
+      when ${posts.createdActorType} = 'user' then
+        (select display_name from users where id = ${posts.createdActorId})
+      when ${posts.createdActorType} = 'api_key' then
+        (select label from api_keys where workspace_id = ${posts.workspaceId} and id = ${posts.createdActorId})
+      else null end`,
+  },
+  lastMutator: {
+    type: posts.lastMutatorType,
+    id: posts.lastMutatorId,
+    label: sql<string | null>`case
+      when ${posts.lastMutatorType} = 'user' then
+        (select display_name from users where id = ${posts.lastMutatorId})
+      when ${posts.lastMutatorType} = 'api_key' then
+        (select label from api_keys where workspace_id = ${posts.workspaceId} and id = ${posts.lastMutatorId})
+      else null end`,
+  },
   providerAccount: {
     id: providerAccounts.id,
     displayName: providerAccounts.displayName,
@@ -60,6 +85,10 @@ function browserJobJoins(database: NodePgDatabase) {
         eq(postRevisions.workspaceId, publicationJobs.workspaceId),
         eq(postRevisions.id, publicationJobs.revisionId),
       ),
+    )
+    .innerJoin(
+      posts,
+      and(eq(posts.workspaceId, publicationJobs.workspaceId), eq(posts.id, publicationJobs.postId)),
     )
     .innerJoin(
       providerAccounts,
@@ -113,12 +142,86 @@ export async function getBrowserJobDetail(
   workspaceId: string,
   jobId: string,
 ) {
-  const rows = await withTenantTransaction(database, { workspaceId }, (transaction) =>
-    browserJobJoins(transaction)
+  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
+    const rows = await browserJobJoins(transaction)
       .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.id, jobId)))
-      .limit(1),
-  );
-  return rows[0] ?? null;
+      .limit(1);
+    const job = rows[0];
+    if (!job) return null;
+    const [media, attempts, activity] = await Promise.all([
+      transaction
+        .select({
+          id: mediaObjects.id,
+          position: revisionMedia.position,
+          mimeType: mediaObjects.mimeType,
+          byteSize: mediaObjects.byteSize,
+          sha256: mediaObjects.sha256,
+          state: mediaObjects.state,
+        })
+        .from(revisionMedia)
+        .innerJoin(
+          mediaObjects,
+          and(
+            eq(mediaObjects.workspaceId, revisionMedia.workspaceId),
+            eq(mediaObjects.id, revisionMedia.mediaId),
+          ),
+        )
+        .where(
+          and(
+            eq(revisionMedia.workspaceId, workspaceId),
+            eq(revisionMedia.revisionId, job.revisionId),
+          ),
+        )
+        .orderBy(asc(revisionMedia.position)),
+      transaction
+        .select({
+          id: publicationAttempts.id,
+          attemptNumber: publicationAttempts.attemptNumber,
+          startedAt: publicationAttempts.startedAt,
+          finishedAt: publicationAttempts.finishedAt,
+          outcome: publicationAttempts.outcome,
+          externalPostId: publicationAttempts.externalPostId,
+          retryAt: publicationAttempts.retryAt,
+          error: publicationAttempts.redactedError,
+        })
+        .from(publicationAttempts)
+        .where(
+          and(
+            eq(publicationAttempts.workspaceId, workspaceId),
+            eq(publicationAttempts.jobId, jobId),
+          ),
+        )
+        .orderBy(asc(publicationAttempts.attemptNumber)),
+      transaction
+        .select({
+          id: publicationJobEvents.id,
+          fromState: publicationJobEvents.fromState,
+          toState: publicationJobEvents.toState,
+          reason: publicationJobEvents.reason,
+          createdAt: publicationJobEvents.createdAt,
+        })
+        .from(publicationJobEvents)
+        .where(
+          and(
+            eq(publicationJobEvents.workspaceId, workspaceId),
+            eq(publicationJobEvents.jobId, jobId),
+          ),
+        )
+        .orderBy(asc(publicationJobEvents.createdAt), asc(publicationJobEvents.id)),
+    ]);
+    const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
+    const externalUrl =
+      published?.externalPostId && job.providerAccount.provider === 'x'
+        ? `https://x.com/${job.providerAccount.handle}/status/${published.externalPostId}`
+        : null;
+    return {
+      ...job,
+      media: media.map((item) => ({ ...item, previewUrl: null })),
+      attempts,
+      activity,
+      providerResult: published ? { id: published.externalPostId, url: externalUrl } : null,
+    };
+  });
 }
 
 export interface PostSummary {
@@ -181,20 +284,5 @@ export async function getPostDetail(database: NodePgDatabase, workspaceId: strin
 }
 
 export async function getJobDetail(database: NodePgDatabase, workspaceId: string, jobId: string) {
-  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
-    const rows = await transaction
-      .select({
-        id: publicationJobs.id,
-        postId: publicationJobs.postId,
-        revisionId: publicationJobs.revisionId,
-        state: publicationJobs.state,
-        scheduledAt: publicationJobs.scheduledAt,
-        createdAt: publicationJobs.createdAt,
-        updatedAt: publicationJobs.updatedAt,
-      })
-      .from(publicationJobs)
-      .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.id, jobId)))
-      .limit(1);
-    return rows[0] ?? null;
-  });
+  return getBrowserJobDetail(database, workspaceId, jobId);
 }

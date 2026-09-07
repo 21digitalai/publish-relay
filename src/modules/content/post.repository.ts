@@ -15,6 +15,17 @@ export interface PostRevisionInput {
   mediaIds: readonly string[];
   providerAccountIds: readonly string[];
   scheduledAt: Date;
+  actor?: { type: 'user' | 'api-key'; id: string };
+}
+
+function persistedActor(actor: PostRevisionInput['actor'], userId?: string) {
+  const resolved = actor ?? (userId ? { type: 'user' as const, id: userId } : undefined);
+  return resolved
+    ? {
+        type: resolved.type === 'api-key' ? ('api_key' as const) : ('user' as const),
+        id: resolved.id,
+      }
+    : { type: null, id: null };
 }
 
 async function validateTargetOwnership(
@@ -63,6 +74,7 @@ async function createRevisionTargets(
   database: NodePgDatabase,
   input: PostRevisionInput & { workspaceId: string; postId: string; revisionNumber: number },
 ): Promise<{ revisionId: string; jobIds: string[] }> {
+  const actor = persistedActor(input.actor);
   const revisions = await database
     .insert(postRevisions)
     .values({
@@ -70,6 +82,8 @@ async function createRevisionTargets(
       postId: input.postId,
       revisionNumber: input.revisionNumber,
       content: input.content,
+      createdActorType: actor.type,
+      createdActorId: actor.id,
     })
     .returning({ id: postRevisions.id });
   const revision = revisions[0];
@@ -102,10 +116,18 @@ export async function createPostIntent(
   database: NodePgDatabase,
   input: PostRevisionInput & { workspaceId: string; userId: string },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[] }> {
+  const actor = persistedActor(input.actor, input.userId);
   await validateTargetOwnership(database, input);
   const rows = await database
     .insert(posts)
-    .values({ workspaceId: input.workspaceId, createdByUserId: input.userId })
+    .values({
+      workspaceId: input.workspaceId,
+      createdByUserId: input.userId,
+      createdActorType: actor.type,
+      createdActorId: actor.id,
+      lastMutatorType: actor.type,
+      lastMutatorId: actor.id,
+    })
     .returning({ id: posts.id });
   const post = rows[0];
   if (!post) throw new Error('Post write returned no record');
@@ -126,6 +148,7 @@ export async function revisePostIntent(
     expectedSupersededJobCount?: number;
   },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
+  const actor = persistedActor(input.actor);
   await validateTargetOwnership(database, input);
   const existing = await database
     .select({ revisionNumber: postRevisions.revisionNumber })
@@ -159,7 +182,7 @@ export async function revisePostIntent(
   });
   await database
     .update(posts)
-    .set({ updatedAt: input.now })
+    .set({ updatedAt: input.now, lastMutatorType: actor.type, lastMutatorId: actor.id })
     .where(and(eq(posts.workspaceId, input.workspaceId), eq(posts.id, input.postId)));
   return {
     postId: input.postId,

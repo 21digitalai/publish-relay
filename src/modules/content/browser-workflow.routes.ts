@@ -104,6 +104,12 @@ function serializeJob(job: Awaited<ReturnType<typeof getBrowserJobDetail>>) {
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     content: job.content,
+    media: job.media,
+    attempts: job.attempts,
+    activity: job.activity,
+    providerResult: job.providerResult,
+    creator: job.creator,
+    lastMutator: job.lastMutator,
     providerAccount: job.providerAccount,
     links: { self: `/api/workflow/jobs/${job.id}`, post: `/api/v1/posts/${job.postId}` },
   };
@@ -115,7 +121,7 @@ function contentPreview(content: unknown): string {
   return typeof text === 'string' ? text.slice(0, 160) : '';
 }
 
-function serializeJobSummary(job: NonNullable<Awaited<ReturnType<typeof getBrowserJobDetail>>>) {
+function serializeJobSummary(job: Awaited<ReturnType<typeof listBrowserJobSummaries>>[number]) {
   return {
     id: job.id,
     postId: job.postId,

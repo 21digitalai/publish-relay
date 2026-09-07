@@ -43,6 +43,7 @@ const migrations = [
   '0017_dark_whizzer.sql',
   '0018_membership_identity_scope.sql',
   '0019_media_retention_lifecycle.sql',
+  '0022_truthful_post_actors.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

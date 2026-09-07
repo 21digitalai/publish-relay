@@ -3,6 +3,7 @@ import { and, eq, gt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
+  posts,
   publicationAttempts,
   publicationJobEvents,
   publicationJobs,
@@ -408,7 +409,13 @@ export async function resolveReconciliation(
 
 export async function cancelPendingJob(
   database: NodePgDatabase,
-  input: { workspaceId: string; jobId: string; actorId: string; now: Date },
+  input: {
+    workspaceId: string;
+    jobId: string;
+    actorId: string;
+    actorType?: 'user' | 'api_key';
+    now: Date;
+  },
 ): Promise<boolean> {
   return withTenantTransaction(
     database,
@@ -429,13 +436,27 @@ export async function cancelPendingJob(
     `);
       const job = resultRows(result)[0];
       if (!job) return false;
+      if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.actorId))
+        await transaction
+          .update(posts)
+          .set({
+            lastMutatorType: input.actorType ?? 'user',
+            lastMutatorId: input.actorId,
+            updatedAt: input.now,
+          })
+          .where(
+            and(
+              eq(posts.workspaceId, input.workspaceId),
+              sql`${posts.id} = (select post_id from publication_jobs where id = ${input.jobId})`,
+            ),
+          );
       await transaction.insert(publicationJobEvents).values({
         workspaceId: input.workspaceId,
         jobId: input.jobId,
         fromState: job.fromState,
         toState: 'cancelled',
         reason: 'operator_cancel',
-        metadata: { actorId: input.actorId },
+        metadata: { actorType: input.actorType ?? 'user', actorId: input.actorId },
       });
       return true;
     },

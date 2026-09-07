@@ -372,6 +372,10 @@ export const posts = pgTable(
     createdByUserId: uuid('created_by_user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
+    createdActorType: actorType('created_actor_type'),
+    createdActorId: uuid('created_actor_id'),
+    lastMutatorType: actorType('last_mutator_type'),
+    lastMutatorId: uuid('last_mutator_id'),
     ...timestamps,
   },
   (table) => [
@@ -390,6 +394,8 @@ export const postRevisions = pgTable(
     postId: uuid('post_id').notNull(),
     revisionNumber: integer('revision_number').notNull(),
     content: jsonb('content').notNull(),
+    createdActorType: actorType('created_actor_type'),
+    createdActorId: uuid('created_actor_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

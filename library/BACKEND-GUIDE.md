@@ -124,6 +124,13 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Usage facts and provider capabilities
 
+## Destination-scoped provider defaults
+
+- `provider_accounts.adapter_defaults` is the destination-scoped source for optional provider policy defaults; it never stores credentials.
+- Scheduling resolves sparse request overrides against those defaults before inserting target jobs. Each `publication_jobs.effective_provider_settings` value is the immutable, complete provider snapshot used for dispatch and returned by job-facing contracts.
+- YouTube resolution is owned by `src/modules/providers/youtube-settings.ts`: public and `notifySubscribers=false` are product defaults, `madeForKids` must resolve from either the destination or request, and omitted tags/category remain absent.
+- Revisions keep caller content; target-specific effective settings belong to the independent job so multiple destinations may resolve differently without mutating shared revision history.
+
 - `getWorkspaceUsageFacts` is the sole transactional owner of workspace usage facts for policy and application consumers. It derives retained media bytes and lifecycle counts, active connected accounts/provider families, publication-job target rows, active queued targets, scheduling horizon, and membership count from canonical Core tables under tenant RLS.
 - A publication target fact is one `publication_jobs` row, including historical rows; multiple jobs aimed at one connected account remain multiple targets. Connected-account facts require both a non-disconnected account and an active parent connection. Deleted media remains visible in lifecycle counts but contributes no retained bytes.
 - Provider capability metadata stays adapter-owned and describes technical content/media shapes, target behavior, dispatch mode, and verified provider limits only. It must not contain plan names, prices, entitlements, or commercial admission rules. Neutral action policy consumes these facts rather than re-querying tables or teaching adapters about commercial policy.

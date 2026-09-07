@@ -5,10 +5,12 @@ import {
   postRevisions,
   posts,
   providerAccounts,
+  providerConnections,
   publicationJobs,
   revisionMedia,
 } from '../../database/schema.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
+import { resolveYouTubeSettings } from '../providers/youtube-settings.js';
 
 export interface PostRevisionInput {
   content: Record<string, unknown>;
@@ -79,6 +81,41 @@ async function createRevisionTargets(
     revisionNumber: number;
   },
 ): Promise<{ revisionId: string; jobIds: string[] }> {
+  const accountRows = await database
+    .select({
+      id: providerAccounts.id,
+      provider: providerConnections.provider,
+      adapterDefaults: providerAccounts.adapterDefaults,
+    })
+    .from(providerAccounts)
+    .innerJoin(providerConnections, eq(providerConnections.id, providerAccounts.connectionId))
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, input.workspaceId),
+        inArray(providerAccounts.id, input.providerAccountIds),
+      ),
+    );
+  const accountsById = new Map(accountRows.map((account) => [account.id, account]));
+  const effectiveSettings = new Map(
+    input.providerAccountIds.map((accountId) => {
+      const account = accountsById.get(accountId);
+      if (!account) throw new PostValidationError('Provider account is unavailable');
+      if (account.provider !== 'youtube') return [accountId, null] as const;
+      const content = input.content as {
+        kind?: unknown;
+        providerOptions?: { youtube?: unknown };
+      };
+      if (content.kind !== 'video') throw new PostValidationError('YouTube requires video content');
+      try {
+        return [
+          accountId,
+          resolveYouTubeSettings(account.adapterDefaults, content.providerOptions?.youtube),
+        ] as const;
+      } catch (error) {
+        throw new PostValidationError(error instanceof Error ? error.message : 'Invalid YouTube settings');
+      }
+    }),
+  );
   const actor = persistedActor(input.actor, input.userId);
   const revisions = await database
     .insert(postRevisions)
@@ -110,6 +147,7 @@ async function createRevisionTargets(
         postId: input.postId,
         revisionId: revision.id,
         providerAccountId,
+        effectiveProviderSettings: effectiveSettings.get(providerAccountId),
         scheduledAt: input.scheduledAt,
       })),
     )

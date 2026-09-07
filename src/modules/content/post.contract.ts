@@ -21,6 +21,7 @@ const postSummarySchema = z.object({
   id: z.uuid(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
+  effectiveProviderSettings: z.record(z.string(), z.unknown()).nullable(),
   links: z.object({ self: z.string() }),
 });
 

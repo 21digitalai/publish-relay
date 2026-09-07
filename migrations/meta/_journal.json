@@ -176,6 +176,13 @@
       "when": 1788786900000,
       "tag": "0024_mp4_media_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788813247644,
+      "tag": "0025_lucky_legion",
+      "breakpoints": true
     }
   ]
 }

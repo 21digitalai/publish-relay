@@ -164,6 +164,7 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
 test('persists credential-free fake-provider connect and disconnect through reload', async ({
   page,
 }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-09-01T05:00:00.000Z'));
   await establishWorkspaceSession(page);
   await page.goto('/w/atlas/accounts?state=empty');
   await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
@@ -648,15 +649,35 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   await page.screenshot({ path: testInfo.outputPath('queue-loading.png'), fullPage: true });
   await expect(page.getByRole('link', { name: /^Dispatching / })).toBeVisible();
   await expect(page.getByRole('link', { name: /^Retrying / })).toBeVisible();
-  await page.getByLabel('Status filter').selectOption('retrying');
+  await page.getByLabel('Status filter').click();
+  await page.getByRole('option', { name: 'Retrying' }).click();
   await expect(page.getByRole('link', { name: /^Dispatching / })).toBeHidden();
   await expect(page).toHaveURL(/status=retrying/);
-  await page.getByLabel('Sort order').selectOption('newest');
+  await page.getByLabel('Provider filter').click();
+  await page.getByRole('option', { name: 'X', exact: true }).click();
+  await page.getByLabel('Date filter').click();
+  await page.getByRole('option', { name: 'Today', exact: true }).click();
+  await expect(page).toHaveURL(/provider=x/);
+  await expect(page).toHaveURL(/date=today/);
+  await page.getByLabel('Sort order').click();
+  await page.getByRole('option', { name: 'Newest first' }).click();
   await page.reload();
-  await expect(page.getByLabel('Status filter')).toHaveValue('retrying');
-  await expect(page.getByLabel('Sort order')).toHaveValue('newest');
-  await page.getByLabel('Status filter').selectOption('any');
-  await page.getByLabel('Sort order').selectOption('priority');
+  await expect(page.getByLabel('Status filter')).toContainText('Retrying');
+  await expect(page.getByLabel('Provider filter')).toContainText('X');
+  await expect(page.getByLabel('Date filter')).toContainText('Today');
+  await expect(page.getByLabel('Sort order')).toContainText('Newest first');
+  await page.getByLabel('Provider filter').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('listbox', { name: 'Provider filter' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox', { name: 'Provider filter' })).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath('queue-filtered.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Published', exact: true }).click();
+  await expect(page.getByText('No jobs match these filters')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await page.getByRole('button', { name: 'Upcoming', exact: true }).click();
+  await expect(page.getByRole('link', { name: /^Dispatching / })).toBeVisible();
+  await page.getByRole('button', { name: 'All', exact: true }).click();
   await page.getByPlaceholder('Search posts or accounts').fill('no-match');
   await expect(page.getByText('No jobs match these filters')).toBeVisible();
 

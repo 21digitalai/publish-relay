@@ -616,6 +616,55 @@ function WorkspaceLayout({
   );
 }
 
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: [string, string][];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(([option]) => option === value)?.[1] ?? options[0]?.[1];
+  return (
+    <div className="filter-select">
+      <button
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        className="filter-button"
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false);
+        }}
+      >
+        {selected} <span aria-hidden="true">⌄</span>
+      </button>
+      {open && (
+        <div className="filter-select-menu" role="listbox" aria-label={label}>
+          {options.map(([option, text]) => (
+            <button
+              aria-selected={option === value}
+              className={option === value ? 'selected' : ''}
+              key={option}
+              role="option"
+              onClick={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function QueuePage() {
   const initialParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const [query, setQuery] = useState(initialParams.get('q') ?? '');
@@ -671,7 +720,9 @@ export function QueuePage() {
             (view === 'All' ||
               (view === 'Needs attention'
                 ? ['failed', 'retrying'].includes(job.state)
-                : STATE_LABELS[job.state] === view)) &&
+                : view === 'Upcoming'
+                  ? ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
+                  : STATE_LABELS[job.state] === view)) &&
             (status === 'any' || job.state === status) &&
             (provider === 'any' || job.provider.toLowerCase() === provider) &&
             (dateRange === 'any' ||
@@ -714,7 +765,7 @@ export function QueuePage() {
               Publication queue
             </h2>
             <div className="queue-views">
-              {['All', 'Needs attention', 'Scheduled', 'Published'].map((label) => (
+              {['All', 'Needs attention', 'Upcoming', 'Published'].map((label) => (
                 <button
                   className={view === label ? 'active' : ''}
                   key={label}
@@ -738,54 +789,43 @@ export function QueuePage() {
                   placeholder="Search posts or accounts"
                 />
               </label>
-              <select
-                aria-label="Status filter"
-                className="filter-button"
+              <FilterSelect
+                label="Status filter"
                 value={status}
-                onChange={(event) => setStatus(event.target.value)}
-              >
-                <option value="any">Status: Any</option>
-                {Object.entries(STATE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="Provider filter"
-                className="filter-button"
+                onChange={setStatus}
+                options={[['any', 'Status: Any'], ...Object.entries(STATE_LABELS)]}
+              />
+              <FilterSelect
+                label="Provider filter"
                 value={provider}
-                onChange={(event) => setProvider(event.target.value)}
-              >
-                <option value="any">Provider: Any</option>
-                {[...new Set((queueJobs ?? []).map((job) => job.provider.toLowerCase()))].map(
-                  (value) => (
-                    <option key={value} value={value}>
-                      {value.toUpperCase()}
-                    </option>
+                onChange={setProvider}
+                options={[
+                  ['any', 'Provider: Any'],
+                  ...[...new Set((queueJobs ?? []).map((job) => job.provider.toLowerCase()))].map(
+                    (value) => [value, value.toUpperCase()] as [string, string],
                   ),
-                )}
-              </select>
-              <select
-                aria-label="Date filter"
-                className="filter-button"
+                ]}
+              />
+              <FilterSelect
+                label="Date filter"
                 value={dateRange}
-                onChange={(event) => setDateRange(event.target.value)}
-              >
-                <option value="any">Date: Any</option>
-                <option value="today">Today</option>
-                <option value="upcoming">Upcoming</option>
-              </select>
-              <select
-                aria-label="Sort order"
-                className="filter-button"
+                onChange={setDateRange}
+                options={[
+                  ['any', 'Date: Any'],
+                  ['today', 'Today'],
+                  ['upcoming', 'Upcoming'],
+                ]}
+              />
+              <FilterSelect
+                label="Sort order"
                 value={sort}
-                onChange={(event) => setSort(event.target.value)}
-              >
-                <option value="priority">Sort: Priority</option>
-                <option value="oldest">Oldest first</option>
-                <option value="newest">Newest first</option>
-              </select>
+                onChange={setSort}
+                options={[
+                  ['priority', 'Sort: Priority'],
+                  ['oldest', 'Oldest first'],
+                  ['newest', 'Newest first'],
+                ]}
+              />
             </div>
             {loadError ? (
               <div className="filter-empty" role="alert">
@@ -823,7 +863,13 @@ export function QueuePage() {
                   </a>
                 ))}
               </div>
-            ) : queueJobs.length === 0 && !query && view === 'All' ? (
+            ) : queueJobs.length === 0 &&
+              !query &&
+              view === 'All' &&
+              status === 'any' &&
+              provider === 'any' &&
+              dateRange === 'any' &&
+              sort === 'priority' ? (
               <div className="filter-empty">
                 <h2>Nothing scheduled yet</h2>
                 <p>Create a post to begin building this workspace’s queue.</p>

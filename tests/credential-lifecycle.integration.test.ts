@@ -169,44 +169,107 @@ describe('credential and OAuth persistence', () => {
   it('binds YouTube OAuth state and persists only encrypted credential and allowlisted accounts', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const key = randomBytes(32);
-    const keys: MasterKeyProvider = { currentVersion: () => 'v1', getKey: () => Promise.resolve(key) };
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
     const issued = await issueOauthTransaction(db, keys, {
-      workspaceId, userId, provider: 'youtube', redirectUri: 'https://relay.test/youtube/callback',
+      workspaceId,
+      userId,
+      provider: 'youtube',
+      redirectUri: 'https://relay.test/youtube/callback',
     });
-    await expect(consumeOauthCallback(db, keys, {
-      workspaceId, state: issued.state, userId: '00000000-0000-4000-8000-000000000103', provider: 'youtube',
-    })).resolves.toBeNull();
-    await expect(consumeOauthCallback(db, keys, {
-      workspaceId, state: issued.state, userId, provider: 'x',
-    })).resolves.toBeNull();
-    const credential = { accessToken: 'yt-access', refreshToken: 'yt-refresh', expiresAt: '2026-09-09T00:00:00.000Z', scope: 'youtube.upload' };
+    await expect(
+      consumeOauthCallback(db, keys, {
+        workspaceId,
+        state: issued.state,
+        userId: '00000000-0000-4000-8000-000000000103',
+        provider: 'youtube',
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      consumeOauthCallback(db, keys, {
+        workspaceId,
+        state: issued.state,
+        userId,
+        provider: 'x',
+      }),
+    ).resolves.toBeNull();
+    const credential = {
+      accessToken: 'yt-access',
+      refreshToken: 'yt-refresh',
+      expiresAt: '2026-09-09T00:00:00.000Z',
+      scope: 'youtube.upload',
+    };
     let exchangeCalls = 0;
     const client = {
-      exchangeCode: () => { exchangeCalls += 1; return Promise.resolve(credential); },
-      discoverChannels: () => Promise.resolve([{ id: 'channel-1', displayName: 'Channel One', privateField: 'discard' }]),
+      exchangeCode: () => {
+        exchangeCalls += 1;
+        return Promise.resolve(credential);
+      },
+      discoverChannels: () =>
+        Promise.resolve([{ id: 'channel-1', displayName: 'Channel One', privateField: 'discard' }]),
     };
     const connected = await completeYouTubeOauthConnection(db, keys, client as never, {
-      workspaceId, userId, state: issued.state, code: 'code', requestId: 'youtube-connect',
+      workspaceId,
+      userId,
+      state: issued.state,
+      code: 'code',
+      requestId: 'youtube-connect',
     });
-    expect(connected?.accounts).toEqual([{ providerAccountId: 'channel-1', displayName: 'Channel One' }]);
-    await expect(completeYouTubeOauthConnection(db, keys, client as never, {
-      workspaceId, userId, state: issued.state, code: 'code', requestId: 'youtube-replay',
-    })).resolves.toBeNull();
+    expect(connected?.accounts).toEqual([
+      { providerAccountId: 'channel-1', displayName: 'Channel One' },
+    ]);
+    await expect(
+      completeYouTubeOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        state: issued.state,
+        code: 'code',
+        requestId: 'youtube-replay',
+      }),
+    ).resolves.toBeNull();
     expect(exchangeCalls).toBe(1);
-    const connection = await database.query<{ credential_id: string }>("select credential_id from provider_connections where provider = 'youtube'");
+    const connection = await database.query<{ credential_id: string }>(
+      "select credential_id from provider_connections where provider = 'youtube'",
+    );
     const credentialId = connection.rows[0]?.credential_id;
     if (!credentialId) throw new Error('Expected persisted YouTube credential');
-    const stored = await withTenantTransaction(db, { workspaceId }, (tx) => getActiveCredential(tx, workspaceId, credentialId));
+    const stored = await withTenantTransaction(db, { workspaceId }, (tx) =>
+      getActiveCredential(tx, workspaceId, credentialId),
+    );
     expect(stored).not.toBeNull();
     if (!stored) throw new Error('Expected active YouTube credential');
     const plaintext = await decryptCredential(stored, keys);
-    try { expect(JSON.parse(plaintext.toString('utf8'))).toEqual(credential); } finally { plaintext.fill(0); }
-    const accounts = await database.query<{ provider_account_id: string; display_name: string }>('select provider_account_id, display_name from provider_accounts');
-    expect(accounts.rows).toEqual([{ provider_account_id: 'channel-1', display_name: 'Channel One' }]);
+    try {
+      expect(JSON.parse(plaintext.toString('utf8'))).toEqual(credential);
+    } finally {
+      plaintext.fill(0);
+    }
+    const accounts = await database.query<{ provider_account_id: string; display_name: string }>(
+      'select provider_account_id, display_name from provider_accounts',
+    );
+    expect(accounts.rows).toEqual([
+      { provider_account_id: 'channel-1', display_name: 'Channel One' },
+    ]);
 
     const expiredAt = new Date('2026-09-01T00:00:00.000Z');
-    const expired = await issueOauthTransaction(db, keys, { workspaceId, userId, provider: 'youtube', redirectUri: 'https://relay.test/youtube/callback', now: expiredAt });
-    await expect(consumeOauthCallback(db, keys, { workspaceId, state: expired.state, userId, provider: 'youtube', now: new Date(expiredAt.getTime() + 11 * 60 * 1000) })).resolves.toBeNull();
+    const expired = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'youtube',
+      redirectUri: 'https://relay.test/youtube/callback',
+      now: expiredAt,
+    });
+    await expect(
+      consumeOauthCallback(db, keys, {
+        workspaceId,
+        state: expired.state,
+        userId,
+        provider: 'youtube',
+        now: new Date(expiredAt.getTime() + 11 * 60 * 1000),
+      }),
+    ).resolves.toBeNull();
     expect(exchangeCalls).toBe(1);
   });
 
@@ -654,17 +717,68 @@ describe('credential and OAuth persistence', () => {
       VALUES ('${accountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000703',
         'channel-1', 'Channel One');
     `);
-    await expect(updateYouTubeAccountDefaults(db, {
-      workspaceId, userId, accountId, requestId: 'defaults-1',
-      defaults: { privacyStatus: 'public', madeForKids: false, notifySubscribers: true },
-    })).resolves.toBe('updated');
+    await expect(
+      updateYouTubeAccountDefaults(db, {
+        workspaceId,
+        userId,
+        accountId,
+        requestId: 'defaults-1',
+        defaults: { privacyStatus: 'public', madeForKids: false, notifySubscribers: true },
+      }),
+    ).resolves.toBe('updated');
     expect((await listProviderAccounts(db, workspaceId))[0]).toMatchObject({
       id: accountId,
       adapterDefaults: { privacyStatus: 'public', madeForKids: false, notifySubscribers: true },
     });
-    await expect(updateYouTubeAccountDefaults(db, {
-      workspaceId, userId, accountId: '00000000-0000-4000-8000-000000000799',
-      requestId: 'defaults-missing', defaults: {},
-    })).resolves.toBe('missing');
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM audit_events
+       WHERE action = 'provider_account.defaults_updated' AND target_id = '${accountId}'`,
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+    await database.exec(`UPDATE provider_connections SET status = 'disconnected'
+      WHERE id = '00000000-0000-4000-8000-000000000703'`);
+    await expect(
+      updateYouTubeAccountDefaults(db, {
+        workspaceId,
+        userId,
+        accountId,
+        requestId: 'defaults-inactive',
+        defaults: {},
+      }),
+    ).resolves.toBe('missing');
+    await database.exec(`UPDATE provider_connections SET status = 'active', provider = 'x'
+      WHERE id = '00000000-0000-4000-8000-000000000703'`);
+    await expect(
+      updateYouTubeAccountDefaults(db, {
+        workspaceId,
+        userId,
+        accountId,
+        requestId: 'defaults-wrong-provider',
+        defaults: {},
+      }),
+    ).resolves.toBe('missing');
+    await database.exec(`UPDATE provider_connections SET provider = 'youtube';
+      UPDATE provider_accounts SET disconnected_at = now() WHERE id = '${accountId}'`);
+    await expect(
+      updateYouTubeAccountDefaults(db, {
+        workspaceId,
+        userId,
+        accountId,
+        requestId: 'defaults-disconnected',
+        defaults: {},
+      }),
+    ).resolves.toBe('missing');
+    await expect(
+      updateYouTubeAccountDefaults(db, {
+        workspaceId,
+        userId,
+        accountId: '00000000-0000-4000-8000-000000000799',
+        requestId: 'defaults-missing',
+        defaults: {},
+      }),
+    ).resolves.toBe('missing');
   });
 });

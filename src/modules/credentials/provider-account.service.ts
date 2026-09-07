@@ -79,6 +79,7 @@ export async function updateYouTubeAccountDefaults(
             eq(providerAccounts.workspaceId, input.workspaceId),
             eq(providerAccounts.id, input.accountId),
             eq(providerConnections.provider, 'youtube'),
+            eq(providerConnections.status, 'active'),
             isNull(providerAccounts.disconnectedAt),
           ),
         )

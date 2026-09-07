@@ -22,7 +22,7 @@ const EXIT = {
   terminal: 9,
   timeout: 10,
 } as const;
-const MUTATIONS = new Set(['posts:create', 'media:upload']);
+const MUTATIONS = new Set(['posts:create', 'media:upload', 'publishes:retry']);
 const ROUTES: Record<string, { method: string; path: string; body?: boolean }> = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
@@ -32,6 +32,7 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   'media:upload': { method: 'POST', path: '/api/v1/media' },
   'publishes:show': { method: 'GET', path: '/api/v1/jobs/:id' },
   'publishes:poll': { method: 'GET', path: '/api/v1/jobs/:id' },
+  'publishes:retry': { method: 'POST', path: '/api/v1/jobs/:id/retry' },
   health: { method: 'GET', path: '/health/live' },
 };
 const ENVELOPE_OUTPUT_KEYS = [
@@ -167,6 +168,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'tags',
     'categoryId',
   ]),
+  'publishes:retry': new Set([...ENVELOPE_OUTPUT_KEYS, 'self']),
 };
 const DEFAULT_OUTPUT_KEYS = new Set(ENVELOPE_OUTPUT_KEYS);
 const REDACTED = '[REDACTED]';

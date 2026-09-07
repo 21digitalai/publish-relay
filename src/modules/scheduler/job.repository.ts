@@ -320,50 +320,63 @@ export async function requestOperatorRetry(
   input: { workspaceId: string; jobId: string; actorId: string; now: Date },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<'scheduled' | 'conflict'> {
-  return withTenantTransaction(
-    database,
-    { workspaceId: input.workspaceId },
-    async (transaction) => {
-      await enforceWorkspaceAction(transaction, policy, {
-        workspaceId: input.workspaceId,
-        actor: { type: 'user', id: input.actorId },
-        action: 'publication.retry',
-        request: {},
-      });
-      const jobs = await transaction
-        .update(publicationJobs)
-        .set({ state: 'retry_wait', nextAttemptAt: input.now, updatedAt: input.now })
-        .where(
-          and(
-            eq(publicationJobs.workspaceId, input.workspaceId),
-            eq(publicationJobs.id, input.jobId),
-            eq(publicationJobs.state, 'failed'),
-            eq(publicationJobs.reconciliationRequired, false),
-          ),
-        )
-        .returning({ id: publicationJobs.id });
-      if (jobs.length === 0) return 'conflict';
-      if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.actorId))
-        await transaction
-          .update(posts)
-          .set({ lastMutatorType: 'user', lastMutatorId: input.actorId, updatedAt: input.now })
-          .where(
-            and(
-              eq(posts.workspaceId, input.workspaceId),
-              sql`${posts.id} = (select post_id from publication_jobs where id = ${input.jobId})`,
-            ),
-          );
-      await transaction.insert(publicationJobEvents).values({
-        workspaceId: input.workspaceId,
-        jobId: input.jobId,
-        fromState: 'failed',
-        toState: 'retry_wait',
-        reason: 'operator_retry',
-        metadata: { actorType: 'user', actorId: input.actorId },
-      });
-      return 'scheduled';
-    },
+  return withTenantTransaction(database, { workspaceId: input.workspaceId }, (transaction) =>
+    requestOperatorRetryInTransaction(
+      transaction,
+      { ...input, actor: { type: 'user', id: input.actorId } },
+      policy,
+    ),
   );
+}
+
+export async function requestOperatorRetryInTransaction(
+  transaction: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    jobId: string;
+    actor: { type: 'user' | 'api-key'; id: string };
+    now: Date;
+  },
+  policy: ActionPolicy = allowAllActionPolicy,
+): Promise<'scheduled' | 'conflict'> {
+  await enforceWorkspaceAction(transaction, policy, {
+    workspaceId: input.workspaceId,
+    actor: input.actor,
+    action: 'publication.retry',
+    request: {},
+  });
+  const jobs = await transaction
+    .update(publicationJobs)
+    .set({ state: 'retry_wait', nextAttemptAt: input.now, updatedAt: input.now })
+    .where(
+      and(
+        eq(publicationJobs.workspaceId, input.workspaceId),
+        eq(publicationJobs.id, input.jobId),
+        eq(publicationJobs.state, 'failed'),
+        eq(publicationJobs.reconciliationRequired, false),
+      ),
+    )
+    .returning({ id: publicationJobs.id });
+  if (jobs.length === 0) return 'conflict';
+  if (input.actor.type === 'user' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.actor.id))
+    await transaction
+      .update(posts)
+      .set({ lastMutatorType: 'user', lastMutatorId: input.actor.id, updatedAt: input.now })
+      .where(
+        and(
+          eq(posts.workspaceId, input.workspaceId),
+          sql`${posts.id} = (select post_id from publication_jobs where id = ${input.jobId})`,
+        ),
+      );
+  await transaction.insert(publicationJobEvents).values({
+    workspaceId: input.workspaceId,
+    jobId: input.jobId,
+    fromState: 'failed',
+    toState: 'retry_wait',
+    reason: 'operator_retry',
+    metadata: { actorType: input.actor.type, actorId: input.actor.id },
+  });
+  return 'scheduled';
 }
 
 export async function resolveReconciliation(

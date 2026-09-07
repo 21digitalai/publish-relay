@@ -75,6 +75,9 @@ describe('API v1 contract', () => {
         '/api/v1/jobs/{jobId}': {
           get: { operationId: 'getJob', responses: { '200': {}, '404': {} } },
         },
+        '/api/v1/jobs/{jobId}/retry': {
+          post: { operationId: 'retryPublication', responses: { '202': {}, '409': {} } },
+        },
       },
     });
   });

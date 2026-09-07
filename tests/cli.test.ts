@@ -400,6 +400,22 @@ describe('Publish Relay CLI', () => {
     });
   });
 
+  it('preflights and retries a publication with an idempotency key', async () => {
+    const baseUrl = await fixture(202, {
+      success: true,
+      data: { id: 'job-1', state: 'retry_wait', links: { self: '/api/v1/jobs/job-1' } },
+      meta: { requestId: 'request-retry' },
+    });
+    const result = await cli(
+      ['publishes', 'retry', 'job-1', '--base-url', baseUrl, '--idempotency-key', 'retry-job-1'],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { id: 'job-1', state: 'retry_wait', links: { self: '/api/v1/jobs/job-1' } },
+    });
+  });
+
   it('preserves the full effective YouTube settings snapshot when polling completes', async () => {
     const effectiveProviderSettings = {
       schemaVersion: 1,

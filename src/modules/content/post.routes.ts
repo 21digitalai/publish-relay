@@ -18,6 +18,7 @@ import { createPostRequestSchema } from './post.contract.js';
 import { PostValidationError } from './post.errors.js';
 import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
 import { createPostInTransaction } from './post.service.js';
+import { requestOperatorRetryInTransaction } from '../scheduler/job.repository.js';
 
 function resourceLinks(result: { postId: string; revisionId: string; jobIds: string[] }) {
   return {
@@ -186,6 +187,80 @@ export function registerPostRoutes(
       return await reply
         .code(500)
         .send(errorEnvelope('internal_error', 'Internal server error', request.id));
+    }
+  });
+
+  application.post('/api/v1/jobs/:jobId/retry', async (request, reply) => {
+    try {
+      const principal = await authorizeApiKeyRequest(request, apiKeys, 'publishes:retry');
+      if (!principal)
+        return await reply
+          .code(401)
+          .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      const decision = rateLimiter.check(principal.workspaceId, principal.id, 'mutation');
+      if (!decision.allowed)
+        return await reply
+          .code(429)
+          .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+      const { jobId } = z.object({ jobId: z.uuid() }).parse(request.params);
+      const suppliedKey = request.headers['idempotency-key'];
+      const idempotencyKey = validateIdempotencyKey(
+        typeof suppliedKey === 'string' ? suppliedKey : undefined,
+      );
+      const result = await executeIdempotentMutation(
+        database,
+        {
+          workspaceId: principal.workspaceId,
+          apiKeyId: principal.id,
+          operation: 'publishes.retry',
+          idempotencyKey,
+          requestFingerprint: mutationFingerprint({ jobId }),
+        },
+        async (transaction) => {
+          const outcome = await requestOperatorRetryInTransaction(
+            transaction,
+            {
+              workspaceId: principal.workspaceId,
+              jobId,
+              actor: { type: 'api-key', id: principal.id },
+              now: new Date(),
+            },
+            actionPolicy,
+          );
+          return outcome === 'scheduled'
+            ? {
+                statusCode: 202,
+                body: successEnvelope(
+                  { id: jobId, state: 'retry_wait', links: { self: `/api/v1/jobs/${jobId}` } },
+                  request.id,
+                ),
+              }
+            : {
+                statusCode: 409,
+                body: errorEnvelope(
+                  'retry_conflict',
+                  'Publication job is not eligible for retry',
+                  request.id,
+                ),
+              };
+        },
+      );
+      if (result.kind === 'conflict')
+        return await reply
+          .code(409)
+          .send(
+            errorEnvelope('idempotency_conflict', 'Idempotency key was already used', request.id),
+          );
+      if (result.kind === 'replayed') void reply.header('Idempotency-Replayed', 'true');
+      return await reply.code(result.response.statusCode).send(result.response.body);
+    } catch (error) {
+      if (error instanceof ApiKeyAuthorizationError)
+        return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (error instanceof z.ZodError)
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', error.message, request.id));
+      throw error;
     }
   });
 

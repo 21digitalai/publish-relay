@@ -345,6 +345,33 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/jobs/{jobId}/retry': {
+        post: {
+          operationId: 'retryPublication',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'jobId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', minLength: 8, maxLength: 200 },
+            },
+          ],
+          responses: {
+            '202': { description: 'Failed publication queued for safe retry' },
+            '400': { description: 'Invalid job ID or idempotency key' },
+            '403': { description: 'Missing publishes:retry capability' },
+            '409': { description: 'Job is not safely retryable or idempotency key conflicts' },
+            '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
     },
     components: {
       securitySchemes: {

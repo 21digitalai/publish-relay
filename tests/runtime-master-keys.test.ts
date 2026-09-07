@@ -54,7 +54,14 @@ describe('production runtime secret configuration', () => {
     expect(resolveXProviderCredentials(production)).toBeNull();
     expect(() =>
       resolveXProviderCredentials({ ...production, PUBLISH_RELAY_X_CONSUMER_KEY: 'consumer' }),
-    ).toThrow(/both consumer key and secret/);
+    ).toThrow(/same namespace/);
+    expect(() =>
+      resolveXProviderCredentials({
+        ...production,
+        PUBLISH_RELAY_X_CONSUMER_KEY: 'current-key',
+        X_API_SECRET: 'legacy-secret',
+      }),
+    ).toThrow(/same namespace/);
     expect(
       resolveXProviderCredentials({
         ...production,
@@ -62,6 +69,15 @@ describe('production runtime secret configuration', () => {
         PUBLISH_RELAY_X_CONSUMER_SECRET: 'secret',
       }),
     ).toEqual({ consumerKey: 'consumer', consumerSecret: 'secret' });
+    expect(
+      resolveXProviderCredentials({
+        ...production,
+        PUBLISH_RELAY_X_CONSUMER_KEY: 'current-key',
+        PUBLISH_RELAY_X_CONSUMER_SECRET: 'current-secret',
+        X_API_KEY: 'legacy-key',
+        X_API_SECRET: 'legacy-secret',
+      }),
+    ).toEqual({ consumerKey: 'current-key', consumerSecret: 'current-secret' });
     const environment = { PUBLISH_RELAY_MASTER_KEY_v1: Buffer.alloc(32, 3).toString('base64') };
     expect(resolveWorkerSecurityRuntime(production, environment).xCredentials).toBeNull();
     expect(() => resolveWorkerSecurityRuntime(production, {})).toThrow(/Master key version v1/);

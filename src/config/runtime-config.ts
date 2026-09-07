@@ -77,10 +77,18 @@ export function resolveWorkerDatabaseUrl(config: RuntimeConfig): string {
 export function resolveXProviderCredentials(
   config: RuntimeConfig,
 ): { consumerKey: string; consumerSecret: string } | null {
-  const consumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
-  const consumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
-  if (!consumerKey && !consumerSecret) return null;
-  if (!consumerKey || !consumerSecret)
-    throw new Error('X provider credentials must configure both consumer key and secret');
-  return { consumerKey, consumerSecret };
+  const current = {
+    consumerKey: config.PUBLISH_RELAY_X_CONSUMER_KEY,
+    consumerSecret: config.PUBLISH_RELAY_X_CONSUMER_SECRET,
+  };
+  const legacy = { consumerKey: config.X_API_KEY, consumerSecret: config.X_API_SECRET };
+  const currentPartial = Boolean(current.consumerKey) !== Boolean(current.consumerSecret);
+  const legacyPartial = Boolean(legacy.consumerKey) !== Boolean(legacy.consumerSecret);
+  if (currentPartial || legacyPartial)
+    throw new Error('X provider credentials must configure both values in the same namespace');
+  if (current.consumerKey && current.consumerSecret)
+    return { consumerKey: current.consumerKey, consumerSecret: current.consumerSecret };
+  if (legacy.consumerKey && legacy.consumerSecret)
+    return { consumerKey: legacy.consumerKey, consumerSecret: legacy.consumerSecret };
+  return null;
 }

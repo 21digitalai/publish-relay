@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { createHash } from 'node:crypto';
+import type { Readable } from 'node:stream';
 import { z } from 'zod';
 
 import { errorEnvelope, successEnvelope } from '../api/contract.js';
@@ -16,7 +17,12 @@ import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import type { MediaStorage } from './media-storage.js';
 import { FfprobeMediaProbe, type MediaProbe } from './media-probe.js';
-import { storeMediaInTransaction, validateMediaContentType } from './media.service.js';
+import {
+  detectMimeType,
+  storeMediaInTransaction,
+  storeStagedMediaInTransaction,
+  validateMediaContentType,
+} from './media.service.js';
 
 export const AGENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const AGENT_MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024;
@@ -43,7 +49,17 @@ export function registerMediaRoutes(
   probe: MediaProbe = new FfprobeMediaProbe(),
   videoConfig = { maxBytes: AGENT_MEDIA_MAX_BYTES, limits: AGENT_VIDEO_LIMITS },
 ): void {
-  for (const contentType of SUPPORTED_CONTENT_TYPES)
+  for (const contentType of SUPPORTED_CONTENT_TYPES) {
+    if (contentType === 'video/mp4') {
+      application.addContentTypeParser(
+        contentType,
+        { bodyLimit: videoConfig.maxBytes },
+        (_request, body, done) => {
+          done(null, body);
+        },
+      );
+      continue;
+    }
     application.addContentTypeParser(
       contentType,
       {
@@ -54,6 +70,7 @@ export function registerMediaRoutes(
         done(null, body);
       },
     );
+  }
 
   application.post('/api/v1/media', async (request, reply) => {
     let uncommittedStorageKey: string | undefined;
@@ -76,7 +93,7 @@ export function registerMediaRoutes(
       if (
         !contentType ||
         !SUPPORTED_CONTENT_TYPES.has(contentType) ||
-        !Buffer.isBuffer(request.body)
+        (contentType !== 'video/mp4' && !Buffer.isBuffer(request.body))
       )
         return await reply
           .code(400)
@@ -92,7 +109,84 @@ export function registerMediaRoutes(
       const idempotencyKey = validateIdempotencyKey(
         typeof suppliedKey === 'string' ? suppliedKey : undefined,
       );
-      const bytes = request.body;
+      if (contentType === 'video/mp4') {
+        if (!storage.stageStream || !storage.promote || !probe.probeMp4File)
+          throw new Error('Streaming media storage is unavailable');
+        const staged = await storage.stageStream({
+          stream: request.body as Readable,
+          maxBytes: videoConfig.maxBytes,
+          fingerprintPrefix: Buffer.from(`${contentType}\0`),
+        });
+        uncommittedStorageKey = staged.temporaryKey;
+        if (detectMimeType(staged.prefix) !== contentType)
+          throw new Error(`Media Content-Type mismatch: declared ${contentType}`);
+        const metadata = await probe.probeMp4File(staged.filePath);
+        if (metadata.durationMs > videoConfig.limits.maxDurationMs)
+          throw new Error('Media duration exceeds the configured limit');
+        if (
+          metadata.width > videoConfig.limits.maxWidth ||
+          metadata.height > videoConfig.limits.maxHeight
+        )
+          throw new Error('Media dimensions exceed the configured limit');
+        const fingerprint = staged.requestFingerprint;
+        const result = await executeIdempotentMutation(
+          database,
+          {
+            workspaceId: principal.workspaceId,
+            apiKeyId: principal.id,
+            operation: 'media.create',
+            idempotencyKey,
+            requestFingerprint: fingerprint,
+          },
+          async (transaction) => {
+            const media = await storeStagedMediaInTransaction(
+              transaction,
+              storage,
+              {
+                workspaceId: principal.workspaceId,
+                userId: principal.createdByUserId,
+                actor: { type: 'api-key', id: principal.id },
+                requestId: request.id,
+                idempotencyKey,
+                staged,
+                mimeType: contentType,
+                metadata,
+              },
+              actionPolicy,
+            );
+            uncommittedStorageKey = `${principal.workspaceId}/${media.mediaId}/${media.sha256}`;
+            return {
+              statusCode: 201,
+              body: successEnvelope(
+                {
+                  id: media.mediaId,
+                  mimeType: media.mimeType,
+                  sha256: media.sha256,
+                  byteSize: media.byteSize,
+                  ...metadata,
+                  state: 'ready',
+                },
+                request.id,
+              ),
+            };
+          },
+        );
+        uncommittedStorageKey = undefined;
+        if (result.kind === 'conflict') {
+          await storage.delete(staged.temporaryKey);
+          return await reply
+            .code(409)
+            .send(
+              errorEnvelope('idempotency_conflict', 'Idempotency key was already used', request.id),
+            );
+        }
+        if (result.kind === 'replayed') {
+          await storage.delete(staged.temporaryKey);
+          void reply.header('Idempotency-Replayed', 'true');
+        }
+        return await reply.code(result.response.statusCode).send(result.response.body);
+      }
+      const bytes = request.body as Buffer;
       validateMediaContentType(bytes, contentType);
       const fingerprint = createHash('sha256')
         .update(contentType)

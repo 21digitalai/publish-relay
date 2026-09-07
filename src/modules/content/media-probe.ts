@@ -17,6 +17,7 @@ export interface VideoMetadata {
 
 export interface MediaProbe {
   probeMp4(bytes: Buffer): Promise<VideoMetadata>;
+  probeMp4File?(file: string): Promise<VideoMetadata>;
 }
 
 interface ProbeOutput {
@@ -54,6 +55,14 @@ export class FfprobeMediaProbe implements MediaProbe {
     const file = join(directory, 'upload.mp4');
     try {
       await writeFile(file, bytes, { flag: 'wx', mode: 0o600 });
+      return await this.probeMp4File(file);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+
+  async probeMp4File(file: string): Promise<VideoMetadata> {
+    try {
       const { stdout } = await execFileAsync(
         this.executable,
         [
@@ -71,8 +80,6 @@ export class FfprobeMediaProbe implements MediaProbe {
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Invalid MP4')) throw error;
       throw new Error('Invalid MP4: container probe failed');
-    } finally {
-      await rm(directory, { recursive: true, force: true });
     }
   }
 }

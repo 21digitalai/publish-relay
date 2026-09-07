@@ -13,7 +13,7 @@ import {
   markMediaReady,
   reserveMedia,
 } from './media.repository.js';
-import type { MediaStorage } from './media-storage.js';
+import type { MediaStorage, StagedMedia } from './media-storage.js';
 import type { MediaProbe, VideoMetadata } from './media-probe.js';
 
 interface StoredMedia {
@@ -31,7 +31,7 @@ const MIME_SIGNATURES: readonly { mimeType: string; signature: readonly number[]
   { mimeType: 'image/webp', signature: [0x52, 0x49, 0x46, 0x46] },
 ];
 
-function detectMimeType(bytes: Buffer): string {
+export function detectMimeType(bytes: Buffer): string {
   if (bytes.length >= 12 && bytes.subarray(4, 8).toString('ascii') === 'ftyp') return 'video/mp4';
   const match = MIME_SIGNATURES.find(({ signature }) =>
     signature.every((value, index) => bytes[index] === value),
@@ -40,6 +40,65 @@ function detectMimeType(bytes: Buffer): string {
   if (match.mimeType === 'image/webp' && bytes.subarray(8, 12).toString('ascii') !== 'WEBP')
     throw new Error('Unsupported media content');
   return match.mimeType;
+}
+
+export async function storeStagedMediaInTransaction(
+  transaction: NodePgDatabase,
+  storage: MediaStorage,
+  input: {
+    workspaceId: string;
+    userId: string;
+    actor: { type: 'api-key'; id: string };
+    requestId: string;
+    idempotencyKey: string;
+    staged: StagedMedia;
+    mimeType: 'video/mp4';
+    metadata: VideoMetadata;
+  },
+  policy: ActionPolicy = allowAllActionPolicy,
+): Promise<StoredMedia> {
+  if (!storage.promote) throw new Error('Streaming media storage is unavailable');
+  await enforceWorkspaceAction(transaction, policy, {
+    workspaceId: input.workspaceId,
+    actor: input.actor,
+    action: 'media.ingest',
+    request: {
+      mediaBytes: input.staged.byteSize,
+      requestId: input.requestId,
+      idempotencyKey: input.idempotencyKey,
+    },
+  });
+  const mediaId = randomUUID();
+  const storageKey = `${input.workspaceId}/${mediaId}/${input.staged.sha256}`;
+  await reserveMedia(transaction, {
+    id: mediaId,
+    workspaceId: input.workspaceId,
+    storageKey,
+    sha256: input.staged.sha256,
+    mimeType: input.mimeType,
+    byteSize: input.staged.byteSize,
+    metadata: input.metadata,
+  });
+  try {
+    const stored = await storage.promote({
+      staged: input.staged,
+      workspaceId: input.workspaceId,
+      mediaId,
+    });
+    if (stored.storageKey !== storageKey) throw new Error('Storage returned an unexpected key');
+    const ready = await markMediaReady(transaction, input.workspaceId, mediaId);
+    if (!ready) throw new Error('Reserved media record was not available for finalization');
+    return {
+      mediaId,
+      mimeType: input.mimeType,
+      sha256: input.staged.sha256,
+      byteSize: input.staged.byteSize,
+      metadata: input.metadata,
+    };
+  } catch (error) {
+    await storage.delete(storageKey);
+    throw error;
+  }
 }
 
 export function validateMediaContentType(bytes: Buffer, declaredMimeType: string): void {

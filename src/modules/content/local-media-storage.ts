@@ -1,8 +1,12 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
+import { Transform, type Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
-import type { MediaStorage } from './media-storage.js';
+import type { MediaStorage, StagedMedia } from './media-storage.js';
 
 export class LocalMediaStorage implements MediaStorage {
   private readonly root: string;
@@ -28,6 +32,69 @@ export class LocalMediaStorage implements MediaStorage {
     const path = this.pathFor(storageKey);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, input.bytes, { flag: 'wx', mode: 0o600 });
+    return { storageKey };
+  }
+
+  public async stageStream(input: {
+    stream: Readable;
+    maxBytes: number;
+    fingerprintPrefix: Buffer;
+  }): Promise<StagedMedia> {
+    const temporaryKey = `.temporary/${randomUUID()}`;
+    const filePath = this.pathFor(temporaryKey);
+    const hash = createHash('sha256');
+    const fingerprintHash = createHash('sha256').update(input.fingerprintPrefix);
+    const prefixChunks: Buffer[] = [];
+    let prefixSize = 0;
+    let byteSize = 0;
+    await mkdir(dirname(filePath), { recursive: true });
+    const meter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        byteSize += chunk.length;
+        if (byteSize > input.maxBytes) {
+          callback(new Error('Media exceeds the configured size limit'));
+          return;
+        }
+        hash.update(chunk);
+        fingerprintHash.update(chunk);
+        if (prefixSize < 12) {
+          const part = chunk.subarray(0, 12 - prefixSize);
+          prefixChunks.push(part);
+          prefixSize += part.length;
+        }
+        callback(null, chunk);
+      },
+    });
+    try {
+      await pipeline(
+        input.stream,
+        meter,
+        createWriteStream(filePath, { flags: 'wx', mode: 0o600 }),
+      );
+      if (byteSize === 0) throw new Error('Media content is empty');
+      return {
+        temporaryKey,
+        filePath,
+        sha256: hash.digest('hex'),
+        requestFingerprint: fingerprintHash.digest('hex'),
+        byteSize,
+        prefix: Buffer.concat(prefixChunks),
+      };
+    } catch (error) {
+      await rm(filePath, { force: true });
+      throw error;
+    }
+  }
+
+  public async promote(input: {
+    staged: StagedMedia;
+    workspaceId: string;
+    mediaId: string;
+  }): Promise<{ storageKey: string }> {
+    const storageKey = `${input.workspaceId}/${input.mediaId}/${input.staged.sha256}`;
+    const destination = this.pathFor(storageKey);
+    await mkdir(dirname(destination), { recursive: true });
+    await rename(this.pathFor(input.staged.temporaryKey), destination);
     return { storageKey };
   }
 

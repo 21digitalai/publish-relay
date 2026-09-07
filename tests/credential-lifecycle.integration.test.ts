@@ -9,6 +9,7 @@ import Fastify from 'fastify';
 import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 import {
   createCredential,
+  getActiveCredential,
   revokeCredential,
   rotateCredential,
 } from '../src/modules/credentials/credential.repository.js';
@@ -16,6 +17,7 @@ import type {
   EncryptedCredential,
   MasterKeyProvider,
 } from '../src/modules/credentials/envelope.js';
+import { decryptCredential } from '../src/modules/credentials/envelope.js';
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
 import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
 import {
@@ -34,6 +36,7 @@ import {
   completeXOauthConnection,
 } from '../src/modules/providers/x-oauth.service.js';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
+import { completeYouTubeOauthConnection } from '../src/modules/providers/youtube-oauth.service.js';
 import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import {
@@ -160,6 +163,50 @@ describe('credential and OAuth persistence', () => {
       { providerAccountId: 'two', displayName: 'Two' },
     ]);
     await expect(adapter.discoverAccounts('never-persisted-token')).resolves.toHaveLength(2);
+  });
+
+  it('binds YouTube OAuth state and persists only encrypted credential and allowlisted accounts', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const key = randomBytes(32);
+    const keys: MasterKeyProvider = { currentVersion: () => 'v1', getKey: () => Promise.resolve(key) };
+    const issued = await issueOauthTransaction(db, keys, {
+      workspaceId, userId, provider: 'youtube', redirectUri: 'https://relay.test/youtube/callback',
+    });
+    await expect(consumeOauthCallback(db, keys, {
+      workspaceId, state: issued.state, userId: '00000000-0000-4000-8000-000000000103', provider: 'youtube',
+    })).resolves.toBeNull();
+    await expect(consumeOauthCallback(db, keys, {
+      workspaceId, state: issued.state, userId, provider: 'x',
+    })).resolves.toBeNull();
+    const credential = { accessToken: 'yt-access', refreshToken: 'yt-refresh', expiresAt: '2026-09-09T00:00:00.000Z', scope: 'youtube.upload' };
+    let exchangeCalls = 0;
+    const client = {
+      exchangeCode: () => { exchangeCalls += 1; return Promise.resolve(credential); },
+      discoverChannels: () => Promise.resolve([{ id: 'channel-1', displayName: 'Channel One', privateField: 'discard' }]),
+    };
+    const connected = await completeYouTubeOauthConnection(db, keys, client as never, {
+      workspaceId, userId, state: issued.state, code: 'code', requestId: 'youtube-connect',
+    });
+    expect(connected?.accounts).toEqual([{ providerAccountId: 'channel-1', displayName: 'Channel One' }]);
+    await expect(completeYouTubeOauthConnection(db, keys, client as never, {
+      workspaceId, userId, state: issued.state, code: 'code', requestId: 'youtube-replay',
+    })).resolves.toBeNull();
+    expect(exchangeCalls).toBe(1);
+    const connection = await database.query<{ credential_id: string }>("select credential_id from provider_connections where provider = 'youtube'");
+    const credentialId = connection.rows[0]?.credential_id;
+    if (!credentialId) throw new Error('Expected persisted YouTube credential');
+    const stored = await withTenantTransaction(db, { workspaceId }, (tx) => getActiveCredential(tx, workspaceId, credentialId));
+    expect(stored).not.toBeNull();
+    if (!stored) throw new Error('Expected active YouTube credential');
+    const plaintext = await decryptCredential(stored, keys);
+    try { expect(JSON.parse(plaintext.toString('utf8'))).toEqual(credential); } finally { plaintext.fill(0); }
+    const accounts = await database.query<{ provider_account_id: string; display_name: string }>('select provider_account_id, display_name from provider_accounts');
+    expect(accounts.rows).toEqual([{ provider_account_id: 'channel-1', display_name: 'Channel One' }]);
+
+    const expiredAt = new Date('2026-09-01T00:00:00.000Z');
+    const expired = await issueOauthTransaction(db, keys, { workspaceId, userId, provider: 'youtube', redirectUri: 'https://relay.test/youtube/callback', now: expiredAt });
+    await expect(consumeOauthCallback(db, keys, { workspaceId, state: expired.state, userId, provider: 'youtube', now: new Date(expiredAt.getTime() + 11 * 60 * 1000) })).resolves.toBeNull();
+    expect(exchangeCalls).toBe(1);
   });
 
   it('removes abandoned OAuth transactions and their encrypted verifiers after expiry', async () => {

@@ -183,11 +183,6 @@ function sameDay(left: Date, right: Date): boolean {
   return startOfDay(left).getTime() === startOfDay(right).getTime();
 }
 
-function calendarAnchor(jobs: Job[]): Date {
-  const firstJob = jobs.at(0);
-  return firstJob ? startOfDay(new Date(firstJob.scheduledAt)) : startOfDay(new Date());
-}
-
 function jobPath(job: Job): string {
   return `${workspacePath()}/jobs/${job.id}`;
 }
@@ -356,10 +351,10 @@ function Composer({ onClose }: { onClose: () => void }) {
             <h3>{receipt.count} posts scheduled</h3>
             <p>{formatTime(receipt.scheduledAt)}</p>
             <div>
-              <a className="secondary-button" href="/w/atlas/queue">
+              <a className="secondary-button" href={`${workspacePath()}/queue`}>
                 Open Queue
               </a>
-              <a className="primary-button" href="/w/atlas/calendar">
+              <a className="primary-button" href={`${workspacePath()}/calendar`}>
                 Open Calendar
               </a>
             </div>
@@ -616,8 +611,9 @@ function WorkspaceLayout({
 }
 
 export function QueuePage() {
-  const [query, setQuery] = useState('');
-  const [view, setView] = useState('All');
+  const initialParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [query, setQuery] = useState(initialParams.get('q') ?? '');
+  const [view, setView] = useState(initialParams.get('view') ?? 'All');
   const [queueJobs, setQueueJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
@@ -642,16 +638,39 @@ export function QueuePage() {
       controller.abort();
     };
   }, []);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (view !== 'All') params.set('view', view);
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${params.size ? `?${params}` : ''}`,
+    );
+  }, [query, view]);
   const jobs = useMemo(
     () =>
-      (queueJobs ?? []).filter(
-        (job) =>
-          `${job.text} ${job.account}`.toLowerCase().includes(query.toLowerCase()) &&
-          (view === 'All' ||
-            (view === 'Needs attention'
-              ? ['failed', 'retrying'].includes(job.state)
-              : STATE_LABELS[job.state] === view)),
-      ),
+      (queueJobs ?? [])
+        .filter(
+          (job) =>
+            `${job.text} ${job.account}`.toLowerCase().includes(query.toLowerCase()) &&
+            (view === 'All' ||
+              (view === 'Needs attention'
+                ? ['failed', 'retrying'].includes(job.state)
+                : STATE_LABELS[job.state] === view)),
+        )
+        .sort((left, right) => {
+          const group = (job: Job) =>
+            ['failed', 'retrying'].includes(job.state)
+              ? 0
+              : ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
+                ? 1
+                : 2;
+          const difference = group(left) - group(right);
+          if (difference) return difference;
+          const time = new Date(left.scheduledAt).getTime() - new Date(right.scheduledAt).getTime();
+          return group(left) === 2 ? -time : time;
+        }),
     [query, queueJobs, view],
   );
   return (
@@ -722,7 +741,7 @@ export function QueuePage() {
                   <span>Actions</span>
                 </div>
                 {jobs.map((job) => (
-                  <a className="queue-row" href={`/w/atlas/jobs/${job.id}`} key={job.id}>
+                  <a className="queue-row" href={`${workspacePath()}/jobs/${job.id}`} key={job.id}>
                     <Status state={job.state} />
                     <time dateTime={job.scheduledAt}>{formatTime(job.scheduledAt)}</time>
                     <span className="post-excerpt">{job.text}</span>
@@ -765,7 +784,13 @@ export function QueuePage() {
 }
 
 export function CalendarPage() {
-  const [mode, setMode] = useState('Week');
+  const initialParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [mode, setMode] = useState(initialParams.get('mode') ?? 'Week');
+  const [visibleDate, setVisibleDate] = useState(() => {
+    const supplied = initialParams.get('date');
+    const parsed = supplied ? new Date(`${supplied}T12:00:00`) : new Date();
+    return Number.isFinite(parsed.getTime()) ? startOfDay(parsed) : startOfDay(new Date());
+  });
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
@@ -788,19 +813,40 @@ export function CalendarPage() {
       controller.abort();
     };
   }, []);
+  useEffect(() => {
+    const params = new URLSearchParams({
+      mode,
+      date: `${visibleDate.getFullYear()}-${String(visibleDate.getMonth() + 1).padStart(2, '0')}-${String(visibleDate.getDate()).padStart(2, '0')}`,
+    });
+    window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
+  }, [mode, visibleDate]);
+  const step = mode === 'Month' ? 30 : mode === 'Week' ? 7 : 1;
   return (
     <WorkspaceLayout active="calendar">
       <div className="calendar-heading">
         <div>
           <p className="eyebrow">Europe/Sofia · EEST</p>
-          <h1>September 2026</h1>
+          <h1>{visibleDate.toLocaleDateString('en', { month: 'long', year: 'numeric' })}</h1>
         </div>
         <div className="calendar-actions">
-          <button className="secondary-button">Today</button>
-          <button className="icon-button" aria-label="Previous date">
+          <button
+            className="secondary-button"
+            onClick={() => setVisibleDate(startOfDay(new Date()))}
+          >
+            Today
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Previous date"
+            onClick={() => setVisibleDate((date) => addDays(date, -step))}
+          >
             ←
           </button>
-          <button className="icon-button" aria-label="Next date">
+          <button
+            className="icon-button"
+            aria-label="Next date"
+            onClick={() => setVisibleDate((date) => addDays(date, step))}
+          >
             →
           </button>
         </div>
@@ -836,19 +882,18 @@ export function CalendarPage() {
             <p>Fetching scheduled job positions…</p>
           </div>
         ) : mode === 'Month' ? (
-          <MonthCalendar jobs={jobs} />
+          <MonthCalendar jobs={jobs} anchor={visibleDate} />
         ) : mode === 'Timeline' ? (
-          <TimelineCalendar jobs={jobs} />
+          <TimelineCalendar jobs={jobs} anchor={visibleDate} />
         ) : (
-          <TimeCalendar dayOnly={mode === 'Day'} jobs={jobs} />
+          <TimeCalendar dayOnly={mode === 'Day'} jobs={jobs} anchor={visibleDate} />
         )}
       </section>
     </WorkspaceLayout>
   );
 }
 
-function MonthCalendar({ jobs }: { jobs: Job[] }) {
-  const anchor = calendarAnchor(jobs);
+function MonthCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
   const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const visibleStart = startOfWeek(monthStart);
   return (
@@ -894,8 +939,7 @@ function MonthCalendar({ jobs }: { jobs: Job[] }) {
   );
 }
 
-function TimeCalendar({ dayOnly, jobs }: { dayOnly: boolean; jobs: Job[] }) {
-  const anchor = calendarAnchor(jobs);
+function TimeCalendar({ dayOnly, jobs, anchor }: { dayOnly: boolean; jobs: Job[]; anchor: Date }) {
   const firstDay = dayOnly ? anchor : startOfWeek(anchor);
   const dates = Array.from({ length: dayOnly ? 1 : 7 }, (_, index) => addDays(firstDay, index));
   const hourStart = 8;
@@ -945,8 +989,7 @@ function TimeCalendar({ dayOnly, jobs }: { dayOnly: boolean; jobs: Job[] }) {
   );
 }
 
-function TimelineCalendar({ jobs }: { jobs: Job[] }) {
-  const anchor = calendarAnchor(jobs);
+function TimelineCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
   const visibleJobs = jobs.filter((job) => sameDay(new Date(job.scheduledAt), anchor));
   const lanes = Array.from(
     visibleJobs.reduce((grouped, job) => {

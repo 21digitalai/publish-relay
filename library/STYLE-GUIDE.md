@@ -84,6 +84,8 @@ Routes:
 
 Workspace selection is a searchable popover showing name, role, and active-account count. Raw IDs never appear in normal workflows.
 
+Queue search/view and calendar mode/date are URL-owned state so refresh and copied links preserve the operator's current context. Queue priority is deterministic: attention first, active work nearest-first, then history newest-first. Every workspace link derives from the active route; no fallback workspace slug is permitted.
+
 ## Authentication and onboarding
 
 Auth uses a centered 440px panel on the canvas with a restrained violet radial glow. No marketing carousel.

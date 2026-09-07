@@ -228,10 +228,13 @@ export async function getBrowserJobDetail(
         .orderBy(asc(publicationJobEvents.createdAt), asc(publicationJobEvents.id)),
     ]);
     const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
-    const externalUrl =
-      published?.externalPostId && job.providerAccount.provider === 'x'
+    const externalUrl = published?.externalPostId
+      ? job.providerAccount.provider === 'x'
         ? `https://x.com/${job.providerAccount.handle}/status/${published.externalPostId}`
-        : null;
+        : job.providerAccount.provider === 'youtube'
+          ? `https://www.youtube.com/watch?v=${published.externalPostId}`
+          : null
+      : null;
     return {
       ...job,
       media: media.map((item) => ({

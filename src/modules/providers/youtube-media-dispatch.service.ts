@@ -219,44 +219,48 @@ export async function reconcileYouTubeJobs(
   });
   let resolved = 0;
   for (const jobId of jobIds) {
-    const rows = await runtime.database
-      .select({
-        id: publicationJobs.id,
-        workspaceId: publicationJobs.workspaceId,
-        revisionId: publicationJobs.revisionId,
-        providerAccountId: publicationJobs.providerAccountId,
-      })
-      .from(publicationJobs)
-      .where(eq(publicationJobs.id, jobId))
-      .limit(1);
-    const job = rows[0];
-    if (!job) continue;
-    const context = await loadJobContext(runtime.database, job.workspaceId, job.id);
-    const credential = await getFreshYouTubeCredential(runtime.database, runtime.keys, runtime.client, {
-      workspaceId: job.workspaceId,
-      credentialId: context.credentialId,
-      now,
-    });
-    const uploaded = await stageYouTubeMedia(runtime.database, runtime.source, runtime.client, runtime.keys, {
-      workspaceId: job.workspaceId,
-      jobId: job.id,
-      mediaId: context.mediaId,
-      accessToken: credential.accessToken,
-      metadata: uploadMetadata(context.settings),
-      notifySubscribers: context.settings.notifySubscribers,
-      now,
-    });
-    void uploaded;
-    if (
-      await resolveReconciliation(runtime.database, {
+    try {
+      const rows = await runtime.database
+        .select({
+          id: publicationJobs.id,
+          workspaceId: publicationJobs.workspaceId,
+          revisionId: publicationJobs.revisionId,
+          providerAccountId: publicationJobs.providerAccountId,
+        })
+        .from(publicationJobs)
+        .where(eq(publicationJobs.id, jobId))
+        .limit(1);
+      const job = rows[0];
+      if (!job) continue;
+      const context = await loadJobContext(runtime.database, job.workspaceId, job.id);
+      const credential = await getFreshYouTubeCredential(runtime.database, runtime.keys, runtime.client, {
+        workspaceId: job.workspaceId,
+        credentialId: context.credentialId,
+        now,
+      });
+      const uploaded = await stageYouTubeMedia(runtime.database, runtime.source, runtime.client, runtime.keys, {
         workspaceId: job.workspaceId,
         jobId: job.id,
-        workerId: runtime.workerId,
-        outcome: 'published',
+        mediaId: context.mediaId,
+        accessToken: credential.accessToken,
+        metadata: uploadMetadata(context.settings),
+        notifySubscribers: context.settings.notifySubscribers,
         now,
-      })
-    )
-      resolved += 1;
+      });
+      if (
+        await resolveReconciliation(runtime.database, {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          workerId: runtime.workerId,
+          outcome: 'published',
+          externalPostId: uploaded.videoId,
+          now,
+        })
+      )
+        resolved += 1;
+    } catch {
+      // Keep reconciliation authority intact for a later lease while allowing other jobs to proceed.
+    }
   }
   return resolved;
 }

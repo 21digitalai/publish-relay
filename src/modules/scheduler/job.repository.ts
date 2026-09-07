@@ -395,6 +395,7 @@ export async function resolveReconciliation(
     outcome: 'published' | 'accepted_pending' | 'retry_wait' | 'failed';
     now: Date;
     retryAt?: Date;
+    externalPostId?: string;
   },
 ): Promise<boolean> {
   if (input.outcome === 'retry_wait' && !input.retryAt)
@@ -424,6 +425,22 @@ export async function resolveReconciliation(
     `);
       const job = resultRows(result)[0];
       if (!job) return false;
+      if (input.externalPostId) {
+        const attempts = await transaction.execute(sql`
+          UPDATE publication_attempts
+          SET external_post_id = ${input.externalPostId}
+          WHERE id = (
+            SELECT id FROM publication_attempts
+            WHERE workspace_id = ${input.workspaceId} AND job_id = ${input.jobId}
+              AND reconciliation_key IS NOT NULL
+            ORDER BY attempt_number DESC
+            LIMIT 1
+          )
+          RETURNING id
+        `);
+        if (resultRows(attempts).length === 0)
+          throw new Error('Reconciliation attempt was not available for provider result');
+      }
       if (job.fromState !== input.outcome)
         await transaction.insert(publicationJobEvents).values({
           workspaceId: input.workspaceId,

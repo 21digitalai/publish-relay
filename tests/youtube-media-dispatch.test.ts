@@ -144,7 +144,28 @@ describe('YouTube media dispatch', () => {
     );
     expect(resolveReconciliation).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ jobId: 'job-1', outcome: 'published' }),
+      expect.objectContaining({
+        jobId: 'job-1', outcome: 'published', externalPostId: 'video-1',
+      }),
+    );
+  });
+
+  it('isolates a failed reconciliation job and continues later claims', async () => {
+    vi.mocked(claimReconciliationJobs).mockResolvedValue(['job-1', 'job-2']);
+    databaseQuery.limit
+      .mockResolvedValueOnce([{ ...claimedJob, id: 'job-1' }] as never)
+      .mockResolvedValueOnce([context])
+      .mockResolvedValueOnce([{ ...claimedJob, id: 'job-2' }] as never)
+      .mockResolvedValueOnce([context]);
+    vi.mocked(stageYouTubeMedia)
+      .mockRejectedValueOnce(new Error('temporary reconciliation failure'))
+      .mockResolvedValueOnce({ videoId: 'video-2' });
+
+    await expect(reconcileYouTubeJobs(runtime, new Date('2026-09-01T00:02:00Z'))).resolves.toBe(1);
+    expect(resolveReconciliation).toHaveBeenCalledTimes(1);
+    expect(resolveReconciliation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ jobId: 'job-2', externalPostId: 'video-2' }),
     );
   });
 });

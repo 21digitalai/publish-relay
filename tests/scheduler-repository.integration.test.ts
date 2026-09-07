@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
+import { getBrowserJobDetail } from '../src/modules/content/post-read.repository.js';
 
 import {
   claimDueJobs,
@@ -285,6 +286,7 @@ describe('scheduler repository', () => {
         jobId,
         workerId: 'reconciler',
         outcome: 'published',
+        externalPostId: 'youtube-video-1',
         now,
       }),
     ).toBe(true);
@@ -297,11 +299,21 @@ describe('scheduler repository', () => {
         now,
       }),
     ).toBe(false);
-    const result = await database.query<{ attempts: number; state: string }>(`
+    const result = await database.query<{ attempts: number; state: string; external_post_id: string }>(`
       SELECT (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS attempts,
-             state FROM publication_jobs WHERE id = '${jobId}'
+             state,
+             (SELECT external_post_id FROM publication_attempts WHERE job_id = '${jobId}' ORDER BY attempt_number DESC LIMIT 1) AS external_post_id
+      FROM publication_jobs WHERE id = '${jobId}'
     `);
-    expect(result.rows[0]).toEqual({ attempts: 1, state: 'published' });
+    expect(result.rows[0]).toEqual({
+      attempts: 1, state: 'published', external_post_id: 'youtube-video-1',
+    });
+    await database.exec(`UPDATE provider_connections SET provider = 'youtube'
+      WHERE id = '00000000-0000-4000-8000-000000000304'`);
+    const detail = await getBrowserJobDetail(db, workspaceId, jobId);
+    expect(detail?.providerResult).toEqual({
+      id: 'youtube-video-1', url: 'https://www.youtube.com/watch?v=youtube-video-1',
+    });
   });
 
   it('makes accepted-pending jobs eligible for reconciliation', async () => {

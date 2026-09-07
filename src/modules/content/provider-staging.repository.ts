@@ -13,16 +13,22 @@ export async function findStagingArtifact(
 ): Promise<{
   id: string;
   providerReference: string;
+  providerReferenceCredentialId: string | null;
   uploadPhase: string;
   nextSegment: number;
+  nextByteOffset: number;
+  externalObjectId: string | null;
   expiresAt: Date;
 } | null> {
   const rows = await database
     .select({
       id: providerStagingArtifacts.id,
       providerReference: providerStagingArtifacts.providerReference,
+      providerReferenceCredentialId: providerStagingArtifacts.providerReferenceCredentialId,
       uploadPhase: providerStagingArtifacts.uploadPhase,
       nextSegment: providerStagingArtifacts.nextSegment,
+      nextByteOffset: providerStagingArtifacts.nextByteOffset,
+      externalObjectId: providerStagingArtifacts.externalObjectId,
       expiresAt: providerStagingArtifacts.expiresAt,
     })
     .from(providerStagingArtifacts)
@@ -45,14 +51,18 @@ export async function createStagingArtifact(
     jobId: string;
     mediaId: string;
     providerReference: string;
+    providerReferenceCredentialId?: string;
     expiresAt: Date;
   },
 ): Promise<{
   isOwner: boolean;
   id: string;
   providerReference: string;
+  providerReferenceCredentialId: string | null;
   uploadPhase: string;
   nextSegment: number;
+  nextByteOffset: number;
+  externalObjectId: string | null;
 }> {
   const inserted = await database
     .insert(providerStagingArtifacts)
@@ -61,8 +71,11 @@ export async function createStagingArtifact(
     .returning({
       id: providerStagingArtifacts.id,
       providerReference: providerStagingArtifacts.providerReference,
+      providerReferenceCredentialId: providerStagingArtifacts.providerReferenceCredentialId,
       uploadPhase: providerStagingArtifacts.uploadPhase,
       nextSegment: providerStagingArtifacts.nextSegment,
+      nextByteOffset: providerStagingArtifacts.nextByteOffset,
+      externalObjectId: providerStagingArtifacts.externalObjectId,
     });
   if (inserted[0]) return { isOwner: true, ...inserted[0] };
   const existing = await findStagingArtifact(
@@ -100,15 +113,21 @@ export async function getStagingArtifactById(
 ): Promise<{
   id: string;
   providerReference: string;
+  providerReferenceCredentialId: string | null;
   uploadPhase: string;
   nextSegment: number;
+  nextByteOffset: number;
+  externalObjectId: string | null;
 } | null> {
   const rows = await database
     .select({
       id: providerStagingArtifacts.id,
       providerReference: providerStagingArtifacts.providerReference,
+      providerReferenceCredentialId: providerStagingArtifacts.providerReferenceCredentialId,
       uploadPhase: providerStagingArtifacts.uploadPhase,
       nextSegment: providerStagingArtifacts.nextSegment,
+      nextByteOffset: providerStagingArtifacts.nextByteOffset,
+      externalObjectId: providerStagingArtifacts.externalObjectId,
     })
     .from(providerStagingArtifacts)
     .where(

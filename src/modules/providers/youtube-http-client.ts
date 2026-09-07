@@ -19,6 +19,7 @@ const channelResponseSchema = z.object({
 
 const YOUTUBE_UPLOAD_ORIGIN = 'https://www.googleapis.com';
 const YOUTUBE_UPLOAD_PATH = '/upload/youtube/v3/videos';
+const MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
 
 function validateUploadSessionUrl(sessionUrl: string): string {
   let url: URL;
@@ -82,9 +83,12 @@ function retryAfterSeconds(response: Response): number | undefined {
   const value = response.headers.get('retry-after');
   if (!value) return undefined;
   const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  if (Number.isFinite(seconds) && seconds >= 0)
+    return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
   const date = Date.parse(value);
-  return Number.isFinite(date) ? Math.max(0, Math.ceil((date - Date.now()) / 1000)) : undefined;
+  return Number.isFinite(date)
+    ? Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(0, Math.ceil((date - Date.now()) / 1000)))
+    : undefined;
 }
 
 function errorKind(status: number, reason?: string): YouTubeRequestErrorKind {

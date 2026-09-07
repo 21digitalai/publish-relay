@@ -187,6 +187,52 @@ describe('YouTubeHttpClient', () => {
     ).rejects.toMatchObject({ status: 403, kind: 'quota', retryAfterSeconds: 45 });
   });
 
+  it.each([
+    { status: 401, reason: undefined, kind: 'auth' },
+    { status: 400, reason: undefined, kind: 'validation' },
+    { status: 503, reason: undefined, kind: 'transient' },
+    { status: 409, reason: undefined, kind: 'permanent' },
+  ] as const)('classifies HTTP $status upload failures as $kind', async ({ status, reason, kind }) => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { message: 'Upload rejected', errors: [{ reason }] } }),
+        { status },
+      ),
+    );
+    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
+    await expect(
+      client.initiateUpload({
+        accessToken: 'access',
+        totalBytes: 512,
+        mimeType: 'video/mp4',
+        metadata: {},
+        notifySubscribers: false,
+      }),
+    ).rejects.toMatchObject({ status, kind });
+  });
+
+  it.each([
+    ['oversized delta-seconds', '999999999'],
+    ['far-future HTTP-date', 'Fri, 31 Dec 9999 23:59:59 GMT'],
+  ])('bounds Retry-After supplied as %s', async (_label, retryAfter) => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'Busy' } }), {
+        status: 503,
+        headers: { 'retry-after': retryAfter },
+      }),
+    );
+    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
+    await expect(
+      client.initiateUpload({
+        accessToken: 'access',
+        totalBytes: 512,
+        mimeType: 'video/mp4',
+        metadata: {},
+        notifySubscribers: false,
+      }),
+    ).rejects.toMatchObject({ kind: 'transient', retryAfterSeconds: 86_400 });
+  });
+
   it('marks a failed resumable PUT transport as an unknown outcome', async () => {
     const sessionUrl =
       'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=session';

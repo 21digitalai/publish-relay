@@ -109,7 +109,7 @@ Group by provider and show each connected account independently. Rows include pr
 - Search name/handle; filter provider, health, and workspace access.
 - Reconnect is primary for expired credentials.
 - Disconnect names the account, explains scheduled-job impact, and requires explicit confirmation.
-- Account rows load from the tenant-scoped account API. Connect and reconnect use the same secure X OAuth redirect; successful callbacks return to the protected workspace. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
+- Account rows load from the tenant-scoped account API. Connect and reconnect use provider-specific secure OAuth redirects for X and YouTube; successful callbacks return to the protected workspace. YouTube rows expose an inline destination-defaults form for visibility, Made for Kids, and subscriber notification so routine schedules need only sparse overrides. Saving is explicit, disables during submission, and keeps errors inline. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
 
 ## Composer
 

@@ -10,6 +10,11 @@ interface Account {
   name: string;
   handle: string;
   health: 'Connected' | 'Reconnect required';
+  adapterDefaults: {
+    privacyStatus?: 'public' | 'unlisted' | 'private';
+    madeForKids?: boolean;
+    notifySubscribers?: boolean;
+  };
 }
 
 function getCsrfToken(): string {
@@ -29,6 +34,20 @@ async function beginXConnection(): Promise<void> {
     error: string | null;
   };
   if (!response.ok || !result.data) throw new Error(result.error ?? 'Could not start X connection');
+  window.location.href = result.data.authorizationUrl;
+}
+
+async function beginYouTubeConnection(): Promise<void> {
+  const response = await fetch('/api/oauth/youtube', {
+    method: 'POST',
+    headers: { 'x-csrf-token': getCsrfToken() },
+  });
+  const result = (await response.json()) as {
+    data: { authorizationUrl: string } | null;
+    error: string | null;
+  };
+  if (!response.ok || !result.data)
+    throw new Error(result.error ?? 'Could not start YouTube connection');
   window.location.href = result.data.authorizationUrl;
 }
 
@@ -662,12 +681,16 @@ function AccountRow({
   account,
   onDisconnect,
   onReconnect,
+  onDefaultsSaved,
 }: {
   account: Account;
   onDisconnect: (account: Account) => void;
   onReconnect: () => void;
+  onDefaultsSaved: (account: Account) => void;
 }) {
   const needsReconnect = account.health === 'Reconnect required';
+  const [savingDefaults, setSavingDefaults] = useState(false);
+  const [defaultsError, setDefaultsError] = useState<string | null>(null);
   return (
     <article className="account-row">
       <div className="account-identity">
@@ -705,6 +728,80 @@ function AccountRow({
           •••
         </button>
       </div>
+      {account.provider === 'YouTube' && (
+        <form
+          className="youtube-defaults"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const fields = new FormData(event.currentTarget);
+            const madeForKids = formText(fields, 'madeForKids');
+            const defaults = {
+              privacyStatus: formText(fields, 'privacyStatus') as 'public' | 'unlisted' | 'private',
+              madeForKids: madeForKids === 'yes',
+              notifySubscribers: fields.get('notifySubscribers') === 'on',
+            };
+            setDefaultsError(null);
+            setSavingDefaults(true);
+            void fetch(`/api/provider-accounts/${account.id}/youtube-defaults`, {
+              method: 'PATCH',
+              headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+              body: JSON.stringify(defaults),
+            })
+              .then(async (response) => {
+                const result = (await response.json()) as { error: string | null };
+                if (!response.ok) throw new Error(result.error ?? 'Defaults could not be saved');
+                onDefaultsSaved({ ...account, adapterDefaults: defaults });
+              })
+              .catch((error: unknown) => {
+                setDefaultsError(
+                  error instanceof Error ? error.message : 'Defaults could not be saved',
+                );
+              })
+              .finally(() => {
+                setSavingDefaults(false);
+              });
+          }}
+        >
+          <strong>Publishing defaults</strong>
+          <label>
+            Visibility
+            <select
+              name="privacyStatus"
+              defaultValue={account.adapterDefaults.privacyStatus ?? 'public'}
+            >
+              <option value="public">Public</option>
+              <option value="unlisted">Unlisted</option>
+              <option value="private">Private</option>
+            </select>
+          </label>
+          <label>
+            Made for kids
+            <select
+              name="madeForKids"
+              defaultValue={account.adapterDefaults.madeForKids === true ? 'yes' : 'no'}
+            >
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </label>
+          <label className="toggle-label">
+            <input
+              name="notifySubscribers"
+              type="checkbox"
+              defaultChecked={account.adapterDefaults.notifySubscribers === true}
+            />
+            Notify subscribers
+          </label>
+          <button className="secondary-button" type="submit" disabled={savingDefaults}>
+            {savingDefaults ? 'Saving…' : 'Save defaults'}
+          </button>
+          {defaultsError && (
+            <span className="field-error" role="alert">
+              {defaultsError}
+            </span>
+          )}
+        </form>
+      )}
     </article>
   );
 }
@@ -732,6 +829,7 @@ function AccountsPage() {
               displayName: string;
               status: string;
               updatedAt: string;
+              adapterDefaults: Account['adapterDefaults'];
             }[];
           };
         }>;
@@ -742,10 +840,16 @@ function AccountsPage() {
             const handleMatch = /\(@([^)]*)\)$/.exec(account.displayName);
             return {
               id: account.id,
-              provider: account.provider.toLowerCase() === 'x' ? 'X' : account.provider,
+              provider:
+                account.provider.toLowerCase() === 'x'
+                  ? 'X'
+                  : account.provider.toLowerCase() === 'youtube'
+                    ? 'YouTube'
+                    : account.provider,
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
               handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
               health: account.status === 'active' ? 'Connected' : 'Reconnect required',
+              adapterDefaults: account.adapterDefaults,
             };
           }),
         );
@@ -776,6 +880,12 @@ function AccountsPage() {
     setActionError(null);
     void beginXConnection().catch((error: unknown) => {
       setActionError(error instanceof Error ? error.message : 'Could not start X connection');
+    });
+  };
+  const connectYouTube = () => {
+    setActionError(null);
+    void beginYouTubeConnection().catch((error: unknown) => {
+      setActionError(error instanceof Error ? error.message : 'Could not start YouTube connection');
     });
   };
   const visible = useMemo(
@@ -824,9 +934,14 @@ function AccountsPage() {
             <h1>Connected accounts</h1>
             <p>Manage publishing access and connection health for {workspaceName}.</p>
           </div>
-          <button className="primary-button connect-account" onClick={connectX}>
-            ＋ Connect account
-          </button>
+          <div className="connect-actions">
+            <button className="secondary-button connect-account" onClick={connectX}>
+              ＋ Connect account
+            </button>
+            <button className="primary-button connect-account" onClick={connectYouTube}>
+              ＋ Connect YouTube
+            </button>
+          </div>
         </div>
         {renderedState === 'loading' ? (
           <section
@@ -930,7 +1045,10 @@ function AccountsPage() {
                         </span>
                       </div>
                     </div>
-                    <button className="text-button" onClick={connectX}>
+                    <button
+                      className="text-button"
+                      onClick={provider === 'YouTube' ? connectYouTube : connectX}
+                    >
                       ＋ Connect another
                     </button>
                   </header>
@@ -941,7 +1059,13 @@ function AccountsPage() {
                         key={account.id}
                         onDisconnect={setDisconnecting}
                         onReconnect={() => {
-                          connectX();
+                          if (account.provider === 'YouTube') connectYouTube();
+                          else connectX();
+                        }}
+                        onDefaultsSaved={(updated) => {
+                          setAccounts((current) =>
+                            current.map((item) => (item.id === updated.id ? updated : item)),
+                          );
                         }}
                       />
                     ))}

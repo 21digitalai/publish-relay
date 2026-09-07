@@ -161,6 +161,51 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
   await page.screenshot({ path: testInfo.outputPath('accounts-disconnect.png'), fullPage: true });
 });
 
+test('edits YouTube destination defaults through the account row', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  let savedBody: unknown;
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000204',
+              provider: 'youtube',
+              displayName: 'Relay Channel',
+              status: 'active',
+              updatedAt: '2026-09-01T00:00:00Z',
+              adapterDefaults: { privacyStatus: 'unlisted', madeForKids: false },
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/provider-accounts/*/youtube-defaults', async (route) => {
+    savedBody = route.request().postDataJSON();
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { adapterDefaults: savedBody }, error: null }),
+    });
+  });
+  await page.goto('/w/atlas/accounts');
+  await expect(page.getByText('Publishing defaults')).toBeVisible();
+  await page.getByLabel('Visibility').selectOption('public');
+  await page.getByLabel('Made for kids').selectOption('yes');
+  await page.getByLabel('Notify subscribers').check();
+  await page.getByRole('button', { name: 'Save defaults' }).click();
+  await expect
+    .poll(() => savedBody)
+    .toEqual({
+      privacyStatus: 'public',
+      madeForKids: true,
+      notifySubscribers: true,
+    });
+});
+
 test('persists credential-free fake-provider connect and disconnect through reload', async ({
   page,
 }, testInfo) => {

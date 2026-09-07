@@ -9,12 +9,15 @@ import {
   publicationJobs,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import type { z } from 'zod';
+import type { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
 
 export interface ProviderAccountSummary {
   id: string;
   provider: string;
   displayName: string;
   status: string;
+  adapterDefaults: unknown;
   updatedAt: Date;
 }
 
@@ -29,6 +32,7 @@ export function listProviderAccounts(
         provider: providerConnections.provider,
         displayName: providerAccounts.displayName,
         status: providerConnections.status,
+        adapterDefaults: providerAccounts.adapterDefaults,
         updatedAt: providerAccounts.updatedAt,
       })
       .from(providerAccounts)
@@ -43,6 +47,64 @@ export function listProviderAccounts(
         and(eq(providerAccounts.workspaceId, workspaceId), isNull(providerAccounts.disconnectedAt)),
       )
       .orderBy(providerConnections.provider, providerAccounts.displayName),
+  );
+}
+
+export async function updateYouTubeAccountDefaults(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    userId: string;
+    accountId: string;
+    requestId: string;
+    defaults: z.infer<typeof youtubeDestinationDefaultsSchema>;
+  },
+): Promise<'updated' | 'missing'> {
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId, userId: input.userId },
+    async (transaction) => {
+      const accounts = await transaction
+        .select({ id: providerAccounts.id })
+        .from(providerAccounts)
+        .innerJoin(
+          providerConnections,
+          and(
+            eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+            eq(providerConnections.id, providerAccounts.connectionId),
+          ),
+        )
+        .where(
+          and(
+            eq(providerAccounts.workspaceId, input.workspaceId),
+            eq(providerAccounts.id, input.accountId),
+            eq(providerConnections.provider, 'youtube'),
+            isNull(providerAccounts.disconnectedAt),
+          ),
+        )
+        .limit(1);
+      if (!accounts[0]) return 'missing';
+      await transaction
+        .update(providerAccounts)
+        .set({ adapterDefaults: input.defaults, updatedAt: new Date() })
+        .where(
+          and(
+            eq(providerAccounts.workspaceId, input.workspaceId),
+            eq(providerAccounts.id, input.accountId),
+          ),
+        );
+      await transaction.insert(auditEvents).values({
+        workspaceId: input.workspaceId,
+        actorType: 'user',
+        actorId: input.userId,
+        action: 'provider_account.defaults_updated',
+        targetType: 'provider_account',
+        targetId: input.accountId,
+        requestId: input.requestId,
+        metadata: { provider: 'youtube' },
+      });
+      return 'updated';
+    },
   );
 }
 

@@ -23,6 +23,7 @@ import { connectProvider } from '../src/modules/credentials/provider-connection.
 import {
   disconnectProviderAccount,
   listProviderAccounts,
+  updateYouTubeAccountDefaults,
 } from '../src/modules/credentials/provider-account.service.js';
 import {
   cleanupExpiredOauthTransactions,
@@ -473,6 +474,7 @@ describe('credential and OAuth persistence', () => {
       'provider',
       'displayName',
       'status',
+      'adapterDefaults',
       'updatedAt',
     ]);
     const principal = {
@@ -635,5 +637,34 @@ describe('credential and OAuth persistence', () => {
       'select count(*)::int as count from publication_jobs',
     );
     expect(historyAfterReconnect.rows[0]?.count).toBe(1);
+  });
+
+  it('updates only tenant-owned active YouTube destination defaults', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const accountId = '00000000-0000-4000-8000-000000000701';
+    await database.exec(`
+      INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce,
+        wrapped_key_tag, ciphertext, nonce, tag)
+      VALUES ('00000000-0000-4000-8000-000000000702', '${workspaceId}',
+        'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+      VALUES ('00000000-0000-4000-8000-000000000703', '${workspaceId}', 'youtube',
+        '00000000-0000-4000-8000-000000000702');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
+      VALUES ('${accountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000703',
+        'channel-1', 'Channel One');
+    `);
+    await expect(updateYouTubeAccountDefaults(db, {
+      workspaceId, userId, accountId, requestId: 'defaults-1',
+      defaults: { privacyStatus: 'public', madeForKids: false, notifySubscribers: true },
+    })).resolves.toBe('updated');
+    expect((await listProviderAccounts(db, workspaceId))[0]).toMatchObject({
+      id: accountId,
+      adapterDefaults: { privacyStatus: 'public', madeForKids: false, notifySubscribers: true },
+    });
+    await expect(updateYouTubeAccountDefaults(db, {
+      workspaceId, userId, accountId: '00000000-0000-4000-8000-000000000799',
+      requestId: 'defaults-missing', defaults: {},
+    })).resolves.toBe('missing');
   });
 });

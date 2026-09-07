@@ -22,6 +22,7 @@ const activeKeyVersion = config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION;
 const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
 const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
 const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
+const DEFAULT_STAGING_STALE_MS = 86_400_000;
 if (
   !activeKeyVersion ||
   !xConsumerKey ||
@@ -30,6 +31,10 @@ if (
   !config.MEDIA_STORAGE_ROOT
 )
   throw new Error('X OAuth runtime configuration is required for the web process');
+const mediaStorage = new LocalMediaStorage(config.MEDIA_STORAGE_ROOT);
+await mediaStorage.cleanupStaleStaging({
+  staleBefore: new Date(Date.now() - (config.MEDIA_STAGING_STALE_MS ?? DEFAULT_STAGING_STALE_MS)),
+});
 const application = createApplication(
   config,
   new AuthService(createPostgresAuthStore(database)),
@@ -41,7 +46,7 @@ const application = createApplication(
     client: new XHttpClient({ consumerKey: xConsumerKey, consumerSecret: xConsumerSecret }),
     callbackUrl: new URL('/api/oauth/x/callback', publicOrigin).toString(),
   },
-  new LocalMediaStorage(config.MEDIA_STORAGE_ROOT),
+  mediaStorage,
 );
 application.addHook('onClose', async () => pool.end());
 

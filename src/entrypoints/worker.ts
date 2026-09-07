@@ -21,6 +21,7 @@ const shutdownController = new AbortController();
 const workerDatabaseUrl = resolveWorkerDatabaseUrl(config);
 const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
 const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
+const DEFAULT_STAGING_STALE_MS = 86_400_000;
 if (
   !config.MEDIA_STORAGE_ROOT ||
   !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION ||
@@ -36,6 +37,9 @@ const pool = new pg.Pool({
 });
 const database = drizzle(pool);
 const mediaStorage = new LocalMediaStorage(config.MEDIA_STORAGE_ROOT);
+await mediaStorage.cleanupStaleStaging({
+  staleBefore: new Date(Date.now() - (config.MEDIA_STAGING_STALE_MS ?? DEFAULT_STAGING_STALE_MS)),
+});
 const mediaRetentionPolicy =
   config.MEDIA_RETENTION_DAYS === undefined
     ? retainForeverMediaPolicy

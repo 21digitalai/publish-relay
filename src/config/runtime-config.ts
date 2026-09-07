@@ -13,6 +13,7 @@ const runtimeConfigSchema = z
     MEDIA_RETENTION_RETRY_DELAY_MS: z.coerce.number().int().positive().optional(),
     MEDIA_RETENTION_STALE_CLAIM_MS: z.coerce.number().int().positive().optional(),
     MEDIA_RETENTION_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).optional(),
+    MEDIA_STAGING_STALE_MS: z.coerce.number().int().positive().optional(),
     WORKER_ID: z.string().min(1).optional(),
     MEDIA_STORAGE_ROOT: z.string().min(1).optional(),
     MEDIA_VIDEO_MAX_BYTES: z.coerce

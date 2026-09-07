@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,5 +70,21 @@ describe('LocalMediaStorage streaming ingest', () => {
       }),
     ).rejects.toThrow('client disconnected');
     expect(await readdir(join(root, '.temporary'))).toEqual([]);
+  });
+
+  it('removes stale staging objects while retaining fresh in-flight objects', async () => {
+    const { root, storage } = await storageFixture();
+    const temporaryDirectory = join(root, '.temporary');
+    const stalePath = join(temporaryDirectory, 'stale');
+    const freshPath = join(temporaryDirectory, 'fresh');
+    await mkdir(temporaryDirectory, { recursive: true });
+    await writeFile(stalePath, 'stale');
+    await writeFile(freshPath, 'fresh');
+    await utimes(stalePath, new Date('2026-09-01T00:00:00Z'), new Date('2026-09-01T00:00:00Z'));
+
+    await expect(
+      storage.cleanupStaleStaging({ staleBefore: new Date('2026-09-02T00:00:00Z') }),
+    ).resolves.toBe(1);
+    expect(await readdir(temporaryDirectory)).toEqual(['fresh']);
   });
 });

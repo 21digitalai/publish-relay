@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
@@ -96,6 +96,29 @@ export class LocalMediaStorage implements MediaStorage {
     await mkdir(dirname(destination), { recursive: true });
     await rename(this.pathFor(input.staged.temporaryKey), destination);
     return { storageKey };
+  }
+
+  public async cleanupStaleStaging(input: { staleBefore: Date }): Promise<number> {
+    const temporaryDirectory = this.pathFor('.temporary');
+    let entries;
+    try {
+      entries = await readdir(temporaryDirectory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+      throw error;
+    }
+
+    let deleted = 0;
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const temporaryKey = `.temporary/${entry.name}`;
+      const filePath = this.pathFor(temporaryKey);
+      const metadata = await stat(filePath);
+      if (metadata.mtimeMs >= input.staleBefore.getTime()) continue;
+      await rm(filePath, { force: true });
+      deleted += 1;
+    }
+    return deleted;
   }
 
   public async delete(storageKey: string): Promise<void> {

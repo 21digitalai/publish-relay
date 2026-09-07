@@ -37,7 +37,12 @@ export class DeterministicFakeProviderAdapter implements ProviderAdapter {
   public validate(accountId: string, content: PublishContent): Promise<void> {
     if (!this.accounts.some((account) => account.id === accountId))
       return Promise.reject(new Error('Unknown provider account'));
-    const text = content.kind === 'article' ? `${content.title}${content.body}` : content.text;
+    const text =
+      content.kind === 'article'
+        ? `${content.title}${content.body}`
+        : content.kind === 'video'
+          ? content.providerOptions.youtube.title
+          : content.text;
     if (!text.trim()) return Promise.reject(new Error('Content must not be empty'));
     return Promise.resolve();
   }

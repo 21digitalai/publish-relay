@@ -72,4 +72,29 @@ describe('provider adapter contract', () => {
       ),
     ).resolves.toMatchObject({ content: { kind: 'quote', quotedPostId: 'post-2' } });
   });
+
+  it('stages video payloads without requiring unrelated text', async () => {
+    const adapter = new DeterministicFakeProviderAdapter(
+      [{ id: 'account-1', displayName: 'One' }],
+      { status: 'accepted_pending', providerJobId: 'job-1' },
+    );
+    const video = {
+      kind: 'video' as const,
+      text: '',
+      media: [{ id: 'media-1', mimeType: 'video/mp4' }] as [{ id: string; mimeType: string }],
+      providerOptions: {
+        youtube: {
+          schemaVersion: 1 as const,
+          title: 'Scheduled release',
+          privacyStatus: 'public' as const,
+          madeForKids: false,
+          notifySubscribers: false,
+        },
+      },
+    };
+
+    await expect(adapter.stage('account-1', video, 'idem-video')).resolves.toMatchObject({
+      content: video,
+    });
+  });
 });

@@ -142,3 +142,5 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 `GET /api/v1/destinations` is the canonical account-scoped discovery surface for API customers. It requires `destinations:read` and returns only the provider-account ID, provider, display name, connection status, and update timestamp. Credential IDs, connection IDs, provider metadata, defaults, ownership fields, and secret material are never exposed by this collection contract.
 
 `POST /api/v1/jobs/:jobId/retry` is the canonical agent retry surface. It requires `publishes:retry`, an idempotency key, and a tenant-owned failed job whose outcome does not require reconciliation. The API-key identity is retained as the policy and event actor; unknown outcomes must be reconciled rather than blindly retried.
+
+Provider runtime registration is isolated: missing provider-specific credentials disable only that provider and emit a secret-free `provider_disabled` event. Common worker prerequisites may still fail startup, but one provider's absent configuration must not prevent unrelated providers or retention/reconciliation infrastructure from running.

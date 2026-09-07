@@ -24,15 +24,8 @@ const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
 const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
 const STAGING_RECONCILIATION_INTERVAL_MS = 60_000;
-if (
-  !config.MEDIA_STORAGE_ROOT ||
-  !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION ||
-  !xConsumerKey ||
-  !xConsumerSecret
-)
-  throw new Error(
-    'Database, media storage, master key, and X runtime configuration are required for the worker',
-  );
+if (!config.MEDIA_STORAGE_ROOT || !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION)
+  throw new Error('Media storage and master key configuration are required for the worker');
 const pool = new pg.Pool({
   connectionString: workerDatabaseUrl,
   options: '-c role=publish_relay_worker',
@@ -49,17 +42,24 @@ const mediaRetentionPolicy =
     ? retainForeverMediaPolicy
     : createFixedMediaRetentionPolicy(config.MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 let nextMediaRetentionAt = 0;
-const runtime = {
-  database,
-  keys: new RuntimeMasterKeyProvider(config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION),
-  source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
-  createClient: createXMediaClientFactory({
-    consumerKey: xConsumerKey,
-    consumerSecret: xConsumerSecret,
-  }),
-  workerId: config.WORKER_ID ?? 'publish-relay-worker',
-  leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
-};
+const xRuntime =
+  xConsumerKey && xConsumerSecret
+    ? {
+        database,
+        keys: new RuntimeMasterKeyProvider(config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION),
+        source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
+        createClient: createXMediaClientFactory({
+          consumerKey: xConsumerKey,
+          consumerSecret: xConsumerSecret,
+        }),
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      }
+    : null;
+if (!xRuntime)
+  process.stdout.write(
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
+  );
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
@@ -68,8 +68,10 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 while (!shutdownController.signal.aborted) {
-  await reconcileXJobs(runtime);
-  await dispatchDueXJobs(runtime);
+  if (xRuntime) {
+    await reconcileXJobs(xRuntime);
+    await dispatchDueXJobs(xRuntime);
+  }
   const now = new Date();
   const deletedStagingObjects = await reconcileMediaStaging(now);
   if (deletedStagingObjects !== undefined) {

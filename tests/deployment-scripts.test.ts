@@ -90,6 +90,12 @@ describe('deployment scripts', () => {
     expect(loadRuntimeConfig({ NODE_ENV: 'test' }).PORT).toBe(3106);
     expect(loadRuntimeConfig({ NODE_ENV: 'test', PORT: '43199' }).PORT).toBe(43199);
   });
+  it('keeps provider-specific worker configuration isolated', () => {
+    const worker = readFileSync(join(projectRoot, 'src/entrypoints/worker.ts'), 'utf8');
+    expect(worker).toContain("event: 'provider_disabled'");
+    expect(worker).toContain('if (xRuntime)');
+    expect(worker).not.toContain('X runtime configuration are required for the worker');
+  });
 
   it('pins both services to the isolated Node 24 path and isolated health port', () => {
     for (const unit of ['publish-relay-web.service', 'publish-relay-worker.service']) {

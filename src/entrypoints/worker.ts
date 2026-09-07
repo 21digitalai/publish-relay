@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
 import { loadRuntimeConfig, resolveWorkerDatabaseUrl } from '../config/runtime-config.js';
-import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
+import { resolveWorkerSecurityRuntime } from '../config/runtime-master-keys.js';
 import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
 import {
   createFixedMediaRetentionPolicy,
@@ -20,8 +20,7 @@ import {
 const config = loadRuntimeConfig();
 const shutdownController = new AbortController();
 const workerDatabaseUrl = resolveWorkerDatabaseUrl(config);
-const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
-const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
+const { keys, xCredentials } = resolveWorkerSecurityRuntime(config);
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
 const STAGING_RECONCILIATION_INTERVAL_MS = 60_000;
 if (!config.MEDIA_STORAGE_ROOT || !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION)
@@ -42,20 +41,19 @@ const mediaRetentionPolicy =
     ? retainForeverMediaPolicy
     : createFixedMediaRetentionPolicy(config.MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 let nextMediaRetentionAt = 0;
-const xRuntime =
-  xConsumerKey && xConsumerSecret
-    ? {
-        database,
-        keys: new RuntimeMasterKeyProvider(config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION),
-        source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
-        createClient: createXMediaClientFactory({
-          consumerKey: xConsumerKey,
-          consumerSecret: xConsumerSecret,
-        }),
-        workerId: config.WORKER_ID ?? 'publish-relay-worker',
-        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
-      }
-    : null;
+const xRuntime = xCredentials
+  ? {
+      database,
+      keys,
+      source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
+      createClient: createXMediaClientFactory({
+        consumerKey: xCredentials.consumerKey,
+        consumerSecret: xCredentials.consumerSecret,
+      }),
+      workerId: config.WORKER_ID ?? 'publish-relay-worker',
+      leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+    }
+  : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,

@@ -43,8 +43,6 @@ const runtimeConfigSchema = z
     if (config.NODE_ENV !== 'production') return;
     for (const name of [
       'PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION',
-      'PUBLISH_RELAY_X_CONSUMER_KEY',
-      'PUBLISH_RELAY_X_CONSUMER_SECRET',
       'PUBLISH_RELAY_PUBLIC_ORIGIN',
     ] as const)
       if (!config[name])
@@ -74,4 +72,15 @@ export function resolveWorkerDatabaseUrl(config: RuntimeConfig): string {
         : 'WORKER_DATABASE_URL or DATABASE_URL is required for the worker',
     );
   return databaseUrl;
+}
+
+export function resolveXProviderCredentials(
+  config: RuntimeConfig,
+): { consumerKey: string; consumerSecret: string } | null {
+  const consumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
+  const consumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
+  if (!consumerKey && !consumerSecret) return null;
+  if (!consumerKey || !consumerSecret)
+    throw new Error('X provider credentials must configure both consumer key and secret');
+  return { consumerKey, consumerSecret };
 }

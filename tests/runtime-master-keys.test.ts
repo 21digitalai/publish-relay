@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadRuntimeConfig, resolveWorkerDatabaseUrl } from '../src/config/runtime-config.js';
-import { RuntimeMasterKeyProvider } from '../src/config/runtime-master-keys.js';
+import {
+  loadRuntimeConfig,
+  resolveWorkerDatabaseUrl,
+  resolveXProviderCredentials,
+} from '../src/config/runtime-config.js';
+import {
+  RuntimeMasterKeyProvider,
+  resolveWorkerSecurityRuntime,
+} from '../src/config/runtime-master-keys.js';
 
 describe('production runtime secret configuration', () => {
   it('loads the active and historical master-key versions without exposing their values', async () => {
@@ -25,7 +32,7 @@ describe('production runtime secret configuration', () => {
     ).toThrow(/Master key version v1/);
   });
 
-  it('requires the approved X and HTTPS origin contract in production', () => {
+  it('requires the common master-key and HTTPS origin contract in production', () => {
     expect(() => loadRuntimeConfig({ NODE_ENV: 'production' })).toThrow();
     expect(() =>
       loadRuntimeConfig({
@@ -36,6 +43,33 @@ describe('production runtime secret configuration', () => {
         PUBLISH_RELAY_PUBLIC_ORIGIN: 'http://relay.example.test',
       }),
     ).toThrow(/HTTPS/);
+  });
+
+  it('disables X when absent and fails closed for partial provider configuration', () => {
+    const production = loadRuntimeConfig({
+      NODE_ENV: 'production',
+      PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: 'v1',
+      PUBLISH_RELAY_PUBLIC_ORIGIN: 'https://relay.example.test',
+    });
+    expect(resolveXProviderCredentials(production)).toBeNull();
+    expect(() =>
+      resolveXProviderCredentials({ ...production, PUBLISH_RELAY_X_CONSUMER_KEY: 'consumer' }),
+    ).toThrow(/both consumer key and secret/);
+    expect(
+      resolveXProviderCredentials({
+        ...production,
+        PUBLISH_RELAY_X_CONSUMER_KEY: 'consumer',
+        PUBLISH_RELAY_X_CONSUMER_SECRET: 'secret',
+      }),
+    ).toEqual({ consumerKey: 'consumer', consumerSecret: 'secret' });
+    const environment = { PUBLISH_RELAY_MASTER_KEY_v1: Buffer.alloc(32, 3).toString('base64') };
+    expect(resolveWorkerSecurityRuntime(production, environment).xCredentials).toBeNull();
+    expect(() => resolveWorkerSecurityRuntime(production, {})).toThrow(/Master key version v1/);
+    expect(() =>
+      resolveWorkerSecurityRuntime(production, {
+        PUBLISH_RELAY_MASTER_KEY_v1: Buffer.alloc(31).toString('base64'),
+      }),
+    ).toThrow(/exactly 32 base64 bytes/);
   });
 
   it('requires a distinct worker database URL in production', () => {

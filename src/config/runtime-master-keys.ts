@@ -1,4 +1,5 @@
 import type { MasterKeyProvider } from '../modules/credentials/envelope.js';
+import { resolveXProviderCredentials, type RuntimeConfig } from './runtime-config.js';
 
 const KEY_BYTES = 32;
 
@@ -28,4 +29,19 @@ export class RuntimeMasterKeyProvider implements MasterKeyProvider {
       throw new Error(`Master key version ${version} must contain exactly 32 base64 bytes`);
     return key;
   }
+}
+
+export function resolveWorkerSecurityRuntime(
+  config: RuntimeConfig,
+  environment: NodeJS.ProcessEnv = process.env,
+): {
+  keys: RuntimeMasterKeyProvider;
+  xCredentials: { consumerKey: string; consumerSecret: string } | null;
+} {
+  if (!config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION)
+    throw new Error('An active master-key version is required');
+  return {
+    keys: new RuntimeMasterKeyProvider(config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION, environment),
+    xCredentials: resolveXProviderCredentials(config),
+  };
 }

@@ -857,6 +857,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   let createRequests = 0;
   let revokeRequests = 0;
   let keys: Record<string, unknown>[] = [];
+  let failNextKeyListRefresh = false;
   await establishWorkspaceSession(page);
   await page.route('**/api/workspaces/current', async (route) => {
     if (route.request().method() === 'PATCH') {
@@ -898,6 +899,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
           revokedAt: null,
         },
       ];
+      if (input.label === 'Partial key') failNextKeyListRefresh = true;
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -912,6 +914,15 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
       await route.fulfill({
         contentType: 'application/json',
         body: '{"data":{"revoked":true},"error":null}',
+      });
+      return;
+    }
+    if (failNextKeyListRefresh) {
+      failNextKeyListRefresh = false;
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: '{"data":null,"error":"Refresh unavailable"}',
       });
       return;
     }
@@ -946,6 +957,15 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   await page.getByRole('button', { name: 'Create key' }).click();
   await expect(page.getByText('Creation failed safely')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create key' })).toBeEnabled();
+  await page.getByLabel('Key name').fill('Partial key');
+  await page.getByRole('button', { name: 'Create key' }).click();
+  await expect(page.getByText('pr_new.one-time-secret')).toBeVisible();
+  await expect(page.getByText(/API key created\. Its secret is safe/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry key list' })).toBeVisible();
+  expect(createRequests).toBe(3);
+  await page.getByRole('button', { name: 'Retry key list' }).click();
+  await expect(page.getByText('Partial key')).toBeVisible();
+  expect(createRequests).toBe(3);
 });
 
 test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({

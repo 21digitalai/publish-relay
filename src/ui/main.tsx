@@ -1076,6 +1076,7 @@ function SettingsPage() {
   const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
+  const [keyListRefreshFailed, setKeyListRefreshFailed] = useState(false);
   const loadApiKeys = async () => {
     const response = await fetch('/api/settings/api-keys');
     const result = (await response.json()) as {
@@ -1085,6 +1086,7 @@ function SettingsPage() {
     if (!response.ok || !result.data)
       throw new Error(result.error ?? 'API keys could not be loaded');
     setKeys(result.data.items);
+    setKeyListRefreshFailed(false);
   };
   useEffect(() => {
     const endpoint = isAutomation ? '/api/settings/api-keys' : '/api/workspaces/current';
@@ -1143,10 +1145,17 @@ function SettingsPage() {
       };
       if (!response.ok || !result.data)
         throw new Error(result.error ?? 'API key could not be created');
-      await loadApiKeys();
       setSecret(result.data.token);
       setLabel('');
       setMessage('API key created');
+      try {
+        await loadApiKeys();
+      } catch {
+        setKeyListRefreshFailed(true);
+        setMessage(
+          'API key created. Its secret is safe below, but the key list could not refresh.',
+        );
+      }
     } finally {
       setIsCreatingKey(false);
     }
@@ -1337,6 +1346,19 @@ function SettingsPage() {
           </section>
           <section className="settings-card" aria-labelledby="keys-title">
             <h2 id="keys-title">API keys</h2>
+            {keyListRefreshFailed && (
+              <div className="form-summary" role="status">
+                <span>The key list is out of date.</span>
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    run(loadApiKeys);
+                  }}
+                >
+                  Retry key list
+                </button>
+              </div>
+            )}
             {keys.length === 0 ? (
               <p>No API keys yet.</p>
             ) : (

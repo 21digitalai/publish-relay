@@ -20,6 +20,7 @@ const migrationUrls = [
   new URL('../migrations/0002_busy_mantis.sql', import.meta.url),
   new URL('../migrations/0003_many_marvel_boy.sql', import.meta.url),
   new URL('../migrations/0004_easy_doctor_spectrum.sql', import.meta.url),
+  new URL('../migrations/0023_clear_shocker.sql', import.meta.url),
 ];
 let database: PGlite;
 
@@ -84,7 +85,12 @@ describe('PostgreSQL tenant isolation', () => {
         name: 'Atlas Studio',
         slug: 'atlas-studio',
       }),
-    ).resolves.toEqual({ id: workspaceId, name: 'Atlas Studio', slug: 'atlas-studio' });
+    ).resolves.toEqual({
+      id: workspaceId,
+      name: 'Atlas Studio',
+      slug: 'atlas-studio',
+      timezone: 'UTC',
+    });
     await database.exec(`RESET ROLE;`);
     const result = await database.query<{ count: number; name: string; slug: string }>(
       'SELECT count(*)::int AS count, max(name) AS name, max(slug) AS slug FROM workspaces',

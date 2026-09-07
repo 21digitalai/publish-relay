@@ -854,6 +854,9 @@ test('navigates calendar months across month-end and leap-year boundaries', asyn
 test('manages workspace settings and API keys with one-time secret and revoke feedback', async ({
   page,
 }, testInfo) => {
+  let createRequests = 0;
+  let revokeRequests = 0;
+  let keys: Record<string, unknown>[] = [];
   await establishWorkspaceSession(page);
   await page.route('**/api/workspaces/current', async (route) => {
     if (route.request().method() === 'PATCH') {
@@ -871,14 +874,41 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   });
   await page.route('**/api/settings/api-keys**', async (route) => {
     if (route.request().method() === 'POST') {
+      createRequests += 1;
+      const input = route.request().postDataJSON() as { label: string; capabilities: string[] };
+      if (input.label === 'Fail key') {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: '{"data":null,"error":"Creation failed safely"}',
+        });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      keys = [
+        {
+          id: 'key-2',
+          label: input.label,
+          prefix: 'pr_new',
+          capabilities: input.capabilities,
+          createdByDisplayName: 'Mira',
+          createdAt: '2026-09-01T00:00:00Z',
+          lastUsedAt: null,
+          expiresAt: null,
+          revokedAt: null,
+        },
+      ];
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
-        body: '{"data":{"key":{"id":"key-2","label":"Agent key","prefix":"pr_new","capabilities":["schedules:read"],"createdByDisplayName":"Mira","createdAt":"2026-09-01T00:00:00Z","lastUsedAt":null,"expiresAt":null,"revokedAt":null},"token":"pr_new.one-time-secret"},"error":null}',
+        body: '{"data":{"key":{"id":"key-2","prefix":"pr_new"},"token":"pr_new.one-time-secret"},"error":null}',
       });
       return;
     }
     if (route.request().method() === 'DELETE') {
+      revokeRequests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      keys = keys.map((key) => ({ ...key, revokedAt: '2026-09-02T00:00:00Z' }));
       await route.fulfill({
         contentType: 'application/json',
         body: '{"data":{"revoked":true},"error":null}',
@@ -887,7 +917,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
     }
     await route.fulfill({
       contentType: 'application/json',
-      body: '{"data":{"items":[]},"error":null}',
+      body: JSON.stringify({ data: { items: keys }, error: null }),
     });
   });
   await page.goto('/w/atlas/settings/workspace');
@@ -898,12 +928,24 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   await page.getByRole('link', { name: 'Automation' }).click();
   await page.getByLabel('Key name').fill('Agent key');
   await page.getByRole('button', { name: 'Create key' }).click();
+  await expect(page.getByRole('button', { name: 'Creating key…' })).toBeDisabled();
   await expect(page.getByText('pr_new.one-time-secret')).toBeVisible();
+  expect(createRequests).toBe(1);
+  await expect(page.getByText('Created by Mira', { exact: false })).toBeVisible();
+  await expect(page.getByText('Created 9/1/2026')).toBeVisible();
+  await expect(page.getByText('Expires never')).toBeVisible();
+  await expect(page.getByText('Capabilities:', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Revoke', exact: true }).click();
   await expect(page.getByText('Revoke this key?')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('settings-automation.png'), fullPage: true });
   await page.getByRole('button', { name: 'Confirm revoke' }).click();
-  await expect(page.getByText('Revoked')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Revoking key…' })).toBeDisabled();
+  await expect(page.getByText('Revoked', { exact: true })).toBeVisible();
+  expect(revokeRequests).toBe(1);
+  await page.getByLabel('Key name').fill('Fail key');
+  await page.getByRole('button', { name: 'Create key' }).click();
+  await expect(page.getByText('Creation failed safely')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create key' })).toBeEnabled();
 });
 
 test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({

@@ -1073,6 +1073,19 @@ function SettingsPage() {
   const [label, setLabel] = useState('');
   const [expiryDays, setExpiryDays] = useState<number | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
+  const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
+  const [isCreatingKey, setIsCreatingKey] = useState(false);
+  const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
+  const loadApiKeys = async () => {
+    const response = await fetch('/api/settings/api-keys');
+    const result = (await response.json()) as {
+      data: { items: ManagedApiKey[] } | null;
+      error: string | null;
+    };
+    if (!response.ok || !result.data)
+      throw new Error(result.error ?? 'API keys could not be loaded');
+    setKeys(result.data.items);
+  };
   useEffect(() => {
     const endpoint = isAutomation ? '/api/settings/api-keys' : '/api/workspaces/current';
     void fetch(endpoint)
@@ -1089,42 +1102,54 @@ function SettingsPage() {
       });
   }, [isAutomation]);
   const saveWorkspace = async () => {
+    if (isSavingWorkspace) return;
+    setIsSavingWorkspace(true);
     setMessage(null);
-    const response = await fetch('/api/workspaces/current', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-      body: JSON.stringify(workspace),
-    });
-    const result = (await response.json()) as {
-      data: typeof workspace | null;
-      error: string | null;
-    };
-    if (!response.ok || !result.data)
-      throw new Error(result.error ?? 'Workspace could not be saved');
-    setWorkspace(result.data);
-    setMessage('Workspace settings saved');
+    try {
+      const response = await fetch('/api/workspaces/current', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify(workspace),
+      });
+      const result = (await response.json()) as {
+        data: typeof workspace | null;
+        error: string | null;
+      };
+      if (!response.ok || !result.data)
+        throw new Error(result.error ?? 'Workspace could not be saved');
+      setWorkspace(result.data);
+      setMessage('Workspace settings saved');
+    } finally {
+      setIsSavingWorkspace(false);
+    }
   };
   const createKey = async () => {
+    if (isCreatingKey) return;
+    setIsCreatingKey(true);
     setMessage(null);
     setSecret(null);
     const expiresAt = expiryDays
       ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
       : null;
-    const response = await fetch('/api/settings/api-keys', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-      body: JSON.stringify({ label, capabilities, expiresAt }),
-    });
-    const result = (await response.json()) as {
-      data: { key: ManagedApiKey; token: string } | null;
-      error: string | null;
-    };
-    if (!response.ok || !result.data)
-      throw new Error(result.error ?? 'API key could not be created');
-    const created = result.data;
-    setKeys((current) => [created.key, ...current]);
-    setSecret(created.token);
-    setLabel('');
+    try {
+      const response = await fetch('/api/settings/api-keys', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({ label, capabilities, expiresAt }),
+      });
+      const result = (await response.json()) as {
+        data: { token: string } | null;
+        error: string | null;
+      };
+      if (!response.ok || !result.data)
+        throw new Error(result.error ?? 'API key could not be created');
+      await loadApiKeys();
+      setSecret(result.data.token);
+      setLabel('');
+      setMessage('API key created');
+    } finally {
+      setIsCreatingKey(false);
+    }
   };
   const run = (action: () => Promise<void>) => {
     void action().catch((error: unknown) => {
@@ -1140,10 +1165,16 @@ function SettingsPage() {
         </div>
       </header>
       <nav className="settings-tabs" aria-label="Settings sections">
-        <a className={!isAutomation ? 'active' : ''} href={`${workspaceBase}/settings/workspace`}>
+        <a
+          className={`settings-tab ${!isAutomation ? 'active' : ''}`}
+          href={`${workspaceBase}/settings/workspace`}
+        >
           Workspace
         </a>
-        <a className={isAutomation ? 'active' : ''} href={`${workspaceBase}/settings/automation`}>
+        <a
+          className={`settings-tab ${isAutomation ? 'active' : ''}`}
+          href={`${workspaceBase}/settings/automation`}
+        >
           Automation
         </a>
       </nav>
@@ -1190,11 +1221,12 @@ function SettingsPage() {
           </label>
           <button
             className="primary-button"
+            disabled={isSavingWorkspace}
             onClick={() => {
               run(saveWorkspace);
             }}
           >
-            Save workspace
+            {isSavingWorkspace ? 'Saving workspace…' : 'Save workspace'}
           </button>
         </section>
       )}
@@ -1218,7 +1250,7 @@ function SettingsPage() {
                 {Object.keys(KEY_PRESETS).map((name) => (
                   <button
                     key={name}
-                    className={preset === name ? 'active' : ''}
+                    className={`preset-button ${preset === name ? 'active' : ''}`}
                     aria-pressed={preset === name}
                     onClick={() => {
                       const nextPreset = name as keyof typeof KEY_PRESETS;
@@ -1240,7 +1272,7 @@ function SettingsPage() {
                   return (
                     <button
                       key={capability}
-                      className={selected ? 'active' : ''}
+                      className={`capability-button ${selected ? 'active' : ''}`}
                       aria-pressed={selected}
                       onClick={() => {
                         setCapabilities((current) =>
@@ -1266,7 +1298,7 @@ function SettingsPage() {
                 ].map(([days, text]) => (
                   <button
                     key={text}
-                    className={expiryDays === days ? 'active' : ''}
+                    className={`expiry-button ${expiryDays === days ? 'active' : ''}`}
                     aria-pressed={expiryDays === days}
                     onClick={() => {
                       setExpiryDays(days as number | null);
@@ -1279,12 +1311,12 @@ function SettingsPage() {
             </div>
             <button
               className="primary-button"
-              disabled={!label.trim()}
+              disabled={!label.trim() || isCreatingKey}
               onClick={() => {
                 run(createKey);
               }}
             >
-              Create key
+              {isCreatingKey ? 'Creating key…' : 'Create key'}
             </button>
             {secret && (
               <div className="secret-reveal" role="status">
@@ -1315,6 +1347,12 @@ function SettingsPage() {
                     <small>
                       {key.prefix} · Created by {key.createdByDisplayName}
                     </small>
+                    <small>Created {new Date(key.createdAt).toLocaleDateString()}</small>
+                    <small>
+                      Expires{' '}
+                      {key.expiresAt ? new Date(key.expiresAt).toLocaleDateString() : 'never'}
+                    </small>
+                    <small>Capabilities: {key.capabilities.join(' · ')}</small>
                     <small>
                       {key.revokedAt
                         ? 'Revoked'
@@ -1329,28 +1367,32 @@ function SettingsPage() {
                         <span>Revoke this key?</span>
                         <button
                           className="danger-button"
+                          disabled={revokingKeyId === key.id}
                           onClick={() => {
                             run(async () => {
-                              const response = await fetch(`/api/settings/api-keys/${key.id}`, {
-                                method: 'DELETE',
-                                headers: { 'x-csrf-token': getCsrfToken() },
-                              });
-                              if (!response.ok) throw new Error('API key could not be revoked');
-                              setKeys((current) =>
-                                current.map((item) =>
-                                  item.id === key.id
-                                    ? { ...item, revokedAt: new Date().toISOString() }
-                                    : item,
-                                ),
-                              );
-                              setRevokeId(null);
+                              if (revokingKeyId) return;
+                              setRevokingKeyId(key.id);
+                              setMessage(null);
+                              try {
+                                const response = await fetch(`/api/settings/api-keys/${key.id}`, {
+                                  method: 'DELETE',
+                                  headers: { 'x-csrf-token': getCsrfToken() },
+                                });
+                                if (!response.ok) throw new Error('API key could not be revoked');
+                                await loadApiKeys();
+                                setRevokeId(null);
+                                setMessage('API key revoked');
+                              } finally {
+                                setRevokingKeyId(null);
+                              }
                             });
                           }}
                         >
-                          Confirm revoke
+                          {revokingKeyId === key.id ? 'Revoking key…' : 'Confirm revoke'}
                         </button>
                         <button
                           className="secondary-button"
+                          disabled={revokingKeyId === key.id}
                           onClick={() => {
                             setRevokeId(null);
                           }}

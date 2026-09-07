@@ -1285,6 +1285,7 @@ export function JobDetailPage() {
   const editScheduleIntentKey = useRef(crypto.randomUUID());
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isMutating, setIsMutating] = useState(false);
+  const [mutationAnnouncement, setMutationAnnouncement] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     void fetch(`/api/workflow/jobs/${encodeURIComponent(jobId)}`, { signal: controller.signal })
@@ -1324,11 +1325,6 @@ export function JobDetailPage() {
         <WorkflowLoading kind="detail" label="Loading publication job" />
       </WorkspaceLayout>
     );
-  const settledAnnouncement =
-    job.state === 'cancelled' || job.state === 'retrying'
-      ? 'Publication state updated successfully'
-      : null;
-  const mutationAnnouncement = isMutating ? 'Saving publication changes' : settledAnnouncement;
   return (
     <WorkspaceLayout active="queue">
       <LiveRegion message={mutationAnnouncement} />
@@ -1580,6 +1576,7 @@ export function JobDetailPage() {
                   if (!target || !job.postId) return;
                   setIsMutating(true);
                   setMutationError(null);
+                  setMutationAnnouncement('Rescheduling publication');
                   void fetch(`/api/workflow/posts/${encodeURIComponent(job.postId)}/schedule`, {
                     method: 'PATCH',
                     headers: {
@@ -1600,13 +1597,15 @@ export function JobDetailPage() {
                         throw new Error(result.error ?? 'Could not update the publishing time');
                       setJob({ ...job, scheduledAt: target.toISOString() });
                       setIsEditingSchedule(false);
+                      setMutationAnnouncement('Publication rescheduled successfully');
                     })
                     .catch((error: unknown) => {
-                      setMutationError(
+                      const message =
                         error instanceof Error
                           ? error.message
-                          : 'Could not update the publishing time',
-                      );
+                          : 'Could not update the publishing time';
+                      setMutationError(message);
+                      setMutationAnnouncement(`Reschedule failed: ${message}`);
                     })
                     .finally(() => {
                       setIsMutating(false);
@@ -1657,6 +1656,9 @@ export function JobDetailPage() {
                   const action = dialog;
                   setIsMutating(true);
                   setMutationError(null);
+                  setMutationAnnouncement(
+                    action === 'cancel' ? 'Cancelling publication' : 'Retrying publication',
+                  );
                   void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/${action}`, {
                     method: 'POST',
                     headers: {
@@ -1673,10 +1675,18 @@ export function JobDetailPage() {
                         throw new Error(result.error ?? `Could not ${action} this job`);
                       setJob({ ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' });
                       setDialog(null);
+                      setMutationAnnouncement(
+                        action === 'cancel'
+                          ? 'Publication cancelled successfully'
+                          : 'Publication retry queued successfully',
+                      );
                     })
                     .catch((error: unknown) => {
-                      setMutationError(
-                        error instanceof Error ? error.message : `Could not ${action} this job`,
+                      const message =
+                        error instanceof Error ? error.message : `Could not ${action} this job`;
+                      setMutationError(message);
+                      setMutationAnnouncement(
+                        `${action === 'cancel' ? 'Cancellation' : 'Retry'} failed: ${message}`,
                       );
                       setDialog(null);
                     })

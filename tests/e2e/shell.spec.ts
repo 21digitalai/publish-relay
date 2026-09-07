@@ -569,6 +569,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   }
   await page.goto('/w/atlas/jobs/job-2048');
   await expect(page.getByRole('heading', { name: 'Daily Viber' })).toBeVisible();
+  await expect(page.getByRole('status')).toBeEmpty();
   await page.screenshot({ path: testInfo.outputPath('job-detail-failed.png'), fullPage: true });
   await page.getByRole('button', { name: 'Retry now' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('preventing a duplicate post');
@@ -576,26 +577,36 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.screenshot({ path: testInfo.outputPath('job-retry-confirm.png'), fullPage: true });
   await page.getByRole('button', { name: 'Retry safely' }).click();
   await expect(page.getByText('Retry service unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Retry failed: Retry service unavailable');
   await page.getByRole('button', { name: 'Retry now' }).click();
   await page.getByRole('button', { name: 'Retry safely' }).click();
   await expect(page.getByRole('button', { name: 'Retrying…' })).toBeDisabled();
-  await expect(page.getByText('Retry queued')).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Retrying publication');
+  await expect(page.getByText('Retry queued', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Publication retry queued successfully');
   expect(retryHeaders?.['x-csrf-token']).toBeTruthy();
   expect(retryHeaders?.['idempotency-key']).toBeTruthy();
   await page.reload();
-  await expect(page.getByText('Retry queued')).toBeVisible();
+  await expect(page.getByText('Retry queued', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toBeEmpty();
   await page.getByRole('button', { name: 'Cancel job' }).click();
   await expect(page.getByRole('button', { name: 'Keep job' })).toBeFocused();
   await page.screenshot({ path: testInfo.outputPath('job-cancel-confirm.png'), fullPage: true });
   await page.getByRole('button', { name: 'Cancel job', exact: true }).last().click();
   await expect(page.getByText('Cancel service unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText(
+    'Cancellation failed: Cancel service unavailable',
+  );
   await page.getByRole('button', { name: 'Cancel job' }).click();
   await page.getByRole('button', { name: 'Cancel job', exact: true }).last().click();
   await expect(page.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
+  await expect(page.getByRole('status')).toContainText('Cancelling publication');
+  await expect(page.getByRole('status')).toContainText('Publication cancelled successfully');
   expect(cancelHeaders?.['x-csrf-token']).toBeTruthy();
   expect(cancelHeaders?.['idempotency-key']).toBeTruthy();
   await page.reload();
   await expect(page.locator('.job-status.cancelled')).toContainText('Cancelled');
+  await expect(page.getByRole('status')).toBeEmpty();
 });
 
 test('reports collision guidance as unavailable instead of an empty result', async ({ page }) => {
@@ -611,6 +622,45 @@ test('reports collision guidance as unavailable instead of an empty result', asy
   await page.goto('/w/atlas/queue');
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByText('Nearby schedule guidance is unavailable.')).toBeVisible();
+});
+
+test('suppresses workflow motion when reduced motion is requested', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-09-01T05:00:00.000Z'));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  let queueRequests = 0;
+  await page.route('**/api/workflow/jobs?*', async (route) => {
+    queueRequests += 1;
+    if (queueRequests === 1) await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [], next: null }, error: null }),
+    });
+  });
+  await page.route('**/api/workflow/posts', (route) =>
+    route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: 'post-reduced', jobIds: ['job-reduced'] }, error: null }),
+    }),
+  );
+
+  await page.goto('/w/atlas/queue');
+  const loadingShape = page.locator('.loading-shape').first();
+  await expect(loadingShape).toBeVisible();
+  await expect(loadingShape).toHaveCSS('animation-name', 'none');
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await expect(page.locator('.composer-sheet')).toHaveCSS('animation-name', 'none');
+  await expect(page.locator('.sheet-backdrop')).toHaveCSS('animation-name', 'none');
+  await expect(page.locator('.composer-sheet')).toHaveCSS('transform', 'none');
+  await page.getByLabel('Post body').fill('Reduced motion scheduling receipt.');
+  await page.getByLabel('Date and time').fill('2026-09-01T10:05');
+  await page.getByRole('button', { name: /Schedule \d+ posts?/ }).click();
+  const successMark = page.locator('.composer-receipt > span');
+  await expect(successMark).toBeVisible();
+  await expect(successMark).toHaveCSS('animation-name', 'none');
+  await expect(successMark).toHaveCSS('transform', 'none');
 });
 
 test('renders truthful queue loading, live states, empty, filtered-empty, and error states', async ({

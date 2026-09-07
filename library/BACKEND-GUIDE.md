@@ -129,6 +129,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `provider_accounts.adapter_defaults` is the destination-scoped source for optional provider policy defaults; it never stores credentials.
 - Scheduling resolves sparse request overrides against those defaults before inserting target jobs. Each `publication_jobs.effective_provider_settings` value is the immutable, complete provider snapshot used for dispatch and returned by job-facing contracts.
 - YouTube resolution is owned by `src/modules/providers/youtube-settings.ts`: public and `notifySubscribers=false` are product defaults, `madeForKids` must resolve from either the destination or request, and omitted tags/category remain absent.
+- `src/modules/providers/youtube-http-client.ts` owns Google token exchange/refresh/revocation and exact owned-channel discovery behind an injected HTTP boundary; persistence services encrypt its credential value and serialize refresh writes.
 - Revisions keep caller content; target-specific effective settings belong to the independent job so multiple destinations may resolve differently without mutating shared revision history.
 
 - `getWorkspaceUsageFacts` is the sole transactional owner of workspace usage facts for policy and application consumers. It derives retained media bytes and lifecycle counts, active connected accounts/provider families, publication-job target rows, active queued targets, scheduling horizon, and membership count from canonical Core tables under tenant RLS.

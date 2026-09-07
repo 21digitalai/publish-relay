@@ -66,6 +66,26 @@ export class YouTubeHttpClient {
     this.now = options.now ?? Date.now;
   }
 
+  public authorizationUrl(input: {
+    redirectUri: string;
+    state: string;
+    codeChallenge: string;
+  }): string {
+    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    url.search = new URLSearchParams({
+      client_id: this.options.clientId,
+      redirect_uri: input.redirectUri,
+      response_type: 'code',
+      scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
+      access_type: 'offline',
+      prompt: 'consent',
+      state: input.state,
+      code_challenge: input.codeChallenge,
+      code_challenge_method: 'S256',
+    }).toString();
+    return url.toString();
+  }
+
   public async exchangeCode(input: {
     code: string;
     codeVerifier: string;

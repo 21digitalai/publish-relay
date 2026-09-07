@@ -34,6 +34,8 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: z.string().min(1).optional(),
     PUBLISH_RELAY_X_CONSUMER_KEY: z.string().min(1).optional(),
     PUBLISH_RELAY_X_CONSUMER_SECRET: z.string().min(1).optional(),
+    PUBLISH_RELAY_GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+    PUBLISH_RELAY_GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
     X_API_KEY: z.string().min(1).optional(),
     X_API_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID: z.string().min(1).optional(),

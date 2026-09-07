@@ -26,6 +26,8 @@ import {
 import type { MasterKeyProvider } from '../modules/credentials/envelope.js';
 import type { XHttpClient } from '../modules/providers/x-http-client.js';
 import { registerXOauthRoutes } from '../modules/providers/x-oauth.routes.js';
+import type { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
+import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.routes.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
@@ -39,6 +41,7 @@ export function createApplication(
   xOauth?: { keys: MasterKeyProvider; client: XHttpClient; callbackUrl: string },
   mediaStorage?: MediaStorage,
   actionPolicy: ActionPolicy = allowAllActionPolicy,
+  youtubeOauth?: { keys: MasterKeyProvider; client: YouTubeHttpClient; callbackUrl: string },
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
@@ -129,6 +132,8 @@ export function createApplication(
   }
   if (auth && database && xOauth)
     registerXOauthRoutes(application, { auth, database, actionPolicy, ...xOauth });
+  if (auth && database && youtubeOauth)
+    registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
 
   return application;
 }

@@ -3,6 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { YouTubeHttpClient } from '../src/modules/providers/youtube-http-client.js';
 
 describe('YouTubeHttpClient', () => {
+  it('builds an offline PKCE authorization URL with exact state correlation', () => {
+    const client = new YouTubeHttpClient({ clientId: 'client-id', clientSecret: 'secret' });
+    const url = new URL(
+      client.authorizationUrl({
+        redirectUri: 'https://relay.test/api/oauth/youtube/callback',
+        state: 'state-token',
+        codeChallenge: 'challenge',
+      }),
+    );
+    expect(url.origin).toBe('https://accounts.google.com');
+    expect(url.searchParams.get('state')).toBe('state-token');
+    expect(url.searchParams.get('code_challenge')).toBe('challenge');
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(url.searchParams.get('access_type')).toBe('offline');
+    expect(url.searchParams.get('scope')).toContain('youtube.upload');
+  });
+
   it('exchanges PKCE code material and preserves refresh credentials', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

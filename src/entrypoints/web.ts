@@ -10,6 +10,7 @@ import { createPostgresApiKeyStore } from '../modules/identity/api-key.repositor
 import { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
 import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
+import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
 
 const config = loadRuntimeConfig();
 if (!config.DATABASE_URL) throw new Error('DATABASE_URL is required for the web process');
@@ -47,6 +48,17 @@ const application = createApplication(
     callbackUrl: new URL('/api/oauth/x/callback', publicOrigin).toString(),
   },
   mediaStorage,
+  undefined,
+  config.PUBLISH_RELAY_GOOGLE_CLIENT_ID && config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET
+    ? {
+        keys: new RuntimeMasterKeyProvider(activeKeyVersion),
+        client: new YouTubeHttpClient({
+          clientId: config.PUBLISH_RELAY_GOOGLE_CLIENT_ID,
+          clientSecret: config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET,
+        }),
+        callbackUrl: new URL('/api/oauth/youtube/callback', publicOrigin).toString(),
+      }
+    : undefined,
 );
 application.addHook('onClose', async () => pool.end());
 

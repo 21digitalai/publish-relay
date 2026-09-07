@@ -183,6 +183,20 @@
       "when": 1788813247644,
       "tag": "0025_lucky_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788814685867,
+      "tag": "0026_parallel_human_cannonball",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1788814738635,
+      "tag": "0027_overjoyed_dark_beast",
+      "breakpoints": true
     }
   ]
 }

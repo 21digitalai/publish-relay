@@ -262,7 +262,10 @@ export const credentials = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     ...timestamps,
   },
-  (table) => [index('credentials_workspace_idx').on(table.workspaceId)],
+  (table) => [
+    index('credentials_workspace_idx').on(table.workspaceId),
+    uniqueIndex('credentials_workspace_id_unique').on(table.workspaceId, table.id),
+  ],
 );
 
 export const providerConnections = pgTable(
@@ -601,8 +604,11 @@ export const providerStagingArtifacts = pgTable(
     jobId: uuid('job_id').notNull(),
     mediaId: uuid('media_id').notNull(),
     providerReference: text('provider_reference').notNull(),
+    providerReferenceCredentialId: uuid('provider_reference_credential_id'),
     uploadPhase: text('upload_phase').notNull().default('initialized'),
     nextSegment: integer('next_segment').notNull().default(0),
+    nextByteOffset: bigint('next_byte_offset', { mode: 'number' }).notNull().default(0),
+    externalObjectId: text('external_object_id'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     ...timestamps,
@@ -621,6 +627,11 @@ export const providerStagingArtifacts = pgTable(
       columns: [table.workspaceId, table.mediaId],
       foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
       name: 'provider_staging_workspace_media_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.providerReferenceCredentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'provider_staging_workspace_reference_credential_fk',
     }).onDelete('restrict'),
   ],
 );

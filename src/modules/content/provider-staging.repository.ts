@@ -187,3 +187,50 @@ export async function markStagingArtifactDeleted(
       ),
     );
 }
+
+export async function updateStagingByteProgress(
+  database: NodePgDatabase,
+  workspaceId: string,
+  artifactId: string,
+  progress: {
+    uploadPhase: 'initialized' | 'uploading' | 'finalized';
+    nextByteOffset: number;
+    externalObjectId?: string;
+  },
+): Promise<void> {
+  await database
+    .update(providerStagingArtifacts)
+    .set({
+      uploadPhase: progress.uploadPhase,
+      nextByteOffset: progress.nextByteOffset,
+      ...(progress.externalObjectId === undefined
+        ? {}
+        : { externalObjectId: progress.externalObjectId }),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(providerStagingArtifacts.workspaceId, workspaceId),
+        eq(providerStagingArtifacts.id, artifactId),
+        isNull(providerStagingArtifacts.deletedAt),
+      ),
+    );
+}
+
+export async function attachStagingReferenceCredential(
+  database: NodePgDatabase,
+  workspaceId: string,
+  artifactId: string,
+  credentialId: string,
+): Promise<void> {
+  await database
+    .update(providerStagingArtifacts)
+    .set({ providerReferenceCredentialId: credentialId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(providerStagingArtifacts.workspaceId, workspaceId),
+        eq(providerStagingArtifacts.id, artifactId),
+        isNull(providerStagingArtifacts.deletedAt),
+      ),
+    );
+}

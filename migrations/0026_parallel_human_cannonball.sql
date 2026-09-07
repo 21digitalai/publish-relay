@@ -1,0 +1,4 @@
+ALTER TABLE "provider_staging_artifacts" ADD COLUMN "provider_reference_credential_id" uuid;--> statement-breakpoint
+ALTER TABLE "provider_staging_artifacts" ADD COLUMN "next_byte_offset" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "provider_staging_artifacts" ADD COLUMN "external_object_id" text;--> statement-breakpoint
+ALTER TABLE "provider_staging_artifacts" ADD CONSTRAINT "provider_staging_artifacts_provider_reference_credential_id_credentials_id_fk" FOREIGN KEY ("provider_reference_credential_id") REFERENCES "public"."credentials"("id") ON DELETE restrict ON UPDATE no action;

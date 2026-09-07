@@ -98,6 +98,32 @@ const COLLISION_PAGE_LIMIT = 100;
 const COLLISION_MAX_PAGES_PER_ACCOUNT = 50;
 const COLLISION_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
+function LiveRegion({ message }: { message: string | null }) {
+  return (
+    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+      {message ?? ''}
+    </p>
+  );
+}
+
+function WorkflowLoading({
+  kind,
+  label,
+}: {
+  kind: 'queue' | 'calendar' | 'detail';
+  label: string;
+}) {
+  const itemCount = kind === 'queue' ? 4 : kind === 'calendar' ? 5 : 3;
+  return (
+    <div className={`workflow-loading ${kind}-loading`} role="status" aria-label={label}>
+      <span className="sr-only">{label}</span>
+      {Array.from({ length: itemCount }, (_, index) => (
+        <span className="loading-shape" aria-hidden="true" key={index} />
+      ))}
+    </div>
+  );
+}
+
 interface QueueCursor {
   beforeScheduledAt: string;
   beforeId: string;
@@ -902,10 +928,7 @@ export function QueuePage() {
                 <p>{loadError}</p>
               </div>
             ) : queueJobs === null ? (
-              <div className="filter-empty" role="status">
-                <h2>Loading publication queue</h2>
-                <p>Fetching the latest job states…</p>
-              </div>
+              <WorkflowLoading kind="queue" label="Loading publication queue" />
             ) : jobs.length ? (
               <div className="queue-table">
                 <div className="queue-header">
@@ -1087,10 +1110,7 @@ export function CalendarPage() {
             <p>{loadError}</p>
           </div>
         ) : jobs === null ? (
-          <div className="filter-empty" role="status">
-            <h2>Loading publication calendar</h2>
-            <p>Fetching scheduled job positions…</p>
-          </div>
+          <WorkflowLoading kind="calendar" label="Loading publication calendar" />
         ) : mode === 'Month' ? (
           <MonthCalendar jobs={jobs} anchor={visibleDate} />
         ) : mode === 'Timeline' ? (
@@ -1301,14 +1321,17 @@ export function JobDetailPage() {
   if (!job)
     return (
       <WorkspaceLayout active="queue">
-        <div className="filter-empty" role="status">
-          <h1>Loading publication job</h1>
-          <p>Fetching the latest execution state…</p>
-        </div>
+        <WorkflowLoading kind="detail" label="Loading publication job" />
       </WorkspaceLayout>
     );
+  const settledAnnouncement =
+    job.state === 'cancelled' || job.state === 'retrying'
+      ? 'Publication state updated successfully'
+      : null;
+  const mutationAnnouncement = isMutating ? 'Saving publication changes' : settledAnnouncement;
   return (
     <WorkspaceLayout active="queue">
+      <LiveRegion message={mutationAnnouncement} />
       <div className="detail-route">
         <a className="back-link" href={`${workspacePath}/queue`}>
           ← Back to queue

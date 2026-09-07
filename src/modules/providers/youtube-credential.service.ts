@@ -55,7 +55,13 @@ export async function getFreshYouTubeCredential(
     return current.credential;
 
   const refreshed = await client.refresh(current.credential);
-  const encrypted = await encryptCredential(Buffer.from(JSON.stringify(refreshed)), keys);
+  const refreshedPlaintext = Buffer.from(JSON.stringify(refreshed));
+  let encrypted;
+  try {
+    encrypted = await encryptCredential(refreshedPlaintext, keys);
+  } finally {
+    refreshedPlaintext.fill(0);
+  }
   const rotated = await withTenantTransaction(database, { workspaceId: input.workspaceId }, (transaction) =>
     rotateCredential(
       transaction,
@@ -68,7 +74,7 @@ export async function getFreshYouTubeCredential(
   if (rotated) return refreshed;
 
   const winner = await readCredential(database, keys, input.workspaceId, input.credentialId);
-  if (Date.parse(winner.credential.expiresAt) <= now.getTime())
+  if (Date.parse(winner.credential.expiresAt) <= now.getTime() + REFRESH_SKEW_MS)
     throw new Error('Concurrent YouTube credential refresh did not produce a usable token');
   return winner.credential;
 }

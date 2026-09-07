@@ -18,8 +18,15 @@ export function mutationFingerprint(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
+export class InvalidIdempotencyKeyError extends Error {
+  public constructor() {
+    super('A valid Idempotency-Key is required');
+    this.name = 'InvalidIdempotencyKeyError';
+  }
+}
+
 export function validateIdempotencyKey(value: string | undefined): string {
   const key = value?.trim();
-  if (!key || key.length > 200) throw new Error('A valid Idempotency-Key is required');
+  if (!key || key.length > 200) throw new InvalidIdempotencyKeyError();
   return key;
 }

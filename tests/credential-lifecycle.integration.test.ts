@@ -388,6 +388,32 @@ describe('credential and OAuth persistence', () => {
         requestId: 'req-connect-account',
       },
     );
+    const foreignWorkspaceId = '00000000-0000-4000-8000-000000000191';
+    const foreignAccountId = '00000000-0000-4000-8000-000000000194';
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug)
+      VALUES ('${foreignWorkspaceId}', 'Foreign Workspace', 'foreign-workspace');
+      SELECT set_config('app.workspace_id', '${foreignWorkspaceId}', false);
+      INSERT INTO credentials (
+        id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag,
+        ciphertext, nonce, tag
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000192', '${foreignWorkspaceId}',
+        'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06'
+      );
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+      VALUES (
+        '00000000-0000-4000-8000-000000000193', '${foreignWorkspaceId}', 'x',
+        '00000000-0000-4000-8000-000000000192'
+      );
+      INSERT INTO provider_accounts (
+        id, workspace_id, connection_id, provider_account_id, display_name
+      ) VALUES (
+        '${foreignAccountId}', '${foreignWorkspaceId}',
+        '00000000-0000-4000-8000-000000000193', 'foreign-account', 'Foreign Secret'
+      );
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+    `);
     const accounts = await listProviderAccounts(db, workspaceId);
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({
@@ -411,13 +437,22 @@ describe('credential and OAuth persistence', () => {
       capabilities: ['destinations:read'],
       expiresAt: null,
     };
+    const deniedPrincipal = {
+      ...principal,
+      id: '00000000-0000-4000-8000-000000000502',
+      capabilities: [],
+    };
     const apiKeys = {
       authenticate: (candidateWorkspaceId: string, token: string) =>
         Promise.resolve(
-          candidateWorkspaceId === workspaceId && token === 'test-key' ? principal : null,
+          candidateWorkspaceId === workspaceId && token === 'test-key'
+            ? principal
+            : candidateWorkspaceId === workspaceId && token === 'denied-key'
+              ? deniedPrincipal
+              : null,
         ),
-      requireCapability: (_principal: unknown, capability: string) =>
-        capability === 'destinations:read'
+      requireCapability: (candidate: typeof principal, capability: string) =>
+        candidate.capabilities.includes(capability)
           ? Promise.resolve()
           : Promise.reject(new ApiKeyAuthorizationError('Missing capability')),
     } as unknown as ApiKeyService;
@@ -438,6 +473,16 @@ describe('credential and OAuth persistence', () => {
     expect(
       (await application.inject({ method: 'GET', url: '/api/v1/destinations' })).statusCode,
     ).toBe(401);
+    const deniedResponse = await application.inject({
+      method: 'GET',
+      url: '/api/v1/destinations',
+      headers: { ...headers, authorization: 'Bearer denied-key' },
+    });
+    expect(deniedResponse.statusCode).toBe(403);
+    expect(deniedResponse.json()).toMatchObject({
+      success: false,
+      error: { code: 'missing_capability', message: 'Missing capability' },
+    });
     const destinationResponse = await application.inject({
       method: 'GET',
       url: '/api/v1/destinations',
@@ -457,6 +502,8 @@ describe('credential and OAuth persistence', () => {
     expect(JSON.stringify(destinationBody)).not.toMatch(
       /credentialId|connectionId|adapterDefaults|userId|secret/i,
     );
+    expect(JSON.stringify(destinationBody)).not.toContain(foreignAccountId);
+    expect(JSON.stringify(destinationBody)).not.toContain('Foreign Secret');
     expect(
       (await application.inject({ method: 'GET', url: '/api/v1/destinations', headers }))
         .statusCode,

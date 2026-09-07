@@ -5,7 +5,11 @@ import { z } from 'zod';
 import type { CursorCodec } from '../api/contract.js';
 import { InvalidCursorError, errorEnvelope, successEnvelope } from '../api/contract.js';
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
-import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
+import {
+  InvalidIdempotencyKeyError,
+  mutationFingerprint,
+  validateIdempotencyKey,
+} from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
 import {
   ActionPolicyDeniedError,
@@ -256,7 +260,7 @@ export function registerPostRoutes(
     } catch (error) {
       if (error instanceof ApiKeyAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
-      if (error instanceof z.ZodError)
+      if (error instanceof z.ZodError || error instanceof InvalidIdempotencyKeyError)
         return await reply
           .code(400)
           .send(errorEnvelope('invalid_request', error.message, request.id));

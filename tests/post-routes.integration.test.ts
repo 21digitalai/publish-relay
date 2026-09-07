@@ -63,6 +63,7 @@ let apiKeys: ApiKeyService;
 let authenticate: ReturnType<typeof vi.fn>;
 let browserAuthenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
+let evaluateAction: ReturnType<typeof vi.fn>;
 let browserNow: Date | undefined;
 let mediaPutError: Error | undefined;
 const temporaryDirectories: string[] = [];
@@ -197,6 +198,7 @@ beforeEach(async () => {
     capabilities: ['schedules:write', 'schedules:read'],
   });
   requireCapability = vi.fn().mockResolvedValue(undefined);
+  evaluateAction = vi.fn().mockResolvedValue({ allowed: true });
   browserAuthenticate = vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' });
   apiKeys = { authenticate, requireCapability } as unknown as ApiKeyService;
   application = Fastify();
@@ -214,6 +216,7 @@ beforeEach(async () => {
       windowMs: 60_000,
     }),
     new CursorCodec(Buffer.alloc(32, 7)),
+    { evaluate: evaluateAction },
   );
   registerMediaRoutes(
     application,
@@ -1393,5 +1396,237 @@ describe('CLI and direct HTTP parity', () => {
     expect(throughCli.code).toBe(0);
     expect(stableEnvelope(throughCli.body)).toEqual(directBody);
     expect(JSON.stringify(throughCli.body)).not.toContain('provider-secret');
+  });
+});
+
+describe('agent publication retry PostgreSQL boundary', () => {
+  const headers = {
+    authorization: 'Bearer pr_test.secret',
+    'x-publish-relay-workspace': workspaceId,
+    'idempotency-key': 'retry-job-1',
+  };
+  const postId = '00000000-0000-4000-8000-000000000821';
+  const revisionId = '00000000-0000-4000-8000-000000000822';
+  const jobId = '00000000-0000-4000-8000-000000000823';
+
+  async function seedJob(
+    input: {
+      postId?: string;
+      revisionId?: string;
+      jobId?: string;
+      state?: string;
+      reconciliationRequired?: boolean;
+    } = {},
+  ) {
+    const targetPostId = input.postId ?? postId;
+    const targetRevisionId = input.revisionId ?? revisionId;
+    const targetJobId = input.jobId ?? jobId;
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id)
+      VALUES ('${targetPostId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+      VALUES ('${targetRevisionId}', '${workspaceId}', '${targetPostId}', 1, '{}');
+      INSERT INTO publication_jobs (
+        id, workspace_id, post_id, revision_id, provider_account_id, state,
+        reconciliation_required, scheduled_at
+      ) VALUES (
+        '${targetJobId}', '${workspaceId}', '${targetPostId}', '${targetRevisionId}',
+        '${providerAccountId}', '${input.state ?? 'failed'}',
+        ${input.reconciliationRequired ? 'true' : 'false'}, now()
+      );
+    `);
+  }
+
+  it('requires authentication and publishes:retry capability', async () => {
+    authenticate.mockResolvedValueOnce(null);
+    expect(
+      (await application.inject({ method: 'POST', url: `/api/v1/jobs/${jobId}/retry`, headers }))
+        .statusCode,
+    ).toBe(401);
+    requireCapability.mockRejectedValueOnce(new ApiKeyAuthorizationError('Missing capability'));
+    const denied = await application.inject({
+      method: 'POST',
+      url: `/api/v1/jobs/${jobId}/retry`,
+      headers,
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({
+      success: false,
+      error: { code: 'missing_capability', message: 'Missing capability' },
+    });
+  });
+
+  it('rejects malformed job and idempotency identities before mutation', async () => {
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: '/api/v1/jobs/not-a-uuid/retry',
+          headers,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: `/api/v1/jobs/${jobId}/retry`,
+          headers: { ...headers, 'idempotency-key': '' },
+        })
+      ).statusCode,
+    ).toBe(400);
+  });
+
+  it('transitions once with exact API-key policy and event attribution', async () => {
+    await seedJob();
+    const response = await application.inject({
+      method: 'POST',
+      url: `/api/v1/jobs/${jobId}/retry`,
+      headers,
+    });
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({
+      success: true,
+      data: {
+        id: jobId,
+        state: 'retry_wait',
+        links: { self: `/api/v1/jobs/${jobId}` },
+      },
+    });
+    expect(Object.keys(response.json<{ data: object }>().data).sort()).toEqual([
+      'id',
+      'links',
+      'state',
+    ]);
+    expect(evaluateAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId,
+        actor: { type: 'api-key', id: apiKeyId },
+        action: 'publication.retry',
+      }),
+    );
+    const state = await database.query<{ state: string; actor_type: string; actor_id: string }>(`
+      SELECT j.state, e.metadata->>'actorType' AS actor_type, e.metadata->>'actorId' AS actor_id
+      FROM publication_jobs j
+      JOIN publication_job_events e ON e.job_id = j.id
+      WHERE j.id = '${jobId}' AND e.reason = 'operator_retry'
+    `);
+    expect(state.rows).toEqual([
+      { state: 'retry_wait', actor_type: 'api-key', actor_id: apiKeyId },
+    ]);
+    const replay = await application.inject({
+      method: 'POST',
+      url: `/api/v1/jobs/${jobId}/retry`,
+      headers,
+    });
+    expect(replay.statusCode).toBe(202);
+    expect(replay.headers['idempotency-replayed']).toBe('true');
+    const events = await database.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM publication_job_events
+      WHERE job_id = '${jobId}' AND reason = 'operator_retry'
+    `);
+    expect(events.rows[0]?.count).toBe(1);
+
+    const browserJobId = '00000000-0000-4000-8000-000000000853';
+    await seedJob({
+      postId: '00000000-0000-4000-8000-000000000851',
+      revisionId: '00000000-0000-4000-8000-000000000852',
+      jobId: browserJobId,
+    });
+    const browserRetry = await application.inject({
+      method: 'POST',
+      url: `/api/workflow/jobs/${browserJobId}/retry`,
+      headers: {
+        cookie: `publish_relay_session=${workspaceId}.browser-token; publish_relay_csrf=retry-csrf`,
+        'x-csrf-token': 'retry-csrf',
+        'idempotency-key': 'browser-retry-user-attribution',
+      },
+    });
+    expect(browserRetry.statusCode).toBe(200);
+    const browserEvent = await database.query<{ actor_type: string; actor_id: string }>(`
+      SELECT metadata->>'actorType' AS actor_type, metadata->>'actorId' AS actor_id
+      FROM publication_job_events
+      WHERE job_id = '${browserJobId}' AND reason = 'operator_retry'
+    `);
+    expect(browserEvent.rows).toEqual([{ actor_type: 'user', actor_id: userId }]);
+  });
+
+  it('conflicts without mutation for foreign, non-failed, and unknown-outcome jobs', async () => {
+    const scheduledJobId = '00000000-0000-4000-8000-000000000833';
+    const unknownJobId = '00000000-0000-4000-8000-000000000843';
+    await seedJob({
+      postId: '00000000-0000-4000-8000-000000000831',
+      revisionId: '00000000-0000-4000-8000-000000000832',
+      jobId: scheduledJobId,
+      state: 'scheduled',
+    });
+    await seedJob({
+      postId: '00000000-0000-4000-8000-000000000841',
+      revisionId: '00000000-0000-4000-8000-000000000842',
+      jobId: unknownJobId,
+      reconciliationRequired: true,
+    });
+    for (const [candidateJobId, key] of [
+      [foreignJobId, 'retry-foreign'],
+      [scheduledJobId, 'retry-scheduled'],
+      [unknownJobId, 'retry-unknown'],
+    ] as const) {
+      const response = await application.inject({
+        method: 'POST',
+        url: `/api/v1/jobs/${candidateJobId}/retry`,
+        headers: { ...headers, 'idempotency-key': key },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: { code: 'retry_conflict' } });
+    }
+    const rows = await database.query<{
+      id: string;
+      state: string;
+      reconciliation_required: boolean;
+    }>(`
+      SELECT id, state, reconciliation_required FROM publication_jobs
+      WHERE id IN ('${scheduledJobId}', '${unknownJobId}') ORDER BY id
+    `);
+    expect(rows.rows).toEqual([
+      { id: scheduledJobId, state: 'scheduled', reconciliation_required: false },
+      { id: unknownJobId, state: 'failed', reconciliation_required: true },
+    ]);
+    const events = await database.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM publication_job_events
+      WHERE job_id IN ('${scheduledJobId}', '${unknownJobId}')
+    `);
+    expect(events.rows[0]?.count).toBe(0);
+  });
+
+  it('rate limits mutations and conflicts when a key fingerprint changes', async () => {
+    await seedJob();
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: `/api/v1/jobs/${jobId}/retry`,
+          headers: { ...headers, 'idempotency-key': 'shared-retry-key' },
+        })
+      ).statusCode,
+    ).toBe(202);
+    const changed = await application.inject({
+      method: 'POST',
+      url: `/api/v1/jobs/${foreignJobId}/retry`,
+      headers: { ...headers, 'idempotency-key': 'shared-retry-key' },
+    });
+    expect(changed.statusCode).toBe(409);
+    expect(changed.json()).toMatchObject({ error: { code: 'idempotency_conflict' } });
+    for (let index = 2; index < 10; index += 1)
+      await application.inject({
+        method: 'POST',
+        url: `/api/v1/jobs/${foreignJobId}/retry`,
+        headers: { ...headers, 'idempotency-key': `rate-${String(index)}` },
+      });
+    const limited = await application.inject({
+      method: 'POST',
+      url: `/api/v1/jobs/${foreignJobId}/retry`,
+      headers: { ...headers, 'idempotency-key': 'rate-limited' },
+    });
+    expect(limited.statusCode).toBe(429);
   });
 });

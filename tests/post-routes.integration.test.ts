@@ -499,6 +499,22 @@ describe('browser workflow PostgreSQL boundary', () => {
     expect(edited.json()).toMatchObject({
       data: { postId, supersededJobIds: [expect.any(String)], jobIds: [expect.any(String)] },
     });
+    const provenance = await database.query<{
+      created_actor_type: string;
+      created_actor_id: string;
+      last_mutator_type: string;
+      last_mutator_id: string;
+    }>(
+      `SELECT r.created_actor_type, r.created_actor_id, p.last_mutator_type, p.last_mutator_id
+       FROM posts p JOIN post_revisions r ON r.post_id = p.id
+       WHERE p.id = '${postId}' ORDER BY r.revision_number DESC LIMIT 1`,
+    );
+    expect(provenance.rows[0]).toEqual({
+      created_actor_type: 'user',
+      created_actor_id: userId,
+      last_mutator_type: 'user',
+      last_mutator_id: userId,
+    });
   });
 
   it('hides missing and foreign posts from browser revision mutations', async () => {

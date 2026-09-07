@@ -4,5 +4,4 @@ ALTER TABLE "posts" ADD COLUMN "created_actor_type" "audit_actor_type";--> state
 ALTER TABLE "posts" ADD COLUMN "created_actor_id" uuid;--> statement-breakpoint
 ALTER TABLE "posts" ADD COLUMN "last_mutator_type" "audit_actor_type";--> statement-breakpoint
 ALTER TABLE "posts" ADD COLUMN "last_mutator_id" uuid;--> statement-breakpoint
-UPDATE "posts" SET "created_actor_type" = 'user', "created_actor_id" = "created_by_user_id", "last_mutator_type" = 'user', "last_mutator_id" = "created_by_user_id";--> statement-breakpoint
 COMMENT ON COLUMN "posts"."created_actor_type" IS 'Nullable only for imported legacy rows; CLI is transport metadata, never identity.';

@@ -72,9 +72,14 @@ async function validateTargetOwnership(
 
 async function createRevisionTargets(
   database: NodePgDatabase,
-  input: PostRevisionInput & { workspaceId: string; postId: string; revisionNumber: number },
+  input: PostRevisionInput & {
+    workspaceId: string;
+    userId?: string;
+    postId: string;
+    revisionNumber: number;
+  },
 ): Promise<{ revisionId: string; jobIds: string[] }> {
-  const actor = persistedActor(input.actor);
+  const actor = persistedActor(input.actor, input.userId);
   const revisions = await database
     .insert(postRevisions)
     .values({
@@ -143,12 +148,13 @@ export async function revisePostIntent(
   database: NodePgDatabase,
   input: PostRevisionInput & {
     workspaceId: string;
+    userId?: string;
     postId: string;
     now: Date;
     expectedSupersededJobCount?: number;
   },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
-  const actor = persistedActor(input.actor);
+  const actor = persistedActor(input.actor, input.userId);
   await validateTargetOwnership(database, input);
   const existing = await database
     .select({ revisionNumber: postRevisions.revisionNumber })
@@ -193,7 +199,14 @@ export async function revisePostIntent(
 
 export async function reschedulePostIntent(
   database: NodePgDatabase,
-  input: { workspaceId: string; postId: string; scheduledAt: Date; now: Date },
+  input: {
+    workspaceId: string;
+    userId?: string;
+    actor?: { type: 'user' | 'api-key'; id: string };
+    postId: string;
+    scheduledAt: Date;
+    now: Date;
+  },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
   const revisions = await database
     .select({ id: postRevisions.id, content: postRevisions.content })

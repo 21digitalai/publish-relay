@@ -14,6 +14,8 @@ import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
+import { getReadyMediaForDownload } from './media.repository.js';
+import type { MediaStorage } from './media-storage.js';
 import { createPostRequestSchema } from './post.contract.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import {
@@ -42,6 +44,7 @@ const listQuerySchema = z.object({
 });
 const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
+const mediaParamsSchema = z.object({ mediaId: z.uuid() });
 const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
@@ -141,9 +144,39 @@ export function registerBrowserWorkflowRoutes(
     database: NodePgDatabase;
     now?: () => Date;
     actionPolicy?: ActionPolicy;
+    mediaStorage?: MediaStorage;
   },
 ): void {
   const actionPolicy = dependencies.actionPolicy ?? allowAllActionPolicy;
+  const mediaStorage = dependencies.mediaStorage;
+  if (mediaStorage)
+    application.get('/api/workflow/media/:mediaId', async (request, reply) => {
+      let identity;
+      try {
+        identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+      } catch (error) {
+        return mutationError(request, reply, error);
+      }
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      const params = mediaParamsSchema.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid media id' });
+      const media = await getReadyMediaForDownload(
+        dependencies.database,
+        identity.workspaceId,
+        params.data.mediaId,
+      );
+      if (!media) return reply.code(404).send({ data: null, error: 'Media was not found' });
+      let bytes: Buffer;
+      try {
+        bytes = await mediaStorage.read(media.storageKey);
+      } catch (error) {
+        request.log.error({ err: error, mediaId: params.data.mediaId }, 'Media read failed');
+        return reply.code(500).send({ data: null, error: 'Stored media is unavailable' });
+      }
+      if (bytes.byteLength !== media.byteSize)
+        return reply.code(500).send({ data: null, error: 'Stored media is unavailable' });
+      return reply.header('cache-control', 'private, max-age=300').type(media.mimeType).send(bytes);
+    });
   application.post('/api/workflow/posts', async (request, reply) => {
     let identity;
     try {

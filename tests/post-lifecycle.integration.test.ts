@@ -77,6 +77,10 @@ class FakeMediaStorage implements MediaStorage {
     this.objects.delete(storageKey);
     return Promise.resolve();
   }
+
+  read(storageKey: string): Promise<Buffer> {
+    return Promise.resolve(Buffer.from(this.objects.get(storageKey) ?? []));
+  }
 }
 
 class FakeProviderStagingStorage implements ProviderStagingStorage {

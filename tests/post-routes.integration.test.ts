@@ -59,6 +59,7 @@ let database: PGlite;
 let application: FastifyInstance;
 let apiKeys: ApiKeyService;
 let authenticate: ReturnType<typeof vi.fn>;
+let browserAuthenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
 let browserNow: Date | undefined;
 let mediaPutError: Error | undefined;
@@ -72,6 +73,7 @@ const mediaStorage: MediaStorage = {
     storedMedia.set(storageKey, Buffer.from(input.bytes));
     return Promise.resolve({ storageKey });
   },
+  read: (storageKey) => Promise.resolve(Buffer.from(storedMedia.get(storageKey) ?? [])),
   delete: (storageKey) => {
     storedMedia.delete(storageKey);
     return Promise.resolve();
@@ -193,6 +195,7 @@ beforeEach(async () => {
     capabilities: ['schedules:write', 'schedules:read'],
   });
   requireCapability = vi.fn().mockResolvedValue(undefined);
+  browserAuthenticate = vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' });
   apiKeys = { authenticate, requireCapability } as unknown as ApiKeyService;
   application = Fastify();
   application.register(cookie);
@@ -227,8 +230,9 @@ beforeEach(async () => {
     database: drizzle(database) as unknown as NodePgDatabase,
     now: () => browserNow ?? new Date(),
     auth: {
-      authenticate: vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' }),
+      authenticate: browserAuthenticate,
     } as unknown as AuthService,
+    mediaStorage,
   });
 });
 
@@ -292,6 +296,40 @@ describe('agent media upload PostgreSQL boundary', () => {
       payload: { ...requestPayload(), mediaIds: [firstBody.data.id] },
     });
     expect(post.statusCode).toBe(201);
+    const jobLink = post.json<{ data: { links: { jobs: string[] } } }>().data.links.jobs[0];
+    const jobId = jobLink?.split('/').at(-1);
+    expect(jobId).toBeTruthy();
+    const browserHeaders = { cookie: `publish_relay_session=${workspaceId}.browser-token` };
+    const detail = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs/${jobId}`,
+      headers: browserHeaders,
+    });
+    expect(detail.statusCode).toBe(200);
+    const previewUrl = detail.json<{ data: { media: { previewUrl: string }[] } }>().data.media[0]
+      ?.previewUrl;
+    expect(previewUrl).toBe(`/api/workflow/media/${firstBody.data.id}`);
+    const preview = await application.inject({
+      method: 'GET',
+      url: previewUrl!,
+      headers: browserHeaders,
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.headers['content-type']).toContain('image/png');
+    expect(preview.headers['cache-control']).toBe('private, max-age=300');
+    expect(preview.rawPayload).toEqual(png);
+
+    browserAuthenticate.mockResolvedValueOnce({
+      workspaceId: foreignWorkspaceId,
+      userId,
+      role: 'owner',
+    });
+    expect(
+      (await application.inject({ method: 'GET', url: previewUrl!, headers: browserHeaders }))
+        .statusCode,
+    ).toBe(404);
+    browserAuthenticate.mockResolvedValueOnce(null);
+    expect((await application.inject({ method: 'GET', url: previewUrl! })).statusCode).toBe(401);
 
     const directory = await mkdtemp(join(tmpdir(), 'publish-relay-media-cli-'));
     temporaryDirectories.push(directory);

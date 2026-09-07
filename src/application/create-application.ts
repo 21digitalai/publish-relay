@@ -105,7 +105,12 @@ export function createApplication(
   }
   if (auth && database) {
     registerProviderAccountRoutes(application, { auth, database });
-    registerBrowserWorkflowRoutes(application, { auth, database, actionPolicy });
+    registerBrowserWorkflowRoutes(application, {
+      auth,
+      database,
+      actionPolicy,
+      ...(mediaStorage ? { mediaStorage } : {}),
+    });
   }
   if (auth && database && xOauth)
     registerXOauthRoutes(application, { auth, database, actionPolicy, ...xOauth });

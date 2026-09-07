@@ -2,6 +2,32 @@ import { and, eq, lt } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { mediaObjects } from '../../database/schema.js';
+import { withTenantTransaction } from '../../database/tenant-transaction.js';
+
+export async function getReadyMediaForDownload(
+  database: NodePgDatabase,
+  workspaceId: string,
+  mediaId: string,
+): Promise<{ storageKey: string; mimeType: string; byteSize: number } | null> {
+  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
+    const rows = await transaction
+      .select({
+        storageKey: mediaObjects.storageKey,
+        mimeType: mediaObjects.mimeType,
+        byteSize: mediaObjects.byteSize,
+      })
+      .from(mediaObjects)
+      .where(
+        and(
+          eq(mediaObjects.workspaceId, workspaceId),
+          eq(mediaObjects.id, mediaId),
+          eq(mediaObjects.state, 'ready'),
+        ),
+      )
+      .limit(1);
+    return rows[0] ?? null;
+  });
+}
 
 export async function reserveMedia(
   database: NodePgDatabase,

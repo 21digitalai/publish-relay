@@ -216,7 +216,10 @@ export async function getBrowserJobDetail(
         : null;
     return {
       ...job,
-      media: media.map((item) => ({ ...item, previewUrl: null })),
+      media: media.map((item) => ({
+        ...item,
+        previewUrl: item.state === 'ready' ? `/api/workflow/media/${item.id}` : null,
+      })),
       attempts,
       activity,
       providerResult: published ? { id: published.externalPostId, url: externalUrl } : null,

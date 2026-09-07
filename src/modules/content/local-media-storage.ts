@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
 
@@ -33,5 +33,9 @@ export class LocalMediaStorage implements MediaStorage {
 
   public async delete(storageKey: string): Promise<void> {
     await rm(this.pathFor(storageKey), { force: true });
+  }
+
+  public async read(storageKey: string): Promise<Buffer> {
+    return readFile(this.pathFor(storageKey));
   }
 }

@@ -359,17 +359,14 @@ describe('Publish Relay CLI', () => {
       PUBLISH_RELAY_API_KEY: 'test-key',
     });
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      data: {
-        items: [
-          {
-            id: 'destination-1',
-            provider: 'youtube',
-            displayName: 'Studio',
-            credentialId: '[REDACTED]',
-          },
-        ],
-      },
+    const output = JSON.parse(result.stdout) as { data: { items: unknown[] } };
+    expect(output.data.items[0]).toEqual({
+      id: 'destination-1',
+      provider: 'youtube',
+      displayName: 'Studio',
+      status: 'active',
+      updatedAt: '2026-09-07T20:00:00.000Z',
+      credentialId: '[REDACTED]',
     });
   });
 

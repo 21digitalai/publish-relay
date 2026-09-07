@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Fastify from 'fastify';
 
 import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 import {
@@ -33,6 +34,12 @@ import {
   completeXOauthConnection,
 } from '../src/modules/providers/x-oauth.service.js';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
+import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
+import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
+import {
+  ApiKeyAuthorizationError,
+  type ApiKeyService,
+} from '../src/modules/identity/api-key.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -395,6 +402,66 @@ describe('credential and OAuth persistence', () => {
       'status',
       'updatedAt',
     ]);
+    const principal = {
+      id: '00000000-0000-4000-8000-000000000501',
+      workspaceId,
+      createdByUserId: userId,
+      workspaceLabel: 'Credential Workspace',
+      prefix: 'pr_test',
+      capabilities: ['destinations:read'],
+      expiresAt: null,
+    };
+    const apiKeys = {
+      authenticate: (candidateWorkspaceId: string, token: string) =>
+        Promise.resolve(
+          candidateWorkspaceId === workspaceId && token === 'test-key' ? principal : null,
+        ),
+      requireCapability: (_principal: unknown, capability: string) =>
+        capability === 'destinations:read'
+          ? Promise.resolve()
+          : Promise.reject(new ApiKeyAuthorizationError('Missing capability')),
+    } as unknown as ApiKeyService;
+    const application = Fastify();
+    registerDestinationRoutes(
+      application,
+      db,
+      apiKeys,
+      new ApiRateLimiter({
+        workspace: 1,
+        key: 1,
+        mutationWorkspace: 1,
+        mutationKey: 1,
+        windowMs: 60_000,
+      }),
+    );
+    const headers = { authorization: 'Bearer test-key', 'x-publish-relay-workspace': workspaceId };
+    expect(
+      (await application.inject({ method: 'GET', url: '/api/v1/destinations' })).statusCode,
+    ).toBe(401);
+    const destinationResponse = await application.inject({
+      method: 'GET',
+      url: '/api/v1/destinations',
+      headers,
+    });
+    expect(destinationResponse.statusCode).toBe(200);
+    const destinationBody = destinationResponse.json<{ data: { items: unknown[] } }>();
+    expect(destinationBody.data.items).toEqual([
+      {
+        id: accounts[0]?.id,
+        provider: 'x',
+        displayName: 'Daily Viber (@dailyviber)',
+        status: 'active',
+        updatedAt: accounts[0]?.updatedAt.toISOString(),
+      },
+    ]);
+    expect(JSON.stringify(destinationBody)).not.toMatch(
+      /credentialId|connectionId|adapterDefaults|userId|secret/i,
+    );
+    expect(
+      (await application.inject({ method: 'GET', url: '/api/v1/destinations', headers }))
+        .statusCode,
+    ).toBe(429);
+    await application.close();
     const accountId = accounts[0]?.id ?? '';
     await database.exec(`
       INSERT INTO posts (id, workspace_id, created_by_user_id)

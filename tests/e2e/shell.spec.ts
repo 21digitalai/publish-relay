@@ -752,6 +752,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   });
   await page.goto('/w/mira-studio/calendar?mode=Week&date=2026-09-01');
   await expect(page.getByRole('status')).toContainText('Loading publication calendar');
+  await page.screenshot({ path: testInfo.outputPath('calendar-loading.png'), fullPage: true });
   await expect(page.getByRole('button', { name: '2 accounts' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('calendar-week.png'), fullPage: true });
 
@@ -765,6 +766,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
     'href',
     '/w/mira-studio/jobs/mira-morning',
   );
+  await page.screenshot({ path: testInfo.outputPath('calendar-month.png'), fullPage: true });
   await page.getByRole('button', { name: 'Previous date' }).click();
   await expect(page).toHaveURL(/mode=Month&date=2026-08-01/);
   await page.getByRole('button', { name: 'Next date' }).click();
@@ -786,6 +788,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await expect(page).toHaveURL(/mode=Day&date=2026-09-02/);
   await page.getByRole('button', { name: 'Previous date' }).click();
   await expect(page.getByLabel('Day calendar').getByRole('link')).toHaveCount(2);
+  await page.screenshot({ path: testInfo.outputPath('calendar-day.png'), fullPage: true });
 
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   await page.getByRole('button', { name: 'Next date' }).click();
@@ -809,6 +812,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
     'href',
     '/w/mira-studio/jobs/mira-morning',
   );
+  await page.screenshot({ path: testInfo.outputPath('calendar-timeline.png'), fullPage: true });
 
   await page.unroute('**/api/workflow/jobs?limit=100');
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
@@ -817,6 +821,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await page.reload();
   await expect(page.getByRole('button', { name: '0 accounts' })).toBeVisible();
   await expect(page.locator('.timeline-calendar')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('calendar-empty.png'), fullPage: true });
 
   await page.unroute('**/api/workflow/jobs?limit=100');
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
@@ -828,6 +833,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   );
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Calendar offline');
+  await page.screenshot({ path: testInfo.outputPath('calendar-error.png'), fullPage: true });
 });
 
 test('navigates calendar months across month-end and leap-year boundaries', async ({ page }) => {

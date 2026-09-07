@@ -60,7 +60,7 @@ export function hashOauthState(state: string): string {
 export async function consumeOauthCallback(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
-  input: { workspaceId: string; state: string; userId?: string; now?: Date },
+  input: { workspaceId: string; state: string; userId?: string; provider?: string; now?: Date },
 ): Promise<{
   userId: string;
   provider: string;
@@ -78,6 +78,7 @@ export async function consumeOauthCallback(
         hashOauthState(input.state),
         now,
         input.userId,
+        input.provider,
       );
       if (!consumed) return null;
       const credential = await getActiveCredential(

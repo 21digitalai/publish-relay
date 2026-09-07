@@ -52,8 +52,9 @@ export async function completeYouTubeOauthConnection(
     workspaceId: input.workspaceId,
     state: input.state,
     userId: input.userId,
+    provider: 'youtube',
   });
-  if (transaction?.provider !== 'youtube') return null;
+  if (!transaction) return null;
   const credential = await client.exchangeCode({
     code: input.code,
     codeVerifier: transaction.codeVerifier,

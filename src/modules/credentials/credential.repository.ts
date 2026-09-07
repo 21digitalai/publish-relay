@@ -159,6 +159,7 @@ export async function consumeOauthTransaction(
   stateHash: string,
   now: Date,
   userId?: string,
+  provider?: string,
 ): Promise<{
   id: string;
   userId: string;
@@ -174,6 +175,7 @@ export async function consumeOauthTransaction(
         eq(oauthTransactions.workspaceId, workspaceId),
         eq(oauthTransactions.stateHash, stateHash),
         ...(userId ? [eq(oauthTransactions.userId, userId)] : []),
+        ...(provider ? [eq(oauthTransactions.provider, provider)] : []),
         isNull(oauthTransactions.consumedAt),
         sql`${oauthTransactions.expiresAt} > ${now}`,
       ),

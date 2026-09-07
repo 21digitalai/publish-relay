@@ -12,7 +12,7 @@ const CLI_JAVASCRIPT = readFileSync(
 const AGENTS_TEXT = `# Publish Relay agent discovery
 Skill: /publish-relay-skill/SKILL.md
 Manifest: /publish-relay-skill/manifest.json
-API contract: /api/openapi.json
+API contract: /api/v1/openapi.json
 CLI: /publish-relay-skill/publish-relay-cli.js
 Read the skill and manifest before calling the API. Never send credentials to discovery URLs.
 `;

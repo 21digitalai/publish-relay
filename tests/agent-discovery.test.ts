@@ -35,6 +35,15 @@ describe('agent discovery', () => {
     }
   });
 
+  it('points agents to the live versioned OpenAPI contract', async () => {
+    const application = createTestApplication();
+    const discovery = await application.inject({ method: 'GET', url: '/agents.txt' });
+    expect(discovery.body).toContain('API contract: /api/v1/openapi.json');
+    const contract = await application.inject({ method: 'GET', url: '/api/v1/openapi.json' });
+    expect(contract.statusCode).toBe(200);
+    expect(contract.json()).toMatchObject({ openapi: '3.1.0' });
+  });
+
   it('publishes checksums that match the exact served assets', async () => {
     const application = createTestApplication();
     const manifest = (

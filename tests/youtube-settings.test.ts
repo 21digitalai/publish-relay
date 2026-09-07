@@ -13,7 +13,7 @@ describe('resolveYouTubeSettings', () => {
           tags: ['default'],
           categoryId: '22',
         },
-        { title: 'Release', privacyStatus: 'public', tags: ['launch'] },
+        { schemaVersion: 1, title: 'Release', privacyStatus: 'public', tags: ['launch'] },
       ),
     ).toEqual({
       schemaVersion: 1,
@@ -27,7 +27,9 @@ describe('resolveYouTubeSettings', () => {
   });
 
   it('uses approved product defaults without inventing optional metadata', () => {
-    expect(resolveYouTubeSettings({ madeForKids: true }, { title: 'Release' })).toEqual({
+    expect(
+      resolveYouTubeSettings({ madeForKids: true }, { schemaVersion: 1, title: 'Release' }),
+    ).toEqual({
       schemaVersion: 1,
       title: 'Release',
       privacyStatus: 'public',
@@ -37,7 +39,7 @@ describe('resolveYouTubeSettings', () => {
   });
 
   it('requires madeForKids in the resolved settings', () => {
-    expect(() => resolveYouTubeSettings({}, { title: 'Release' })).toThrow(
+    expect(() => resolveYouTubeSettings({}, { schemaVersion: 1, title: 'Release' })).toThrow(
       'YouTube madeForKids requires a destination default or request override',
     );
   });

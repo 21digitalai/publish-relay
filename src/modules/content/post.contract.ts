@@ -21,7 +21,6 @@ const postSummarySchema = z.object({
   id: z.uuid(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
-  effectiveProviderSettings: z.record(z.string(), z.unknown()).nullable(),
   links: z.object({ self: z.string() }),
 });
 
@@ -38,6 +37,7 @@ export const jobDetailResponseSchema = z.object({
   scheduledAt: timestampSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
+  effectiveProviderSettings: z.record(z.string(), z.unknown()).nullable(),
   links: z.object({ self: z.string(), post: z.string() }),
 });
 

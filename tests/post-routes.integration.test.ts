@@ -855,6 +855,58 @@ afterEach(async () => {
 });
 
 describe('POST /api/v1/posts', () => {
+  it('persists and returns resolved YouTube settings through the job route', async () => {
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'youtube'
+      WHERE id = '00000000-0000-4000-8000-000000000806';
+      UPDATE provider_accounts
+      SET adapter_defaults = '{"madeForKids":false,"privacyStatus":"unlisted","notifySubscribers":true}'::jsonb
+      WHERE id = '${providerAccountId}';
+    `);
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+        'idempotency-key': 'youtube-settings-1',
+      },
+      payload: {
+        content: {
+          kind: 'video',
+          providerOptions: {
+            youtube: { schemaVersion: 1, title: 'Release', privacyStatus: 'public' },
+          },
+        },
+        providerAccountIds: [providerAccountId],
+        scheduledAt: '2026-09-02T10:00:00.000Z',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const jobPath = created.json<{ data: { links: { jobs: string[] } } }>().data.links.jobs[0];
+    if (!jobPath) throw new Error('Create response omitted the YouTube job link');
+    const detail = await application.inject({
+      method: 'GET',
+      url: jobPath,
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+      },
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      data: {
+        effectiveProviderSettings: {
+          schemaVersion: 1,
+          title: 'Release',
+          privacyStatus: 'public',
+          madeForKids: false,
+          notifySubscribers: true,
+        },
+      },
+    });
+  });
+
   it('atomically creates direct resource links and replays an identical mutation', async () => {
     const request = {
       method: 'POST' as const,

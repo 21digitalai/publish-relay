@@ -15,6 +15,7 @@ export const youtubeDestinationDefaultsSchema = z
   .strict();
 
 const youtubeRequestOptionsSchema = youtubeDestinationDefaultsSchema.extend({
+  schemaVersion: z.literal(1),
   title: z.string().trim().min(1),
   description: z.string().optional(),
 });

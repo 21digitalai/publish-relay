@@ -80,7 +80,7 @@ export function createApplication(
       mutationKey: 60,
       windowMs: 60_000,
     });
-    registerApiKeyRoutes(application, apiKeys, rateLimiter);
+    registerApiKeyRoutes(application, apiKeys, rateLimiter, auth);
     if (database) {
       if (!config.CURSOR_SIGNING_SECRET)
         throw new Error('CURSOR_SIGNING_SECRET is required for API routes');

@@ -1,7 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { apiKeys, auditEvents, workspaces } from '../../database/schema.js';
+import { apiKeys, auditEvents, users, workspaces } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { ApiKeyStore } from './api-key.service.js';
 
@@ -74,6 +74,31 @@ export function createPostgresApiKeyStore(database: NodePgDatabase): ApiKeyStore
           .limit(1);
         const row = rows[0];
         return row ? { ...row, capabilities: row.capabilities as never } : null;
+      });
+    },
+    async list(workspaceId, userId) {
+      return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
+        const rows = await transaction
+          .select({
+            id: apiKeys.id,
+            workspaceId: apiKeys.workspaceId,
+            createdByUserId: apiKeys.createdByUserId,
+            createdByDisplayName: users.displayName,
+            workspaceLabel: workspaces.name,
+            label: apiKeys.label,
+            prefix: apiKeys.prefix,
+            capabilities: apiKeys.capabilities,
+            expiresAt: apiKeys.expiresAt,
+            createdAt: apiKeys.createdAt,
+            lastUsedAt: apiKeys.lastUsedAt,
+            revokedAt: apiKeys.revokedAt,
+          })
+          .from(apiKeys)
+          .innerJoin(users, eq(users.id, apiKeys.createdByUserId))
+          .innerJoin(workspaces, eq(workspaces.id, apiKeys.workspaceId))
+          .where(eq(apiKeys.workspaceId, workspaceId))
+          .orderBy(apiKeys.createdAt);
+        return rows.map((row) => ({ ...row, capabilities: row.capabilities as never }));
       });
     },
     async markUsed(workspaceId, keyId, usedAt) {

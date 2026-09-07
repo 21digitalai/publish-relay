@@ -25,6 +25,14 @@ export interface ApiKeyRecord extends ApiKeyPrincipal {
   revokedAt: Date | null;
 }
 
+export interface ApiKeySummary extends ApiKeyPrincipal {
+  label: string;
+  createdByDisplayName: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}
+
 export interface ApiKeyStore {
   create(input: {
     workspaceId: string;
@@ -37,6 +45,7 @@ export interface ApiKeyStore {
     requestId: string;
   }): Promise<ApiKeyPrincipal>;
   findByPrefix(workspaceId: string, prefix: string): Promise<ApiKeyRecord | null>;
+  list(workspaceId: string, userId: string): Promise<ApiKeySummary[]>;
   markUsed(workspaceId: string, keyId: string, usedAt: Date): Promise<void>;
   recordCapabilityDenied(
     principal: ApiKeyPrincipal,
@@ -107,6 +116,10 @@ export class ApiKeyService {
     void secretHash;
     void revokedAt;
     return principal;
+  }
+
+  public list(workspaceId: string, userId: string): Promise<ApiKeySummary[]> {
+    return this.store.list(workspaceId, userId);
   }
 
   public async requireCapability(

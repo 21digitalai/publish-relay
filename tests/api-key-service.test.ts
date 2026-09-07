@@ -10,13 +10,15 @@ import {
 function createHarness() {
   const create = vi.fn<ApiKeyStore['create']>();
   const findByPrefix = vi.fn<ApiKeyStore['findByPrefix']>();
+  const list = vi.fn<ApiKeyStore['list']>();
   const markUsed = vi.fn<ApiKeyStore['markUsed']>();
   const recordCapabilityDenied = vi.fn<ApiKeyStore['recordCapabilityDenied']>();
   const revoke = vi.fn<ApiKeyStore['revoke']>();
   return {
-    store: { create, findByPrefix, markUsed, recordCapabilityDenied, revoke },
+    store: { create, findByPrefix, list, markUsed, recordCapabilityDenied, revoke },
     create,
     findByPrefix,
+    list,
     markUsed,
     recordCapabilityDenied,
     revoke,

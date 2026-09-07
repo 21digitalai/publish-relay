@@ -65,10 +65,12 @@ describe('YouTubeHttpClient', () => {
   });
 
   it('starts and resumes an upload from the provider-confirmed offset', async () => {
+    const sessionUrl =
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=session';
     const request = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
-        new Response(null, { status: 200, headers: { location: 'https://upload.test/session' } }),
+        new Response(null, { status: 200, headers: { location: sessionUrl } }),
       )
       .mockResolvedValueOnce(new Response(null, { status: 308, headers: { range: 'bytes=0-255' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-1' }), { status: 200 }));
@@ -85,18 +87,62 @@ describe('YouTubeHttpClient', () => {
         metadata: { snippet: { title: 'Clip' } },
         notifySubscribers: false,
       }),
-    ).resolves.toBe('https://upload.test/session');
-    await expect(client.queryUpload('https://upload.test/session', 'access', 512)).resolves.toEqual(
-      { status: 'incomplete', nextOffset: 256 },
-    );
+    ).resolves.toBe(sessionUrl);
+    await expect(client.queryUpload(sessionUrl, 'access', 512)).resolves.toEqual({
+      status: 'incomplete',
+      nextOffset: 256,
+    });
     await expect(
       client.uploadChunk({
-        sessionUrl: 'https://upload.test/session',
+        sessionUrl,
         accessToken: 'access',
         bytes: new Uint8Array(256),
         startOffset: 256,
         totalBytes: 512,
       }),
     ).resolves.toEqual({ status: 'complete', videoId: 'video-1' });
+  });
+
+  it.each([
+    'https://attacker.example/upload/youtube/v3/videos?upload_id=session',
+    'http://www.googleapis.com/upload/youtube/v3/videos?upload_id=session',
+    'https://www.googleapis.com.attacker.example/upload/youtube/v3/videos?upload_id=session',
+    'https://user@www.googleapis.com/upload/youtube/v3/videos?upload_id=session',
+    'not a url',
+  ])('rejects an untrusted upload session URL before sending credentials: %s', async (sessionUrl) => {
+    const request = vi.fn<typeof fetch>();
+    const client = new YouTubeHttpClient({
+      clientId: 'id',
+      clientSecret: 'secret',
+      fetch: request,
+    });
+    await expect(client.queryUpload(sessionUrl, 'access-secret', 512)).rejects.toThrow(
+      /upload session URL/,
+    );
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('rejects an untrusted upload session URL returned during initiation', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 200,
+        headers: { location: 'https://attacker.example/upload/youtube/v3/videos' },
+      }),
+    );
+    const client = new YouTubeHttpClient({
+      clientId: 'id',
+      clientSecret: 'secret',
+      fetch: request,
+    });
+    await expect(
+      client.initiateUpload({
+        accessToken: 'access',
+        totalBytes: 512,
+        mimeType: 'video/mp4',
+        metadata: {},
+        notifySubscribers: false,
+      }),
+    ).rejects.toThrow('not an authorized Google upload URL');
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

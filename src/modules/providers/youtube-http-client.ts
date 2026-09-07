@@ -17,6 +17,27 @@ const channelResponseSchema = z.object({
   ),
 });
 
+const YOUTUBE_UPLOAD_ORIGIN = 'https://www.googleapis.com';
+const YOUTUBE_UPLOAD_PATH = '/upload/youtube/v3/videos';
+
+function validateUploadSessionUrl(sessionUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(sessionUrl);
+  } catch {
+    throw new Error('YouTube upload session URL is malformed');
+  }
+  if (
+    url.origin !== YOUTUBE_UPLOAD_ORIGIN ||
+    url.pathname !== YOUTUBE_UPLOAD_PATH ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error('YouTube upload session URL is not an authorized Google upload URL');
+  }
+  return url.toString();
+}
+
 export interface YouTubeCredential {
   accessToken: string;
   refreshToken: string;
@@ -117,7 +138,7 @@ export class YouTubeHttpClient {
       throw new Error(`YouTube upload initialization failed with HTTP ${String(response.status)}`);
     const sessionUrl = response.headers.get('location');
     if (!sessionUrl) throw new Error('YouTube upload initialization omitted the session URL');
-    return sessionUrl;
+    return validateUploadSessionUrl(sessionUrl);
   }
 
   public queryUpload(
@@ -171,7 +192,8 @@ export class YouTubeHttpClient {
     accessToken: string,
     init: { headers: Record<string, string>; body?: BodyInit },
   ): Promise<YouTubeUploadProgress> {
-    const response = await this.request(sessionUrl, {
+    const validatedSessionUrl = validateUploadSessionUrl(sessionUrl);
+    const response = await this.request(validatedSessionUrl, {
       method: 'PUT',
       headers: { authorization: `Bearer ${accessToken}`, ...init.headers },
       ...(init.body === undefined ? {} : { body: init.body }),

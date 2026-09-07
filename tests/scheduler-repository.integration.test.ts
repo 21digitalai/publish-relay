@@ -354,6 +354,39 @@ describe('scheduler repository', () => {
     ).toEqual([jobId]);
   });
 
+  it('isolates reconciliation claims by provider while retaining the unfiltered path', async () => {
+    const youtubeJobId = '00000000-0000-4000-8000-000000000317';
+    const now = new Date('2026-08-31T16:00:00Z');
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'x' WHERE id = '00000000-0000-4000-8000-000000000304';
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+        VALUES ('00000000-0000-4000-8000-000000000314', '${workspaceId}', 'youtube', '00000000-0000-4000-8000-000000000303');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
+        VALUES ('00000000-0000-4000-8000-000000000315', '${workspaceId}', '00000000-0000-4000-8000-000000000314', 'youtube-channel', 'YouTube');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state, reconciliation_required)
+        VALUES ('${youtubeJobId}', '${workspaceId}', '00000000-0000-4000-8000-000000000306', '00000000-0000-4000-8000-000000000308', '00000000-0000-4000-8000-000000000315', '2026-08-31T15:00:00Z', 'accepted_pending', true);
+      UPDATE publication_jobs SET state = 'accepted_pending', reconciliation_required = true WHERE id = '${jobId}';
+    `);
+
+    expect(
+      await claimReconciliationJobs(db, {
+        workerId: 'x-reconciler', now, leaseMs: 30_000, limit: 10, provider: 'x',
+      }),
+    ).toEqual([jobId]);
+    await database.exec(`UPDATE publication_jobs SET lease_owner = NULL, lease_expires_at = NULL`);
+    expect(
+      await claimReconciliationJobs(db, {
+        workerId: 'youtube-reconciler', now, leaseMs: 30_000, limit: 10, provider: 'youtube',
+      }),
+    ).toEqual([youtubeJobId]);
+    await database.exec(`UPDATE publication_jobs SET lease_owner = NULL, lease_expires_at = NULL`);
+    expect(
+      await claimReconciliationJobs(db, {
+        workerId: 'all-reconciler', now, leaseMs: 30_000, limit: 10,
+      }),
+    ).toEqual([jobId, youtubeJobId]);
+  });
+
   it('rejects reconciliation resolution after the owned lease expires', async () => {
     const claimedAt = new Date('2026-08-31T16:00:00Z');
     await database.exec(`UPDATE publication_jobs SET state = 'accepted_pending',

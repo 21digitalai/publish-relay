@@ -343,13 +343,23 @@ export async function requestOperatorRetry(
         )
         .returning({ id: publicationJobs.id });
       if (jobs.length === 0) return 'conflict';
+      if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.actorId))
+        await transaction
+          .update(posts)
+          .set({ lastMutatorType: 'user', lastMutatorId: input.actorId, updatedAt: input.now })
+          .where(
+            and(
+              eq(posts.workspaceId, input.workspaceId),
+              sql`${posts.id} = (select post_id from publication_jobs where id = ${input.jobId})`,
+            ),
+          );
       await transaction.insert(publicationJobEvents).values({
         workspaceId: input.workspaceId,
         jobId: input.jobId,
         fromState: 'failed',
         toState: 'retry_wait',
         reason: 'operator_retry',
-        metadata: { actorId: input.actorId },
+        metadata: { actorType: 'user', actorId: input.actorId },
       });
       return 'scheduled';
     },

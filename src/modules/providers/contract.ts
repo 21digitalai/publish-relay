@@ -6,7 +6,7 @@ export interface YouTubeVideoOptions {
   description?: string;
   privacyStatus: 'public' | 'unlisted' | 'private';
   madeForKids: boolean;
-  notifySubscribers?: boolean;
+  notifySubscribers: boolean;
   tags?: string[];
   categoryId?: string;
 }

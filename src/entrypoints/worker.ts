@@ -16,6 +16,11 @@ import {
   dispatchDueXJobs,
   reconcileXJobs,
 } from '../modules/providers/x-media-dispatch.service.js';
+import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
+import {
+  dispatchDueYouTubeJobs,
+  reconcileYouTubeJobs,
+} from '../modules/providers/youtube-media-dispatch.service.js';
 
 const config = loadRuntimeConfig();
 const shutdownController = new AbortController();
@@ -54,9 +59,27 @@ const xRuntime = xCredentials
       leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
     }
   : null;
+const youtubeRuntime =
+  config.PUBLISH_RELAY_GOOGLE_CLIENT_ID && config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET
+    ? {
+        database,
+        keys,
+        source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
+        client: new YouTubeHttpClient({
+          clientId: config.PUBLISH_RELAY_GOOGLE_CLIENT_ID,
+          clientSecret: config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET,
+        }),
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      }
+    : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
+  );
+if (!youtubeRuntime)
+  process.stdout.write(
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'youtube', reason: 'missing_configuration' })}\n`,
   );
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -69,6 +92,10 @@ while (!shutdownController.signal.aborted) {
   if (xRuntime) {
     await reconcileXJobs(xRuntime);
     await dispatchDueXJobs(xRuntime);
+  }
+  if (youtubeRuntime) {
+    await reconcileYouTubeJobs(youtubeRuntime);
+    await dispatchDueYouTubeJobs(youtubeRuntime);
   }
   const now = new Date();
   const deletedStagingObjects = await reconcileMediaStaging(now);

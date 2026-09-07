@@ -48,7 +48,7 @@ export async function storeStagedMediaInTransaction(
   input: {
     workspaceId: string;
     userId: string;
-    actor: { type: 'api-key'; id: string };
+    actor: { type: 'user' | 'api-key'; id: string };
     requestId: string;
     idempotencyKey: string;
     staged: StagedMedia;

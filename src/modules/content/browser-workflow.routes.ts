@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { Readable } from 'node:stream';
 import { z } from 'zod';
 
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
@@ -16,6 +17,8 @@ import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.reposit
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
 import { getReadyMediaForDownload } from './media.repository.js';
 import type { MediaStorage } from './media-storage.js';
+import { FfprobeMediaProbe, type MediaProbe } from './media-probe.js';
+import { detectMimeType, storeStagedMediaInTransaction } from './media.service.js';
 import { createPostRequestSchema } from './post.contract.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import {
@@ -48,6 +51,8 @@ const mediaParamsSchema = z.object({ mediaId: z.uuid() });
 const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
+const BROWSER_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+const BROWSER_VIDEO_LIMITS = { maxDurationMs: 60 * 60 * 1000, maxWidth: 8192, maxHeight: 8192 };
 
 function authorizeMutation(request: FastifyRequest): boolean {
   const cookies = request.cookies as Record<string, string | undefined> | undefined;
@@ -89,7 +94,11 @@ function mutationError(request: FastifyRequest, reply: FastifyReply, error: unkn
       metadata: error.metadata,
       requestId: request.id,
     });
-  if (error instanceof z.ZodError || error instanceof PostValidationError)
+  if (
+    error instanceof z.ZodError ||
+    error instanceof PostValidationError ||
+    (error instanceof Error && /Media|Idempotency|Unsupported/.test(error.message))
+  )
     return reply.code(400).send({ data: null, error: error.message });
   if (error instanceof PostNotFoundError)
     return reply.code(404).send({ data: null, error: 'Post was not found' });
@@ -150,10 +159,113 @@ export function registerBrowserWorkflowRoutes(
     now?: () => Date;
     actionPolicy?: ActionPolicy;
     mediaStorage?: MediaStorage;
+    mediaProbe?: MediaProbe;
+    videoConfig?: { maxBytes: number; limits: typeof BROWSER_VIDEO_LIMITS };
   },
 ): void {
   const actionPolicy = dependencies.actionPolicy ?? allowAllActionPolicy;
   const mediaStorage = dependencies.mediaStorage;
+  const mediaProbe = dependencies.mediaProbe ?? new FfprobeMediaProbe();
+  const videoConfig = dependencies.videoConfig ?? {
+    maxBytes: BROWSER_VIDEO_MAX_BYTES,
+    limits: BROWSER_VIDEO_LIMITS,
+  };
+  if (mediaStorage && !application.hasContentTypeParser('video/mp4'))
+    application.addContentTypeParser(
+      'video/mp4',
+      { bodyLimit: videoConfig.maxBytes },
+      (_request, body, done) => {
+        done(null, body);
+      },
+    );
+  if (mediaStorage)
+    application.post('/api/workflow/media', async (request, reply) => {
+      let temporaryKey: string | undefined;
+      try {
+        const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+        if (!identity)
+          return await reply.code(401).send({ data: null, error: 'Authentication required' });
+        if (!authorizeMutation(request))
+          return await reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+        const key = idempotencyKey(request.headers);
+        if (!key)
+          return await reply
+            .code(400)
+            .send({ data: null, error: 'A valid Idempotency-Key is required' });
+        const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
+        if (contentType !== 'video/mp4' || !mediaStorage.stageStream || !mediaStorage.promote || !mediaProbe.probeMp4File)
+          return await reply.code(400).send({ data: null, error: 'A valid MP4 upload is required' });
+        z.string().min(1).max(255).parse(request.headers['x-file-name']);
+        const staged = await mediaStorage.stageStream({
+          stream: request.body as Readable,
+          maxBytes: videoConfig.maxBytes,
+          fingerprintPrefix: Buffer.from('video/mp4\0'),
+        });
+        temporaryKey = staged.temporaryKey;
+        if (detectMimeType(staged.prefix) !== 'video/mp4') throw new Error('Media Content-Type mismatch');
+        const metadata = await mediaProbe.probeMp4File(staged.filePath);
+        if (metadata.durationMs > videoConfig.limits.maxDurationMs)
+          throw new Error('Media duration exceeds the configured limit');
+        if (metadata.width > videoConfig.limits.maxWidth || metadata.height > videoConfig.limits.maxHeight)
+          throw new Error('Media dimensions exceed the configured limit');
+        const result = await executeBrowserMutation(
+          dependencies.database,
+          {
+            workspaceId: identity.workspaceId,
+            userId: identity.userId,
+            operation: 'media.create',
+            idempotencyKey: key,
+            requestFingerprint: staged.requestFingerprint,
+          },
+          async (transaction) => {
+            const media = await storeStagedMediaInTransaction(
+              transaction,
+              mediaStorage,
+              {
+                workspaceId: identity.workspaceId,
+                userId: identity.userId,
+                actor: { type: 'user', id: identity.userId },
+                requestId: request.id,
+                idempotencyKey: key,
+                staged,
+                mimeType: 'video/mp4',
+                metadata,
+              },
+              actionPolicy,
+            );
+            temporaryKey = `${identity.workspaceId}/${media.mediaId}/${media.sha256}`;
+            return {
+              statusCode: 201,
+              body: {
+                data: {
+                  id: media.mediaId,
+                  mimeType: media.mimeType,
+                  byteSize: media.byteSize,
+                  ...metadata,
+                  state: 'ready',
+                },
+                error: null,
+              },
+            };
+          },
+        );
+        temporaryKey = undefined;
+        if (result.kind === 'conflict') {
+          await mediaStorage.delete(staged.temporaryKey);
+          return await reply
+            .code(409)
+            .send({ data: null, error: 'Idempotency key was already used' });
+        }
+        if (result.kind === 'replayed') {
+          await mediaStorage.delete(staged.temporaryKey);
+          void reply.header('Idempotency-Replayed', 'true');
+        }
+        return await reply.code(result.response.statusCode).send(result.response.body);
+      } catch (error) {
+        if (temporaryKey) await mediaStorage.delete(temporaryKey).catch(() => undefined);
+        return mutationError(request, reply, error);
+      }
+    });
   if (mediaStorage)
     application.get('/api/workflow/media/:mediaId', async (request, reply) => {
       let identity;

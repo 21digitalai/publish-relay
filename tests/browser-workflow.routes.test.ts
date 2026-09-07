@@ -12,6 +12,7 @@ const cancelPendingJob = vi.fn();
 const requestOperatorRetry = vi.fn();
 const verifyCsrfToken = vi.fn(() => true);
 const executeBrowserMutation = vi.fn();
+const storeStagedMediaInTransaction = vi.fn();
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest,
@@ -20,6 +21,10 @@ vi.mock('../src/modules/identity/auth.routes.js', () => ({
 vi.mock('../src/modules/identity/session.js', () => ({ verifyCsrfToken }));
 vi.mock('../src/modules/content/browser-idempotency.repository.js', () => ({
   executeBrowserMutation,
+}));
+vi.mock('../src/modules/content/media.service.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  storeStagedMediaInTransaction,
 }));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   cancelPendingJob,
@@ -370,4 +375,125 @@ describe('browser workflow read contract', () => {
       await application.close();
     },
   );
+});
+
+describe('browser workflow MP4 ingest', () => {
+  const storage = {
+    stageStream: vi.fn(),
+    promote: vi.fn(),
+    delete: vi.fn(),
+    read: vi.fn(),
+    store: vi.fn(),
+    put: vi.fn(),
+  };
+  const probe = { probe: vi.fn(), probeMp4: vi.fn(), probeMp4File: vi.fn() };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    verifyCsrfToken.mockReturnValue(true);
+    storage.delete.mockResolvedValue(undefined);
+    authorizeRequest.mockResolvedValue({ workspaceId, userId: 'user', role: 'owner' });
+    storage.stageStream.mockResolvedValue({
+      temporaryKey: '.temporary/upload',
+      filePath: '/tmp/upload',
+      prefix: Buffer.from([0, 0, 0, 0, 0x66, 0x74, 0x79, 0x70, 0, 0, 0, 0]),
+      sha256: 'a'.repeat(64),
+      byteSize: 128,
+      requestFingerprint: 'fingerprint',
+    });
+    probe.probeMp4File.mockResolvedValue({ durationMs: 1000, width: 1080, height: 1920 });
+    storeStagedMediaInTransaction.mockResolvedValue({
+      mediaId: '00000000-0000-4000-8000-000000000899',
+      mimeType: 'video/mp4',
+      sha256: 'a'.repeat(64),
+      byteSize: 128,
+    });
+    executeBrowserMutation.mockImplementation(
+      async (
+        _database: unknown,
+        _input: unknown,
+        mutation: (transaction: never) => Promise<unknown>,
+      ) => ({
+        kind: 'executed',
+        response: await mutation({} as never),
+      }),
+    );
+  });
+
+  async function upload(headers: Record<string, string> = {}) {
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, {
+      auth: {} as AuthService,
+      database: {} as never,
+      mediaStorage: storage,
+      mediaProbe: probe,
+      videoConfig: {
+        maxBytes: 1024,
+        limits: { maxDurationMs: 2000, maxWidth: 1920, maxHeight: 1920 },
+      },
+    });
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/media',
+      headers: {
+        'content-type': 'video/mp4',
+        'x-file-name': 'clip.mp4',
+        'idempotency-key': 'browser-upload',
+        'x-csrf-token': 'csrf',
+        cookie: 'publish_relay_csrf=csrf',
+        ...headers,
+      },
+      payload: Buffer.from('video'),
+    });
+    await application.close();
+    return response;
+  }
+
+  it('stores a tenant-scoped user upload and returns only ready media fields', async () => {
+    const response = await upload();
+
+    expect(response.statusCode).toBe(201);
+    expect(executeBrowserMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId, userId: 'user', operation: 'media.create' }),
+      expect.any(Function),
+    );
+    expect(storeStagedMediaInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      storage,
+      expect.objectContaining({ workspaceId, userId: 'user', actor: { type: 'user', id: 'user' } }),
+      expect.anything(),
+    );
+    expect(response.json()).toEqual({
+      data: {
+        id: '00000000-0000-4000-8000-000000000899',
+        mimeType: 'video/mp4',
+        byteSize: 128,
+        durationMs: 1000,
+        width: 1080,
+        height: 1920,
+        state: 'ready',
+      },
+      error: null,
+    });
+    expect(response.body).not.toContain('sha256');
+  });
+
+  it('rejects missing sessions and CSRF before staging bytes', async () => {
+    authorizeRequest.mockResolvedValueOnce(null);
+    expect((await upload()).statusCode).toBe(401);
+    verifyCsrfToken.mockReturnValueOnce(false);
+    expect((await upload()).statusCode).toBe(403);
+    expect(storage.stageStream).not.toHaveBeenCalled();
+  });
+
+  it('rolls back staged bytes when validation or persistence fails', async () => {
+    probe.probeMp4File.mockResolvedValueOnce({ durationMs: 3000, width: 1080, height: 1920 });
+    expect((await upload()).statusCode).toBe(400);
+    expect(storage.delete).toHaveBeenCalledWith('.temporary/upload');
+
+    storeStagedMediaInTransaction.mockRejectedValueOnce(new Error('database unavailable'));
+    expect((await upload()).statusCode).toBe(500);
+    expect(storage.delete).toHaveBeenCalledWith('.temporary/upload');
+  });
 });

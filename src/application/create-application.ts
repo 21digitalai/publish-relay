@@ -128,6 +128,14 @@ export function createApplication(
       database,
       actionPolicy,
       ...(mediaStorage ? { mediaStorage } : {}),
+      videoConfig: {
+        maxBytes: config.MEDIA_VIDEO_MAX_BYTES ?? AGENT_MEDIA_MAX_BYTES,
+        limits: {
+          maxDurationMs: config.MEDIA_VIDEO_MAX_DURATION_MS ?? AGENT_VIDEO_LIMITS.maxDurationMs,
+          maxWidth: config.MEDIA_VIDEO_MAX_WIDTH ?? AGENT_VIDEO_LIMITS.maxWidth,
+          maxHeight: config.MEDIA_VIDEO_MAX_HEIGHT ?? AGENT_VIDEO_LIMITS.maxHeight,
+        },
+      },
     });
   }
   if (auth && database && xOauth)

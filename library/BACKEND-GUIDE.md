@@ -80,6 +80,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 ## Provider adapter contract
 
 - Provider adapters implement the versioned `ProviderAdapter` contract for connect, discover, validate, stage, publish, lookup, and revoke.
+- Adapter contract v1.1 adds the provider-neutral `video` content kind with exactly one media reference and versioned YouTube options. YouTube requires a title, explicit `privacyStatus` and `madeForKids`; `notifySubscribers` defaults only at the product boundary to false, while description, tags, and category remain absent when omitted. The adapter advertises video-only technical capabilities and fails closed until OAuth, resumable-upload, lookup, and revocation transports are configured.
 - Core content is an explicit text, quote, or article union with typed media references. Adapters reject unsupported input; they never silently truncate or transform it.
 - Publishing returns one typed outcome: published, accepted pending, unknown/reconciliation-required, or failed with auth, rate-limit, validation, transient, or permanent classification.
 - Staging is idempotent by caller-supplied key. An unknown publish outcome must be reconciled through lookup rather than retried blindly.

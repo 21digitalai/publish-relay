@@ -1,4 +1,15 @@
-export const PROVIDER_ADAPTER_VERSION = '1.0' as const;
+export const PROVIDER_ADAPTER_VERSION = '1.1' as const;
+
+export interface YouTubeVideoOptions {
+  schemaVersion: 1;
+  title: string;
+  description?: string;
+  privacyStatus: 'public' | 'unlisted' | 'private';
+  madeForKids: boolean;
+  notifySubscribers?: boolean;
+  tags?: string[];
+  categoryId?: string;
+}
 
 export interface ProviderTechnicalCapabilities {
   readonly providerFamily: string;
@@ -18,7 +29,13 @@ export interface MediaReference {
 export type PublishContent =
   | { kind: 'text'; text: string; media: MediaReference[] }
   | { kind: 'quote'; text: string; quotedPostId: string; media: MediaReference[] }
-  | { kind: 'article'; title: string; body: string; media: MediaReference[] };
+  | { kind: 'article'; title: string; body: string; media: MediaReference[] }
+  | {
+      kind: 'video';
+      text: string;
+      media: [MediaReference];
+      providerOptions: { youtube: YouTubeVideoOptions };
+    };
 
 export type ProviderErrorCode = 'auth' | 'rate_limit' | 'validation' | 'transient' | 'permanent';
 

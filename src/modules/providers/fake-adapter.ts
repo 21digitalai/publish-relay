@@ -11,8 +11,8 @@ export class DeterministicFakeProviderAdapter implements ProviderAdapter {
   public readonly version = PROVIDER_ADAPTER_VERSION;
   public readonly capabilities = {
     providerFamily: 'fake',
-    contentKinds: ['text', 'quote', 'article'],
-    supportedMediaTypes: ['image/*'],
+    contentKinds: ['text', 'quote', 'article', 'video'],
+    supportedMediaTypes: ['image/*', 'video/mp4'],
     accountTargetMode: 'single_account',
     dispatchMode: 'immediate_or_scheduled',
     verifiedLimits: {},

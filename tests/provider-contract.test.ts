@@ -23,8 +23,8 @@ describe('provider adapter contract', () => {
     });
     expect(adapter.capabilities).toEqual({
       providerFamily: 'fake',
-      contentKinds: ['text', 'quote', 'article'],
-      supportedMediaTypes: ['image/*'],
+      contentKinds: ['text', 'quote', 'article', 'video'],
+      supportedMediaTypes: ['image/*', 'video/mp4'],
       accountTargetMode: 'single_account',
       dispatchMode: 'immediate_or_scheduled',
       verifiedLimits: {},

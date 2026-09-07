@@ -54,8 +54,25 @@ export async function stageYouTubeMedia(
   const existing = await withTenantTransaction(database, input, (transaction) =>
     findStagingArtifact(transaction, input.workspaceId, input.jobId, input.mediaId),
   );
-  const artifact = existing ?? (await initializeUpload(database, source, client, keys, input));
+  const artifact = existing ?? (await reserveUpload(database, input));
+  await initializeUpload(database, source, client, keys, input, artifact);
   return resumeUpload(database, source, client, keys, input, artifact);
+}
+
+async function reserveUpload(
+  database: NodePgDatabase,
+  input: YouTubeStagingInput,
+): Promise<YouTubeArtifact> {
+  const now = input.now ?? new Date();
+  return withTenantTransaction(database, input, (transaction) =>
+    createStagingArtifact(transaction, {
+      workspaceId: input.workspaceId,
+      jobId: input.jobId,
+      mediaId: input.mediaId,
+      providerReference: 'youtube:resumable',
+      expiresAt: new Date(now.getTime() + YOUTUBE_SESSION_LIFETIME_MS),
+    }),
+  );
 }
 
 async function initializeUpload(
@@ -64,43 +81,38 @@ async function initializeUpload(
   client: YouTubeHttpClient,
   keys: MasterKeyProvider,
   input: YouTubeStagingInput,
-): Promise<YouTubeArtifact> {
-  const media = await source.load(input);
-  validateMedia(media);
-  let sessionBytes: Buffer | undefined;
-  try {
-    const sessionUrl = await client.initiateUpload({
-      accessToken: input.accessToken,
-      totalBytes: media.bytes.length,
-      mimeType: media.mimeType,
-      metadata: input.metadata,
-      notifySubscribers: input.notifySubscribers,
-    });
-    sessionBytes = Buffer.from(sessionUrl);
-    const encrypted = await encryptCredential(sessionBytes, keys);
-    const now = input.now ?? new Date();
-    return await withTenantTransaction(database, input, async (transaction) => {
-      const reserved = await createStagingArtifact(transaction, {
-        workspaceId: input.workspaceId,
-        jobId: input.jobId,
-        mediaId: input.mediaId,
-        providerReference: 'youtube:resumable',
-        expiresAt: new Date(now.getTime() + YOUTUBE_SESSION_LIFETIME_MS),
+  artifact: YouTubeArtifact,
+): Promise<void> {
+  await withProviderStagingLock(database, artifact.id, async () => {
+    const current = await loadArtifact(database, input.workspaceId, artifact.id);
+    if (current.externalObjectId || current.providerReferenceCredentialId) return;
+    const media = await source.load(input);
+    let sessionBytes: Buffer | undefined;
+    try {
+      validateMedia(media);
+      const sessionUrl = await client.initiateUpload({
+        accessToken: input.accessToken,
+        totalBytes: media.bytes.length,
+        mimeType: media.mimeType,
+        metadata: input.metadata,
+        notifySubscribers: input.notifySubscribers,
       });
-      if (!reserved.isOwner) return reserved;
+      sessionBytes = Buffer.from(sessionUrl);
+      const encrypted = await encryptCredential(sessionBytes, keys);
+      await withTenantTransaction(database, input, async (transaction) => {
       const credential = await createCredential(transaction, input.workspaceId, encrypted);
       await attachStagingReferenceCredential(
         transaction,
         input.workspaceId,
-        reserved.id,
+          current.id,
         credential.id,
       );
-      return { ...reserved, providerReferenceCredentialId: credential.id };
-    });
-  } finally {
-    sessionBytes?.fill(0);
-    media.bytes.fill(0);
-  }
+      });
+    } finally {
+      sessionBytes?.fill(0);
+      media.bytes.fill(0);
+    }
+  });
 }
 
 function validateMedia(media: { bytes: Buffer; mimeType: string }): void {
@@ -124,13 +136,14 @@ async function resumeUpload(
     }
     const credentialId = current.providerReferenceCredentialId;
     const media = await source.load(input);
-    validateMedia(media);
-    const stored = await withTenantTransaction(database, input, (transaction) =>
-      getActiveCredential(transaction, input.workspaceId, credentialId),
-    );
-    if (!stored) throw new Error('YouTube upload session credential is unavailable');
-    const sessionBytes = await decryptCredential(stored, keys);
+    let sessionBytes: Buffer | undefined;
     try {
+      validateMedia(media);
+      const stored = await withTenantTransaction(database, input, (transaction) =>
+        getActiveCredential(transaction, input.workspaceId, credentialId),
+      );
+      if (!stored) throw new Error('YouTube upload session credential is unavailable');
+      sessionBytes = await decryptCredential(stored, keys);
       const sessionUrl = sessionBytes.toString('utf8');
       const authority = await client.queryUpload(sessionUrl, input.accessToken, media.bytes.length);
       return await uploadFromAuthority(
@@ -143,7 +156,7 @@ async function resumeUpload(
         authority,
       );
     } finally {
-      sessionBytes.fill(0);
+      sessionBytes?.fill(0);
       media.bytes.fill(0);
     }
   });
@@ -183,6 +196,8 @@ async function uploadFromAuthority(
       startOffset,
       totalBytes: bytes.length,
     });
+    if (progress.status === 'incomplete' && progress.nextOffset <= startOffset)
+      throw new Error('YouTube resumable upload offset did not advance');
     await persistProgress(database, input.workspaceId, artifactId, progress);
   }
   return { videoId: progress.videoId };

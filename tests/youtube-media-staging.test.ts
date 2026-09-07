@@ -58,7 +58,9 @@ describe('stageYouTubeMedia', () => {
     vi.mocked(findStagingArtifact).mockResolvedValue(null);
     vi.mocked(createStagingArtifact).mockResolvedValue({ ...artifact, isOwner: true });
     vi.mocked(createCredential).mockResolvedValue({ id: 'credential-1' } as never);
-    vi.mocked(getStagingArtifactById).mockResolvedValue(artifact);
+    vi.mocked(getStagingArtifactById)
+      .mockResolvedValueOnce({ ...artifact, providerReferenceCredentialId: null })
+      .mockResolvedValue(artifact);
     vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
     vi.mocked(encryptCredential).mockImplementation((plaintext) => {
       encryptedSession = plaintext.toString('utf8');
@@ -72,7 +74,9 @@ describe('stageYouTubeMedia', () => {
         .fn()
         .mockResolvedValue('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=one'),
       queryUpload: vi.fn().mockResolvedValue({ status: 'incomplete', nextOffset: 2 }),
-      uploadChunk: vi.fn().mockResolvedValue({ status: 'complete', videoId: 'video-1' }),
+      uploadChunk: vi.fn()
+        .mockResolvedValueOnce({ status: 'incomplete', nextOffset: 4 })
+        .mockResolvedValueOnce({ status: 'complete', videoId: 'video-1' }),
     };
 
     await expect(
@@ -114,6 +118,12 @@ describe('stageYouTubeMedia', () => {
       expect.anything(),
       'workspace-1',
       'artifact-1',
+      { uploadPhase: 'uploading', nextByteOffset: 4 },
+    );
+    expect(updateStagingByteProgress).toHaveBeenCalledWith(
+      expect.anything(),
+      'workspace-1',
+      'artifact-1',
       { uploadPhase: 'finalized', nextByteOffset: 0, externalObjectId: 'video-1' },
     );
     expect(loadedBuffers).toHaveLength(2);
@@ -142,5 +152,42 @@ describe('stageYouTubeMedia', () => {
     expect(source.load).not.toHaveBeenCalled();
     expect(decryptCredential).not.toHaveBeenCalled();
     expect(client.queryUpload).not.toHaveBeenCalled();
+  });
+
+  it('zeroes loaded media when initialization validation or credential loading fails', async () => {
+    const invalid = Buffer.from('invalid');
+    vi.mocked(findStagingArtifact).mockResolvedValueOnce(null);
+    vi.mocked(createStagingArtifact).mockResolvedValueOnce({ ...artifact, isOwner: true, providerReferenceCredentialId: null });
+    vi.mocked(getStagingArtifactById).mockResolvedValueOnce({ ...artifact, providerReferenceCredentialId: null });
+    const initiateUpload = vi.fn();
+    await expect(stageYouTubeMedia({} as never, { load: vi.fn().mockResolvedValue({ bytes: invalid, mimeType: 'text/plain' }) }, { initiateUpload } as never, {} as never, {
+      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access', metadata: {}, notifySubscribers: false,
+    })).rejects.toThrow('requires video/mp4');
+    expect(invalid.every((byte) => byte === 0)).toBe(true);
+    expect(initiateUpload).not.toHaveBeenCalled();
+
+    const missing = Buffer.from('video');
+    vi.mocked(findStagingArtifact).mockResolvedValueOnce(artifact);
+    vi.mocked(getStagingArtifactById).mockResolvedValue(artifact);
+    vi.mocked(getActiveCredential).mockResolvedValueOnce(null);
+    await expect(stageYouTubeMedia({} as never, { load: vi.fn().mockResolvedValue({ bytes: missing, mimeType: 'video/mp4' }) }, {} as never, {} as never, {
+      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access', metadata: {}, notifySubscribers: false,
+    })).rejects.toThrow('session credential is unavailable');
+    expect(missing.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it('rejects a provider offset that does not advance', async () => {
+    vi.mocked(findStagingArtifact).mockResolvedValue(artifact);
+    vi.mocked(getStagingArtifactById).mockResolvedValue(artifact);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=one'));
+    const client = {
+      queryUpload: vi.fn().mockResolvedValue({ status: 'incomplete', nextOffset: 2 }),
+      uploadChunk: vi.fn().mockResolvedValue({ status: 'incomplete', nextOffset: 2 }),
+    };
+    await expect(stageYouTubeMedia({} as never, { load: vi.fn().mockResolvedValue({ bytes: Buffer.from('video'), mimeType: 'video/mp4' }) }, client as never, {} as never, {
+      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access', metadata: {}, notifySubscribers: false,
+    })).rejects.toThrow('offset did not advance');
+    expect(updateStagingByteProgress).not.toHaveBeenCalled();
   });
 });

@@ -731,23 +731,84 @@ select:focus-visible {
   border-radius: 10px;
   background: var(--surface-1);
 }
-.youtube-defaults > label {
+.youtube-defaults > label,
+.youtube-defaults .defaults-field {
   display: grid;
   gap: 6px;
   color: var(--muted);
   font-size: 12px;
+  position: relative;
 }
-.youtube-defaults select {
+.defaults-select-trigger,
+.defaults-toggle {
   min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-0);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
 }
-.youtube-defaults .toggle-label {
+.defaults-select-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 12px;
+}
+.defaults-select-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: grid;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-0);
+  box-shadow: var(--shadow-lg);
+}
+.defaults-select-menu button {
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.defaults-select-menu button:hover,
+.defaults-select-menu button.selected {
+  background: var(--surface-2);
+}
+.youtube-defaults .defaults-toggle {
   display: flex;
   align-items: center;
   min-height: 40px;
   gap: 8px;
+  padding: 0 10px;
 }
-.youtube-defaults .toggle-label input {
-  accent-color: var(--brand);
+.toggle-track {
+  width: 32px;
+  height: 18px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--faint);
+  transition: background var(--motion-hover);
+}
+.toggle-track span {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform var(--motion-hover);
+}
+.defaults-toggle[aria-checked='true'] .toggle-track {
+  background: var(--brand);
+}
+.defaults-toggle[aria-checked='true'] .toggle-track span {
+  transform: translateX(14px);
 }
 .youtube-defaults .field-error {
   grid-column: 1 / -1;

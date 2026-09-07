@@ -184,7 +184,8 @@ Job detail is a route-backed drawer on desktop and a page on mobile. Sections: s
 - Dialogs trap and restore focus; destructive dialogs focus Cancel by default.
 - Skeletons mirror final geometry. No shell-level full-screen spinner.
 - `WorkflowLoading` in `src/ui/workflow.tsx` is the canonical geometry-matched loading primitive for queue, calendar, and detail surfaces. Motion timing uses the shared `--motion-*` tokens in `src/ui/styles.css`; shimmer and entrance transforms are removed under reduced motion.
-- `LiveRegion` in `src/ui/workflow.tsx` owns polite mutation announcements after server-confirmed state changes. Visible persistent errors remain separate `role="alert"` content.
+- `LiveRegion` in `src/ui/feedback.tsx` owns polite mutation announcements after server-confirmed state changes across workflow and account surfaces. Visible persistent errors remain separate `role="alert"` content.
+- Account adapter settings use `.defaults-select-*` listboxes and `.defaults-toggle` switches rather than native selects or checkboxes; both expose explicit ARIA state and remain keyboard operable.
 - Queue empty: Nothing scheduled yet + Create post.
 - Filter empty: No jobs match these filters + Clear filters.
 - Accounts empty: Connect your first account with explanation.

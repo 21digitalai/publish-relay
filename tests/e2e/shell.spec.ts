@@ -164,6 +164,10 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
 test('edits YouTube destination defaults through the account row', async ({ page }) => {
   await establishWorkspaceSession(page);
   let savedBody: unknown;
+  let savedHeaders: Record<string, string> = {};
+  let savedMethod = '';
+  let patchCount = 0;
+  let persistedDefaults = { privacyStatus: 'unlisted', madeForKids: false };
   await page.route('**/api/provider-accounts', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -176,7 +180,7 @@ test('edits YouTube destination defaults through the account row', async ({ page
               displayName: 'Relay Channel',
               status: 'active',
               updatedAt: '2026-09-01T00:00:00Z',
-              adapterDefaults: { privacyStatus: 'unlisted', madeForKids: false },
+              adapterDefaults: persistedDefaults,
             },
           ],
         },
@@ -185,18 +189,36 @@ test('edits YouTube destination defaults through the account row', async ({ page
     }),
   );
   await page.route('**/api/provider-accounts/*/youtube-defaults', async (route) => {
+    patchCount += 1;
     savedBody = route.request().postDataJSON();
+    savedHeaders = route.request().headers();
+    savedMethod = route.request().method();
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    if (patchCount === 2) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Defaults service is unavailable' }),
+      });
+      return;
+    }
+    persistedDefaults = savedBody as typeof persistedDefaults;
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data: { adapterDefaults: savedBody }, error: null }),
     });
   });
   await page.goto('/w/atlas/accounts');
+  await expect(page.getByRole('button', { name: /Connect X/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Connect YouTube/ })).toBeVisible();
   await expect(page.getByText('Publishing defaults')).toBeVisible();
-  await page.getByLabel('Visibility').selectOption('public');
-  await page.getByLabel('Made for kids').selectOption('yes');
-  await page.getByLabel('Notify subscribers').check();
-  await page.getByRole('button', { name: 'Save defaults' }).click();
+  await page.getByRole('button', { name: 'Visibility' }).click();
+  await page.getByRole('option', { name: 'Public' }).click();
+  await page.getByRole('button', { name: 'Made for kids' }).click();
+  await page.getByRole('option', { name: 'Yes' }).click();
+  await page.getByRole('switch', { name: 'Notify subscribers' }).click();
+  const saveButton = page.getByRole('button', { name: 'Save defaults' });
+  await saveButton.click();
   await expect
     .poll(() => savedBody)
     .toEqual({
@@ -204,6 +226,23 @@ test('edits YouTube destination defaults through the account row', async ({ page
       madeForKids: true,
       notifySubscribers: true,
     });
+  expect(savedMethod).toBe('PATCH');
+  expect(savedHeaders['x-csrf-token']).toBeTruthy();
+  await expect(page.getByRole('status')).toContainText(
+    'Publishing defaults saved for Relay Channel.',
+  );
+  await expect(saveButton).toBeEnabled();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Visibility' })).toContainText('Public');
+  await expect(page.getByRole('button', { name: 'Made for kids' })).toContainText('Yes');
+  await expect(page.getByRole('switch', { name: 'Notify subscribers' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await page.getByRole('button', { name: 'Visibility' }).click();
+  await page.getByRole('option', { name: 'Private' }).click();
+  await page.getByRole('button', { name: 'Save defaults' }).click();
+  await expect(page.getByRole('alert')).toContainText('Defaults service is unavailable');
 });
 
 test('persists credential-free fake-provider connect and disconnect through reload', async ({
@@ -226,7 +265,7 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await expect(page.getByLabel('Account health summary')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('accounts-error.png'), fullPage: true });
   await page.goto('/w/atlas/accounts');
-  await page.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await page.getByRole('button', { name: 'Connect X', exact: true }).click();
   await expect(page.getByText('Daily Viber')).toBeVisible();
   await page.reload();
   await expect(page.getByText('Daily Viber')).toBeVisible();

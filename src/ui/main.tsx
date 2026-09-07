@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
+import { LiveRegion } from './feedback.js';
 import { CalendarPage, JobDetailPage, QueuePage, WorkspaceLayout } from './workflow.js';
 
 interface Account {
@@ -62,6 +63,63 @@ function Mark({ provider }: { provider: string }) {
     <span className={`provider-mark ${isX ? 'x' : 'generic'}`} aria-hidden="true">
       {isX ? 'X' : provider.slice(0, 1).toUpperCase()}
     </span>
+  );
+}
+
+function DefaultsSelect({
+  label,
+  name,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  name: string;
+  value: string;
+  options: [string, string][];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(([option]) => option === value)?.[1] ?? value;
+  return (
+    <div className="defaults-field">
+      <span>{label}</span>
+      <input name={name} type="hidden" value={value} />
+      <button
+        type="button"
+        className="defaults-select-trigger"
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => {
+          setOpen((current) => !current);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false);
+        }}
+      >
+        {selected} <span aria-hidden="true">⌄</span>
+      </button>
+      {open && (
+        <div className="defaults-select-menu" role="listbox" aria-label={label}>
+          {options.map(([option, text]) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option === value}
+              className={option === value ? 'selected' : ''}
+              key={option}
+              onClick={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -691,6 +749,16 @@ function AccountRow({
   const needsReconnect = account.health === 'Reconnect required';
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
+  const [defaultsAnnouncement, setDefaultsAnnouncement] = useState<string | null>(null);
+  const [privacyStatus, setPrivacyStatus] = useState(
+    account.adapterDefaults.privacyStatus ?? 'public',
+  );
+  const [madeForKids, setMadeForKids] = useState(
+    account.adapterDefaults.madeForKids === true ? 'yes' : 'no',
+  );
+  const [notifySubscribers, setNotifySubscribers] = useState(
+    account.adapterDefaults.notifySubscribers === true,
+  );
   return (
     <article className="account-row">
       <div className="account-identity">
@@ -734,13 +802,13 @@ function AccountRow({
           onSubmit={(event) => {
             event.preventDefault();
             const fields = new FormData(event.currentTarget);
-            const madeForKids = formText(fields, 'madeForKids');
             const defaults = {
               privacyStatus: formText(fields, 'privacyStatus') as 'public' | 'unlisted' | 'private',
-              madeForKids: madeForKids === 'yes',
-              notifySubscribers: fields.get('notifySubscribers') === 'on',
+              madeForKids: formText(fields, 'madeForKids') === 'yes',
+              notifySubscribers: formText(fields, 'notifySubscribers') === 'true',
             };
             setDefaultsError(null);
+            setDefaultsAnnouncement(null);
             setSavingDefaults(true);
             void fetch(`/api/provider-accounts/${account.id}/youtube-defaults`, {
               method: 'PATCH',
@@ -751,6 +819,7 @@ function AccountRow({
                 const result = (await response.json()) as { error: string | null };
                 if (!response.ok) throw new Error(result.error ?? 'Defaults could not be saved');
                 onDefaultsSaved({ ...account, adapterDefaults: defaults });
+                setDefaultsAnnouncement(`Publishing defaults saved for ${account.name}.`);
               })
               .catch((error: unknown) => {
                 setDefaultsError(
@@ -763,35 +832,44 @@ function AccountRow({
           }}
         >
           <strong>Publishing defaults</strong>
-          <label>
-            Visibility
-            <select
-              name="privacyStatus"
-              defaultValue={account.adapterDefaults.privacyStatus ?? 'public'}
-            >
-              <option value="public">Public</option>
-              <option value="unlisted">Unlisted</option>
-              <option value="private">Private</option>
-            </select>
-          </label>
-          <label>
-            Made for kids
-            <select
-              name="madeForKids"
-              defaultValue={account.adapterDefaults.madeForKids === true ? 'yes' : 'no'}
-            >
-              <option value="no">No</option>
-              <option value="yes">Yes</option>
-            </select>
-          </label>
-          <label className="toggle-label">
-            <input
-              name="notifySubscribers"
-              type="checkbox"
-              defaultChecked={account.adapterDefaults.notifySubscribers === true}
-            />
+          <DefaultsSelect
+            label="Visibility"
+            name="privacyStatus"
+            value={privacyStatus}
+            options={[
+              ['public', 'Public'],
+              ['unlisted', 'Unlisted'],
+              ['private', 'Private'],
+            ]}
+            onChange={(value) => {
+              setPrivacyStatus(value as 'public' | 'unlisted' | 'private');
+            }}
+          />
+          <DefaultsSelect
+            label="Made for kids"
+            name="madeForKids"
+            value={madeForKids}
+            options={[
+              ['no', 'No'],
+              ['yes', 'Yes'],
+            ]}
+            onChange={setMadeForKids}
+          />
+          <input name="notifySubscribers" type="hidden" value={String(notifySubscribers)} />
+          <button
+            type="button"
+            className="defaults-toggle"
+            role="switch"
+            aria-checked={notifySubscribers}
+            onClick={() => {
+              setNotifySubscribers((current) => !current);
+            }}
+          >
+            <span className="toggle-track" aria-hidden="true">
+              <span />
+            </span>
             Notify subscribers
-          </label>
+          </button>
           <button className="secondary-button" type="submit" disabled={savingDefaults}>
             {savingDefaults ? 'Saving…' : 'Save defaults'}
           </button>
@@ -800,6 +878,7 @@ function AccountRow({
               {defaultsError}
             </span>
           )}
+          <LiveRegion message={defaultsAnnouncement} />
         </form>
       )}
     </article>
@@ -936,7 +1015,7 @@ function AccountsPage() {
           </div>
           <div className="connect-actions">
             <button className="secondary-button connect-account" onClick={connectX}>
-              ＋ Connect account
+              ＋ Connect X
             </button>
             <button className="primary-button connect-account" onClick={connectYouTube}>
               ＋ Connect YouTube
@@ -1024,7 +1103,7 @@ function AccountsPage() {
               <h2>Connect your first account</h2>
               <p>Add a provider account to start scheduling from this workspace.</p>
               <button className="primary-button" onClick={connectX}>
-                Connect account
+                Connect X
               </button>
             </div>
           )}

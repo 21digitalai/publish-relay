@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Rail } from './main.js';
+import { LiveRegion } from './feedback.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
 type JobState =
@@ -97,14 +98,6 @@ const COLLISION_SPACING_MS = 15 * 60_000;
 const COLLISION_PAGE_LIMIT = 100;
 const COLLISION_MAX_PAGES_PER_ACCOUNT = 50;
 const COLLISION_WINDOW_MS = 7 * 24 * 60 * 60_000;
-
-function LiveRegion({ message }: { message: string | null }) {
-  return (
-    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-      {message ?? ''}
-    </p>
-  );
-}
 
 function WorkflowLoading({
   kind,

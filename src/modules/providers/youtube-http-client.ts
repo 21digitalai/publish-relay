@@ -31,6 +31,9 @@ export interface YouTubeHttpClientOptions {
   now?: () => number;
 }
 
+export type YouTubeUploadProgress =
+  { status: 'incomplete'; nextOffset: number } | { status: 'complete'; videoId: string };
+
 export class YouTubeHttpClient {
   private readonly request: typeof fetch;
   private readonly now: () => number;
@@ -89,6 +92,61 @@ export class YouTubeHttpClient {
       throw new Error(`Google token revocation failed with HTTP ${String(response.status)}`);
   }
 
+  public async initiateUpload(input: {
+    accessToken: string;
+    totalBytes: number;
+    mimeType: string;
+    metadata: Record<string, unknown>;
+    notifySubscribers: boolean;
+  }): Promise<string> {
+    const url = new URL('https://www.googleapis.com/upload/youtube/v3/videos');
+    url.searchParams.set('uploadType', 'resumable');
+    url.searchParams.set('part', 'snippet,status');
+    url.searchParams.set('notifySubscribers', String(input.notifySubscribers));
+    const response = await this.request(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${input.accessToken}`,
+        'content-type': 'application/json',
+        'x-upload-content-length': String(input.totalBytes),
+        'x-upload-content-type': input.mimeType,
+      },
+      body: JSON.stringify(input.metadata),
+    });
+    if (!response.ok)
+      throw new Error(`YouTube upload initialization failed with HTTP ${String(response.status)}`);
+    const sessionUrl = response.headers.get('location');
+    if (!sessionUrl) throw new Error('YouTube upload initialization omitted the session URL');
+    return sessionUrl;
+  }
+
+  public queryUpload(
+    sessionUrl: string,
+    accessToken: string,
+    totalBytes: number,
+  ): Promise<YouTubeUploadProgress> {
+    return this.uploadRequest(sessionUrl, accessToken, {
+      headers: { 'content-length': '0', 'content-range': `bytes */${String(totalBytes)}` },
+    });
+  }
+
+  public uploadChunk(input: {
+    sessionUrl: string;
+    accessToken: string;
+    bytes: Uint8Array;
+    startOffset: number;
+    totalBytes: number;
+  }): Promise<YouTubeUploadProgress> {
+    const endOffset = input.startOffset + input.bytes.byteLength - 1;
+    return this.uploadRequest(input.sessionUrl, input.accessToken, {
+      headers: {
+        'content-length': String(input.bytes.byteLength),
+        'content-range': `bytes ${String(input.startOffset)}-${String(endOffset)}/${String(input.totalBytes)}`,
+      },
+      body: new Blob([Uint8Array.from(input.bytes)]),
+    });
+  }
+
   private async tokenRequest(fields: Record<string, string>) {
     const response = await this.request('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -106,6 +164,29 @@ export class YouTubeHttpClient {
     const body = (await response.json().catch(() => null)) as unknown;
     if (!response.ok) throw new Error(`${action} failed with HTTP ${String(response.status)}`);
     return body;
+  }
+
+  private async uploadRequest(
+    sessionUrl: string,
+    accessToken: string,
+    init: { headers: Record<string, string>; body?: BodyInit },
+  ): Promise<YouTubeUploadProgress> {
+    const response = await this.request(sessionUrl, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${accessToken}`, ...init.headers },
+      ...(init.body === undefined ? {} : { body: init.body }),
+    });
+    if (response.status === 308) {
+      const range = response.headers.get('range');
+      const match = range?.match(/^bytes=0-(\d+)$/);
+      return { status: 'incomplete', nextOffset: match ? Number(match[1]) + 1 : 0 };
+    }
+    const body = (await this.responseJson(response, 'YouTube resumable upload')) as {
+      id?: unknown;
+    };
+    if (typeof body.id !== 'string' || !body.id)
+      throw new Error('YouTube upload response omitted video ID');
+    return { status: 'complete', videoId: body.id };
   }
 
   private credential(

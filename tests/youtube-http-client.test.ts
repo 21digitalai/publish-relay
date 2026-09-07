@@ -63,4 +63,40 @@ describe('YouTubeHttpClient', () => {
     });
     await expect(client.discoverChannels('expired')).rejects.toThrow('HTTP 401');
   });
+
+  it('starts and resumes an upload from the provider-confirmed offset', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, { status: 200, headers: { location: 'https://upload.test/session' } }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 308, headers: { range: 'bytes=0-255' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-1' }), { status: 200 }));
+    const client = new YouTubeHttpClient({
+      clientId: 'id',
+      clientSecret: 'secret',
+      fetch: request,
+    });
+    await expect(
+      client.initiateUpload({
+        accessToken: 'access',
+        totalBytes: 512,
+        mimeType: 'video/mp4',
+        metadata: { snippet: { title: 'Clip' } },
+        notifySubscribers: false,
+      }),
+    ).resolves.toBe('https://upload.test/session');
+    await expect(client.queryUpload('https://upload.test/session', 'access', 512)).resolves.toEqual(
+      { status: 'incomplete', nextOffset: 256 },
+    );
+    await expect(
+      client.uploadChunk({
+        sessionUrl: 'https://upload.test/session',
+        accessToken: 'access',
+        bytes: new Uint8Array(256),
+        startOffset: 256,
+        totalBytes: 512,
+      }),
+    ).resolves.toEqual({ status: 'complete', videoId: 'video-1' });
+  });
 });

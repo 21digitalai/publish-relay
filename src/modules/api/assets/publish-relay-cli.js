@@ -139,6 +139,15 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'self',
     'mediaCount',
     'previewMediaId',
+    'effectiveProviderSettings',
+    'schemaVersion',
+    'title',
+    'description',
+    'privacyStatus',
+    'madeForKids',
+    'notifySubscribers',
+    'tags',
+    'categoryId',
   ]),
 };
 const DEFAULT_OUTPUT_KEYS = new Set(ENVELOPE_OUTPUT_KEYS);

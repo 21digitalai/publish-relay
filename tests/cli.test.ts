@@ -370,4 +370,27 @@ describe('Publish Relay CLI', () => {
       links: { job: '/api/v1/jobs/job-1' },
     });
   });
+
+  it('preserves the full effective YouTube settings snapshot when polling completes', async () => {
+    const effectiveProviderSettings = {
+      schemaVersion: 1,
+      title: 'Scheduled clip',
+      privacyStatus: 'public',
+      madeForKids: false,
+      notifySubscribers: true,
+    };
+    const baseUrl = await fixture(200, {
+      success: true,
+      data: { id: 'job-1', state: 'published', effectiveProviderSettings },
+      meta: { requestId: 'request-4' },
+    });
+    const result = await cli(
+      ['publishes', 'poll', 'job-1', '--base-url', baseUrl, '--poll-timeout-ms', '100'],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { id: 'job-1', effectiveProviderSettings },
+    });
+  });
 });

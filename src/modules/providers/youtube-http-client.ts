@@ -55,6 +55,61 @@ export interface YouTubeHttpClientOptions {
 export type YouTubeUploadProgress =
   { status: 'incomplete'; nextOffset: number } | { status: 'complete'; videoId: string };
 
+export type YouTubeRequestErrorKind =
+  | 'auth'
+  | 'quota'
+  | 'validation'
+  | 'transient'
+  | 'permanent';
+
+export class YouTubeRequestError extends Error {
+  public readonly retryAfterSeconds?: number;
+  public readonly outcomeUnknown?: boolean;
+
+  public constructor(
+    public readonly status: number,
+    public readonly kind: YouTubeRequestErrorKind,
+    message: string,
+    options: { retryAfterSeconds?: number; outcomeUnknown?: boolean; cause?: unknown } = {},
+  ) {
+    super(message, { cause: options.cause });
+    if (options.retryAfterSeconds !== undefined) this.retryAfterSeconds = options.retryAfterSeconds;
+    if (options.outcomeUnknown !== undefined) this.outcomeUnknown = options.outcomeUnknown;
+  }
+}
+
+function retryAfterSeconds(response: Response): number | undefined {
+  const value = response.headers.get('retry-after');
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, Math.ceil((date - Date.now()) / 1000)) : undefined;
+}
+
+function errorKind(status: number, reason?: string): YouTubeRequestErrorKind {
+  if (status === 401) return 'auth';
+  if (status === 429 || reason === 'quotaExceeded' || reason === 'dailyLimitExceeded') return 'quota';
+  if (status === 400 || status === 404 || status === 410 || status === 422) return 'validation';
+  if (status >= 500) return 'transient';
+  if (status === 403) return 'auth';
+  return 'permanent';
+}
+
+async function uploadError(response: Response, action: string): Promise<YouTubeRequestError> {
+  const body = (await response.json().catch(() => null)) as {
+    error?: { message?: string; errors?: { reason?: string }[] };
+  } | null;
+  const reason = body?.error?.errors?.[0]?.reason;
+  const retryAfter = retryAfterSeconds(response);
+  return new YouTubeRequestError(
+    response.status,
+    errorKind(response.status, reason),
+    body?.error?.message ?? `${action} failed with HTTP ${String(response.status)}`,
+    retryAfter === undefined ? {} : { retryAfterSeconds: retryAfter },
+  );
+}
+
 export class YouTubeHttpClient {
   private readonly request: typeof fetch;
   private readonly now: () => number;
@@ -154,8 +209,7 @@ export class YouTubeHttpClient {
       },
       body: JSON.stringify(input.metadata),
     });
-    if (!response.ok)
-      throw new Error(`YouTube upload initialization failed with HTTP ${String(response.status)}`);
+    if (!response.ok) throw await uploadError(response, 'YouTube upload initialization');
     const sessionUrl = response.headers.get('location');
     if (!sessionUrl) throw new Error('YouTube upload initialization omitted the session URL');
     return validateUploadSessionUrl(sessionUrl);
@@ -213,20 +267,27 @@ export class YouTubeHttpClient {
     init: { headers: Record<string, string>; body?: BodyInit },
   ): Promise<YouTubeUploadProgress> {
     const validatedSessionUrl = validateUploadSessionUrl(sessionUrl);
-    const response = await this.request(validatedSessionUrl, {
-      method: 'PUT',
-      headers: { authorization: `Bearer ${accessToken}`, ...init.headers },
-      ...(init.body === undefined ? {} : { body: init.body }),
-    });
+    let response: Response;
+    try {
+      response = await this.request(validatedSessionUrl, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${accessToken}`, ...init.headers },
+        ...(init.body === undefined ? {} : { body: init.body }),
+      });
+    } catch (error) {
+      throw new YouTubeRequestError(0, 'transient', 'YouTube resumable upload outcome is unknown', {
+        outcomeUnknown: true,
+        cause: error,
+      });
+    }
     if (response.status === 308) {
       const range = response.headers.get('range');
       const match = range?.match(/^bytes=0-(\d+)$/);
       return { status: 'incomplete', nextOffset: match ? Number(match[1]) + 1 : 0 };
     }
-    const body = (await this.responseJson(response, 'YouTube resumable upload')) as {
-      id?: unknown;
-    };
-    if (typeof body.id !== 'string' || !body.id)
+    if (!response.ok) throw await uploadError(response, 'YouTube resumable upload');
+    const body = (await response.json().catch(() => null)) as { id?: unknown } | null;
+    if (!body || typeof body.id !== 'string' || !body.id)
       throw new Error('YouTube upload response omitted video ID');
     return { status: 'complete', videoId: body.id };
   }

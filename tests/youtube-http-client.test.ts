@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { YouTubeHttpClient } from '../src/modules/providers/youtube-http-client.js';
+import {
+  YouTubeHttpClient,
+  YouTubeRequestError,
+} from '../src/modules/providers/youtube-http-client.js';
 
 describe('YouTubeHttpClient', () => {
   it('builds an offline PKCE authorization URL with exact state correlation', () => {
@@ -161,5 +164,44 @@ describe('YouTubeHttpClient', () => {
       }),
     ).rejects.toThrow('not an authorized Google upload URL');
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies quota errors and preserves retry timing', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { message: 'Daily quota exhausted', errors: [{ reason: 'quotaExceeded' }] },
+        }),
+        { status: 403, headers: { 'retry-after': '45' } },
+      ),
+    );
+    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
+    await expect(
+      client.initiateUpload({
+        accessToken: 'access',
+        totalBytes: 512,
+        mimeType: 'video/mp4',
+        metadata: {},
+        notifySubscribers: false,
+      }),
+    ).rejects.toMatchObject({ status: 403, kind: 'quota', retryAfterSeconds: 45 });
+  });
+
+  it('marks a failed resumable PUT transport as an unknown outcome', async () => {
+    const sessionUrl =
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=session';
+    const request = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('socket closed'));
+    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
+    const error = await client
+      .uploadChunk({
+        sessionUrl,
+        accessToken: 'access',
+        bytes: new Uint8Array(256),
+        startOffset: 0,
+        totalBytes: 512,
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(YouTubeRequestError);
+    expect(error).toMatchObject({ status: 0, kind: 'transient', outcomeUnknown: true });
   });
 });

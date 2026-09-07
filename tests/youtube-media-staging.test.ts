@@ -35,6 +35,8 @@ import {
   createCredential,
   getActiveCredential,
 } from '../src/modules/credentials/credential.repository.js';
+import { withProviderStagingLock } from '../src/modules/content/provider-staging-lock.js';
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 import { decryptCredential, encryptCredential } from '../src/modules/credentials/envelope.js';
 import { stageYouTubeMedia } from '../src/modules/providers/youtube-media-staging.service.js';
 
@@ -189,5 +191,169 @@ describe('stageYouTubeMedia', () => {
       workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access', metadata: {}, notifySubscribers: false,
     })).rejects.toThrow('offset did not advance');
     expect(updateStagingByteProgress).not.toHaveBeenCalled();
+  });
+
+  it('serializes concurrent initialization and reloads durable state under the lock', async () => {
+    let durableArtifact = {
+      ...artifact,
+      providerReferenceCredentialId: null as string | null,
+      externalObjectId: null as string | null,
+    };
+    let lockTail = Promise.resolve();
+    vi.mocked(findStagingArtifact).mockResolvedValue(null);
+    vi.mocked(createStagingArtifact).mockImplementation(() =>
+      Promise.resolve({ ...durableArtifact, isOwner: true } as never),
+    );
+    vi.mocked(getStagingArtifactById).mockImplementation(() =>
+      Promise.resolve({ ...durableArtifact } as never),
+    );
+    vi.mocked(createCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(attachStagingReferenceCredential).mockImplementation(() => {
+      durableArtifact = { ...durableArtifact, providerReferenceCredentialId: 'credential-1' };
+      return Promise.resolve(undefined as never);
+    });
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(encryptCredential).mockResolvedValue({} as never);
+    vi.mocked(decryptCredential).mockResolvedValue(
+      Buffer.from('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=one'),
+    );
+    vi.mocked(updateStagingByteProgress).mockImplementation((_tx, _workspace, _id, update) => {
+      if (update.uploadPhase === 'finalized') {
+        durableArtifact = { ...durableArtifact, externalObjectId: update.externalObjectId ?? null };
+      }
+      return Promise.resolve(undefined as never);
+    });
+    vi.mocked(withProviderStagingLock).mockImplementation(async (_database, _id, work) => {
+      const previous = lockTail;
+      let release: () => void = vi.fn();
+      lockTail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await work();
+      } finally {
+        release();
+      }
+    });
+    const client = {
+      initiateUpload: vi
+        .fn()
+        .mockResolvedValue('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=one'),
+      queryUpload: vi.fn().mockResolvedValue({ status: 'complete', videoId: 'video-1' }),
+    };
+    const source = {
+      load: vi.fn().mockImplementation(() =>
+        Promise.resolve({ bytes: Buffer.from('video'), mimeType: 'video/mp4' }),
+      ),
+    };
+    const input = {
+      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access',
+      metadata: {}, notifySubscribers: false,
+    };
+
+    await expect(
+      Promise.all([
+        stageYouTubeMedia({} as never, source, client as never, {} as never, input),
+        stageYouTubeMedia({} as never, source, client as never, {} as never, input),
+      ]),
+    ).resolves.toEqual([{ videoId: 'video-1' }, { videoId: 'video-1' }]);
+
+    expect(client.initiateUpload).toHaveBeenCalledTimes(1);
+    expect(client.queryUpload).toHaveBeenCalledTimes(2);
+    expect(getStagingArtifactById).toHaveBeenCalledTimes(4);
+  });
+
+  it('rolls back credential creation when attachment fails and repairs the durable intent on retry', async () => {
+    const transactionState = { credentialIds: [] as string[] };
+    let durableArtifact = {
+      ...artifact,
+      providerReferenceCredentialId: null as string | null,
+      externalObjectId: null as string | null,
+    };
+    let shouldFailAttach = true;
+    vi.mocked(withTenantTransaction).mockImplementation(async (_database, _tenant, work) => {
+      const snapshot = [...transactionState.credentialIds];
+      try {
+        return await work(transactionState as never);
+      } catch (error) {
+        transactionState.credentialIds = snapshot;
+        throw error;
+      }
+    });
+    vi.mocked(findStagingArtifact).mockImplementation(() =>
+      Promise.resolve({ ...durableArtifact } as never),
+    );
+    vi.mocked(getStagingArtifactById).mockImplementation(() =>
+      Promise.resolve({ ...durableArtifact } as never),
+    );
+    vi.mocked(createCredential).mockImplementation((transaction) => {
+      expect(transaction).toBe(transactionState);
+      transactionState.credentialIds.push('credential-1');
+      return Promise.resolve({ id: 'credential-1' } as never);
+    });
+    vi.mocked(attachStagingReferenceCredential).mockImplementation((transaction) => {
+      expect(transaction).toBe(transactionState);
+      if (shouldFailAttach) throw new Error('attach failed');
+      durableArtifact = { ...durableArtifact, providerReferenceCredentialId: 'credential-1' };
+      return Promise.resolve(undefined as never);
+    });
+    vi.mocked(encryptCredential).mockResolvedValue({} as never);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockResolvedValue(
+      Buffer.from('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=replacement'),
+    );
+    const client = {
+      initiateUpload: vi
+        .fn()
+        .mockResolvedValueOnce('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=lost')
+        .mockResolvedValueOnce('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=replacement'),
+      queryUpload: vi.fn().mockResolvedValue({ status: 'complete', videoId: 'video-1' }),
+    };
+    const source = { load: vi.fn().mockImplementation(() =>
+      Promise.resolve({ bytes: Buffer.from('video'), mimeType: 'video/mp4' })) };
+    const input = {
+      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access',
+      metadata: {}, notifySubscribers: false,
+    };
+
+    await expect(
+      stageYouTubeMedia({} as never, source, client as never, {} as never, input),
+    ).rejects.toThrow('attach failed');
+    expect(transactionState.credentialIds).toEqual([]);
+    expect(durableArtifact.providerReferenceCredentialId).toBeNull();
+
+    shouldFailAttach = false;
+    await expect(
+      stageYouTubeMedia({} as never, source, client as never, {} as never, input),
+    ).resolves.toEqual({ videoId: 'video-1' });
+    expect(client.initiateUpload).toHaveBeenCalledTimes(2);
+    expect(transactionState.credentialIds).toEqual(['credential-1']);
+  });
+
+  it('zeroes media and decrypted session bytes when decryption rejects', async () => {
+    const mediaBytes = Buffer.from('video');
+    const partialSession = Buffer.from('sensitive-session');
+    vi.mocked(findStagingArtifact).mockResolvedValue(artifact);
+    vi.mocked(getStagingArtifactById).mockResolvedValue(artifact);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockImplementation(() => {
+      partialSession.fill(0);
+      return Promise.reject(new Error('decrypt failed'));
+    });
+
+    await expect(stageYouTubeMedia(
+      {} as never,
+      { load: vi.fn().mockResolvedValue({ bytes: mediaBytes, mimeType: 'video/mp4' }) },
+      {} as never,
+      {} as never,
+      {
+        workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access',
+        metadata: {}, notifySubscribers: false,
+      },
+    )).rejects.toThrow('decrypt failed');
+
+    expect(mediaBytes.every((byte) => byte === 0)).toBe(true);
+    expect(partialSession.every((byte) => byte === 0)).toBe(true);
   });
 });

@@ -38,9 +38,25 @@ export async function reserveMedia(
     sha256: string;
     mimeType: string;
     byteSize: number;
+    metadata?: {
+      durationMs: number;
+      width: number;
+      height: number;
+      videoCodec: string;
+      audioCodec: string | null;
+      container: string;
+    };
   },
 ): Promise<void> {
-  await database.insert(mediaObjects).values(input);
+  await database.insert(mediaObjects).values({
+    ...input,
+    durationMs: input.metadata?.durationMs,
+    width: input.metadata?.width,
+    height: input.metadata?.height,
+    videoCodec: input.metadata?.videoCodec,
+    audioCodec: input.metadata?.audioCodec,
+    container: input.metadata?.container,
+  });
 }
 
 export async function markMediaReady(

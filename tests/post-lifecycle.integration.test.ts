@@ -44,6 +44,7 @@ const migrations = [
   '0018_membership_identity_scope.sql',
   '0019_media_retention_lifecycle.sql',
   '0022_truthful_post_actors.sql',
+  '0024_mp4_media_metadata.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';
@@ -691,6 +692,53 @@ describe('media lifecycle', () => {
       'SELECT state FROM media_objects ORDER BY created_at',
     );
     expect(states.rows.map((row) => row.state).sort()).toEqual(['deleted', 'ready']);
+  });
+
+  it('persists server-probed MP4 metadata and enforces video limits', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    const mp4 = Buffer.from([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
+    const probe = {
+      probeMp4: vi.fn().mockResolvedValue({
+        container: 'mp4' as const,
+        durationMs: 30_000,
+        width: 1080,
+        height: 1920,
+        videoCodec: 'h264',
+        audioCodec: 'aac',
+      }),
+    };
+    const stored = await storeMedia(db, storage, {
+      workspaceId,
+      userId,
+      bytes: mp4,
+      maxBytes: 1024,
+      probe,
+      limits: { maxDurationMs: 60_000, maxWidth: 2160, maxHeight: 3840 },
+    });
+    expect(stored.metadata).toMatchObject({ durationMs: 30_000, width: 1080, height: 1920 });
+    const row = await database.query<{ duration_ms: number; container: string }>(
+      `SELECT duration_ms, container FROM media_objects WHERE id = '${stored.mediaId}'`,
+    );
+    expect(row.rows[0]).toEqual({ duration_ms: 30_000, container: 'mp4' });
+    probe.probeMp4.mockResolvedValueOnce({
+      container: 'mp4',
+      durationMs: 61_000,
+      width: 1080,
+      height: 1920,
+      videoCodec: 'h264',
+      audioCodec: null,
+    });
+    await expect(
+      storeMedia(db, storage, {
+        workspaceId,
+        userId,
+        bytes: mp4,
+        maxBytes: 1024,
+        probe,
+        limits: { maxDurationMs: 60_000, maxWidth: 2160, maxHeight: 3840 },
+      }),
+    ).rejects.toThrow('Media duration exceeds');
   });
 
   it('reconciles stale temporary objects after an interrupted upload', async () => {

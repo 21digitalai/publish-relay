@@ -15,10 +15,23 @@ import {
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import type { MediaStorage } from './media-storage.js';
+import { FfprobeMediaProbe, type MediaProbe } from './media-probe.js';
 import { storeMediaInTransaction, validateMediaContentType } from './media.service.js';
 
-export const AGENT_MEDIA_MAX_BYTES = 5 * 1024 * 1024;
-const SUPPORTED_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+export const AGENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const AGENT_MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+export const AGENT_VIDEO_LIMITS = {
+  maxDurationMs: 60 * 60 * 1000,
+  maxWidth: 8192,
+  maxHeight: 8192,
+};
+const SUPPORTED_CONTENT_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'video/mp4',
+]);
 
 export function registerMediaRoutes(
   application: FastifyInstance,
@@ -27,11 +40,16 @@ export function registerMediaRoutes(
   apiKeys: ApiKeyService,
   rateLimiter: ApiRateLimiter,
   actionPolicy: ActionPolicy = allowAllActionPolicy,
+  probe: MediaProbe = new FfprobeMediaProbe(),
+  videoConfig = { maxBytes: AGENT_MEDIA_MAX_BYTES, limits: AGENT_VIDEO_LIMITS },
 ): void {
   for (const contentType of SUPPORTED_CONTENT_TYPES)
     application.addContentTypeParser(
       contentType,
-      { parseAs: 'buffer', bodyLimit: AGENT_MEDIA_MAX_BYTES },
+      {
+        parseAs: 'buffer',
+        bodyLimit: contentType === 'video/mp4' ? videoConfig.maxBytes : AGENT_IMAGE_MAX_BYTES,
+      },
       (_request, body, done) => {
         done(null, body);
       },
@@ -65,7 +83,7 @@ export function registerMediaRoutes(
           .send(
             errorEnvelope(
               'invalid_request',
-              'A supported image Content-Type is required',
+              'A supported media Content-Type is required',
               request.id,
             ),
           );
@@ -101,7 +119,9 @@ export function registerMediaRoutes(
               requestId: request.id,
               idempotencyKey,
               bytes,
-              maxBytes: AGENT_MEDIA_MAX_BYTES,
+              maxBytes: contentType === 'video/mp4' ? videoConfig.maxBytes : AGENT_IMAGE_MAX_BYTES,
+              probe,
+              limits: videoConfig.limits,
             },
             actionPolicy,
           );
@@ -114,6 +134,7 @@ export function registerMediaRoutes(
                 mimeType: media.mimeType,
                 sha256: media.sha256,
                 byteSize: media.byteSize,
+                ...(media.metadata ?? {}),
                 state: 'ready',
               },
               request.id,

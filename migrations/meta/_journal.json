@@ -169,6 +169,13 @@
       "when": 1788764507655,
       "tag": "0023_clear_shocker",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788786900000,
+      "tag": "0024_mp4_media_metadata",
+      "breakpoints": true
     }
   ]
 }

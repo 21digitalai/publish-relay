@@ -18,7 +18,11 @@ import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
 import { registerPostRoutes } from '../modules/content/post.routes.js';
 import { registerBrowserWorkflowRoutes } from '../modules/content/browser-workflow.routes.js';
 import type { MediaStorage } from '../modules/content/media-storage.js';
-import { registerMediaRoutes } from '../modules/content/media.routes.js';
+import {
+  AGENT_MEDIA_MAX_BYTES,
+  AGENT_VIDEO_LIMITS,
+  registerMediaRoutes,
+} from '../modules/content/media.routes.js';
 import type { MasterKeyProvider } from '../modules/credentials/envelope.js';
 import type { XHttpClient } from '../modules/providers/x-http-client.js';
 import { registerXOauthRoutes } from '../modules/providers/x-oauth.routes.js';
@@ -100,6 +104,15 @@ export function createApplication(
           apiKeys,
           rateLimiter,
           actionPolicy,
+          undefined,
+          {
+            maxBytes: config.MEDIA_VIDEO_MAX_BYTES ?? AGENT_MEDIA_MAX_BYTES,
+            limits: {
+              maxDurationMs: config.MEDIA_VIDEO_MAX_DURATION_MS ?? AGENT_VIDEO_LIMITS.maxDurationMs,
+              maxWidth: config.MEDIA_VIDEO_MAX_WIDTH ?? AGENT_VIDEO_LIMITS.maxWidth,
+              maxHeight: config.MEDIA_VIDEO_MAX_HEIGHT ?? AGENT_VIDEO_LIMITS.maxHeight,
+            },
+          },
         );
     }
   }

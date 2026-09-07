@@ -20,13 +20,19 @@ const accountSchema = z.object({
 });
 const mediaMutationSchema = z.object({
   id: z.uuid(),
-  mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+  mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4']),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   byteSize: z
     .number()
     .int()
     .positive()
-    .max(5 * 1024 * 1024),
+    .max(2 * 1024 * 1024 * 1024),
+  durationMs: z.number().int().positive().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  videoCodec: z.string().min(1).optional(),
+  audioCodec: z.string().min(1).nullable().optional(),
+  container: z.literal('mp4').optional(),
   state: z.literal('ready'),
 });
 
@@ -60,6 +66,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               'image/jpeg': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
               'image/gif': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
               'image/webp': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
+              'video/mp4': { schema: { type: 'string', format: 'binary', maxLength: 2147483648 } },
             },
           },
           responses: {
@@ -89,7 +96,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
             },
             '413': {
-              description: 'Media exceeds 5 MiB',
+              description: 'Media exceeds its configured technical byte ceiling',
               content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
             },
             '429': {

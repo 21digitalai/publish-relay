@@ -15,6 +15,20 @@ const runtimeConfigSchema = z
     MEDIA_RETENTION_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).optional(),
     WORKER_ID: z.string().min(1).optional(),
     MEDIA_STORAGE_ROOT: z.string().min(1).optional(),
+    MEDIA_VIDEO_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2 * 1024 * 1024 * 1024)
+      .optional(),
+    MEDIA_VIDEO_MAX_DURATION_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(60 * 60 * 1000)
+      .optional(),
+    MEDIA_VIDEO_MAX_WIDTH: z.coerce.number().int().positive().max(8192).optional(),
+    MEDIA_VIDEO_MAX_HEIGHT: z.coerce.number().int().positive().max(8192).optional(),
     CURSOR_SIGNING_SECRET: z.string().min(32).optional(),
     PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: z.string().min(1).optional(),
     PUBLISH_RELAY_X_CONSUMER_KEY: z.string().min(1).optional(),

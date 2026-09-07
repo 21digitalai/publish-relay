@@ -551,11 +551,11 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
 }
 
-function WorkspaceLayout({
+export function WorkspaceLayout({
   active,
   children,
 }: {
-  active: 'queue' | 'calendar';
+  active: 'queue' | 'calendar' | 'settings';
   children: React.ReactNode | ((openComposer: () => void) => React.ReactNode);
 }) {
   const [menuOpen, setMenuOpen] = useState(false);

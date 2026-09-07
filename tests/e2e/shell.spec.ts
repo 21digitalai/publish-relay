@@ -851,6 +851,61 @@ test('navigates calendar months across month-end and leap-year boundaries', asyn
   await expect(page).toHaveURL(/mode=Month&date=2028-01-29/);
 });
 
+test('manages workspace settings and API keys with one-time secret and revoke feedback', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workspaces/current', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      const body = route.request().postDataJSON() as Record<string, string>;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id: 'workspace-1', ...body }, error: null }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"id":"workspace-1","name":"Atlas","slug":"atlas","timezone":"Europe/Sofia"},"error":null}',
+    });
+  });
+  await page.route('**/api/settings/api-keys**', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: '{"data":{"key":{"id":"key-2","label":"Agent key","prefix":"pr_new","capabilities":["schedules:read"],"createdByDisplayName":"Mira","createdAt":"2026-09-01T00:00:00Z","lastUsedAt":null,"expiresAt":null,"revokedAt":null},"token":"pr_new.one-time-secret"},"error":null}',
+      });
+      return;
+    }
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: '{"data":{"revoked":true},"error":null}',
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[]},"error":null}',
+    });
+  });
+  await page.goto('/w/atlas/settings/workspace');
+  await expect(page.getByRole('heading', { name: 'Workspace profile' })).toBeVisible();
+  await page.getByLabel('Name').fill('Atlas Studio');
+  await page.getByRole('button', { name: 'Save workspace' }).click();
+  await expect(page.getByRole('status')).toContainText('Workspace settings saved');
+  await page.getByRole('link', { name: 'Automation' }).click();
+  await page.getByLabel('Key name').fill('Agent key');
+  await page.getByRole('button', { name: 'Create key' }).click();
+  await expect(page.getByText('pr_new.one-time-secret')).toBeVisible();
+  await page.getByRole('button', { name: 'Revoke', exact: true }).click();
+  await expect(page.getByText('Revoke this key?')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('settings-automation.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Confirm revoke' }).click();
+  await expect(page.getByText('Revoked')).toBeVisible();
+});
+
 test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({
   page,
 }) => {

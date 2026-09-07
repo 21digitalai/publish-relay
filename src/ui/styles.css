@@ -1029,6 +1029,129 @@ select:focus-visible {
   }
 }
 
+.settings-heading,
+.settings-tabs,
+.settings-card {
+  margin: 0 auto;
+  width: min(100% - 32px, 960px);
+}
+.settings-heading {
+  padding: 32px 0 18px;
+}
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-tabs a {
+  color: var(--muted);
+  padding: 12px 16px;
+  text-decoration: none;
+}
+.settings-tabs a.active {
+  color: var(--text);
+  border-bottom: 2px solid var(--accent);
+}
+.settings-grid {
+  display: grid;
+  gap: 16px;
+  margin: 24px auto;
+  width: min(100% - 32px, 960px);
+}
+.settings-card {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+}
+.settings-grid .settings-card {
+  margin: 0;
+  width: auto;
+}
+.segmented-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.segmented-control button {
+  min-height: 44px;
+  padding: 0 14px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+}
+.segmented-control button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.advanced-capabilities {
+  margin: 12px 0 18px;
+}
+.advanced-capabilities summary {
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.capability-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.capability-grid button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  background: transparent;
+}
+.capability-grid button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.secret-reveal {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+}
+.secret-reveal code {
+  overflow-wrap: anywhere;
+}
+.api-key-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+.api-key-row div:first-child {
+  display: grid;
+  gap: 4px;
+}
+.api-key-row small {
+  color: var(--muted);
+}
+.inline-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 700px) {
+  .api-key-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 /* Scheduling workflow */
 .workflow-main {
   min-width: 0;

@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
-import { CalendarPage, JobDetailPage, QueuePage } from './workflow.js';
+import { CalendarPage, JobDetailPage, QueuePage, WorkspaceLayout } from './workflow.js';
 
 interface Account {
   id: string;
@@ -1035,6 +1035,349 @@ function AccountsPage() {
   );
 }
 
+const KEY_PRESETS = {
+  Read: ['schedules:read', 'destinations:read', 'audit:read'],
+  Publish: ['schedules:read', 'schedules:write', 'content:write', 'publishes:submit'],
+  Full: [
+    'schedules:read',
+    'schedules:write',
+    'content:write',
+    'publishes:submit',
+    'destinations:read',
+    'audit:read',
+  ],
+} as const;
+
+interface ManagedApiKey {
+  id: string;
+  label: string;
+  prefix: string;
+  capabilities: string[];
+  createdByDisplayName: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+}
+
+function SettingsPage() {
+  const isAutomation = window.location.pathname.endsWith('/settings/automation');
+  const workspaceBase = window.location.pathname.split('/settings/')[0] ?? '';
+  const [workspace, setWorkspace] = useState({ name: '', slug: '', timezone: 'UTC' });
+  const [keys, setKeys] = useState<ManagedApiKey[]>([]);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [message, setMessage] = useState<string | null>(null);
+  const [secret, setSecret] = useState<string | null>(null);
+  const [preset, setPreset] = useState<keyof typeof KEY_PRESETS>('Publish');
+  const [capabilities, setCapabilities] = useState<string[]>([...KEY_PRESETS.Publish]);
+  const [label, setLabel] = useState('');
+  const [expiryDays, setExpiryDays] = useState<number | null>(null);
+  const [revokeId, setRevokeId] = useState<string | null>(null);
+  useEffect(() => {
+    const endpoint = isAutomation ? '/api/settings/api-keys' : '/api/workspaces/current';
+    void fetch(endpoint)
+      .then(async (response) => {
+        const result = (await response.json()) as { data: unknown; error: string | null };
+        if (!response.ok) throw new Error(result.error ?? 'Settings could not be loaded');
+        if (isAutomation) setKeys((result.data as { items: ManagedApiKey[] }).items);
+        else setWorkspace(result.data as typeof workspace);
+        setLoadState('ready');
+      })
+      .catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : 'Settings could not be loaded');
+        setLoadState('error');
+      });
+  }, [isAutomation]);
+  const saveWorkspace = async () => {
+    setMessage(null);
+    const response = await fetch('/api/workspaces/current', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+      body: JSON.stringify(workspace),
+    });
+    const result = (await response.json()) as {
+      data: typeof workspace | null;
+      error: string | null;
+    };
+    if (!response.ok || !result.data)
+      throw new Error(result.error ?? 'Workspace could not be saved');
+    setWorkspace(result.data);
+    setMessage('Workspace settings saved');
+  };
+  const createKey = async () => {
+    setMessage(null);
+    setSecret(null);
+    const expiresAt = expiryDays
+      ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+    const response = await fetch('/api/settings/api-keys', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+      body: JSON.stringify({ label, capabilities, expiresAt }),
+    });
+    const result = (await response.json()) as {
+      data: { key: ManagedApiKey; token: string } | null;
+      error: string | null;
+    };
+    if (!response.ok || !result.data)
+      throw new Error(result.error ?? 'API key could not be created');
+    const created = result.data;
+    setKeys((current) => [created.key, ...current]);
+    setSecret(created.token);
+    setLabel('');
+  };
+  const run = (action: () => Promise<void>) => {
+    void action().catch((error: unknown) => {
+      setMessage(error instanceof Error ? error.message : 'Settings action failed');
+    });
+  };
+  return (
+    <WorkspaceLayout active="settings">
+      <header className="settings-heading">
+        <div>
+          <p className="eyebrow">Workspace controls</p>
+          <h1>Settings</h1>
+        </div>
+      </header>
+      <nav className="settings-tabs" aria-label="Settings sections">
+        <a className={!isAutomation ? 'active' : ''} href={`${workspaceBase}/settings/workspace`}>
+          Workspace
+        </a>
+        <a className={isAutomation ? 'active' : ''} href={`${workspaceBase}/settings/automation`}>
+          Automation
+        </a>
+      </nav>
+      {loadState === 'loading' && <p role="status">Loading settings…</p>}
+      {message && (
+        <div className="form-summary" role={loadState === 'error' ? 'alert' : 'status'}>
+          {message}
+        </div>
+      )}
+      {loadState === 'ready' && !isAutomation && (
+        <section className="settings-card" aria-labelledby="workspace-settings-title">
+          <h2 id="workspace-settings-title">Workspace profile</h2>
+          <label className="field-label">
+            Name
+            <input
+              className="text-input"
+              value={workspace.name}
+              onChange={(event) => {
+                setWorkspace({ ...workspace, name: event.target.value });
+              }}
+            />
+          </label>
+          <label className="field-label">
+            Workspace URL
+            <input
+              className="text-input"
+              value={workspace.slug}
+              readOnly
+              aria-describedby="slug-guard"
+            />
+          </label>
+          <p id="slug-guard" className="field-hint">
+            Contact an administrator before changing this routing identity.
+          </p>
+          <label className="field-label">
+            Timezone
+            <input
+              className="text-input"
+              value={workspace.timezone}
+              onChange={(event) => {
+                setWorkspace({ ...workspace, timezone: event.target.value });
+              }}
+            />
+          </label>
+          <button
+            className="primary-button"
+            onClick={() => {
+              run(saveWorkspace);
+            }}
+          >
+            Save workspace
+          </button>
+        </section>
+      )}
+      {loadState === 'ready' && isAutomation && (
+        <div className="settings-grid">
+          <section className="settings-card" aria-labelledby="create-key-title">
+            <h2 id="create-key-title">Create API key</h2>
+            <label className="field-label">
+              Key name
+              <input
+                className="text-input"
+                value={label}
+                onChange={(event) => {
+                  setLabel(event.target.value);
+                }}
+              />
+            </label>
+            <div className="field-label">
+              Capability preset
+              <div className="segmented-control">
+                {Object.keys(KEY_PRESETS).map((name) => (
+                  <button
+                    key={name}
+                    className={preset === name ? 'active' : ''}
+                    aria-pressed={preset === name}
+                    onClick={() => {
+                      const nextPreset = name as keyof typeof KEY_PRESETS;
+                      setPreset(nextPreset);
+                      setCapabilities([...KEY_PRESETS[nextPreset]]);
+                    }}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="field-hint">{capabilities.join(' · ')}</p>
+            <details className="advanced-capabilities">
+              <summary>Advanced capabilities</summary>
+              <div className="capability-grid">
+                {KEY_PRESETS.Full.map((capability) => {
+                  const selected = capabilities.includes(capability);
+                  return (
+                    <button
+                      key={capability}
+                      className={selected ? 'active' : ''}
+                      aria-pressed={selected}
+                      onClick={() => {
+                        setCapabilities((current) =>
+                          selected
+                            ? current.filter((value) => value !== capability)
+                            : [...current, capability],
+                        );
+                      }}
+                    >
+                      {capability}
+                    </button>
+                  );
+                })}
+              </div>
+            </details>
+            <div className="field-label">
+              Expiry
+              <div className="segmented-control">
+                {[
+                  [null, 'Never'],
+                  [30, '30 days'],
+                  [90, '90 days'],
+                ].map(([days, text]) => (
+                  <button
+                    key={text}
+                    className={expiryDays === days ? 'active' : ''}
+                    aria-pressed={expiryDays === days}
+                    onClick={() => {
+                      setExpiryDays(days as number | null);
+                    }}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              className="primary-button"
+              disabled={!label.trim()}
+              onClick={() => {
+                run(createKey);
+              }}
+            >
+              Create key
+            </button>
+            {secret && (
+              <div className="secret-reveal" role="status">
+                <strong>Copy this key now. It will not be shown again.</strong>
+                <code>{secret}</code>
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(secret).then(() => {
+                      setMessage('API key copied');
+                    });
+                  }}
+                >
+                  Copy key
+                </button>
+              </div>
+            )}
+          </section>
+          <section className="settings-card" aria-labelledby="keys-title">
+            <h2 id="keys-title">API keys</h2>
+            {keys.length === 0 ? (
+              <p>No API keys yet.</p>
+            ) : (
+              keys.map((key) => (
+                <article className="api-key-row" key={key.id}>
+                  <div>
+                    <strong>{key.label}</strong>
+                    <small>
+                      {key.prefix} · Created by {key.createdByDisplayName}
+                    </small>
+                    <small>
+                      {key.revokedAt
+                        ? 'Revoked'
+                        : key.lastUsedAt
+                          ? `Last used ${new Date(key.lastUsedAt).toLocaleDateString()}`
+                          : 'Never used'}
+                    </small>
+                  </div>
+                  {!key.revokedAt &&
+                    (revokeId === key.id ? (
+                      <div className="inline-confirm">
+                        <span>Revoke this key?</span>
+                        <button
+                          className="danger-button"
+                          onClick={() => {
+                            run(async () => {
+                              const response = await fetch(`/api/settings/api-keys/${key.id}`, {
+                                method: 'DELETE',
+                                headers: { 'x-csrf-token': getCsrfToken() },
+                              });
+                              if (!response.ok) throw new Error('API key could not be revoked');
+                              setKeys((current) =>
+                                current.map((item) =>
+                                  item.id === key.id
+                                    ? { ...item, revokedAt: new Date().toISOString() }
+                                    : item,
+                                ),
+                              );
+                              setRevokeId(null);
+                            });
+                          }}
+                        >
+                          Confirm revoke
+                        </button>
+                        <button
+                          className="secondary-button"
+                          onClick={() => {
+                            setRevokeId(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          setRevokeId(key.id);
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    ))}
+                </article>
+              ))
+            )}
+          </section>
+        </div>
+      )}
+    </WorkspaceLayout>
+  );
+}
+
 export function App() {
   const path = window.location.pathname;
   if (path === '/register') return <AuthPage mode="register" />;
@@ -1044,6 +1387,7 @@ export function App() {
   if (/\/w\/[^/]+\/queue$/.test(path)) return <QueuePage />;
   if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;
   if (/\/w\/[^/]+\/jobs\/[^/]+$/.test(path)) return <JobDetailPage />;
+  if (/\/w\/[^/]+\/settings\/(workspace|automation)$/.test(path)) return <SettingsPage />;
   return <AccountsPage />;
 }
 

@@ -113,7 +113,13 @@ export class LocalMediaStorage implements MediaStorage {
       if (!entry.isFile()) continue;
       const temporaryKey = `.temporary/${entry.name}`;
       const filePath = this.pathFor(temporaryKey);
-      const metadata = await stat(filePath);
+      let metadata;
+      try {
+        metadata = await stat(filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
       if (metadata.mtimeMs >= input.staleBefore.getTime()) continue;
       await rm(filePath, { force: true });
       deleted += 1;

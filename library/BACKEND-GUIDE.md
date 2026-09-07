@@ -113,7 +113,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Content and media persistence
 
-- Streamed uploads stage mode-0600 files under the local storage `.temporary` namespace. Web and worker startup remove only files older than `MEDIA_STAGING_STALE_MS` (24 hours by default), preserving fresh/in-flight uploads while bounding crash-orphan retention.
+- Streamed uploads stage mode-0600 files under the local storage `.temporary` namespace. The worker reconciles this namespace on startup and every 60 seconds, removing only files older than `MEDIA_STAGING_STALE_MS` (24 hours by default); web startup performs the same idempotent sweep. Concurrent sweepers tolerate entries that disappear between enumeration and inspection, preserving fresh/in-flight uploads while deterministically bounding crash-orphan retention.
 
 - `posts` owns mutable publication intent while `post_revisions` records immutable, numbered content snapshots. The database rejects revision update and deletion.
 - Post and revision actor columns persist the authenticated user or named API key identity; `api_key` is identity while CLI is optional transport metadata only. Nullable actor columns are the explicit legacy/unknown state. Canonical job detail projections resolve safe actor labels and include ordered revision media, attempt/activity history, and the latest provider result.

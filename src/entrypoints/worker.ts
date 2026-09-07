@@ -9,6 +9,7 @@ import {
   retainForeverMediaPolicy,
 } from '../modules/content/media-retention.service.js';
 import { runMediaRetentionCycle } from '../modules/content/media-retention.worker.js';
+import { createMediaStagingReconciler } from '../modules/content/media-staging.worker.js';
 import {
   createLocalXMediaSource,
   createXMediaClientFactory,
@@ -22,6 +23,7 @@ const workerDatabaseUrl = resolveWorkerDatabaseUrl(config);
 const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
 const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
+const STAGING_RECONCILIATION_INTERVAL_MS = 60_000;
 if (
   !config.MEDIA_STORAGE_ROOT ||
   !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION ||
@@ -37,8 +39,10 @@ const pool = new pg.Pool({
 });
 const database = drizzle(pool);
 const mediaStorage = new LocalMediaStorage(config.MEDIA_STORAGE_ROOT);
-await mediaStorage.cleanupStaleStaging({
-  staleBefore: new Date(Date.now() - (config.MEDIA_STAGING_STALE_MS ?? DEFAULT_STAGING_STALE_MS)),
+const stagingStaleMs = config.MEDIA_STAGING_STALE_MS ?? DEFAULT_STAGING_STALE_MS;
+const reconcileMediaStaging = createMediaStagingReconciler(mediaStorage, {
+  staleMs: stagingStaleMs,
+  intervalMs: STAGING_RECONCILIATION_INTERVAL_MS,
 });
 const mediaRetentionPolicy =
   config.MEDIA_RETENTION_DAYS === undefined
@@ -67,6 +71,12 @@ while (!shutdownController.signal.aborted) {
   await reconcileXJobs(runtime);
   await dispatchDueXJobs(runtime);
   const now = new Date();
+  const deletedStagingObjects = await reconcileMediaStaging(now);
+  if (deletedStagingObjects !== undefined) {
+    process.stdout.write(
+      `${JSON.stringify({ event: 'media_staging_reconciliation', deleted: deletedStagingObjects })}\n`,
+    );
+  }
   if (now.getTime() >= nextMediaRetentionAt) {
     const retention = await runMediaRetentionCycle(database, mediaStorage, mediaRetentionPolicy, {
       batchSize: config.MEDIA_RETENTION_BATCH_SIZE ?? 100,

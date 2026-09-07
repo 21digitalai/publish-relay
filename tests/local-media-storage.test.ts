@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { LocalMediaStorage } from '../src/modules/content/local-media-storage.js';
+import { createMediaStagingReconciler } from '../src/modules/content/media-staging.worker.js';
 
 const roots: string[] = [];
 
@@ -86,5 +87,45 @@ describe('LocalMediaStorage streaming ingest', () => {
       storage.cleanupStaleStaging({ staleBefore: new Date('2026-09-02T00:00:00Z') }),
     ).resolves.toBe(1);
     expect(await readdir(temporaryDirectory)).toEqual(['fresh']);
+  });
+
+  it('removes an object after it ages past the threshold during a later reconciliation', async () => {
+    const { root, storage } = await storageFixture();
+    const temporaryDirectory = join(root, '.temporary');
+    const stagedPath = join(temporaryDirectory, 'ages-during-worker-lifetime');
+    await mkdir(temporaryDirectory, { recursive: true });
+    await writeFile(stagedPath, 'staged');
+
+    const reconcile = createMediaStagingReconciler(storage, {
+      staleMs: 24 * 60 * 60 * 1000,
+      intervalMs: 60_000,
+    });
+    await expect(reconcile(new Date('2026-09-02T00:00:00Z'))).resolves.toBe(0);
+    await utimes(stagedPath, new Date('2026-09-01T00:00:00Z'), new Date('2026-09-01T00:00:00Z'));
+    await expect(reconcile(new Date('2026-09-02T00:00:30Z'))).resolves.toBeUndefined();
+    await expect(reconcile(new Date('2026-09-02T00:01:00Z'))).resolves.toBe(1);
+    expect(await readdir(temporaryDirectory)).toEqual([]);
+  });
+
+  it('allows concurrent reconcilers to race over disappearing entries', async () => {
+    const { root, storage } = await storageFixture();
+    const temporaryDirectory = join(root, '.temporary');
+    await mkdir(temporaryDirectory, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 50 }, async (_, index) => {
+        const path = join(temporaryDirectory, `stale-${String(index)}`);
+        await writeFile(path, 'stale');
+        await utimes(path, new Date('2026-09-01T00:00:00Z'), new Date('2026-09-01T00:00:00Z'));
+      }),
+    );
+
+    await expect(
+      Promise.all(
+        Array.from({ length: 8 }, () =>
+          storage.cleanupStaleStaging({ staleBefore: new Date('2026-09-02T00:00:00Z') }),
+        ),
+      ),
+    ).resolves.toBeDefined();
+    expect(await readdir(temporaryDirectory)).toEqual([]);
   });
 });

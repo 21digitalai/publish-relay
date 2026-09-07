@@ -30,12 +30,12 @@ export interface AuthStore {
   findWorkspace: (
     workspaceId: string,
     userId: string,
-  ) => Promise<{ id: string; name: string; slug: string } | null>;
+  ) => Promise<{ id: string; name: string; slug: string; timezone: string } | null>;
   updateWorkspace: (
     workspaceId: string,
     userId: string,
-    input: { name: string; slug: string },
-  ) => Promise<{ id: string; name: string; slug: string }>;
+    input: { name: string; slug: string; timezone?: string },
+  ) => Promise<{ id: string; name: string; slug: string; timezone: string }>;
   listWorkspaces: (userId: string) => Promise<WorkspaceSummary[]>;
   rotateWorkspaceSession: (input: {
     currentWorkspaceId: string;
@@ -120,8 +120,8 @@ export class AuthService {
 
   async updateWorkspace(
     identity: AuthIdentity,
-    input: { name: string; slug: string },
-  ): Promise<{ id: string; name: string; slug: string }> {
+    input: { name: string; slug: string; timezone?: string },
+  ): Promise<{ id: string; name: string; slug: string; timezone: string }> {
     requireWorkspaceAction(identity.role, 'workspace:manage');
     return this.store.updateWorkspace(identity.workspaceId, identity.userId, {
       name: input.name.trim(),

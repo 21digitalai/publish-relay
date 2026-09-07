@@ -22,6 +22,17 @@ const workspaceProfileSchema = z.object({
     .min(2)
     .max(80)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i),
+  timezone: z
+    .string()
+    .refine((value) => {
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: value }).format();
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .optional(),
 });
 const workspaceSwitchSchema = z.object({ workspaceId: z.uuid() });
 
@@ -166,7 +177,11 @@ export function registerAuthRoutes(
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Invalid workspace profile' });
     try {
-      const workspace = await auth.updateWorkspace(identity, input.data);
+      const workspace = await auth.updateWorkspace(identity, {
+        name: input.data.name,
+        slug: input.data.slug,
+        ...(input.data.timezone ? { timezone: input.data.timezone } : {}),
+      });
       return { data: workspace, error: null };
     } catch (error) {
       if (isUniqueViolation(error))

@@ -164,7 +164,12 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
     async findWorkspace(workspaceId, userId) {
       return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
         const [workspace] = await transaction
-          .select({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug })
+          .select({
+            id: workspaces.id,
+            name: workspaces.name,
+            slug: workspaces.slug,
+            timezone: workspaces.timezone,
+          })
           .from(workspaces)
           .where(eq(workspaces.id, workspaceId))
           .limit(1);
@@ -175,9 +180,19 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
       return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
         const [workspace] = await transaction
           .update(workspaces)
-          .set({ name: input.name, slug: input.slug, updatedAt: new Date() })
+          .set({
+            name: input.name,
+            slug: input.slug,
+            ...(input.timezone ? { timezone: input.timezone } : {}),
+            updatedAt: new Date(),
+          })
           .where(eq(workspaces.id, workspaceId))
-          .returning({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug });
+          .returning({
+            id: workspaces.id,
+            name: workspaces.name,
+            slug: workspaces.slug,
+            timezone: workspaces.timezone,
+          });
         if (!workspace) throw new Error('Workspace was not found');
         return workspace;
       });

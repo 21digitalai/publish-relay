@@ -173,6 +173,7 @@ describe('authentication HTTP boundary', () => {
       id: 'w1',
       name: 'Atlas Studio',
       slug: 'atlas-studio',
+      timezone: 'Europe/Sofia',
     });
     const response = await createTestApplication(store).inject({
       method: 'PATCH',
@@ -185,7 +186,7 @@ describe('authentication HTTP boundary', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      data: { id: 'w1', name: 'Atlas Studio', slug: 'atlas-studio' },
+      data: { id: 'w1', name: 'Atlas Studio', slug: 'atlas-studio', timezone: 'Europe/Sofia' },
       error: null,
     });
     expect(store.updateWorkspace).toHaveBeenCalledWith('w1', 'u1', {
@@ -208,6 +209,7 @@ describe('authentication HTTP boundary', () => {
       id: 'w1',
       name: 'Atlas Studio',
       slug: 'atlas-studio',
+      timezone: 'Europe/Sofia',
     });
     const response = await createTestApplication(store).inject({
       method: 'GET',
@@ -216,7 +218,7 @@ describe('authentication HTTP boundary', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      data: { id: 'w1', name: 'Atlas Studio', slug: 'atlas-studio' },
+      data: { id: 'w1', name: 'Atlas Studio', slug: 'atlas-studio', timezone: 'Europe/Sofia' },
       error: null,
     });
   });

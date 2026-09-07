@@ -636,7 +636,9 @@ function FilterSelect({
         aria-expanded={open}
         aria-haspopup="listbox"
         className="filter-button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpen((current) => !current);
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') setOpen(false);
         }}
@@ -933,7 +935,7 @@ export function CalendarPage() {
   useEffect(() => {
     const params = new URLSearchParams({
       mode,
-      date: `${visibleDate.getFullYear()}-${String(visibleDate.getMonth() + 1).padStart(2, '0')}-${String(visibleDate.getDate()).padStart(2, '0')}`,
+      date: `${String(visibleDate.getFullYear())}-${String(visibleDate.getMonth() + 1).padStart(2, '0')}-${String(visibleDate.getDate()).padStart(2, '0')}`,
     });
     window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
   }, [mode, visibleDate]);
@@ -951,21 +953,27 @@ export function CalendarPage() {
         <div className="calendar-actions">
           <button
             className="secondary-button"
-            onClick={() => setVisibleDate(startOfDay(new Date()))}
+            onClick={() => {
+              setVisibleDate(startOfDay(new Date()));
+            }}
           >
             Today
           </button>
           <button
             className="icon-button"
             aria-label="Previous date"
-            onClick={() => setVisibleDate((date) => moveVisibleDate(date, -1))}
+            onClick={() => {
+              setVisibleDate((date) => moveVisibleDate(date, -1));
+            }}
           >
             ←
           </button>
           <button
             className="icon-button"
             aria-label="Next date"
-            onClick={() => setVisibleDate((date) => moveVisibleDate(date, 1))}
+            onClick={() => {
+              setVisibleDate((date) => moveVisibleDate(date, 1));
+            }}
           >
             →
           </button>

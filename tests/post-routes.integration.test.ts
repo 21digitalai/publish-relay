@@ -299,6 +299,7 @@ describe('agent media upload PostgreSQL boundary', () => {
     const jobLink = post.json<{ data: { links: { jobs: string[] } } }>().data.links.jobs[0];
     const jobId = jobLink?.split('/').at(-1);
     expect(jobId).toBeTruthy();
+    if (!jobId) throw new Error('Expected a created job link');
     const browserHeaders = { cookie: `publish_relay_session=${workspaceId}.browser-token` };
     const detail = await application.inject({
       method: 'GET',
@@ -309,9 +310,10 @@ describe('agent media upload PostgreSQL boundary', () => {
     const previewUrl = detail.json<{ data: { media: { previewUrl: string }[] } }>().data.media[0]
       ?.previewUrl;
     expect(previewUrl).toBe(`/api/workflow/media/${firstBody.data.id}`);
+    if (!previewUrl) throw new Error('Expected a tenant media preview URL');
     const preview = await application.inject({
       method: 'GET',
-      url: previewUrl!,
+      url: previewUrl,
       headers: browserHeaders,
     });
     expect(preview.statusCode).toBe(200);
@@ -325,11 +327,11 @@ describe('agent media upload PostgreSQL boundary', () => {
       role: 'owner',
     });
     expect(
-      (await application.inject({ method: 'GET', url: previewUrl!, headers: browserHeaders }))
+      (await application.inject({ method: 'GET', url: previewUrl, headers: browserHeaders }))
         .statusCode,
     ).toBe(404);
     browserAuthenticate.mockResolvedValueOnce(null);
-    expect((await application.inject({ method: 'GET', url: previewUrl! })).statusCode).toBe(401);
+    expect((await application.inject({ method: 'GET', url: previewUrl })).statusCode).toBe(401);
 
     const directory = await mkdtemp(join(tmpdir(), 'publish-relay-media-cli-'));
     temporaryDirectories.push(directory);

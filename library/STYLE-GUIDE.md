@@ -235,3 +235,8 @@ Builder must provide 1440px and 390px screenshots for auth, onboarding, accounts
 - Onboarding may skip account connection with explicit limitations.
 
 Next design pass: after the first complete static shell and one populated queue/calendar dataset exist.
+
+# YouTube composer
+
+- The canonical publication composer in `src/ui/workflow.tsx` switches to a single-channel YouTube video flow only when exactly one YouTube destination is selected.
+- It uploads one MP4 through the authenticated browser media endpoint before creating the post, exposes sparse per-publication overrides, and displays the returned effective settings snapshot in the receipt.

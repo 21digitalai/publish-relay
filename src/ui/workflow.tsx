@@ -301,7 +301,13 @@ function Status({ state }: { state: JobState }) {
 
 function Composer({ onClose }: { onClose: () => void }) {
   const [accounts, setAccounts] = useState<
-    { id: string; provider: string; displayName: string; status: string }[]
+    {
+      id: string;
+      provider: string;
+      displayName: string;
+      status: string;
+      adapterDefaults: { madeForKids?: boolean };
+    }[]
   >([]);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<QueueJobDto[]>([]);
@@ -310,8 +316,20 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [collisionWindowEnd, setCollisionWindowEnd] = useState<Date | null>(null);
   const [body, setBody] = useState('');
+  const [video, setVideo] = useState<File | null>(null);
+  const [videoTitle, setVideoTitle] = useState('');
+  const [videoDescription, setVideoDescription] = useState('');
+  const [madeForKids, setMadeForKids] = useState<'default' | 'yes' | 'no'>('default');
+  const [privacyStatus, setPrivacyStatus] = useState<'default' | 'public' | 'unlisted' | 'private'>(
+    'default',
+  );
+  const [notifySubscribers, setNotifySubscribers] = useState<'default' | 'yes' | 'no'>('default');
   const [scheduled, setScheduled] = useState(true);
-  const [receipt, setReceipt] = useState<{ count: number; scheduledAt: string } | null>(null);
+  const [receipt, setReceipt] = useState<{
+    count: number;
+    scheduledAt: string;
+    effectiveProviderSettings: Record<string, unknown>[];
+  } | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
@@ -321,6 +339,10 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [scheduleOption, setScheduleOption] = useState(0);
   const scheduledAt = scheduleOptions[scheduleOption];
   const scheduledAtMillis = scheduledAt ? scheduledAt.getTime() : null;
+  const selected = accounts.filter((account) => selectedAccounts.includes(account.id));
+  const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
+  const includesYouTube = selected.some((account) => account.provider === 'youtube');
+  const youtubeHasMadeForKids = selected[0]?.adapterDefaults.madeForKids !== undefined;
   const scheduleError =
     scheduled && scheduleOptions.length === 0
       ? 'This local time does not exist because the clock changes. Choose another time.'
@@ -338,7 +360,10 @@ function Composer({ onClose }: { onClose: () => void }) {
       )
     : [];
   const invalid =
-    !body.trim() ||
+    (isYouTube
+      ? !video || !videoTitle.trim() || (!youtubeHasMadeForKids && madeForKids === 'default')
+      : !body.trim()) ||
+    (includesYouTube && !isYouTube) ||
     selectedAccounts.length === 0 ||
     state !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
@@ -348,7 +373,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         if (!response.ok) throw new Error('Connected accounts could not be loaded.');
         return response.json() as Promise<{
           data: {
-            accounts: { id: string; provider: string; displayName: string; status: string }[];
+            accounts: {
+              id: string;
+              provider: string;
+              displayName: string;
+              status: string;
+              adapterDefaults: { madeForKids?: boolean };
+            }[];
           };
         }>;
       })
@@ -391,13 +422,55 @@ function Composer({ onClose }: { onClose: () => void }) {
   }, [scheduledAtMillis, selectedAccounts]);
   useEffect(() => {
     intentKey.current = crypto.randomUUID();
-  }, [body, localSchedule, scheduleOption, scheduled, selectedAccounts]);
+  }, [
+    body,
+    localSchedule,
+    madeForKids,
+    notifySubscribers,
+    privacyStatus,
+    scheduleOption,
+    scheduled,
+    selectedAccounts,
+    video,
+    videoDescription,
+    videoTitle,
+  ]);
   const submit = async () => {
     setState('saving');
     setError(null);
     const targetTime = scheduled ? scheduledAt : new Date();
     if (!targetTime) return;
     try {
+      let mediaIds: string[] = [];
+      if (isYouTube && video) {
+        const uploadResponse = await fetch('/api/workflow/media', {
+          method: 'POST',
+          headers: {
+            'content-type': 'video/mp4',
+            'x-file-name': video.name,
+            'x-csrf-token': cookieValue('publish_relay_csrf'),
+            'idempotency-key': `${intentKey.current}-media`,
+          },
+          body: video,
+        });
+        const upload = (await uploadResponse.json()) as {
+          data?: { id: string };
+          error?: string | null;
+        };
+        if (!uploadResponse.ok || !upload.data)
+          throw new Error(upload.error ?? 'The video could not be uploaded.');
+        mediaIds = [upload.data.id];
+      }
+      const youtubeOverrides = {
+        schemaVersion: 1,
+        title: videoTitle.trim(),
+        ...(videoDescription.trim() ? { description: videoDescription.trim() } : {}),
+        ...(madeForKids === 'default' ? {} : { madeForKids: madeForKids === 'yes' }),
+        ...(privacyStatus === 'default' ? {} : { privacyStatus }),
+        ...(notifySubscribers === 'default'
+          ? {}
+          : { notifySubscribers: notifySubscribers === 'yes' }),
+      };
       const response = await fetch('/api/workflow/posts', {
         method: 'POST',
         headers: {
@@ -406,14 +479,26 @@ function Composer({ onClose }: { onClose: () => void }) {
           'idempotency-key': intentKey.current,
         },
         body: JSON.stringify({
-          content: { type: 'text', text: body.trim() },
+          content: isYouTube
+            ? { kind: 'video', text: '', providerOptions: { youtube: youtubeOverrides } }
+            : { type: 'text', text: body.trim() },
+          mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
         }),
       });
-      const envelope = (await response.json()) as { error?: string | null };
+      const envelope = (await response.json()) as {
+        data?: { jobs?: { effectiveProviderSettings?: Record<string, unknown> | null }[] };
+        error?: string | null;
+      };
       if (!response.ok) throw new Error(envelope.error ?? 'The post could not be scheduled.');
-      setReceipt({ count: selectedAccounts.length, scheduledAt: targetTime.toISOString() });
+      setReceipt({
+        count: selectedAccounts.length,
+        scheduledAt: targetTime.toISOString(),
+        effectiveProviderSettings: (envelope.data?.jobs ?? []).flatMap((job) =>
+          job.effectiveProviderSettings ? [job.effectiveProviderSettings] : [],
+        ),
+      });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The post could not be scheduled.');
     } finally {
@@ -442,6 +527,11 @@ function Composer({ onClose }: { onClose: () => void }) {
             <span aria-hidden="true">✓</span>
             <h3>{receipt.count} posts scheduled</h3>
             <p>{formatTime(receipt.scheduledAt)}</p>
+            {receipt.effectiveProviderSettings.map((settings, index) => (
+              <p key={index} className="receipt-settings">
+                YouTube settings: {JSON.stringify(settings)}
+              </p>
+            ))}
             <div>
               <a className="secondary-button" href={`${workspacePath()}/queue`}>
                 Open Queue
@@ -484,25 +574,121 @@ function Composer({ onClose }: { onClose: () => void }) {
               ))}
             </fieldset>
             <label className="field-label">
-              Post body
-              <textarea
-                className="composer-body"
-                value={body}
-                onChange={(event) => {
-                  setBody(event.target.value);
-                }}
-                placeholder="What should your audience know?"
-              />
-              <small>{body.length}/280 per X post</small>
+              {isYouTube ? 'Video title' : 'Post body'}
+              {isYouTube ? (
+                <input
+                  className="text-input"
+                  maxLength={100}
+                  value={videoTitle}
+                  onChange={(event) => {
+                    setVideoTitle(event.target.value);
+                  }}
+                />
+              ) : (
+                <textarea
+                  className="composer-body"
+                  value={body}
+                  onChange={(event) => {
+                    setBody(event.target.value);
+                  }}
+                  placeholder="What should your audience know?"
+                />
+              )}
+              <small>
+                {isYouTube
+                  ? `${String(videoTitle.length)}/100`
+                  : `${String(body.length)}/280 per X post`}
+              </small>
             </label>
+            {isYouTube && (
+              <div className="youtube-composer-options">
+                <label className="field-label">
+                  Description
+                  <textarea
+                    className="composer-body"
+                    maxLength={5000}
+                    value={videoDescription}
+                    onChange={(event) => {
+                      setVideoDescription(event.target.value);
+                    }}
+                  />
+                </label>
+                <label className="field-label">
+                  Visibility
+                  <select
+                    className="text-input"
+                    value={privacyStatus}
+                    onChange={(event) => {
+                      setPrivacyStatus(event.target.value as typeof privacyStatus);
+                    }}
+                  >
+                    <option value="default">Use channel default</option>
+                    <option value="public">Public</option>
+                    <option value="unlisted">Unlisted</option>
+                    <option value="private">Private</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  Made for kids
+                  <select
+                    className="text-input"
+                    value={madeForKids}
+                    onChange={(event) => {
+                      setMadeForKids(event.target.value as typeof madeForKids);
+                    }}
+                  >
+                    <option value="default">Use channel default</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <label className="field-label">
+                  Notify subscribers
+                  <select
+                    className="text-input"
+                    value={notifySubscribers}
+                    onChange={(event) => {
+                      setNotifySubscribers(event.target.value as typeof notifySubscribers);
+                    }}
+                  >
+                    <option value="default">Use channel default</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+              </div>
+            )}
             <div className="media-dropzone">
               <strong>Add media</strong>
-              <span>Drop images or video here, or choose files</span>
+              <span>
+                {isYouTube
+                  ? video
+                    ? video.name
+                    : 'Choose exactly one MP4 video'
+                  : 'Media upload is available for YouTube destinations'}
+              </span>
               <label className="secondary-button" htmlFor="composer-media-upload">
                 Choose files
               </label>
-              <input id="composer-media-upload" className="sr-only" type="file" multiple />
+              <input
+                id="composer-media-upload"
+                className="sr-only"
+                type="file"
+                accept="video/mp4"
+                disabled={!isYouTube}
+                onChange={(event) => {
+                  setVideo(event.target.files?.[0] ?? null);
+                }}
+              />
             </div>
+            {includesYouTube && !isYouTube && (
+              <p className="inline-validation" role="alert">
+                YouTube videos must target exactly one YouTube channel.
+              </p>
+            )}
+            {isYouTube && !youtubeHasMadeForKids && madeForKids === 'default' && (
+              <p className="inline-validation">Choose whether this video is made for kids.</p>
+            )}
             <fieldset className="schedule-choice">
               <legend>Publishing time</legend>
               <button
@@ -604,7 +790,7 @@ function Composer({ onClose }: { onClose: () => void }) {
             {state === 'loading' && (
               <p className="inline-validation">Loading connected accounts before scheduling.</p>
             )}
-            {state === 'ready' && !body.trim() && (
+            {state === 'ready' && !isYouTube && !body.trim() && (
               <p className="inline-validation">Add post text before scheduling.</p>
             )}
             {state === 'ready' && body.trim() && selectedAccounts.length === 0 && (

@@ -1773,6 +1773,23 @@ select:focus-visible {
 .media-dropzone .secondary-button {
   margin-top: 8px;
 }
+.youtube-composer-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.youtube-composer-options > :first-child {
+  grid-column: 1 / -1;
+}
+.youtube-composer-options .composer-body {
+  min-height: 96px;
+}
+.receipt-settings {
+  max-width: 520px;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
 .schedule-choice {
   display: grid;
   grid-template-columns: 1fr 1fr;

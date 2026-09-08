@@ -193,8 +193,15 @@ export function registerBrowserWorkflowRoutes(
             .code(400)
             .send({ data: null, error: 'A valid Idempotency-Key is required' });
         const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
-        if (contentType !== 'video/mp4' || !mediaStorage.stageStream || !mediaStorage.promote || !mediaProbe.probeMp4File)
-          return await reply.code(400).send({ data: null, error: 'A valid MP4 upload is required' });
+        if (
+          contentType !== 'video/mp4' ||
+          !mediaStorage.stageStream ||
+          !mediaStorage.promote ||
+          !mediaProbe.probeMp4File
+        )
+          return await reply
+            .code(400)
+            .send({ data: null, error: 'A valid MP4 upload is required' });
         z.string().min(1).max(255).parse(request.headers['x-file-name']);
         const staged = await mediaStorage.stageStream({
           stream: request.body as Readable,
@@ -202,11 +209,15 @@ export function registerBrowserWorkflowRoutes(
           fingerprintPrefix: Buffer.from('video/mp4\0'),
         });
         temporaryKey = staged.temporaryKey;
-        if (detectMimeType(staged.prefix) !== 'video/mp4') throw new Error('Media Content-Type mismatch');
+        if (detectMimeType(staged.prefix) !== 'video/mp4')
+          throw new Error('Media Content-Type mismatch');
         const metadata = await mediaProbe.probeMp4File(staged.filePath);
         if (metadata.durationMs > videoConfig.limits.maxDurationMs)
           throw new Error('Media duration exceeds the configured limit');
-        if (metadata.width > videoConfig.limits.maxWidth || metadata.height > videoConfig.limits.maxHeight)
+        if (
+          metadata.width > videoConfig.limits.maxWidth ||
+          metadata.height > videoConfig.limits.maxHeight
+        )
           throw new Error('Media dimensions exceed the configured limit');
         const result = await executeBrowserMutation(
           dependencies.database,
@@ -357,7 +368,22 @@ export function registerBrowserWorkflowRoutes(
     if (result.kind === 'conflict')
       return reply.code(409).send({ data: null, error: 'Idempotency key was already used' });
     if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');
-    return reply.code(result.response.statusCode).send(result.response.body);
+    const responseBody = result.response.body as {
+      data: { jobIds?: string[] };
+      error: null;
+    };
+    const jobs = await Promise.all(
+      (responseBody.data.jobIds ?? []).map(async (jobId) => {
+        const job = await getBrowserJobDetail(dependencies.database, identity.workspaceId, jobId);
+        return job
+          ? { id: job.id, effectiveProviderSettings: job.effectiveProviderSettings }
+          : { id: jobId, effectiveProviderSettings: null };
+      }),
+    );
+    return reply.code(result.response.statusCode).send({
+      ...responseBody,
+      data: { ...responseBody.data, jobs },
+    });
   });
 
   application.patch('/api/workflow/posts/:postId', async (request, reply) => {

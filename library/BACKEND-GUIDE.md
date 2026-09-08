@@ -149,3 +149,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 `POST /api/v1/jobs/:jobId/retry` is the canonical agent retry surface. It requires `publishes:retry`, an idempotency key, and a tenant-owned failed job whose outcome does not require reconciliation. The API-key identity is retained as the policy and event actor; unknown outcomes must be reconciled rather than blindly retried.
 
 Provider runtime registration is isolated: missing provider-specific credentials disable only that provider and emit a secret-free `provider_disabled` event. Common worker prerequisites may still fail startup, but one provider's absent configuration must not prevent unrelated providers or retention/reconciliation infrastructure from running.
+
+# Browser create response
+
+- Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.

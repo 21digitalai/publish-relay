@@ -146,3 +146,57 @@ export async function cleanupRetainedMedia(
   }
   return { deleted, failed };
 }
+
+export async function deleteUnattachedMedia(
+  database: NodePgDatabase,
+  storage: MediaStorage,
+  input: { workspaceId: string; mediaId: string; now?: Date },
+): Promise<boolean> {
+  const now = input.now ?? new Date();
+  const claim = await withTenantTransaction(database, input, async (transaction) => {
+    const result = await transaction.execute<{ storage_key: string }>(sql`
+      update media_objects media
+      set state = 'deleting', cleanup_started_at = ${now},
+        deletion_attempts = media.deletion_attempts + 1, updated_at = ${now}
+      where media.workspace_id = ${input.workspaceId} and media.id = ${input.mediaId}
+        and media.state in ('ready', 'cleanup_failed')
+        and not exists (
+          select 1 from revision_media rm
+          where rm.workspace_id = media.workspace_id and rm.media_id = media.id
+        )
+      returning media.storage_key
+    `);
+    const claimed = result.rows[0];
+    if (claimed) return { kind: 'claimed' as const, storageKey: claimed.storage_key };
+    const existing = await transaction.execute<{ state: string }>(sql`
+      select state from media_objects
+      where workspace_id = ${input.workspaceId} and id = ${input.mediaId}
+    `);
+    return {
+      kind: existing.rows[0]?.state === 'deleted' ? ('deleted' as const) : ('unavailable' as const),
+    };
+  });
+  if (claim.kind === 'deleted') return true;
+  if (claim.kind === 'unavailable') return false;
+  if (!claim.storageKey) return false;
+  try {
+    await storage.delete(claim.storageKey);
+  } catch (error) {
+    await withTenantTransaction(database, input, (transaction) =>
+      transaction.execute(sql`
+        update media_objects set state = 'cleanup_failed', cleanup_failed_at = ${now},
+          cleanup_retry_at = ${now}, updated_at = ${now}
+        where workspace_id = ${input.workspaceId} and id = ${input.mediaId} and state = 'deleting'
+      `),
+    );
+    throw error;
+  }
+  await withTenantTransaction(database, input, (transaction) =>
+    transaction.execute(sql`
+      update media_objects set state = 'deleted', deleted_at = ${now}, cleanup_retry_at = null,
+        updated_at = ${now} where workspace_id = ${input.workspaceId} and id = ${input.mediaId}
+        and state = 'deleting'
+    `),
+  );
+  return true;
+}

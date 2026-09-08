@@ -743,11 +743,17 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
     return route.fulfill({
       status: 201,
       contentType: 'application/json',
-      body: JSON.stringify({ data: { id: `media-${uploadCount}` }, error: null }),
+      body: JSON.stringify({ data: { id: `media-${String(uploadCount)}` }, error: null }),
     });
   });
   await page.route('**/api/workflow/media/*', (route) => {
     deletedMedia.push(route.request().url());
+    if (deletedMedia.length === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: '{"data":null,"error":"Cleanup unavailable"}',
+      });
     return route.fulfill({
       contentType: 'application/json',
       body: '{"data":{"deleted":true},"error":null}',
@@ -800,7 +806,23 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
   await schedule.click();
   await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
   await expect.poll(() => deletedMedia.length).toBe(1);
-  await schedule.click();
+  await page.getByRole('button', { name: 'Close composer' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect.poll(() => deletedMedia.length).toBe(2);
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByLabel('Video title').fill('A finished short');
+  await page.getByLabel('Made for kids').click();
+  await page.getByRole('option', { name: 'No', exact: true }).click();
+  await page.getByLabel('Visibility').click();
+  await page.getByRole('option', { name: 'Public' }).click();
+  await page.getByLabel('Notify subscribers').click();
+  await page.getByRole('option', { name: 'Yes', exact: true }).click();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'short.mp4',
+    mimeType: 'video/mp4',
+    buffer: Buffer.from('mp4'),
+  });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
   await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
   const settings = page.getByLabel('YouTube settings');
   await expect(settings).toContainText('Visibilitypublic');

@@ -9,6 +9,7 @@ import { cleanupTemporaryMedia, storeMedia } from '../src/modules/content/media.
 import {
   cleanupRetainedMedia,
   createFixedMediaRetentionPolicy,
+  deleteUnattachedMedia,
   evaluateMediaRetention,
 } from '../src/modules/content/media-retention.service.js';
 import { runMediaRetentionCycle } from '../src/modules/content/media-retention.worker.js';
@@ -122,6 +123,50 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('media retention lifecycle', () => {
+  it('retries abandoned upload deletion after storage failure and refuses attached media', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    const freeMedia = '00000000-0000-4000-8000-000000000219';
+    const attachedMedia = '00000000-0000-4000-8000-000000000220';
+    const postId = '00000000-0000-4000-8000-000000000221';
+    const revisionId = '00000000-0000-4000-8000-000000000222';
+    await database.exec(`
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${freeMedia}', '${workspaceId}', 'abandoned-key', 'free', 'image/png', 11, 'ready'),
+               ('${attachedMedia}', '${workspaceId}', 'attached-key', 'used', 'image/png', 13, 'ready');
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"kind":"video","text":""}');
+      INSERT INTO revision_media (workspace_id, revision_id, media_id, position)
+        VALUES ('${workspaceId}', '${revisionId}', '${attachedMedia}', 0);
+    `);
+    storage.objects.set('abandoned-key', Buffer.from('bytes'));
+    storage.shouldFailDelete = true;
+    await expect(
+      deleteUnattachedMedia(db, storage, { workspaceId, mediaId: freeMedia }),
+    ).rejects.toThrow();
+    expect(
+      (
+        await database.query<{ state: string }>(
+          `SELECT state FROM media_objects WHERE id = '${freeMedia}'`,
+        )
+      ).rows[0]?.state,
+    ).toBe('cleanup_failed');
+    storage.shouldFailDelete = false;
+    await expect(
+      deleteUnattachedMedia(db, storage, { workspaceId, mediaId: freeMedia }),
+    ).resolves.toBe(true);
+    await expect(
+      deleteUnattachedMedia(db, storage, { workspaceId, mediaId: freeMedia }),
+    ).resolves.toBe(true);
+    await expect(
+      deleteUnattachedMedia(db, storage, { workspaceId, mediaId: attachedMedia }),
+    ).resolves.toBe(false);
+    await expect(
+      deleteUnattachedMedia(db, storage, { workspaceId, mediaId: accountOne }),
+    ).resolves.toBe(false);
+  });
+
   it('retains referenced bytes, tombstones confirmed deletion, and replays cleanup safely', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const storage = new FakeMediaStorage();

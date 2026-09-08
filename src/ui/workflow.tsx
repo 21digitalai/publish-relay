@@ -335,18 +335,27 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
   const uploadedMediaId = useRef<string | null>(null);
-  const discardUpload = async () => {
+  const discardUpload = async (): Promise<boolean> => {
     const mediaId = uploadedMediaId.current;
-    if (!mediaId) return;
-    uploadedMediaId.current = null;
-    await fetch(`/api/workflow/media/${mediaId}`, {
-      method: 'DELETE',
-      headers: { 'x-csrf-token': cookieValue('publish_relay_csrf') },
-    }).catch(() => undefined);
+    if (!mediaId) return true;
+    try {
+      const response = await fetch(`/api/workflow/media/${mediaId}`, {
+        method: 'DELETE',
+        headers: { 'x-csrf-token': cookieValue('publish_relay_csrf') },
+      });
+      const envelope = (await response.json()) as { data?: { deleted?: boolean } };
+      if (response.ok && envelope.data?.deleted === true) {
+        uploadedMediaId.current = null;
+        return true;
+      }
+    } catch {
+      // Keep the media identity so a retry can resume server-owned cleanup.
+    }
+    return false;
   };
-  const closeComposer = () => {
-    void discardUpload();
-    onClose();
+  const closeComposer = async () => {
+    if (await discardUpload()) onClose();
+    else setError('The uploaded video is still being cleaned up. Try closing again.');
   };
   const initialSchedule = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
   const [localSchedule, setLocalSchedule] = useState(localDateTimeValue(initialSchedule));
@@ -458,24 +467,27 @@ function Composer({ onClose }: { onClose: () => void }) {
     try {
       let mediaIds: string[] = [];
       if (isYouTube && video) {
-        const uploadResponse = await fetch('/api/workflow/media', {
-          method: 'POST',
-          headers: {
-            'content-type': 'video/mp4',
-            'x-file-name': video.name,
-            'x-csrf-token': cookieValue('publish_relay_csrf'),
-            'idempotency-key': `${intentKey.current}-media`,
-          },
-          body: video,
-        });
-        const upload = (await uploadResponse.json()) as {
-          data?: { id: string };
-          error?: string | null;
-        };
-        if (!uploadResponse.ok || !upload.data)
-          throw new Error(upload.error ?? 'The video could not be uploaded.');
-        mediaIds = [upload.data.id];
-        uploadedMediaId.current = upload.data.id;
+        if (uploadedMediaId.current) mediaIds = [uploadedMediaId.current];
+        else {
+          const uploadResponse = await fetch('/api/workflow/media', {
+            method: 'POST',
+            headers: {
+              'content-type': 'video/mp4',
+              'x-file-name': video.name,
+              'x-csrf-token': cookieValue('publish_relay_csrf'),
+              'idempotency-key': `${intentKey.current}-media`,
+            },
+            body: video,
+          });
+          const upload = (await uploadResponse.json()) as {
+            data?: { id: string };
+            error?: string | null;
+          };
+          if (!uploadResponse.ok || !upload.data)
+            throw new Error(upload.error ?? 'The video could not be uploaded.');
+          mediaIds = [upload.data.id];
+          uploadedMediaId.current = upload.data.id;
+        }
       }
       const youtubeOverrides = {
         schemaVersion: 1,
@@ -538,7 +550,7 @@ function Composer({ onClose }: { onClose: () => void }) {
           </div>
           <button
             className="icon-button"
-            onClick={closeComposer}
+            onClick={() => void closeComposer()}
             aria-label="Close composer"
             disabled={state === 'saving'}
           >

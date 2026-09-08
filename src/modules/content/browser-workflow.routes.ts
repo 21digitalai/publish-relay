@@ -15,7 +15,8 @@ import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
-import { claimUnattachedMediaForDeletion, getReadyMediaForDownload } from './media.repository.js';
+import { getReadyMediaForDownload } from './media.repository.js';
+import { deleteUnattachedMedia } from './media-retention.service.js';
 import type { MediaStorage } from './media-storage.js';
 import { FfprobeMediaProbe, type MediaProbe } from './media-probe.js';
 import { detectMimeType, storeStagedMediaInTransaction } from './media.service.js';
@@ -316,13 +317,11 @@ export function registerBrowserWorkflowRoutes(
         const params = mediaParamsSchema.safeParse(request.params);
         if (!params.success)
           return await reply.code(400).send({ data: null, error: 'Invalid media id' });
-        const media = await claimUnattachedMediaForDeletion(
-          dependencies.database,
-          identity.workspaceId,
-          params.data.mediaId,
-        );
-        if (media) await mediaStorage.delete(media.storageKey);
-        return await reply.send({ data: { deleted: Boolean(media) }, error: null });
+        const deleted = await deleteUnattachedMedia(dependencies.database, mediaStorage, {
+          workspaceId: identity.workspaceId,
+          mediaId: params.data.mediaId,
+        });
+        return await reply.send({ data: { deleted }, error: null });
       } catch (error) {
         return mutationError(request, reply, error);
       }

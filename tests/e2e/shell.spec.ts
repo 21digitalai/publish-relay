@@ -14,6 +14,13 @@ async function establishWorkspaceSession(page: Page) {
   expect(response.ok()).toBe(true);
 }
 
+async function workspacePath(page: Page, path: string) {
+  const response = await page.request.get('/api/workspaces/current');
+  expect(response.ok()).toBe(true);
+  const body = (await response.json()) as { data: { slug: string } };
+  return `/w/${body.data.slug}/${path}`;
+}
+
 test('renders persisted shell identity on desktop and mobile after reload', async ({ page }) => {
   const suffix = Math.random().toString(36).slice(2);
   const displayName = `Nova Operator ${suffix}`;
@@ -49,6 +56,7 @@ async function mockConnectedAccounts(page: Page) {
               displayName: 'Daily Viber (@dailyviber)',
               status: 'active',
               updatedAt: '2026-09-01T00:00:00Z',
+              adapterDefaults: {},
             },
             {
               id: '00000000-0000-4000-8000-000000000202',
@@ -56,6 +64,7 @@ async function mockConnectedAccounts(page: Page) {
               displayName: 'Studio Notes (@studionotes)',
               status: 'reconnect_required',
               updatedAt: '2026-08-29T00:00:00Z',
+              adapterDefaults: {},
             },
             {
               id: '00000000-0000-4000-8000-000000000203',
@@ -63,6 +72,7 @@ async function mockConnectedAccounts(page: Page) {
               displayName: 'Mira Studio (@mirastudio)',
               status: 'active',
               updatedAt: '2026-09-01T00:00:00Z',
+              adapterDefaults: {},
             },
           ],
         },
@@ -148,7 +158,7 @@ test('registers, persists the first workspace update, and reloads the protected 
 test('filters accounts and opens a named disconnect confirmation', async ({ page }, testInfo) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
-  await page.goto('/w/atlas/accounts');
+  await page.goto(await workspacePath(page, 'accounts'));
   await expect(page.getByRole('heading', { name: 'Connected accounts' })).toBeVisible();
   await expect(page.getByText('Studio Notes')).toBeVisible();
   await page.getByPlaceholder('Search name or handle').fill('Mira');
@@ -208,7 +218,7 @@ test('edits YouTube destination defaults through the account row', async ({ page
       body: JSON.stringify({ data: { adapterDefaults: savedBody }, error: null }),
     });
   });
-  await page.goto('/w/atlas/accounts');
+  await page.goto(await workspacePath(page, 'accounts'));
   await expect(page.getByRole('button', { name: /Connect X/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Connect YouTube/ })).toBeVisible();
   await expect(page.getByText('Publishing defaults')).toBeVisible();
@@ -250,21 +260,21 @@ test('persists credential-free fake-provider connect and disconnect through relo
 }, testInfo) => {
   await page.clock.setFixedTime(new Date('2026-09-01T05:00:00.000Z'));
   await establishWorkspaceSession(page);
-  await page.goto('/w/atlas/accounts?state=empty');
+  await page.goto(await workspacePath(page, 'accounts?state=empty'));
   await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
   await expect(page.getByLabel('Account health summary')).toContainText(
     '0Connected accounts0Healthy0Needs attention',
   );
   await page.screenshot({ path: testInfo.outputPath('accounts-empty.png'), fullPage: true });
-  await page.goto('/w/atlas/accounts?state=loading');
+  await page.goto(await workspacePath(page, 'accounts?state=loading'));
   await expect(page.getByLabel('Loading accounts')).toBeVisible();
   await expect(page.getByLabel('Loading account health')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('accounts-loading.png'), fullPage: true });
-  await page.goto('/w/atlas/accounts?state=error');
+  await page.goto(await workspacePath(page, 'accounts?state=error'));
   await expect(page.getByRole('alert')).toContainText('Accounts could not be loaded');
   await expect(page.getByLabel('Account health summary')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('accounts-error.png'), fullPage: true });
-  await page.goto('/w/atlas/accounts');
+  await page.goto(await workspacePath(page, 'accounts'));
   await page.getByRole('button', { name: 'Connect X', exact: true }).click();
   await expect(page.getByText('Daily Viber')).toBeVisible();
   await page.reload();
@@ -315,7 +325,7 @@ test('uses the mobile navigation drawer', async ({ page }) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/w/atlas/accounts');
+  await page.goto(await workspacePath(page, 'accounts'));
   await page.getByRole('button', { name: 'Open navigation' }).click();
   await expect(page.getByLabel('Primary navigation')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create post' })).toBeVisible();
@@ -381,7 +391,7 @@ test('operates the workspace switcher completely from the keyboard', async ({ pa
       body: JSON.stringify({ data: { workspace: { slug: 'relay' } }, error: null }),
     });
   });
-  await page.goto('/w/atlas/accounts');
+  await page.goto(await workspacePath(page, 'accounts'));
   if ((page.viewportSize()?.width ?? 0) < 768)
     await page.getByRole('button', { name: 'Open navigation' }).click();
   const trigger = page.getByRole('button', { name: /Atlas owner/ });
@@ -586,16 +596,14 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
       }),
     });
   });
-  await page.goto('/w/atlas/queue');
+  await page.goto(await workspacePath(page, 'queue'));
   await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
   await expect(page.getByText('The clearest plans')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('queue-populated.png'), fullPage: true });
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('composer.png'), fullPage: true });
-  const fileChooserPromise = page.waitForEvent('filechooser');
-  await page.getByText('Choose files', { exact: true }).click();
-  await fileChooserPromise;
+  await expect(page.getByRole('button', { name: 'Choose files' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
   const scheduleInput = page.getByLabel('Date and time');
@@ -639,7 +647,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
     new Date('2026-09-01T10:05:00+03:00'),
   );
   await page.getByRole('button', { name: 'Close composer' }).click();
-  await page.goto('/w/atlas/calendar');
+  await page.goto(await workspacePath(page, 'calendar'));
   for (const mode of ['Month', 'Week', 'Day', 'Timeline']) {
     await page.getByRole('button', { name: mode, exact: true }).click();
     await expect(page.getByLabel(`${mode} calendar`)).toBeVisible();
@@ -651,7 +659,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
       fullPage: true,
     });
   }
-  await page.goto('/w/atlas/jobs/job-2048');
+  await page.goto(await workspacePath(page, 'jobs/job-2048'));
   await expect(page.getByRole('heading', { name: 'Daily Viber' })).toBeVisible();
   await expect(page.getByRole('status')).toBeEmpty();
   await page.screenshot({ path: testInfo.outputPath('job-detail-failed.png'), fullPage: true });
@@ -703,7 +711,7 @@ test('reports collision guidance as unavailable instead of an empty result', asy
       body: JSON.stringify({ data: null, error: 'Queue unavailable' }),
     }),
   );
-  await page.goto('/w/atlas/queue');
+  await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByText('Nearby schedule guidance is unavailable.')).toBeVisible();
 });
@@ -812,7 +820,7 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
       }),
     });
   });
-  await page.goto('/w/atlas/queue');
+  await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await page.getByLabel('Video title').fill('A finished short');
   await page.getByLabel('Made for kids').click();
@@ -866,7 +874,7 @@ test('suppresses workflow motion when reduced motion is requested', async ({ pag
     }),
   );
 
-  await page.goto('/w/atlas/queue');
+  await page.goto(await workspacePath(page, 'queue'));
   const loadingShape = page.locator('.loading-shape').first();
   await expect(loadingShape).toBeVisible();
   await expect(loadingShape).toHaveCSS('animation-name', 'none');
@@ -914,7 +922,7 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
       }),
     });
   });
-  await page.goto('/w/atlas/queue');
+  await page.goto(await workspacePath(page, 'queue'));
   await expect(page.getByRole('status')).toContainText('Loading publication queue');
   await page.screenshot({ path: testInfo.outputPath('queue-loading.png'), fullPage: true });
   await expect(page.getByRole('link', { name: /^Dispatching / })).toBeVisible();
@@ -1111,10 +1119,10 @@ test('navigates calendar months across month-end and leap-year boundaries', asyn
   await page.route('**/api/workflow/jobs?limit=100', (route) =>
     route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
   );
-  await page.goto('/w/atlas/calendar?mode=Month&date=2027-01-31');
+  await page.goto(await workspacePath(page, 'calendar?mode=Month&date=2027-01-31'));
   await page.getByRole('button', { name: 'Next date' }).click();
   await expect(page).toHaveURL(/mode=Month&date=2027-02-28/);
-  await page.goto('/w/atlas/calendar?mode=Month&date=2028-01-31');
+  await page.goto(await workspacePath(page, 'calendar?mode=Month&date=2028-01-31'));
   await page.getByRole('button', { name: 'Next date' }).click();
   await expect(page).toHaveURL(/mode=Month&date=2028-02-29/);
   await page.getByRole('button', { name: 'Previous date' }).click();
@@ -1201,7 +1209,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
       body: JSON.stringify({ data: { items: keys }, error: null }),
     });
   });
-  await page.goto('/w/atlas/settings/workspace');
+  await page.goto(await workspacePath(page, 'settings/workspace'));
   await expect(page.getByRole('heading', { name: 'Workspace profile' })).toBeVisible();
   await page.getByLabel('Name').fill('Atlas Studio');
   await page.getByRole('button', { name: 'Save workspace' }).click();
@@ -1369,7 +1377,7 @@ test('edits a scheduled job through the canonical browser revision route', async
       body: JSON.stringify({ data: { revisionId: 'revision-new' }, error: null }),
     });
   });
-  await page.goto('/w/atlas/jobs/scheduled-job');
+  await page.goto(await workspacePath(page, 'jobs/scheduled-job'));
   await page.getByRole('button', { name: 'Edit schedule' }).click();
   await page.getByLabel('Date and time').fill('2027-09-02T10:15');
   await page.getByRole('button', { name: 'Update schedule' }).click();
@@ -1405,7 +1413,7 @@ test.describe('Europe/Sofia DST scheduling', () => {
         body: '{"data":{"id":"post-dst","jobIds":["one","two"]},"error":null}',
       });
     });
-    await page.goto('/w/atlas/queue');
+    await page.goto(await workspacePath(page, 'queue'));
 
     const scheduleFold = async (offsetLabel: string) => {
       await page.getByRole('button', { name: 'Create post' }).last().click();

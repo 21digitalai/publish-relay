@@ -153,3 +153,4 @@ Provider runtime registration is isolated: missing provider-specific credentials
 # Browser create response
 
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.
+- Browser Composer uploads remain unattached until post creation succeeds. Its authenticated CSRF-protected media delete endpoint atomically tombstones only tenant-owned ready media with no revision reference, then removes the local object; attached media is never deleted through this abandonment path.

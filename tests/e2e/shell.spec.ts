@@ -708,6 +708,107 @@ test('reports collision guidance as unavailable instead of an empty result', asy
   await expect(page.getByText('Nearby schedule guidance is unavailable.')).toBeVisible();
 });
 
+test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000901',
+              provider: 'youtube',
+              displayName: 'Relay Channel',
+              status: 'active',
+              adapterDefaults: {},
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [], next: null }, error: null }),
+    }),
+  );
+  let uploadCount = 0;
+  const deletedMedia: string[] = [];
+  await page.route('**/api/workflow/media', (route) => {
+    uploadCount += 1;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: `media-${uploadCount}` }, error: null }),
+    });
+  });
+  await page.route('**/api/workflow/media/*', (route) => {
+    deletedMedia.push(route.request().url());
+    return route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"deleted":true},"error":null}',
+    });
+  });
+  let createCount = 0;
+  await page.route('**/api/workflow/posts', (route) => {
+    createCount += 1;
+    if (createCount === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Scheduling is temporarily unavailable' }),
+      });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          jobs: [
+            {
+              id: 'job-youtube',
+              effectiveProviderSettings: {
+                privacyStatus: 'public',
+                madeForKids: false,
+                notifySubscribers: true,
+              },
+            },
+          ],
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto('/w/atlas/queue');
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByLabel('Video title').fill('A finished short');
+  await page.getByLabel('Made for kids').click();
+  await page.getByRole('option', { name: 'No', exact: true }).click();
+  await page.getByLabel('Visibility').click();
+  await page.getByRole('option', { name: 'Public' }).click();
+  await page.getByLabel('Notify subscribers').click();
+  await page.getByRole('option', { name: 'Yes', exact: true }).click();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'short.mp4',
+    mimeType: 'video/mp4',
+    buffer: Buffer.from('mp4'),
+  });
+  const schedule = page.getByRole('button', { name: 'Schedule 1 post' });
+  await schedule.click();
+  await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
+  await expect.poll(() => deletedMedia.length).toBe(1);
+  await schedule.click();
+  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  const settings = page.getByLabel('YouTube settings');
+  await expect(settings).toContainText('Visibilitypublic');
+  await expect(settings).toContainText('Made for kidsNo');
+  await expect(settings).toContainText('Notify subscribersYes');
+  expect(uploadCount).toBe(2);
+});
+
 test('suppresses workflow motion when reduced motion is requested', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-09-01T05:00:00.000Z'));
   await page.emulateMedia({ reducedMotion: 'reduce' });

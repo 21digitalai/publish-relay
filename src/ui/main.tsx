@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
+import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
 import { CalendarPage, JobDetailPage, QueuePage, WorkspaceLayout } from './workflow.js';
 
@@ -63,63 +64,6 @@ function Mark({ provider }: { provider: string }) {
     <span className={`provider-mark ${isX ? 'x' : 'generic'}`} aria-hidden="true">
       {isX ? 'X' : provider.slice(0, 1).toUpperCase()}
     </span>
-  );
-}
-
-function DefaultsSelect({
-  label,
-  name,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  name: string;
-  value: string;
-  options: [string, string][];
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const selected = options.find(([option]) => option === value)?.[1] ?? value;
-  return (
-    <div className="defaults-field">
-      <span>{label}</span>
-      <input name={name} type="hidden" value={value} />
-      <button
-        type="button"
-        className="defaults-select-trigger"
-        aria-label={label}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        onClick={() => {
-          setOpen((current) => !current);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') setOpen(false);
-        }}
-      >
-        {selected} <span aria-hidden="true">⌄</span>
-      </button>
-      {open && (
-        <div className="defaults-select-menu" role="listbox" aria-label={label}>
-          {options.map(([option, text]) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={option === value}
-              className={`defaults-select-option${option === value ? ' selected' : ''}`}
-              key={option}
-              onClick={() => {
-                onChange(option);
-                setOpen(false);
-              }}
-            >
-              {text}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 

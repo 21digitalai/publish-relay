@@ -1,7 +1,7 @@
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, lt, notExists } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { mediaObjects } from '../../database/schema.js';
+import { mediaObjects, revisionMedia } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
 export async function getReadyMediaForDownload(
@@ -87,6 +87,35 @@ export async function markMediaDeleted(
     .update(mediaObjects)
     .set({ state: 'deleted', deletedAt: new Date(), updatedAt: new Date() })
     .where(and(eq(mediaObjects.workspaceId, workspaceId), eq(mediaObjects.id, mediaId)));
+}
+
+export async function claimUnattachedMediaForDeletion(
+  database: NodePgDatabase,
+  workspaceId: string,
+  mediaId: string,
+): Promise<{ storageKey: string } | null> {
+  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
+    const rows = await transaction
+      .update(mediaObjects)
+      .set({ state: 'deleted', deletedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(mediaObjects.workspaceId, workspaceId),
+          eq(mediaObjects.id, mediaId),
+          eq(mediaObjects.state, 'ready'),
+          notExists(
+            transaction
+              .select({ mediaId: revisionMedia.mediaId })
+              .from(revisionMedia)
+              .where(
+                and(eq(revisionMedia.workspaceId, workspaceId), eq(revisionMedia.mediaId, mediaId)),
+              ),
+          ),
+        ),
+      )
+      .returning({ storageKey: mediaObjects.storageKey });
+    return rows[0] ?? null;
+  });
 }
 
 export async function listExpiredTemporaryMedia(

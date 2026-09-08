@@ -15,7 +15,7 @@ import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
-import { getReadyMediaForDownload } from './media.repository.js';
+import { claimUnattachedMediaForDeletion, getReadyMediaForDownload } from './media.repository.js';
 import type { MediaStorage } from './media-storage.js';
 import { FfprobeMediaProbe, type MediaProbe } from './media-probe.js';
 import { detectMimeType, storeStagedMediaInTransaction } from './media.service.js';
@@ -304,6 +304,28 @@ export function registerBrowserWorkflowRoutes(
       if (bytes.byteLength !== media.byteSize)
         return reply.code(500).send({ data: null, error: 'Stored media is unavailable' });
       return reply.header('cache-control', 'private, max-age=300').type(media.mimeType).send(bytes);
+    });
+  if (mediaStorage)
+    application.delete('/api/workflow/media/:mediaId', async (request, reply) => {
+      try {
+        const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+        if (!identity)
+          return await reply.code(401).send({ data: null, error: 'Authentication required' });
+        if (!authorizeMutation(request))
+          return await reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+        const params = mediaParamsSchema.safeParse(request.params);
+        if (!params.success)
+          return await reply.code(400).send({ data: null, error: 'Invalid media id' });
+        const media = await claimUnattachedMediaForDeletion(
+          dependencies.database,
+          identity.workspaceId,
+          params.data.mediaId,
+        );
+        if (media) await mediaStorage.delete(media.storageKey);
+        return await reply.send({ data: { deleted: Boolean(media) }, error: null });
+      } catch (error) {
+        return mutationError(request, reply, error);
+      }
     });
   application.post('/api/workflow/posts', async (request, reply) => {
     let identity;

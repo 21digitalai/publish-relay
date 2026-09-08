@@ -749,6 +749,13 @@ select:focus-visible {
   font: inherit;
   cursor: pointer;
 }
+.defaults-field {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .defaults-select-trigger {
   display: flex;
   justify-content: space-between;
@@ -1789,6 +1796,18 @@ select:focus-visible {
   max-width: 520px;
   overflow-wrap: anywhere;
   color: var(--text-muted);
+}
+.receipt-settings div {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+}
+.receipt-settings dt {
+  font-weight: 600;
+}
+.receipt-settings dd {
+  margin: 0;
+  text-transform: capitalize;
 }
 .schedule-choice {
   display: grid;

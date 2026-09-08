@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Rail } from './main.js';
 import { LiveRegion } from './feedback.js';
+import { DefaultsSelect } from './defaults-select.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
 type JobState =
@@ -333,6 +334,20 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
+  const uploadedMediaId = useRef<string | null>(null);
+  const discardUpload = async () => {
+    const mediaId = uploadedMediaId.current;
+    if (!mediaId) return;
+    uploadedMediaId.current = null;
+    await fetch(`/api/workflow/media/${mediaId}`, {
+      method: 'DELETE',
+      headers: { 'x-csrf-token': cookieValue('publish_relay_csrf') },
+    }).catch(() => undefined);
+  };
+  const closeComposer = () => {
+    void discardUpload();
+    onClose();
+  };
   const initialSchedule = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
   const [localSchedule, setLocalSchedule] = useState(localDateTimeValue(initialSchedule));
   const scheduleOptions = useMemo(() => matchingLocalInstants(localSchedule), [localSchedule]);
@@ -460,6 +475,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         if (!uploadResponse.ok || !upload.data)
           throw new Error(upload.error ?? 'The video could not be uploaded.');
         mediaIds = [upload.data.id];
+        uploadedMediaId.current = upload.data.id;
       }
       const youtubeOverrides = {
         schemaVersion: 1,
@@ -492,6 +508,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         error?: string | null;
       };
       if (!response.ok) throw new Error(envelope.error ?? 'The post could not be scheduled.');
+      uploadedMediaId.current = null;
       setReceipt({
         count: selectedAccounts.length,
         scheduledAt: targetTime.toISOString(),
@@ -500,6 +517,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         ),
       });
     } catch (reason) {
+      await discardUpload();
       setError(reason instanceof Error ? reason.message : 'The post could not be scheduled.');
     } finally {
       setState('ready');
@@ -518,7 +536,12 @@ function Composer({ onClose }: { onClose: () => void }) {
             <p className="eyebrow">New publication</p>
             <h2 id="composer-title">Create post</h2>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close composer">
+          <button
+            className="icon-button"
+            onClick={closeComposer}
+            aria-label="Close composer"
+            disabled={state === 'saving'}
+          >
             ×
           </button>
         </header>
@@ -528,9 +551,24 @@ function Composer({ onClose }: { onClose: () => void }) {
             <h3>{receipt.count} posts scheduled</h3>
             <p>{formatTime(receipt.scheduledAt)}</p>
             {receipt.effectiveProviderSettings.map((settings, index) => (
-              <p key={index} className="receipt-settings">
-                YouTube settings: {JSON.stringify(settings)}
-              </p>
+              <dl key={index} className="receipt-settings" aria-label="YouTube settings">
+                <div>
+                  <dt>Visibility</dt>
+                  <dd>
+                    {typeof settings.privacyStatus === 'string'
+                      ? settings.privacyStatus
+                      : 'Not set'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Made for kids</dt>
+                  <dd>{settings.madeForKids === true ? 'Yes' : 'No'}</dd>
+                </div>
+                <div>
+                  <dt>Notify subscribers</dt>
+                  <dd>{settings.notifySubscribers === true ? 'Yes' : 'No'}</dd>
+                </div>
+              </dl>
             ))}
             <div>
               <a className="secondary-button" href={`${workspacePath()}/queue`}>
@@ -613,49 +651,46 @@ function Composer({ onClose }: { onClose: () => void }) {
                     }}
                   />
                 </label>
-                <label className="field-label">
-                  Visibility
-                  <select
-                    className="text-input"
-                    value={privacyStatus}
-                    onChange={(event) => {
-                      setPrivacyStatus(event.target.value as typeof privacyStatus);
-                    }}
-                  >
-                    <option value="default">Use channel default</option>
-                    <option value="public">Public</option>
-                    <option value="unlisted">Unlisted</option>
-                    <option value="private">Private</option>
-                  </select>
-                </label>
-                <label className="field-label">
-                  Made for kids
-                  <select
-                    className="text-input"
-                    value={madeForKids}
-                    onChange={(event) => {
-                      setMadeForKids(event.target.value as typeof madeForKids);
-                    }}
-                  >
-                    <option value="default">Use channel default</option>
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </label>
-                <label className="field-label">
-                  Notify subscribers
-                  <select
-                    className="text-input"
-                    value={notifySubscribers}
-                    onChange={(event) => {
-                      setNotifySubscribers(event.target.value as typeof notifySubscribers);
-                    }}
-                  >
-                    <option value="default">Use channel default</option>
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </label>
+                <DefaultsSelect
+                  label="Visibility"
+                  name="privacyStatus"
+                  value={privacyStatus}
+                  options={[
+                    ['default', 'Use channel default'],
+                    ['public', 'Public'],
+                    ['unlisted', 'Unlisted'],
+                    ['private', 'Private'],
+                  ]}
+                  onChange={(value) => {
+                    setPrivacyStatus(value as typeof privacyStatus);
+                  }}
+                />
+                <DefaultsSelect
+                  label="Made for kids"
+                  name="madeForKids"
+                  value={madeForKids}
+                  options={[
+                    ['default', 'Use channel default'],
+                    ['yes', 'Yes'],
+                    ['no', 'No'],
+                  ]}
+                  onChange={(value) => {
+                    setMadeForKids(value as typeof madeForKids);
+                  }}
+                />
+                <DefaultsSelect
+                  label="Notify subscribers"
+                  name="notifySubscribers"
+                  value={notifySubscribers}
+                  options={[
+                    ['default', 'Use channel default'],
+                    ['yes', 'Yes'],
+                    ['no', 'No'],
+                  ]}
+                  onChange={(value) => {
+                    setNotifySubscribers(value as typeof notifySubscribers);
+                  }}
+                />
               </div>
             )}
             <div className="media-dropzone">

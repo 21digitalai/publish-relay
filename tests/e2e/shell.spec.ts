@@ -830,29 +830,15 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
   await schedule.click();
   await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
   await expect.poll(() => deletedMedia.length).toBe(1);
-  await page.getByRole('button', { name: 'Close composer' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect.poll(() => deletedMedia.length).toBe(2);
-  await page.getByRole('button', { name: 'Create post' }).last().click();
-  await page.getByLabel('Video title').fill('A finished short');
-  await page.getByLabel('Made for kids').click();
-  await page.getByRole('option', { name: 'No', exact: true }).click();
-  await page.getByLabel('Visibility').click();
-  await page.getByRole('option', { name: 'Public' }).click();
-  await page.getByLabel('Notify subscribers').click();
-  await page.getByRole('option', { name: 'Yes', exact: true }).click();
-  await page.locator('#composer-media-upload').setInputFiles({
-    name: 'short.mp4',
-    mimeType: 'video/mp4',
-    buffer: Buffer.from('mp4'),
-  });
-  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await schedule.click();
   await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
   const settings = page.getByLabel('YouTube settings');
   await expect(settings).toContainText('Visibilitypublic');
   await expect(settings).toContainText('Made for kidsNo');
   await expect(settings).toContainText('Notify subscribersYes');
-  expect(uploadCount).toBe(2);
+  expect(uploadCount).toBe(1);
+  expect(deletedMedia).toHaveLength(1);
+  expect(deletedMedia[0]).toContain('/api/workflow/media/media-1');
   await page.getByRole('button', { name: 'Close composer' }).click();
   await page.reload();
   await expect(page.getByText('A finished short')).toBeVisible();

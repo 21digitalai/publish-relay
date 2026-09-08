@@ -13,6 +13,7 @@ const requestOperatorRetry = vi.fn();
 const verifyCsrfToken = vi.fn(() => true);
 const executeBrowserMutation = vi.fn();
 const storeStagedMediaInTransaction = vi.fn();
+const deleteUnattachedMedia = vi.fn();
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest,
@@ -25,6 +26,10 @@ vi.mock('../src/modules/content/browser-idempotency.repository.js', () => ({
 vi.mock('../src/modules/content/media.service.js', async (importOriginal) => ({
   ...(await importOriginal()),
   storeStagedMediaInTransaction,
+}));
+vi.mock('../src/modules/content/media-retention.service.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  deleteUnattachedMedia,
 }));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   cancelPendingJob,
@@ -392,6 +397,7 @@ describe('browser workflow MP4 ingest', () => {
     vi.clearAllMocks();
     verifyCsrfToken.mockReturnValue(true);
     storage.delete.mockResolvedValue(undefined);
+    deleteUnattachedMedia.mockResolvedValue(true);
     authorizeRequest.mockResolvedValue({ workspaceId, userId: 'user', role: 'owner' });
     storage.stageStream.mockResolvedValue({
       temporaryKey: '.temporary/upload',
@@ -495,5 +501,61 @@ describe('browser workflow MP4 ingest', () => {
     storeStagedMediaInTransaction.mockRejectedValueOnce(new Error('database unavailable'));
     expect((await upload()).statusCode).toBe(500);
     expect(storage.delete).toHaveBeenCalledWith('.temporary/upload');
+  });
+
+  async function removeMedia(options?: { authenticated?: boolean; csrf?: boolean }) {
+    if (options?.authenticated === false) authorizeRequest.mockResolvedValueOnce(null);
+    if (options?.csrf === false) verifyCsrfToken.mockReturnValueOnce(false);
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, {
+      auth: {} as AuthService,
+      database: {} as never,
+      mediaStorage: storage,
+    });
+    const response = await application.inject({
+      method: 'DELETE',
+      url: '/api/workflow/media/00000000-0000-4000-8000-000000000899',
+      headers: { 'x-csrf-token': 'csrf', cookie: 'publish_relay_csrf=csrf' },
+    });
+    await application.close();
+    return response;
+  }
+
+  it('requires authentication and CSRF before deleting abandoned media', async () => {
+    expect((await removeMedia({ authenticated: false })).statusCode).toBe(401);
+    expect((await removeMedia({ csrf: false })).statusCode).toBe(403);
+    expect(deleteUnattachedMedia).not.toHaveBeenCalled();
+  });
+
+  it.each(['cross-tenant', 'nonexistent', 'attached'])(
+    'refuses %s media deletion through the tenant route boundary',
+    async () => {
+      deleteUnattachedMedia.mockResolvedValueOnce(false);
+      const response = await removeMedia();
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ data: { deleted: false }, error: null });
+      expect(deleteUnattachedMedia).toHaveBeenCalledWith(expect.anything(), storage, {
+        workspaceId,
+        mediaId: '00000000-0000-4000-8000-000000000899',
+      });
+    },
+  );
+
+  it('deletes successfully and safely replays the deletion result', async () => {
+    deleteUnattachedMedia.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+    expect((await removeMedia()).json()).toEqual({ data: { deleted: true }, error: null });
+    expect((await removeMedia()).json()).toEqual({ data: { deleted: true }, error: null });
+    expect(deleteUnattachedMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a bounded failure and permits storage-failure recovery on retry', async () => {
+    deleteUnattachedMedia
+      .mockRejectedValueOnce(new Error('storage-secret-detail'))
+      .mockResolvedValueOnce(true);
+    const failed = await removeMedia();
+    expect(failed.statusCode).toBe(500);
+    expect(failed.json()).toEqual({ data: null, error: 'Internal server error' });
+    expect(failed.body).not.toContain('storage-secret-detail');
+    expect((await removeMedia()).json()).toEqual({ data: { deleted: true }, error: null });
   });
 });

@@ -730,10 +730,35 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
       }),
     }),
   );
+  let createCount = 0;
   await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ data: { items: [], next: null }, error: null }),
+      body: JSON.stringify({
+        data: {
+          items:
+            createCount > 1
+              ? [
+                  {
+                    id: 'job-youtube',
+                    postId: 'post-youtube',
+                    state: 'scheduled',
+                    scheduledAt: '2026-09-09T10:00:00.000Z',
+                    contentPreview: 'A finished short',
+                    providerAccount: {
+                      id: '00000000-0000-4000-8000-000000000901',
+                      displayName: 'Relay Channel',
+                      handle: 'relay-channel',
+                      provider: 'youtube',
+                    },
+                    media: { count: 1, previewUrl: null },
+                  },
+                ]
+              : [],
+          next: null,
+        },
+        error: null,
+      }),
     }),
   );
   let uploadCount = 0;
@@ -759,7 +784,6 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
       body: '{"data":{"deleted":true},"error":null}',
     });
   });
-  let createCount = 0;
   await page.route('**/api/workflow/posts', (route) => {
     createCount += 1;
     if (createCount === 1)
@@ -829,6 +853,9 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
   await expect(settings).toContainText('Made for kidsNo');
   await expect(settings).toContainText('Notify subscribersYes');
   expect(uploadCount).toBe(2);
+  await page.getByRole('button', { name: 'Close composer' }).click();
+  await page.reload();
+  await expect(page.getByText('A finished short')).toBeVisible();
 });
 
 test('suppresses workflow motion when reduced motion is requested', async ({ page }) => {

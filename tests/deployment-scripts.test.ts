@@ -3,6 +3,7 @@ import {
   chmodSync,
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   readFileSync,
   readlinkSync,
   writeFileSync,
@@ -37,14 +38,19 @@ function createDeployFixture(): {
   const releaseRoot = join(root, 'releases');
   mkdirSync(bin);
   mkdirSync(join(source, 'dist', 'database'), { recursive: true });
+  mkdirSync(join(source, 'deploy'), { recursive: true });
   writeFileSync(join(source, 'package-lock.json'), '{}');
   writeFileSync(join(source, 'dist', 'database', 'migrate.js'), '');
+  writeFileSync(join(source, 'deploy', 'bootstrap-database-authorities.sql'), '');
   writeExecutable(join(bin, 'install'), 'mkdir -p "${@: -1}"');
   writeExecutable(join(bin, 'chown'), 'exit 0');
-  writeExecutable(join(bin, 'mv'), '[[ "$1" == "-Tf" ]] && shift; command /bin/mv "$@"');
+  writeExecutable(
+    join(bin, 'mv'),
+    'echo "mv $*" >> "$COMMAND_LOG"; [[ "$1" == "-Tf" ]] && shift; command /bin/mv "$@"',
+  );
   writeExecutable(
     join(bin, 'sudo'),
-    'while [[ "$1" == --* ]]; do [[ "$1" == --chdir=* ]] && cd "${1#*=}"; shift; done; [[ "$1" == "-u" ]] && shift 2; exec "$@"',
+    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*) cd "${1#*=}" ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGDATABASE,PGPASSWORD" ]]; then exec "${base[@]}" PGDATABASE="${PGDATABASE:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
   );
   const nodeBin = join(bin, 'node24');
   const npmCli = join(bin, 'npm-cli.js');
@@ -53,6 +59,12 @@ function createDeployFixture(): {
     nodeBin,
     'if [[ "$1" == "--version" ]]; then echo v24.8.0; exit 0; fi; [[ "$1" == *"npm-cli.js" ]] && { shift; echo "npm $*" >> "$COMMAND_LOG"; exit 0; }; echo "node=$0 cwd=$PWD script=$1 database=$([[ -n "${DATABASE_URL:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing)" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 ]]',
   );
+  const psqlBin = join(bin, 'psql');
+  writeExecutable(
+    psqlBin,
+    'echo "psql cwd=$PWD database=$([[ -n "${PGDATABASE:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing) $*" >> "$COMMAND_LOG"; [[ "${FAIL_BOOTSTRAP:-0}" != 1 ]]',
+  );
+  writeExecutable(join(bin, 'ln'), 'echo "ln $*" >> "$COMMAND_LOG"; command /bin/ln "$@"');
   writeExecutable(join(bin, 'systemctl'), 'echo "systemctl $*" >> "$COMMAND_LOG"');
   writeExecutable(join(bin, 'curl'), 'echo "curl $*" >> "$COMMAND_LOG"');
   return {
@@ -65,6 +77,7 @@ function createDeployFixture(): {
       PUBLISH_RELAY_SERVICE_USER: 'test-user',
       PUBLISH_RELAY_NODE_BIN: nodeBin,
       PUBLISH_RELAY_NPM_CLI: npmCli,
+      PUBLISH_RELAY_PSQL_BIN: psqlBin,
       PUBLISH_RELAY_HEALTH_URL: 'http://127.0.0.1:3999/health/ready',
       MIGRATION_DATABASE_URL: 'postgresql://migrator@127.0.0.1/publish_relay',
       PGPASSWORD: 'fixture-password',
@@ -152,11 +165,24 @@ describe('deployment scripts', () => {
       },
     );
     const commands = readFileSync(fixture.log, 'utf8');
+    const releaseDirectory = join(realpathSync(fixture.releaseRoot), 'release-1');
     expect(commands).toContain('npm ci --omit=dev --ignore-scripts');
     expect(commands).toContain(
-      `node=${fixture.nodeBin} cwd=${join(fixture.releaseRoot, 'release-1')} script=dist/database/migrate.js database=set password=set`,
+      `node=${fixture.nodeBin} cwd=${releaseDirectory} script=dist/database/migrate.js database=set password=set`,
+    );
+    expect(commands).toContain(
+      `psql cwd=${releaseDirectory} database=set password=set -v ON_ERROR_STOP=1 -f deploy/bootstrap-database-authorities.sql`,
     );
     expect(commands).not.toContain('fixture-password');
+    expect(commands.indexOf('script=dist/database/migrate.js')).toBeLessThan(
+      commands.indexOf('psql cwd='),
+    );
+    expect(commands.indexOf('psql cwd=')).toBeLessThan(commands.indexOf('ln -sfn'));
+    expect(commands.indexOf('ln -sfn')).toBeLessThan(commands.indexOf('systemctl restart'));
+    expect(commands.indexOf('systemctl restart')).toBeLessThan(
+      commands.indexOf('systemctl is-active'),
+    );
+    expect(commands.indexOf('systemctl is-active')).toBeLessThan(commands.indexOf('curl --fail'));
     expect(commands).toContain(
       'curl --fail --silent --show-error http://127.0.0.1:3999/health/ready',
     );
@@ -187,6 +213,18 @@ describe('deployment scripts', () => {
       { env: { ...fixture.environment, FAIL_MIGRATION: '1' } },
     );
     expect(result.status).not.toBe(0);
+    expect(() => readFileSync(fixture.currentLink)).toThrow();
+  });
+
+  it('does not switch the current release when authority bootstrap fails', () => {
+    const fixture = createDeployFixture();
+    const result = spawnSync(
+      'bash',
+      [join(projectRoot, 'deploy/publish-release.sh'), 'release-bootstrap-failure', fixture.source],
+      { env: { ...fixture.environment, FAIL_BOOTSTRAP: '1' } },
+    );
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(fixture.log, 'utf8')).toContain('psql cwd=');
     expect(() => readFileSync(fixture.currentLink)).toThrow();
   });
 

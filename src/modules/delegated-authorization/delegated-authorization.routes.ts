@@ -52,10 +52,17 @@ export function registerDelegatedAuthorizationRoutes(
   application: FastifyInstance,
   service: DelegatedAuthorizationService,
   auth: AuthService,
+  shellHtml?: string,
 ): void {
   application.get('/connect/authorize', async (request, reply) => {
     const identity = await authenticateRequest(request, auth);
-    if (!identity) return reply.code(401).send({ data: null, error: { code: 'login_required' } });
+    if (!identity) {
+      if (shellHtml && request.headers.accept?.includes('text/html'))
+        return reply.redirect(`/login?next=${encodeURIComponent(request.url)}`);
+      return reply.code(401).send({ data: null, error: { code: 'login_required' } });
+    }
+    if (shellHtml && request.headers.accept?.includes('text/html'))
+      return reply.type('text/html').send(shellHtml);
     const parsed = authorizationSchema.safeParse(request.query);
     if (!parsed.success)
       return reply.code(400).send({ data: null, error: { code: 'invalid_request' } });
@@ -96,6 +103,8 @@ export function registerDelegatedAuthorizationRoutes(
       redirect.searchParams.set('code', result.code);
       redirect.searchParams.set('state', input.state);
       void reply.header('Cache-Control', 'no-store');
+      if (request.headers.accept?.includes('application/json'))
+        return { data: { authorizationRedirect: redirect.toString() }, error: null };
       return await reply.redirect(redirect.toString());
     } catch (error) {
       return sendProtocolError(reply, error);

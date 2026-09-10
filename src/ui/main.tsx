@@ -79,6 +79,11 @@ function formText(fields: FormData, name: string): string {
   return typeof value === 'string' ? value : '';
 }
 
+function safeLocalNext(): string {
+  const next = new URLSearchParams(window.location.search).get('next');
+  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/app';
+}
+
 function Mark({ provider }: { provider: string }) {
   const isX = provider.toLowerCase() === 'x';
   return (
@@ -145,7 +150,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
                 if (isRegister) {
                   sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
                   window.location.href = '/onboarding/workspace';
-                } else window.location.href = '/app';
+                } else window.location.href = safeLocalNext();
               } catch (submissionError) {
                 setError(
                   submissionError instanceof Error
@@ -214,6 +219,103 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
             {isRegister ? 'Sign in' : 'Create account'}
           </a>
         </p>
+      </section>
+    </main>
+  );
+}
+
+function ConsentPage() {
+  const [request, setRequest] = useState<{ client: { id: string }; scopes: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isApproving, setIsApproving] = useState(false);
+  useEffect(() => {
+    void fetch(`${window.location.pathname}${window.location.search}`, {
+      headers: { accept: 'application/json' },
+    })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          data: { client: { id: string }; scopes: string[] } | null;
+          error: { message?: string } | null;
+        };
+        if (!response.ok || !result.data)
+          throw new Error(result.error?.message ?? 'Connection request is invalid');
+        setRequest(result.data);
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : 'Connection request is invalid');
+      });
+  }, []);
+  const approve = async () => {
+    if (isApproving) return;
+    setIsApproving(true);
+    setError(null);
+    try {
+      const parameters = new URLSearchParams(window.location.search);
+      const response = await fetch('/connect/authorize', {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'x-csrf-token': getCsrfToken(),
+        },
+        body: JSON.stringify(Object.fromEntries(parameters.entries())),
+      });
+      const result = (await response.json()) as {
+        data: { authorizationRedirect: string } | null;
+      };
+      if (!response.ok || !result.data) throw new Error('Connection approval failed');
+      window.location.href = result.data.authorizationRedirect;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Connection approval failed');
+      setIsApproving(false);
+    }
+  };
+  const cancel = () => {
+    const parameters = new URLSearchParams(window.location.search);
+    const redirect = new URL(parameters.get('redirect_uri') ?? window.location.origin);
+    redirect.searchParams.set('error', 'access_denied');
+    redirect.searchParams.set('state', parameters.get('state') ?? '');
+    window.location.href = redirect.toString();
+  };
+  return (
+    <main className="auth-page">
+      <section className="auth-panel" aria-labelledby="consent-title">
+        <a className="brand-lockup" href="/app">
+          <span className="brand-signal" /> Publish Relay
+        </a>
+        <p className="eyebrow">Application connection</p>
+        <h1 id="consent-title">Approve access</h1>
+        {error && (
+          <div className="form-summary" role="alert">
+            {error}
+          </div>
+        )}
+        {!request && !error && <p role="status">Checking connection request…</p>}
+        {request && (
+          <>
+            <p className="auth-intro">
+              <strong>{request.client.id}</strong> wants to connect to this Publish Relay workspace.
+            </p>
+            <div className="settings-card">
+              <h2>Requested access</h2>
+              <ul>
+                {request.scopes.map((scope) => (
+                  <li key={scope}>{scope}</li>
+                ))}
+              </ul>
+            </div>
+            <button
+              className="primary-button"
+              disabled={isApproving}
+              onClick={() => void approve()}
+            >
+              {isApproving ? 'Connecting…' : 'Approve connection'}
+            </button>
+            <button className="secondary-button" onClick={cancel}>
+              Cancel
+            </button>
+          </>
+        )}
       </section>
     </main>
   );
@@ -1662,8 +1764,8 @@ function SettingsPage() {
         <section className="settings-card" aria-labelledby="integrations-title">
           <h2 id="integrations-title">Connected applications</h2>
           <p className="field-hint">
-            These applications can act through the access you approved. Revoking a connection
-            signs it out without changing your API keys or connected channels.
+            These applications can act through the access you approved. Revoking a connection signs
+            it out without changing your API keys or connected channels.
           </p>
           {grants.length === 0 ? (
             <p>No applications connected.</p>
@@ -1739,6 +1841,7 @@ export function App() {
   if (path === '/register') return <AuthPage mode="register" />;
   if (path === '/login' || path === '/') return <AuthPage mode="login" />;
   if (path === '/forgot-password') return <ForgotPasswordPage />;
+  if (path === '/connect/authorize') return <ConsentPage />;
   if (path.startsWith('/onboarding/')) return <OnboardingPage />;
   if (/\/w\/[^/]+\/queue$/.test(path)) return <QueuePage />;
   if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;

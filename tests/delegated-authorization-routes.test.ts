@@ -54,9 +54,9 @@ function buildService() {
   ]);
   const revokeGrant = vi.fn().mockResolvedValue(true);
   const store: DelegatedAuthorizationStore = {
-    findClient: vi.fn().mockImplementation((clientId) =>
-      Promise.resolve(clientId === client.id ? client : null),
-    ),
+    findClient: vi
+      .fn()
+      .mockImplementation((clientId) => Promise.resolve(clientId === client.id ? client : null)),
     createGrantAndCode,
     exchangeCode,
     rotateRefreshToken: vi.fn().mockResolvedValue(null),
@@ -73,11 +73,11 @@ function buildService() {
   };
 }
 
-async function buildApplication() {
+async function buildApplication(shellHtml?: string) {
   const application = Fastify();
   await application.register(cookie);
   const built = buildService();
-  registerDelegatedAuthorizationRoutes(application, built.service, {} as AuthService);
+  registerDelegatedAuthorizationRoutes(application, built.service, {} as AuthService, shellHtml);
   return { application, ...built };
 }
 
@@ -122,6 +122,29 @@ describe('delegated authorization HTTP routes', () => {
 
     expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({ data: null, error: { code: 'login_required' } });
+    await application.close();
+  });
+
+  it('serves the consent shell to browsers and preserves login continuation', async () => {
+    const { application } = await buildApplication('<main>consent shell</main>');
+    const rendered = await application.inject({
+      method: 'GET',
+      url: `/connect/authorize?${authorizationQuery}`,
+      headers: { accept: 'text/html' },
+    });
+    expect(rendered.statusCode).toBe(200);
+    expect(rendered.headers['content-type']).toContain('text/html');
+    expect(rendered.body).toContain('consent shell');
+
+    vi.mocked(authenticateRequest).mockResolvedValueOnce(null);
+    const login = await application.inject({
+      method: 'GET',
+      url: `/connect/authorize?${authorizationQuery}`,
+      headers: { accept: 'text/html' },
+    });
+    expect(login.statusCode).toBe(302);
+    expect(login.headers.location).toContain('/login?next=');
+    expect(decodeURIComponent(login.headers.location ?? '')).toContain('/connect/authorize?');
     await application.close();
   });
 

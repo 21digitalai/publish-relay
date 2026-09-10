@@ -187,6 +187,7 @@ Job detail is a route-backed drawer on desktop and a page on mobile. Sections: s
 - `LiveRegion` in `src/ui/feedback.tsx` owns polite mutation announcements after server-confirmed state changes across workflow and account surfaces. Visible persistent errors remain separate `role="alert"` content.
 - Account adapter settings and Composer provider overrides reuse the canonical `DefaultsSelect` listbox in `src/ui/defaults-select.tsx` rather than native selects; its body-level fixed portal prevents account cards and mobile containers from clipping menus. Account booleans use `.defaults-toggle` switches. Both expose explicit ARIA state and remain keyboard operable.
 - Settings Integrations reuses the existing settings tab shell, card, API-key row, and inline confirmation primitives. It displays friendly client IDs, approved scopes, and connection dates; revocation is an explicit two-step action and never exposes tokens or internal workspace/user IDs.
+- `/connect/authorize` reuses the focused authentication panel as the generic consent surface. It names the requesting application, lists every requested scope, provides explicit approve/cancel actions, and preserves the full authorization request through login without storing credentials in browser storage.
 - Queue empty: Nothing scheduled yet + Create post.
 - Filter empty: No jobs match these filters + Clear filters.
 - Accounts empty: Connect your first account with explanation.

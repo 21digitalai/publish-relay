@@ -154,7 +154,7 @@ export function createApplication(
   if (auth && database && youtubeOauth)
     registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
   if (auth && delegatedAuthorization)
-    registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth);
+    registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
 
   return application;
 }

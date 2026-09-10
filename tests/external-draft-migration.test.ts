@@ -14,6 +14,9 @@ describe('external draft migration contract', () => {
     expect(sql).toContain('external_drafts_source_external_unique');
     expect(sql).toContain('external_draft_media_position_unique');
     expect(sql).toContain('external_draft_media_workspace_media_fk');
+    expect(sql.indexOf('external_drafts_workspace_id_unique')).toBeLessThan(
+      sql.indexOf('external_draft_media_workspace_draft_fk'),
+    );
   });
 
   it('forces workspace isolation on both new tables', async () => {

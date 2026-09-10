@@ -472,6 +472,68 @@ export const mediaObjects = pgTable(
   ],
 );
 
+export const externalDrafts = pgTable(
+  'external_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    sourceActorType: actorType('source_actor_type').notNull(),
+    sourceActorId: uuid('source_actor_id').notNull(),
+    sourceClientId: text('source_client_id').references(() => registeredClients.id, {
+      onDelete: 'restrict',
+    }),
+    externalId: text('external_id').notNull(),
+    label: text('label'),
+    returnUrl: text('return_url'),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    postId: uuid('post_id'),
+    transitionedAt: timestamp('transitioned_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('external_drafts_workspace_id_unique').on(table.workspaceId, table.id),
+    uniqueIndex('external_drafts_source_external_unique').on(
+      table.workspaceId,
+      table.sourceActorType,
+      table.sourceActorId,
+      table.externalId,
+    ),
+    index('external_drafts_workspace_created_idx').on(table.workspaceId, table.createdAt),
+    foreignKey({
+      columns: [table.workspaceId, table.postId],
+      foreignColumns: [posts.workspaceId, posts.id],
+      name: 'external_drafts_workspace_post_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const externalDraftMedia = pgTable(
+  'external_draft_media',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    draftId: uuid('draft_id').notNull(),
+    mediaId: uuid('media_id').notNull(),
+    position: integer('position').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.draftId, table.mediaId] }),
+    uniqueIndex('external_draft_media_position_unique').on(table.draftId, table.position),
+    index('external_draft_media_workspace_idx').on(table.workspaceId),
+    foreignKey({
+      columns: [table.workspaceId, table.draftId],
+      foreignColumns: [externalDrafts.workspaceId, externalDrafts.id],
+      name: 'external_draft_media_workspace_draft_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.mediaId],
+      foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
+      name: 'external_draft_media_workspace_media_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
 export const posts = pgTable(
   'posts',
   {

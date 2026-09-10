@@ -12,10 +12,12 @@ const EXIT = {
   terminal: 9,
   timeout: 10,
 };
-const MUTATIONS = new Set(['posts:create', 'media:upload', 'publishes:retry']);
+const MUTATIONS = new Set(['drafts:create', 'posts:create', 'media:upload', 'publishes:retry']);
 const ROUTES = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
+  'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
+  'drafts:show': { method: 'GET', path: '/api/v1/drafts/:id' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
   'posts:list': { method: 'GET', path: '/api/v1/posts' },
   'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
@@ -57,6 +59,28 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'provider',
     'displayName',
     'updatedAt',
+  ]),
+  'drafts:create': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'externalId',
+    'label',
+    'returnUrl',
+    'mediaIds',
+    'postId',
+    'createdAt',
+    'self',
+    'cockpit',
+  ]),
+  'drafts:show': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'externalId',
+    'label',
+    'returnUrl',
+    'mediaIds',
+    'postId',
+    'createdAt',
+    'self',
+    'cockpit',
   ]),
   'posts:create': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

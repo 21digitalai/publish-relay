@@ -46,12 +46,82 @@ const mediaMutationSchema = z.object({
   container: z.literal('mp4').optional(),
   state: z.literal('ready'),
 });
+const externalDraftRequestSchema = z.object({
+  externalId: z.string().min(1).max(200),
+  mediaIds: z.array(z.uuid()).min(1).max(20),
+  label: z.string().max(200).optional(),
+  returnUrl: z.url().startsWith('https://').optional(),
+});
+const externalDraftSchema = z.object({
+  id: z.uuid(),
+  externalId: z.string(),
+  label: z.string().nullable(),
+  returnUrl: z.string().nullable(),
+  mediaIds: z.array(z.uuid()),
+  postId: z.uuid().nullable(),
+  createdAt: z.iso.datetime(),
+  links: z.object({ self: z.string(), cockpit: z.string(), post: z.string().optional() }),
+});
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
   return {
     openapi: '3.1.0',
     info: { title: 'Publish Relay API', version: '1.1.0' },
     paths: {
+      '/api/v1/drafts': {
+        post: {
+          operationId: 'createExternalDraft',
+          security: [{ bearerAuth: [], workspace: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(externalDraftRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'External draft created',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(externalDraftSchema)),
+                },
+              },
+            },
+            '400': { description: 'Invalid draft input' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing content:write capability' },
+            '409': { description: 'External ID conflicts with existing input' },
+            '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/drafts/{draftId}': {
+        get: {
+          operationId: 'getExternalDraft',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'draftId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Principal-owned external draft',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(externalDraftSchema)),
+                },
+              },
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing content:write capability' },
+            '404': { description: 'Draft not found' },
+          },
+        },
+      },
       '/api/v1/destinations': {
         get: {
           operationId: 'listDestinations',

@@ -93,7 +93,13 @@ export function createApplication(
     });
     registerApiKeyRoutes(application, apiKeys, rateLimiter, auth);
     if (database) {
-      registerDestinationRoutes(application, database, apiKeys, rateLimiter);
+      registerDestinationRoutes(
+        application,
+        database,
+        apiKeys,
+        rateLimiter,
+        delegatedAuthorization,
+      );
       if (!config.CURSOR_SIGNING_SECRET)
         throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
       registerPostRoutes(

@@ -3,8 +3,9 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
-import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
+import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
+import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
 import { listProviderAccounts } from './provider-account.service.js';
 
 export function registerDestinationRoutes(
@@ -12,15 +13,21 @@ export function registerDestinationRoutes(
   database: NodePgDatabase,
   apiKeys: ApiKeyService,
   rateLimiter: ApiRateLimiter,
+  delegatedAuthorization?: DelegatedAuthorizationService,
 ): void {
   application.get('/api/v1/destinations', async (request, reply) => {
     try {
-      const principal = await authorizeApiKeyRequest(request, apiKeys, 'destinations:read');
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'destinations:read',
+      );
       if (!principal)
         return await reply
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
-      const decision = rateLimiter.check(principal.workspaceId, principal.id, 'read');
+      const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
       void reply.header('X-RateLimit-Limit', decision.limit);
       void reply.header('X-RateLimit-Remaining', decision.remaining);
       if (!decision.allowed) {
@@ -45,7 +52,7 @@ export function registerDestinationRoutes(
         ),
       );
     } catch (error) {
-      if (error instanceof ApiKeyAuthorizationError)
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       throw error;
     }

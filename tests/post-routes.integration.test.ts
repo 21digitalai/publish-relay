@@ -16,6 +16,7 @@ import { registerPostRoutes } from '../src/modules/content/post.routes.js';
 import { registerMediaRoutes } from '../src/modules/content/media.routes.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { registerBrowserWorkflowRoutes } from '../src/modules/content/browser-workflow.routes.js';
+import { registerExternalDraftRoutes } from '../src/modules/content/external-draft.routes.js';
 import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js';
 import { ApiKeyAuthorizationError } from '../src/modules/identity/api-key.service.js';
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
@@ -67,6 +68,7 @@ const foreignPostId = '00000000-0000-4000-8000-000000000814';
 const foreignRevisionId = '00000000-0000-4000-8000-000000000815';
 const foreignJobId = '00000000-0000-4000-8000-000000000816';
 const foreignMediaId = '00000000-0000-4000-8000-000000000817';
+const foreignDraftId = '00000000-0000-4000-8000-000000000818';
 const missingResourceId = '00000000-0000-4000-8000-000000000899';
 let database: PGlite;
 let application: FastifyInstance;
@@ -201,6 +203,11 @@ beforeEach(async () => {
       VALUES ('${foreignJobId}', '${foreignWorkspaceId}', '${foreignPostId}', '${foreignRevisionId}', '${foreignProviderAccountId}', now());
     INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
       VALUES ('${foreignMediaId}', '${foreignWorkspaceId}', 'foreign.jpg', 'foreign-hash', 'image/jpeg', 10, 'ready');
+    INSERT INTO external_drafts
+      (id, workspace_id, source_actor_type, source_actor_id, external_id, request_fingerprint)
+      VALUES ('${foreignDraftId}', '${foreignWorkspaceId}', 'api_key', '${apiKeyId}', 'foreign-draft', 'foreign-fingerprint');
+    INSERT INTO external_draft_media (workspace_id, draft_id, media_id, position)
+      VALUES ('${foreignWorkspaceId}', '${foreignDraftId}', '${foreignMediaId}', 0);
     SELECT set_config('app.workspace_id', '${workspaceId}', false);
   `);
   authenticate = vi.fn().mockResolvedValue({
@@ -252,6 +259,19 @@ beforeEach(async () => {
     undefined,
     delegatedAuthorization,
   );
+  registerExternalDraftRoutes(
+    application,
+    drizzle(database) as unknown as NodePgDatabase,
+    apiKeys,
+    new ApiRateLimiter({
+      workspace: 10,
+      key: 10,
+      mutationWorkspace: 10,
+      mutationKey: 10,
+      windowMs: 60_000,
+    }),
+    delegatedAuthorization,
+  );
   registerBrowserWorkflowRoutes(application, {
     database: drizzle(database) as unknown as NodePgDatabase,
     now: () => browserNow ?? new Date(),
@@ -259,6 +279,92 @@ beforeEach(async () => {
       authenticate: browserAuthenticate,
     } as unknown as AuthService,
     mediaStorage,
+  });
+});
+
+describe('external draft PostgreSQL route boundary', () => {
+  const localMediaId = '00000000-0000-4000-8000-000000000819';
+  const headers = {
+    authorization: 'Bearer pr_test.secret',
+    'x-publish-relay-workspace': workspaceId,
+    'content-type': 'application/json',
+  };
+
+  beforeEach(async () => {
+    await database.exec(`
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${localMediaId}', '${workspaceId}', 'local.jpg', 'local-hash', 'image/jpeg', 10, 'ready');
+    `);
+  });
+
+  it('serializes concurrent POST replay and returns one durable draft aggregate', async () => {
+    const request = {
+      method: 'POST' as const,
+      url: '/api/v1/drafts',
+      headers: { ...headers, 'idempotency-key': 'concurrent-draft-create' },
+      payload: { externalId: 'clip-concurrent', mediaIds: [localMediaId], label: 'Clip' },
+    };
+    const [first, second] = await Promise.all([
+      application.inject(request),
+      application.inject(request),
+    ]);
+
+    expect([first.statusCode, second.statusCode].sort()).toEqual([201, 201]);
+    expect([
+      first.headers['idempotency-replayed'],
+      second.headers['idempotency-replayed'],
+    ]).toContain('true');
+    const firstBody = first.json<{ data: { id: string; links: { self: string } } }>();
+    const secondBody = second.json<{ data: { id: string; links: { self: string } } }>();
+    expect(secondBody.data).toEqual(firstBody.data);
+
+    const drafts = await database.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM external_drafts
+      WHERE workspace_id = '${workspaceId}' AND external_id = 'clip-concurrent'
+    `);
+    const attachments = await database.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM external_draft_media
+      WHERE workspace_id = '${workspaceId}' AND draft_id = '${firstBody.data.id}'
+    `);
+    expect(drafts.rows[0]?.count).toBe(1);
+    expect(attachments.rows[0]?.count).toBe(1);
+
+    const detail = await application.inject({
+      method: 'GET',
+      url: firstBody.data.links.self,
+      headers,
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      data: { id: firstBody.data.id, mediaIds: [localMediaId] },
+    });
+  });
+
+  it('safe-hides foreign drafts and rejects foreign media without leaking tenant data', async () => {
+    const detail = await application.inject({
+      method: 'GET',
+      url: `/api/v1/drafts/${foreignDraftId}`,
+      headers,
+    });
+    expect(detail.statusCode).toBe(404);
+    expect(detail.json()).toMatchObject({ error: { code: 'not_found' } });
+    expect(JSON.stringify(detail.json())).not.toContain('foreign-draft');
+
+    const create = await application.inject({
+      method: 'POST',
+      url: '/api/v1/drafts',
+      headers: { ...headers, 'idempotency-key': 'foreign-media-draft' },
+      payload: { externalId: 'foreign-media-attempt', mediaIds: [foreignMediaId] },
+    });
+    expect(create.statusCode).toBe(400);
+    expect(create.json()).toMatchObject({ error: { code: 'invalid_request' } });
+    expect(JSON.stringify(create.json())).not.toContain('foreign');
+    const rows = await database.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM external_drafts
+      WHERE workspace_id = '${workspaceId}' AND external_id = 'foreign-media-attempt'
+    `);
+    expect(rows.rows[0]?.count).toBe(0);
   });
 });
 

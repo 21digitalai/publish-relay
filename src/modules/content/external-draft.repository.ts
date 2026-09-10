@@ -21,6 +21,8 @@ export interface ExternalDraftRecord {
   createdAt: Date;
 }
 
+export class ExternalDraftMediaUnavailableError extends Error {}
+
 export async function findExternalDraft(
   database: NodePgDatabase,
   input: {
@@ -148,7 +150,8 @@ export async function insertExternalDraft(
         inArray(mediaObjects.id, input.mediaIds),
       ),
     );
-  if (readyMedia.length !== input.mediaIds.length) throw new Error('Draft media is unavailable');
+  if (readyMedia.length !== input.mediaIds.length)
+    throw new ExternalDraftMediaUnavailableError('Draft media is unavailable');
   const inserted = await database
     .insert(externalDrafts)
     .values({

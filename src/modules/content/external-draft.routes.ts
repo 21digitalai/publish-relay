@@ -9,7 +9,10 @@ import type { ApiRateLimiter } from '../api/rate-limit.js';
 import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
-import type { ExternalDraftRecord } from './external-draft.repository.js';
+import {
+  ExternalDraftMediaUnavailableError,
+  type ExternalDraftRecord,
+} from './external-draft.repository.js';
 import {
   createExternalDraftInTransaction,
   ExternalDraftConflictError,
@@ -47,7 +50,11 @@ function sendKnownError(error: unknown, requestId: string) {
       status: 409,
       body: errorEnvelope('draft_conflict', 'externalId already has different input', requestId),
     };
-  if (error instanceof ExternalDraftValidationError || error instanceof z.ZodError)
+  if (
+    error instanceof ExternalDraftValidationError ||
+    error instanceof ExternalDraftMediaUnavailableError ||
+    error instanceof z.ZodError
+  )
     return { status: 400, body: errorEnvelope('invalid_request', error.message, requestId) };
   if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
     return { status: 403, body: errorEnvelope(error.code, error.message, requestId) };

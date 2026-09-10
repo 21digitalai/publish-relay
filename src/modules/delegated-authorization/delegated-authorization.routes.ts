@@ -29,6 +29,12 @@ const tokenSchema = z.discriminatedUnion('grant_type', [
   z.object({ grant_type: z.literal('refresh_token'), refresh_token: z.string().min(1) }),
 ]);
 const grantParamsSchema = z.object({ grantId: z.uuid() });
+const revocationSchema = z.object({
+  token: z.string().min(1),
+  client_id: z.string().trim().min(1).max(200),
+  client_secret: z.string().min(1).optional(),
+  token_type_hint: z.enum(['access_token', 'refresh_token']).optional(),
+});
 
 function hasValidCsrf(request: FastifyRequest): boolean {
   return verifyCsrfToken(
@@ -138,6 +144,26 @@ export function registerDelegatedAuthorizationRoutes(
     } catch (error) {
       if (error instanceof DelegatedTokenError)
         return reply.code(400).send({ error: error.code, error_description: error.message });
+      throw error;
+    }
+  });
+
+  application.post('/connect/revoke', async (request, reply) => {
+    void reply.header('Cache-Control', 'no-store');
+    const parsed = revocationSchema.safeParse(request.body);
+    if (!parsed.success)
+      return reply.code(400).send({ error: 'invalid_request', error_description: 'Invalid revocation request' });
+    try {
+      await service.revokeClientToken({
+        token: parsed.data.token,
+        clientId: parsed.data.client_id,
+        ...(parsed.data.client_secret ? { clientSecret: parsed.data.client_secret } : {}),
+        requestId: request.id,
+      });
+      return await reply.code(200).send();
+    } catch (error) {
+      if (error instanceof DelegatedAuthorizationError && error.code === 'invalid_client')
+        return reply.code(401).send({ error: 'invalid_client' });
       throw error;
     }
   });

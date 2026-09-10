@@ -246,6 +246,20 @@
       "when": 1789045228130,
       "tag": "0034_simple_jamie_braddock",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1789049300000,
+      "tag": "0035_delegated_account_receipt",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1789049400000,
+      "tag": "0036_delegated_programmatic_revocation",
+      "breakpoints": true
     }
   ]
 }

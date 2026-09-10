@@ -40,11 +40,22 @@ function harness() {
     authenticateAccessToken: vi.fn().mockResolvedValue(null),
     listGrants: vi.fn().mockResolvedValue([]),
     revokeGrant: vi.fn().mockResolvedValue(true),
+    revokeByToken: vi.fn().mockResolvedValue(undefined),
   };
   return { store, service: new DelegatedAuthorizationService(store, () => now) };
 }
 
 describe('delegated authorization service', () => {
+  it('hashes a public client token and revokes only through the opaque store boundary', async () => {
+    const { store, service } = harness();
+    await service.revokeClientToken({ token: 'access-secret', clientId: 'open-clips-dev', requestId: 'request-2' });
+    expect(store.revokeByToken).toHaveBeenCalledWith({
+      tokenHash: createHash('sha256').update('access-secret').digest('hex'),
+      clientId: 'open-clips-dev',
+      now,
+      requestId: 'request-2',
+    });
+  });
   it('approves only a registered exact redirect and persists no plaintext code', async () => {
     const { store, service } = harness();
     const result = await service.approve({

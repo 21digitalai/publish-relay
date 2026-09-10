@@ -4,9 +4,11 @@ import {
   DELEGATED_ACCESS_TOKEN_TTL_SECONDS,
   derivePkceChallenge,
   hashSecret,
+  verifySecret,
   type AuthorizationRequest,
   type RegisteredClient,
   validateAuthorizationRequest,
+  DelegatedAuthorizationError,
 } from './protocol.js';
 
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -71,6 +73,12 @@ export interface DelegatedAuthorizationStore {
     accessTokenHash: string,
     now: Date,
   ): Promise<DelegatedAccessPrincipal | null>;
+  revokeByToken?(input: {
+    tokenHash: string;
+    clientId: string;
+    now: Date;
+    requestId: string;
+  }): Promise<void>;
   listGrants(workspaceId: string, userId: string): Promise<DelegatedGrantSummary[]>;
   revokeGrant(
     workspaceId: string,
@@ -150,6 +158,27 @@ export class DelegatedAuthorizationService {
 
   authenticate(accessToken: string): Promise<DelegatedAccessPrincipal | null> {
     return this.store.authenticateAccessToken(hashSecret(accessToken), this.now());
+  }
+
+  async revokeClientToken(input: {
+    token: string;
+    clientId: string;
+    clientSecret?: string;
+    requestId: string;
+  }): Promise<void> {
+    const client = await this.store.findClient(input.clientId);
+    if (!client) throw new DelegatedAuthorizationError('invalid_client', 'Client authentication failed');
+    if (client.clientType === 'confidential') {
+      if (!input.clientSecret || !client.secretHash || !verifySecret(input.clientSecret, client.secretHash))
+        throw new DelegatedAuthorizationError('invalid_client', 'Client authentication failed');
+    }
+    if (!this.store.revokeByToken) throw new Error('Delegated token revocation is unavailable');
+    await this.store.revokeByToken({
+      tokenHash: hashSecret(input.token),
+      clientId: input.clientId,
+      now: this.now(),
+      requestId: input.requestId,
+    });
   }
 
   list(workspaceId: string, userId: string): Promise<DelegatedGrantSummary[]> {

@@ -5,6 +5,8 @@ export const DELEGATED_AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60;
 
 export interface RegisteredClient {
   id: string;
+  clientType?: string;
+  secretHash?: string | null;
   redirectUris: readonly string[];
   allowedScopes: readonly string[];
 }

@@ -36,6 +36,8 @@ export function createPostgresDelegatedAuthorizationStore(
       const found = await database
         .select({
           id: registeredClients.id,
+          clientType: registeredClients.clientType,
+          secretHash: registeredClients.secretHash,
           redirectUris: registeredClients.redirectUris,
           allowedScopes: registeredClients.allowedScopes,
         })
@@ -112,6 +114,14 @@ export function createPostgresDelegatedAuthorizationStore(
         FROM resolve_delegated_access_token(${accessTokenHash}, ${now})
       `);
       return rows(result)[0] ?? null;
+    },
+
+    async revokeByToken(input) {
+      await database.execute(sql`
+        SELECT revoke_delegated_token_family(
+          ${input.tokenHash}, ${input.clientId}, ${input.now}, ${input.requestId}
+        )
+      `);
     },
 
     async listGrants(workspaceId, userId) {

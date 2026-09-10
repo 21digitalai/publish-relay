@@ -79,6 +79,16 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
     openapi: '3.1.0',
     info: { title: 'Publish Relay API', version: '1.1.0' },
     paths: {
+      '/connect/revoke': {
+        post: {
+          operationId: 'revokeDelegatedGrant',
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object', required: ['token', 'client_id'], properties: { token: { type: 'string' }, client_id: { type: 'string' }, client_secret: { type: 'string' }, token_type_hint: { enum: ['access_token', 'refresh_token'] } } } } },
+          },
+          responses: { '200': { description: 'Grant family revoked or token already invalid' }, '400': { description: 'Invalid request' }, '401': { description: 'Invalid confidential client authentication' } },
+        },
+      },
       '/api/v1/drafts': {
         post: {
           operationId: 'createExternalDraft',

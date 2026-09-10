@@ -53,6 +53,7 @@ function buildService() {
     },
   ]);
   const revokeGrant = vi.fn().mockResolvedValue(true);
+  const revokeByToken = vi.fn().mockResolvedValue(undefined);
   const store: DelegatedAuthorizationStore = {
     findClient: vi
       .fn()
@@ -63,12 +64,14 @@ function buildService() {
     authenticateAccessToken: vi.fn(),
     listGrants,
     revokeGrant,
+    revokeByToken,
   };
   return {
     createGrantAndCode,
     exchangeCode,
     listGrants,
     revokeGrant,
+    revokeByToken,
     service: new DelegatedAuthorizationService(store),
   };
 }
@@ -85,6 +88,20 @@ describe('delegated authorization HTTP routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(authenticateRequest).mockResolvedValue(identity as never);
+  });
+
+  it('revokes a delegated token family with an opaque no-store response', async () => {
+    const { application, revokeByToken } = await buildApplication();
+    const response = await application.inject({
+      method: 'POST', url: '/connect/revoke',
+      payload: { token: 'refresh-secret', client_id: 'open-clips-dev' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(revokeByToken).toHaveBeenCalledOnce();
+    expect(JSON.stringify(vi.mocked(revokeByToken).mock.calls)).not.toContain('refresh-secret');
+    await application.close();
   });
 
   it('returns a bounded tenant grant summary without token material', async () => {

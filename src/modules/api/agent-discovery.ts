@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.2.0';
+const CONTRACT_VERSION = '1.3.0';
 const CLI_VERSION = '1.2.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
@@ -29,7 +29,7 @@ Read the manifest and API contract first. Authenticate with either a workspace A
 
 Public clients use authorization code + PKCE S256. Generate a fresh verifier, challenge, and opaque state, then open /connect/authorize with client_id, an exactly registered redirect_uri, state, code_challenge, code_challenge_method=S256, and a space-delimited scope. After the user logs in and approves, verify the returned state and exchange the short-lived code at POST /connect/token. The callback contains no durable credential; access and refresh tokens exist only in the token response and must be encrypted at rest by the client.
 
-Send the delegated access token in the Authorization header using the Bearer scheme, together with X-Publish-Relay-Workspace, on the same /api/v1 routes used by API keys. Refresh through POST /connect/token with grant_type=refresh_token before retrying an expired request. Disconnect by revoking the grant in Relay Settings > Integrations; reconnect creates a new grant and never reuses an unrelated API key or old grant. The Open Clips development registration is client_id=open-clips-dev with exact callback http://127.0.0.1:43123/callback and scopes destinations:read schedules:read schedules:write content:write publishes:retry.
+Send the delegated access token in the Authorization header using the Bearer scheme, together with X-Publish-Relay-Workspace, on the same /api/v1 routes used by API keys. Immediately verify the connection with GET /api/v1/account and retain its delegated clientId, grantId, workspaceId/label, capabilities, and expiresAt receipt. Refresh through POST /connect/token with grant_type=refresh_token before retrying an expired request. Disconnect through POST /connect/revoke with the client's own access or refresh token and client_id; confidential clients also send client_secret. A successful or already-invalid token returns an empty 200 response and invalidates the entire selected grant family without revealing token existence. Relay Settings > Integrations remains the human revocation surface. Reconnect creates a new grant and never reuses an unrelated API key or old grant. The Open Clips development registration is client_id=open-clips-dev with exact callback http://127.0.0.1:43123/callback and scopes destinations:read schedules:read schedules:write content:write publishes:retry.
 
 ## Capabilities
 

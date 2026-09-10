@@ -149,6 +149,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `external_drafts` is the durable tenant-scoped handoff aggregate for authorized external applications. Identity and canonical replay are keyed by workspace, authenticated actor type/id, and the caller's opaque `external_id`; `request_fingerprint` detects changed-input conflicts without overloading the generic mutation-replay ledger.
 - `external_draft_media` is the only draft-to-media attachment owner. Its workspace-composite foreign keys prevent cross-tenant attachment, preserve caller ordering, and keep the canonical `media_objects` lifecycle reusable. A draft may transition once to a canonical post through its optional workspace-bound `post_id`; provider, destination, schedule, and publication metadata do not belong on import drafts.
 - Both tables use forced tenant RLS. Application boundaries validate optional return URLs as HTTPS and derive source actor/client identity from authentication rather than request fields.
+- `src/modules/content/external-draft.service.ts` owns validation and canonical replay/conflict behavior; its repository owns the transactional aggregate, ordered attachments, and creation audit. `POST /api/v1/drafts` and `GET /api/v1/drafts/:draftId` require `content:write`, expose only the draft contract and stable relative links, and safe-404 drafts owned by another workspace or machine principal.
 
 ## Delegated client authorization
 

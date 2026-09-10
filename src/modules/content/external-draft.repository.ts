@@ -6,10 +6,12 @@ import {
   externalDraftMedia,
   externalDrafts,
   mediaObjects,
+  workspaces,
 } from '../../database/schema.js';
 
 export interface ExternalDraftRecord {
   id: string;
+  workspaceSlug: string;
   externalId: string;
   label: string | null;
   returnUrl: string | null;
@@ -42,6 +44,13 @@ export async function findExternalDraft(
     .limit(1);
   const draft = rows[0];
   if (!draft) return null;
+  const workspaceRows = await database
+    .select({ slug: workspaces.slug })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .limit(1);
+  const workspace = workspaceRows[0];
+  if (!workspace) return null;
   const media = await database
     .select({ id: externalDraftMedia.mediaId })
     .from(externalDraftMedia)
@@ -52,7 +61,7 @@ export async function findExternalDraft(
       ),
     )
     .orderBy(asc(externalDraftMedia.position));
-  return { ...draft, mediaIds: media.map((item) => item.id) };
+  return { ...draft, workspaceSlug: workspace.slug, mediaIds: media.map((item) => item.id) };
 }
 
 export async function getExternalDraftById(
@@ -141,5 +150,12 @@ export async function insertExternalDraft(
     requestId: input.requestId,
     metadata: { externalId: input.externalId, sourceClientId: input.sourceClientId ?? null },
   });
-  return { ...draft, mediaIds: input.mediaIds };
+  const workspaceRows = await database
+    .select({ slug: workspaces.slug })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .limit(1);
+  const workspace = workspaceRows[0];
+  if (!workspace) throw new Error('Draft workspace is unavailable');
+  return { ...draft, workspaceSlug: workspace.slug, mediaIds: input.mediaIds };
 }

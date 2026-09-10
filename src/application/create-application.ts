@@ -16,6 +16,7 @@ import { registerAuthRoutes } from '../modules/identity/auth.routes.js';
 import type { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
 import { registerPostRoutes } from '../modules/content/post.routes.js';
+import { registerExternalDraftRoutes } from '../modules/content/external-draft.routes.js';
 import { registerBrowserWorkflowRoutes } from '../modules/content/browser-workflow.routes.js';
 import type { MediaStorage } from '../modules/content/media-storage.js';
 import {
@@ -109,6 +110,13 @@ export function createApplication(
         rateLimiter,
         new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
         actionPolicy,
+        delegatedAuthorization,
+      );
+      registerExternalDraftRoutes(
+        application,
+        database,
+        apiKeys,
+        rateLimiter,
         delegatedAuthorization,
       );
       if (mediaStorage)

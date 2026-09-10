@@ -3,20 +3,20 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 export const DELEGATED_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const DELEGATED_AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60;
 
-export type RegisteredClient = {
+export interface RegisteredClient {
   id: string;
   redirectUris: readonly string[];
   allowedScopes: readonly string[];
-};
+}
 
-export type AuthorizationRequest = {
+export interface AuthorizationRequest {
   clientId: string;
   redirectUri: string;
   state: string;
   codeChallenge: string;
   codeChallengeMethod: string;
   requestedScopes: readonly string[];
-};
+}
 
 export class DelegatedAuthorizationError extends Error {
   constructor(
@@ -31,7 +31,7 @@ export function validateAuthorizationRequest(
   input: AuthorizationRequest,
   client: RegisteredClient | null,
 ): { scopes: string[] } {
-  if (!client || client.id !== input.clientId)
+  if (client?.id !== input.clientId)
     throw new DelegatedAuthorizationError('invalid_client', 'Client is not registered');
   if (!input.state) throw new DelegatedAuthorizationError('invalid_request', 'State is required');
   if (!client.redirectUris.includes(input.redirectUri))

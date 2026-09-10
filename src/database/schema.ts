@@ -146,6 +146,107 @@ export const apiKeys = pgTable(
   ],
 );
 
+export const registeredClients = pgTable('registered_clients', {
+  id: text('id').primaryKey(),
+  displayName: text('display_name').notNull(),
+  clientType: text('client_type').notNull(),
+  secretHash: text('secret_hash'),
+  redirectUris: text('redirect_uris').array().notNull(),
+  allowedScopes: text('allowed_scopes').array().notNull(),
+  ...timestamps,
+});
+
+export const delegatedGrants = pgTable(
+  'delegated_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    clientId: text('client_id')
+      .notNull()
+      .references(() => registeredClients.id, { onDelete: 'restrict' }),
+    scopes: text('scopes').array().notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('delegated_grants_workspace_id_unique').on(table.workspaceId, table.id),
+    uniqueIndex('delegated_grants_active_identity_unique')
+      .on(table.workspaceId, table.userId, table.clientId)
+      .where(sql`${table.revokedAt} is null`),
+    index('delegated_grants_workspace_user_idx').on(table.workspaceId, table.userId),
+    index('delegated_grants_workspace_client_idx').on(table.workspaceId, table.clientId),
+  ],
+);
+
+export const delegatedAuthorizationCodes = pgTable(
+  'delegated_authorization_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    grantId: uuid('grant_id').notNull(),
+    clientId: text('client_id').notNull(),
+    codeHash: text('code_hash').notNull(),
+    redirectUri: text('redirect_uri').notNull(),
+    scopes: text('scopes').array().notNull(),
+    codeChallenge: text('code_challenge').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('delegated_authorization_codes_hash_unique').on(table.codeHash),
+    index('delegated_authorization_codes_expiry_idx').on(table.workspaceId, table.expiresAt),
+    foreignKey({
+      columns: [table.workspaceId, table.grantId],
+      foreignColumns: [delegatedGrants.workspaceId, delegatedGrants.id],
+      name: 'delegated_authorization_codes_workspace_grant_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.clientId],
+      foreignColumns: [registeredClients.id],
+      name: 'delegated_authorization_codes_client_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const delegatedTokens = pgTable(
+  'delegated_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    grantId: uuid('grant_id').notNull(),
+    accessTokenHash: text('access_token_hash').notNull(),
+    refreshTokenHash: text('refresh_token_hash').notNull(),
+    scopes: text('scopes').array().notNull(),
+    accessExpiresAt: timestamp('access_expires_at', { withTimezone: true }).notNull(),
+    refreshExpiresAt: timestamp('refresh_expires_at', { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    rotatedFromTokenId: uuid('rotated_from_token_id'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('delegated_tokens_access_hash_unique').on(table.accessTokenHash),
+    uniqueIndex('delegated_tokens_refresh_hash_unique').on(table.refreshTokenHash),
+    index('delegated_tokens_workspace_grant_idx').on(table.workspaceId, table.grantId),
+    foreignKey({
+      columns: [table.workspaceId, table.grantId],
+      foreignColumns: [delegatedGrants.workspaceId, delegatedGrants.id],
+      name: 'delegated_tokens_workspace_grant_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.rotatedFromTokenId],
+      foreignColumns: [table.id],
+      name: 'delegated_tokens_rotated_from_fk',
+    }).onDelete('set null'),
+  ],
+);
+
 export const apiMutationResults = pgTable(
   'api_mutation_results',
   {

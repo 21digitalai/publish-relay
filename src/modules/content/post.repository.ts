@@ -17,14 +17,19 @@ export interface PostRevisionInput {
   mediaIds: readonly string[];
   providerAccountIds: readonly string[];
   scheduledAt: Date;
-  actor?: { type: 'user' | 'api-key'; id: string };
+  actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
 }
 
 function persistedActor(actor: PostRevisionInput['actor'], userId?: string) {
   const resolved = actor ?? (userId ? { type: 'user' as const, id: userId } : undefined);
   return resolved
     ? {
-        type: resolved.type === 'api-key' ? ('api_key' as const) : ('user' as const),
+        type:
+          resolved.type === 'api-key'
+            ? ('api_key' as const)
+            : resolved.type === 'delegated'
+              ? ('delegated' as const)
+              : ('user' as const),
         id: resolved.id,
       }
     : { type: null, id: null };
@@ -240,7 +245,7 @@ export async function reschedulePostIntent(
   input: {
     workspaceId: string;
     userId?: string;
-    actor?: { type: 'user' | 'api-key'; id: string };
+    actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
     postId: string;
     scheduledAt: Date;
     now: Date;

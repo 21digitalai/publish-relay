@@ -8,13 +8,14 @@ import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import { executeIdempotentMutation } from '../api/idempotency.repository.js';
 import { validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
+import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
 import {
   ActionPolicyDeniedError,
   allowAllActionPolicy,
   type ActionPolicy,
 } from '../policy/action-policy.js';
-import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
+import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
 import type { MediaStorage } from './media-storage.js';
 import { FfprobeMediaProbe, type MediaProbe } from './media-probe.js';
 import {
@@ -48,6 +49,7 @@ export function registerMediaRoutes(
   actionPolicy: ActionPolicy = allowAllActionPolicy,
   probe: MediaProbe = new FfprobeMediaProbe(),
   videoConfig = { maxBytes: AGENT_MEDIA_MAX_BYTES, limits: AGENT_VIDEO_LIMITS },
+  delegatedAuthorization?: DelegatedAuthorizationService,
 ): void {
   for (const contentType of SUPPORTED_CONTENT_TYPES) {
     if (contentType === 'video/mp4') {
@@ -75,12 +77,17 @@ export function registerMediaRoutes(
   application.post('/api/v1/media', async (request, reply) => {
     let uncommittedStorageKey: string | undefined;
     try {
-      const principal = await authorizeApiKeyRequest(request, apiKeys, 'content:write');
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'content:write',
+      );
       if (!principal)
         return await reply
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
-      const decision = rateLimiter.check(principal.workspaceId, principal.id, 'mutation');
+      const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
       void reply.header('X-RateLimit-Limit', decision.limit);
       void reply.header('X-RateLimit-Remaining', decision.remaining);
       if (!decision.allowed) {
@@ -133,7 +140,7 @@ export function registerMediaRoutes(
           database,
           {
             workspaceId: principal.workspaceId,
-            actor: { type: 'api-key', id: principal.id },
+            actor: { type: principal.kind, id: principal.actorId },
             operation: 'media.create',
             idempotencyKey,
             requestFingerprint: fingerprint,
@@ -144,8 +151,8 @@ export function registerMediaRoutes(
               storage,
               {
                 workspaceId: principal.workspaceId,
-                userId: principal.createdByUserId,
-                actor: { type: 'api-key', id: principal.id },
+                userId: principal.kind === 'api-key' ? principal.createdByUserId : principal.userId,
+                actor: { type: principal.kind, id: principal.actorId },
                 requestId: request.id,
                 idempotencyKey,
                 staged,
@@ -197,7 +204,7 @@ export function registerMediaRoutes(
         database,
         {
           workspaceId: principal.workspaceId,
-          actor: { type: 'api-key', id: principal.id },
+          actor: { type: principal.kind, id: principal.actorId },
           operation: 'media.create',
           idempotencyKey,
           requestFingerprint: fingerprint,
@@ -208,8 +215,8 @@ export function registerMediaRoutes(
             storage,
             {
               workspaceId: principal.workspaceId,
-              userId: principal.createdByUserId,
-              actor: { type: 'api-key', id: principal.id },
+              userId: principal.kind === 'api-key' ? principal.createdByUserId : principal.userId,
+              actor: { type: principal.kind, id: principal.actorId },
               requestId: request.id,
               idempotencyKey,
               bytes,
@@ -253,7 +260,7 @@ export function registerMediaRoutes(
           request.log.error({ storageKey: uncommittedStorageKey }, 'Media rollback cleanup failed');
         }
       }
-      if (error instanceof ApiKeyAuthorizationError)
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       if (error instanceof ActionPolicyDeniedError)
         return await reply

@@ -48,7 +48,7 @@ export async function storeStagedMediaInTransaction(
   input: {
     workspaceId: string;
     userId: string;
-    actor: { type: 'user' | 'api-key'; id: string };
+    actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
     requestId: string;
     idempotencyKey: string;
     staged: StagedMedia;
@@ -115,7 +115,7 @@ export async function storeMedia(
   input: {
     workspaceId: string;
     userId: string;
-    actor?: { type: 'user' | 'api-key'; id: string };
+    actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
     requestId?: string;
     idempotencyKey?: string;
     bytes: Buffer;
@@ -194,7 +194,7 @@ async function persistMedia(
   input: {
     workspaceId: string;
     userId: string;
-    actor?: { type: 'user' | 'api-key'; id: string };
+    actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
     requestId?: string;
     idempotencyKey?: string;
     bytes: Buffer;
@@ -251,7 +251,7 @@ export async function storeMediaInTransaction(
   input: {
     workspaceId: string;
     userId: string;
-    actor?: { type: 'user' | 'api-key'; id: string };
+    actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
     requestId?: string;
     idempotencyKey?: string;
     bytes: Buffer;

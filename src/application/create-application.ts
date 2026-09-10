@@ -128,6 +128,7 @@ export function createApplication(
               maxHeight: config.MEDIA_VIDEO_MAX_HEIGHT ?? AGENT_VIDEO_LIMITS.maxHeight,
             },
           },
+          delegatedAuthorization,
         );
     }
   }

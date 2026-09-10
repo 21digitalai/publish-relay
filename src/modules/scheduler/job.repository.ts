@@ -341,7 +341,7 @@ export async function requestOperatorRetryInTransaction(
   input: {
     workspaceId: string;
     jobId: string;
-    actor: { type: 'user' | 'api-key'; id: string };
+    actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
     now: Date;
   },
   policy: ActionPolicy = allowAllActionPolicy,

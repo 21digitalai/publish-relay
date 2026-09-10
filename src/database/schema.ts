@@ -28,7 +28,7 @@ const bytea = customType<{ data: Buffer }>({
 });
 
 export const membershipRole = pgEnum('membership_role', ['owner', 'admin', 'editor', 'viewer']);
-export const actorType = pgEnum('audit_actor_type', ['user', 'api_key', 'system']);
+export const actorType = pgEnum('audit_actor_type', ['user', 'api_key', 'delegated', 'system']);
 export const mediaState = pgEnum('media_state', [
   'temporary',
   'ready',

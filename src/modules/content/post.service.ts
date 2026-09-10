@@ -18,7 +18,7 @@ import {
 export interface PostIntentInput extends PostRevisionInput {
   workspaceId: string;
   userId: string;
-  actor?: { type: 'user' | 'api-key'; id: string };
+  actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
   requestId?: string;
   idempotencyKey?: string;
 }
@@ -79,7 +79,7 @@ export async function reschedulePostInTransaction(
   input: {
     workspaceId: string;
     userId?: string;
-    actor?: { type: 'user' | 'api-key'; id: string };
+    actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
     requestId?: string;
     idempotencyKey?: string;
     postId: string;
@@ -104,7 +104,7 @@ export async function reschedulePost(
   input: {
     workspaceId: string;
     userId?: string;
-    actor?: { type: 'user' | 'api-key'; id: string };
+    actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
     requestId?: string;
     idempotencyKey?: string;
     postId: string;

@@ -17,7 +17,6 @@ import {
   allowAllActionPolicy,
   type ActionPolicy,
 } from '../policy/action-policy.js';
-import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
 import { createPostRequestSchema } from './post.contract.js';
@@ -214,12 +213,17 @@ export function registerPostRoutes(
 
   application.post('/api/v1/jobs/:jobId/retry', async (request, reply) => {
     try {
-      const principal = await authorizeApiKeyRequest(request, apiKeys, 'publishes:retry');
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'publishes:retry',
+      );
       if (!principal)
         return await reply
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
-      const decision = rateLimiter.check(principal.workspaceId, principal.id, 'mutation');
+      const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
       if (!decision.allowed)
         return await reply
           .code(429)
@@ -233,7 +237,7 @@ export function registerPostRoutes(
         database,
         {
           workspaceId: principal.workspaceId,
-          actor: { type: 'api-key', id: principal.id },
+          actor: { type: principal.kind, id: principal.actorId },
           operation: 'publishes.retry',
           idempotencyKey,
           requestFingerprint: mutationFingerprint({ jobId }),
@@ -244,7 +248,7 @@ export function registerPostRoutes(
             {
               workspaceId: principal.workspaceId,
               jobId,
-              actor: { type: 'api-key', id: principal.id },
+              actor: { type: principal.kind, id: principal.actorId },
               now: new Date(),
             },
             actionPolicy,
@@ -276,7 +280,7 @@ export function registerPostRoutes(
       if (result.kind === 'replayed') void reply.header('Idempotency-Replayed', 'true');
       return await reply.code(result.response.statusCode).send(result.response.body);
     } catch (error) {
-      if (error instanceof ApiKeyAuthorizationError)
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       if (error instanceof z.ZodError || error instanceof InvalidIdempotencyKeyError)
         return await reply
@@ -288,12 +292,17 @@ export function registerPostRoutes(
 
   application.post('/api/v1/posts', async (request, reply) => {
     try {
-      const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:write');
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'schedules:write',
+      );
       if (!principal)
         return await reply
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
-      const decision = rateLimiter.check(principal.workspaceId, principal.id, 'mutation');
+      const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
       void reply.header('X-RateLimit-Limit', decision.limit);
       void reply.header('X-RateLimit-Remaining', decision.remaining);
       if (!decision.allowed) {
@@ -311,7 +320,7 @@ export function registerPostRoutes(
         database,
         {
           workspaceId: principal.workspaceId,
-          actor: { type: 'api-key', id: principal.id },
+          actor: { type: principal.kind, id: principal.actorId },
           operation: 'posts.create',
           idempotencyKey,
           requestFingerprint: mutationFingerprint(body),
@@ -321,8 +330,8 @@ export function registerPostRoutes(
             transaction,
             {
               workspaceId: principal.workspaceId,
-              userId: principal.createdByUserId,
-              actor: { type: 'api-key', id: principal.id },
+              userId: principal.kind === 'api-key' ? principal.createdByUserId : principal.userId,
+              actor: { type: principal.kind, id: principal.actorId },
               requestId: request.id,
               idempotencyKey,
               content: body.content,

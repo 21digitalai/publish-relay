@@ -16,7 +16,7 @@ export type ActionName = (typeof ACTION_NAMES)[number];
 
 export interface ActionPolicyContext {
   workspaceId: string;
-  actor: { type: 'user' | 'api-key'; id: string };
+  actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
   action: ActionName;
   facts: WorkspaceUsageFacts;
   request: {

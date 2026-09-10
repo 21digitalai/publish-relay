@@ -132,6 +132,21 @@ export function registerDelegatedAuthorizationRoutes(
     }
   });
 
+  application.get('/api/settings/delegated-grants', async (request, reply) => {
+    const identity = await authenticateRequest(request, auth);
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const grants = await service.list(identity.workspaceId, identity.userId);
+    return {
+      data: grants.map((grant) => ({
+        id: grant.id,
+        clientId: grant.clientId,
+        scopes: grant.scopes,
+        createdAt: grant.createdAt.toISOString(),
+      })),
+      error: null,
+    };
+  });
+
   application.delete('/api/settings/delegated-grants/:grantId', async (request, reply) => {
     const identity = await authenticateRequest(request, auth);
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });

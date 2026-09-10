@@ -38,6 +38,7 @@ function harness() {
       scopes: ['destinations:read'],
     }),
     authenticateAccessToken: vi.fn().mockResolvedValue(null),
+    listGrants: vi.fn().mockResolvedValue([]),
     revokeGrant: vi.fn().mockResolvedValue(true),
   };
   return { store, service: new DelegatedAuthorizationService(store, () => now) };

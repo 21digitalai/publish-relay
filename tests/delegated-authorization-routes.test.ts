@@ -44,6 +44,14 @@ function buildService() {
     scopes: ['destinations:read'],
   });
   const createGrantAndCode = vi.fn().mockResolvedValue(undefined);
+  const listGrants = vi.fn().mockResolvedValue([
+    {
+      id: grantId,
+      clientId: client.id,
+      scopes: ['destinations:read'],
+      createdAt: new Date('2026-09-10T10:00:00.000Z'),
+    },
+  ]);
   const revokeGrant = vi.fn().mockResolvedValue(true);
   const store: DelegatedAuthorizationStore = {
     findClient: vi.fn().mockImplementation((clientId) =>
@@ -53,11 +61,13 @@ function buildService() {
     exchangeCode,
     rotateRefreshToken: vi.fn().mockResolvedValue(null),
     authenticateAccessToken: vi.fn(),
+    listGrants,
     revokeGrant,
   };
   return {
     createGrantAndCode,
     exchangeCode,
+    listGrants,
     revokeGrant,
     service: new DelegatedAuthorizationService(store),
   };
@@ -75,6 +85,30 @@ describe('delegated authorization HTTP routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(authenticateRequest).mockResolvedValue(identity as never);
+  });
+
+  it('returns a bounded tenant grant summary without token material', async () => {
+    const { application, listGrants } = await buildApplication();
+    const response = await application.inject({
+      method: 'GET',
+      url: '/api/settings/delegated-grants',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      data: [
+        {
+          id: grantId,
+          clientId: client.id,
+          scopes: ['destinations:read'],
+          createdAt: '2026-09-10T10:00:00.000Z',
+        },
+      ],
+      error: null,
+    });
+    expect(listGrants).toHaveBeenCalledWith(identity.workspaceId, identity.userId);
+    expect(response.body).not.toMatch(/token|secret|userId|workspaceId/);
+    await application.close();
   });
 
   it('requires login before inspecting an authorization request', async () => {

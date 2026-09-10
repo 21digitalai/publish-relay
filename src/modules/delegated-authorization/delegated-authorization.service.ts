@@ -19,6 +19,13 @@ export interface DelegatedPrincipal {
   scopes: string[];
 }
 
+export interface DelegatedGrantSummary {
+  id: string;
+  clientId: string;
+  scopes: string[];
+  createdAt: Date;
+}
+
 interface AuthorizationCodeRecord extends DelegatedPrincipal {
   redirectUri: string;
   codeChallenge: string;
@@ -55,6 +62,7 @@ export interface DelegatedAuthorizationStore {
     };
   }): Promise<RefreshTokenRecord | null>;
   authenticateAccessToken(accessTokenHash: string, now: Date): Promise<DelegatedPrincipal | null>;
+  listGrants(workspaceId: string, userId: string): Promise<DelegatedGrantSummary[]>;
   revokeGrant(workspaceId: string, userId: string, grantId: string, now: Date): Promise<boolean>;
 }
 
@@ -125,6 +133,10 @@ export class DelegatedAuthorizationService {
 
   authenticate(accessToken: string): Promise<DelegatedPrincipal | null> {
     return this.store.authenticateAccessToken(hashSecret(accessToken), this.now());
+  }
+
+  list(workspaceId: string, userId: string): Promise<DelegatedGrantSummary[]> {
+    return this.store.listGrants(workspaceId, userId);
   }
 
   revoke(workspaceId: string, userId: string, grantId: string): Promise<boolean> {

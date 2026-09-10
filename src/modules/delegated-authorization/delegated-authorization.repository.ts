@@ -14,6 +14,13 @@ interface CredentialRow extends DelegatedPrincipal, Record<string, unknown> {
   tokenId: string;
 }
 
+interface GrantRow extends Record<string, unknown> {
+  id: string;
+  clientId: string;
+  scopes: string[];
+  createdAt: Date;
+}
+
 function rows<T>(result: { rows?: T[] } | T[]): T[] {
   return Array.isArray(result) ? result : (result.rows ?? []);
 }
@@ -91,6 +98,19 @@ export function createPostgresDelegatedAuthorizationStore(
         FROM resolve_delegated_access_token(${accessTokenHash}, ${now})
       `);
       return rows(result)[0] ?? null;
+    },
+
+    async listGrants(workspaceId, userId) {
+      return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
+        const result = await transaction.execute<GrantRow>(sql`
+          SELECT id, client_id AS "clientId", scopes, created_at AS "createdAt"
+          FROM delegated_grants
+          WHERE workspace_id = ${workspaceId} AND user_id = ${userId} AND revoked_at IS NULL
+          ORDER BY created_at DESC, id DESC
+          LIMIT 100
+        `);
+        return rows(result);
+      });
     },
 
     async revokeGrant(workspaceId, userId, grantId, now) {

@@ -144,6 +144,12 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 # Agent destination discovery
 
+## Delegated client authorization
+
+- `src/modules/delegated-authorization/protocol.ts` is the provider-neutral protocol boundary for registered clients. Authorization requests require a non-empty client state, exact redirect-URI allowlisting, PKCE S256, and a non-empty subset of the client's registered scopes.
+- Authorization codes, access tokens, refresh tokens, and confidential-client secrets are opaque random values. Durable storage receives only SHA-256 hashes; comparison uses constant-time equality. Codes expire after five minutes and access tokens after fifteen minutes unless a later owner-approved contract changes those named constants.
+- Open Clips is the initial registered client, not a schema or route owner. Client-specific redirect URIs and scope allowlists are configuration/data, while grant lifecycle, exchange, rotation, revocation, and audit behavior remain generic Relay responsibilities.
+
 `GET /api/v1/destinations` is the canonical account-scoped discovery surface for API customers. It requires `destinations:read` and returns only the provider-account ID, provider, display name, connection status, and update timestamp. Credential IDs, connection IDs, provider metadata, defaults, ownership fields, and secret material are never exposed by this collection contract.
 
 `POST /api/v1/jobs/:jobId/retry` is the canonical agent retry surface. It requires `publishes:retry`, an idempotency key, and a tenant-owned failed job whose outcome does not require reconciliation. The API-key identity is retained as the policy and event actor; unknown outcomes must be reconciled rather than blindly retried.

@@ -46,8 +46,15 @@ const migrations = [
   '0022_truthful_post_actors.sql',
   '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
+  '0026_parallel_human_cannonball.sql',
+  '0027_overjoyed_dark_beast.sql',
+  '0028_nosy_dracula.sql',
+  '0029_handy_human_fly.sql',
+  '0030_delegated_token_resolution.sql',
   '0031_graceful_photon.sql',
   '0032_little_stellaris.sql',
+  '0033_open_clips_development_client.sql',
+  '0034_simple_jamie_braddock.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';
@@ -575,6 +582,67 @@ describe('browser workflow PostgreSQL boundary', () => {
         (SELECT count(*)::int FROM browser_mutation_results WHERE workspace_id = '${workspaceId}') AS mutations`,
     );
     expect(counts.rows[0]).toEqual({ posts: 1, mutations: 1 });
+  });
+
+  it('hydrates and transitions an imported draft exactly once', async () => {
+    const draftId = '00000000-0000-4000-8000-000000000850';
+    const mediaId = '00000000-0000-4000-8000-000000000807';
+    await database.exec(`
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+      VALUES ('${mediaId}', '${workspaceId}', 'draft.jpg', 'draft-hash', 'image/jpeg', 10, 'ready');
+      INSERT INTO external_drafts
+        (id, workspace_id, source_actor_type, source_actor_id, external_id, label, request_fingerprint)
+      VALUES ('${draftId}', '${workspaceId}', 'api_key', '${apiKeyId}', 'clip-850', 'Approved clip', 'fingerprint');
+      INSERT INTO external_draft_media (workspace_id, draft_id, media_id, position)
+      VALUES ('${workspaceId}', '${draftId}', '${mediaId}', 0);
+    `);
+    const hydrated = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/drafts/${draftId}`,
+      headers: browserHeaders,
+    });
+    expect(hydrated.statusCode).toBe(200);
+    expect(hydrated.json()).toEqual({
+      data: { id: draftId, label: 'Approved clip', mediaIds: [mediaId], postId: null },
+      error: null,
+    });
+
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: {
+        ...browserHeaders,
+        cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+        'x-csrf-token': 'browser-csrf',
+        'idempotency-key': 'browser-draft-transition',
+      },
+      payload: {
+        ...requestPayload('Imported draft post'),
+        mediaIds: [mediaId],
+        externalDraftId: draftId,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const postId = created.json<{ data: { id: string } }>().data.id;
+    const transitioned = await database.query<{ post_id: string; action: string }>(
+      `SELECT d.post_id, a.action FROM external_drafts d
+       JOIN audit_events a ON a.target_id = d.id AND a.action = 'external_draft.transitioned'
+       WHERE d.id = '${draftId}'`,
+    );
+    expect(transitioned.rows).toEqual([{ post_id: postId, action: 'external_draft.transitioned' }]);
+
+    const repeated = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: {
+        ...browserHeaders,
+        cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+        'x-csrf-token': 'browser-csrf',
+        'idempotency-key': 'browser-draft-transition-again',
+      },
+      payload: { ...requestPayload('Second post'), mediaIds: [mediaId], externalDraftId: draftId },
+    });
+    expect(repeated.statusCode).toBe(400);
   });
 
   it('revises a browser post once and supersedes its previous job', async () => {

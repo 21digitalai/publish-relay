@@ -353,7 +353,7 @@ export function registerPostRoutes(
       if (result.kind === 'replayed') void reply.header('Idempotency-Replayed', 'true');
       return await reply.code(result.response.statusCode).send(result.response.body);
     } catch (error) {
-      if (error instanceof ApiKeyAuthorizationError)
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       if (error instanceof z.ZodError || error instanceof PostValidationError)
         return await reply

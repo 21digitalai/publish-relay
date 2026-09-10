@@ -20,6 +20,7 @@ import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js'
 import { ApiKeyAuthorizationError } from '../src/modules/identity/api-key.service.js';
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
+import type { DelegatedAuthorizationService } from '../src/modules/delegated-authorization/delegated-authorization.service.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -46,10 +47,12 @@ const migrations = [
   '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
   '0031_graceful_photon.sql',
+  '0032_little_stellaris.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';
 const apiKeyId = '00000000-0000-4000-8000-000000000803';
+const delegatedGrantId = '00000000-0000-4000-8000-000000000809';
 const providerAccountId = '00000000-0000-4000-8000-000000000804';
 const foreignWorkspaceId = '00000000-0000-4000-8000-000000000810';
 const foreignProviderAccountId = '00000000-0000-4000-8000-000000000811';
@@ -64,6 +67,7 @@ let apiKeys: ApiKeyService;
 let authenticate: ReturnType<typeof vi.fn>;
 let browserAuthenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
+let authenticateDelegated: ReturnType<typeof vi.fn>;
 let evaluateAction: ReturnType<typeof vi.fn>;
 let browserNow: Date | undefined;
 let mediaPutError: Error | undefined;
@@ -199,9 +203,13 @@ beforeEach(async () => {
     capabilities: ['schedules:write', 'schedules:read'],
   });
   requireCapability = vi.fn().mockResolvedValue(undefined);
+  authenticateDelegated = vi.fn().mockResolvedValue(null);
   evaluateAction = vi.fn().mockResolvedValue({ allowed: true });
   browserAuthenticate = vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' });
   apiKeys = { authenticate, requireCapability } as unknown as ApiKeyService;
+  const delegatedAuthorization = {
+    authenticate: authenticateDelegated,
+  } as unknown as DelegatedAuthorizationService;
   application = Fastify();
   application.register(cookie);
   registerApiKeyRoutes(application, apiKeys);
@@ -218,6 +226,7 @@ beforeEach(async () => {
     }),
     new CursorCodec(Buffer.alloc(32, 7)),
     { evaluate: evaluateAction },
+    delegatedAuthorization,
   );
   registerMediaRoutes(
     application,
@@ -231,6 +240,10 @@ beforeEach(async () => {
       mutationKey: 10,
       windowMs: 60_000,
     }),
+    undefined,
+    undefined,
+    undefined,
+    delegatedAuthorization,
   );
   registerBrowserWorkflowRoutes(application, {
     database: drizzle(database) as unknown as NodePgDatabase,
@@ -859,6 +872,73 @@ afterEach(async () => {
 });
 
 describe('POST /api/v1/posts', () => {
+  it('creates and replays with delegated grant attribution while enforcing scope and workspace', async () => {
+    authenticate.mockResolvedValue(null);
+    authenticateDelegated.mockResolvedValue({
+      grantId: delegatedGrantId,
+      workspaceId,
+      userId,
+      clientId: 'open-clips-local',
+      scopes: ['schedules:write'],
+    });
+    const request = {
+      method: 'POST' as const,
+      url: '/api/v1/posts',
+      headers: {
+        authorization: 'Bearer delegated-token',
+        'x-publish-relay-workspace': workspaceId,
+        'idempotency-key': 'delegated-create-post',
+      },
+      payload: requestPayload('Delegated post'),
+    };
+
+    const created = await application.inject(request);
+    const replayed = await application.inject(request);
+    expect(created.statusCode).toBe(201);
+    expect(replayed.statusCode).toBe(201);
+    expect(replayed.headers['idempotency-replayed']).toBe('true');
+    const attribution = await database.query<{
+      actor_type: string;
+      actor_id: string;
+      mutation_actor_type: string;
+    }>(`
+      SELECT p.created_actor_type AS actor_type, p.created_actor_id AS actor_id,
+             m.actor_type AS mutation_actor_type
+      FROM posts p
+      JOIN api_mutation_results m ON m.workspace_id = p.workspace_id
+      WHERE p.workspace_id = '${workspaceId}' AND m.idempotency_key = 'delegated-create-post'
+    `);
+    expect(attribution.rows).toEqual([
+      { actor_type: 'delegated', actor_id: delegatedGrantId, mutation_actor_type: 'delegated' },
+    ]);
+
+    authenticateDelegated.mockResolvedValueOnce({
+      grantId: delegatedGrantId,
+      workspaceId,
+      userId,
+      clientId: 'open-clips-local',
+      scopes: ['schedules:read'],
+    });
+    const missingScope = await application.inject({
+      ...request,
+      headers: { ...request.headers, 'idempotency-key': 'delegated-missing-scope' },
+    });
+    expect(missingScope.statusCode).toBe(403);
+
+    authenticateDelegated.mockResolvedValueOnce({
+      grantId: delegatedGrantId,
+      workspaceId: foreignWorkspaceId,
+      userId,
+      clientId: 'open-clips-local',
+      scopes: ['schedules:write'],
+    });
+    const wrongWorkspace = await application.inject({
+      ...request,
+      headers: { ...request.headers, 'idempotency-key': 'delegated-wrong-workspace' },
+    });
+    expect(wrongWorkspace.statusCode).toBe(401);
+  });
+
   it('persists and returns resolved YouTube settings through the job route', async () => {
     await database.exec(`
       UPDATE provider_connections SET provider = 'youtube'

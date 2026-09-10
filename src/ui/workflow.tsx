@@ -301,6 +301,7 @@ function Status({ state }: { state: JobState }) {
 }
 
 function Composer({ onClose }: { onClose: () => void }) {
+  const draftId = /\/drafts\/([^/]+)$/.exec(window.location.pathname)?.[1] ?? null;
   const [accounts, setAccounts] = useState<
     {
       id: string;
@@ -317,6 +318,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [collisionWindowEnd, setCollisionWindowEnd] = useState<Date | null>(null);
   const [body, setBody] = useState('');
+  const [draftLabel, setDraftLabel] = useState<string | null>(null);
+  const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
   const [video, setVideo] = useState<File | null>(null);
   const [videoTitle, setVideoTitle] = useState('');
   const [videoDescription, setVideoDescription] = useState('');
@@ -392,6 +395,24 @@ function Composer({ onClose }: { onClose: () => void }) {
     state !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
   useEffect(() => {
+    if (!draftId) return;
+    void fetch(`/api/workflow/drafts/${draftId}`)
+      .then(async (response) => {
+        const envelope = (await response.json()) as {
+          data?: { label: string | null; mediaIds: string[]; postId: string | null };
+          error?: string | null;
+        };
+        if (!response.ok || !envelope.data)
+          throw new Error(envelope.error ?? 'Draft could not be loaded.');
+        if (envelope.data.postId) throw new Error('This draft has already been scheduled.');
+        setDraftLabel(envelope.data.label);
+        setDraftMediaIds(envelope.data.mediaIds);
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : 'Draft could not be loaded.');
+      });
+  }, [draftId]);
+  useEffect(() => {
     void fetch('/api/provider-accounts')
       .then(async (response) => {
         if (!response.ok) throw new Error('Connected accounts could not be loaded.');
@@ -465,7 +486,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     const targetTime = scheduled ? scheduledAt : new Date();
     if (!targetTime) return;
     try {
-      let mediaIds: string[] = [];
+      let mediaIds: string[] = draftMediaIds;
       if (isYouTube && video) {
         if (uploadedMediaId.current) mediaIds = [uploadedMediaId.current];
         else {
@@ -513,6 +534,7 @@ function Composer({ onClose }: { onClose: () => void }) {
           mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
+          ...(draftId ? { externalDraftId: draftId } : {}),
         }),
       });
       const envelope = (await response.json()) as {
@@ -593,6 +615,15 @@ function Composer({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <>
+            {draftId && (
+              <div className="imported-draft-banner" role="status">
+                <strong>{draftLabel ?? 'Imported draft'}</strong>
+                <span>
+                  {draftMediaIds.length} attached media item{draftMediaIds.length === 1 ? '' : 's'}{' '}
+                  ready
+                </span>
+              </div>
+            )}
             <fieldset className="account-picker">
               <legend>Publish to</legend>
               {state === 'loading' && <p>Loading connected accounts…</p>}
@@ -873,12 +904,14 @@ function Composer({ onClose }: { onClose: () => void }) {
 export function WorkspaceLayout({
   active,
   children,
+  initialComposerOpen = false,
 }: {
   active: 'queue' | 'calendar' | 'settings';
   children: React.ReactNode | ((openComposer: () => void) => React.ReactNode);
+  initialComposerOpen?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(initialComposerOpen);
   return (
     <div className="workspace-app">
       <a className="skip-link" href="#main-content">
@@ -932,6 +965,16 @@ export function WorkspaceLayout({
         />
       )}
     </div>
+  );
+}
+
+export function ExternalDraftPage() {
+  return (
+    <WorkspaceLayout active="queue" initialComposerOpen>
+      <section className="external-draft-loading" aria-label="Imported draft">
+        <WorkflowLoading kind="detail" label="Loading imported draft" />
+      </section>
+    </WorkspaceLayout>
   );
 }
 

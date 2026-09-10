@@ -15,6 +15,10 @@ import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
+import {
+  getExternalDraftForWorkspace,
+  transitionExternalDraft,
+} from './external-draft.repository.js';
 import { getReadyMediaForDownload } from './media.repository.js';
 import { deleteUnattachedMedia } from './media-retention.service.js';
 import type { MediaStorage } from './media-storage.js';
@@ -49,6 +53,10 @@ const listQuerySchema = z.object({
 const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
 const mediaParamsSchema = z.object({ mediaId: z.uuid() });
+const draftParamsSchema = z.object({ draftId: z.uuid() });
+const browserCreatePostSchema = createPostRequestSchema.extend({
+  externalDraftId: z.uuid().optional(),
+});
 const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
@@ -326,6 +334,21 @@ export function registerBrowserWorkflowRoutes(
         return mutationError(request, reply, error);
       }
     });
+  application.get('/api/workflow/drafts/:draftId', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const params = draftParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid draft id' });
+    const draft = await getExternalDraftForWorkspace(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      draftId: params.data.draftId,
+    });
+    if (!draft) return reply.code(404).send({ data: null, error: 'Draft was not found' });
+    return reply.send({
+      data: { id: draft.id, label: draft.label, mediaIds: draft.mediaIds, postId: draft.postId },
+      error: null,
+    });
+  });
   application.post('/api/workflow/posts', async (request, reply) => {
     let identity;
     try {
@@ -339,7 +362,7 @@ export function registerBrowserWorkflowRoutes(
     const key = idempotencyKey(request.headers);
     if (!key)
       return reply.code(400).send({ data: null, error: 'A valid Idempotency-Key is required' });
-    const parsed = createPostRequestSchema.safeParse(request.body);
+    const parsed = browserCreatePostSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ data: null, error: 'Invalid post' });
     const body = parsed.data;
     if (isPastSchedule(body.scheduledAt, dependencies.now?.()))
@@ -370,6 +393,17 @@ export function registerBrowserWorkflowRoutes(
             },
             actionPolicy,
           );
+          if (body.externalDraftId) {
+            const transitioned = await transitionExternalDraft(transaction, {
+              workspaceId: identity.workspaceId,
+              draftId: body.externalDraftId,
+              postId: created.postId,
+              userId: identity.userId,
+              requestId: request.id,
+            });
+            if (!transitioned)
+              throw new PostValidationError('Draft is unavailable or already used');
+          }
           return {
             statusCode: 201,
             body: {

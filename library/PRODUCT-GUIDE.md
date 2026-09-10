@@ -6,6 +6,8 @@ Users can register, connect multiple social accounts, schedule content through t
 
 ## Initial scope
 
+- Generic clients may hand approved local media to a tenant-scoped draft and send the user into Relay's canonical cockpit composer. Relay owns retention, destination choice, scheduling, and the one-time draft-to-post receipt; source clients keep only their opaque correlation and optional HTTPS return link.
+
 - Authentication and protected application shell.
 - Multi-tenant workspaces/projects.
 - Multiple provider accounts per workspace.

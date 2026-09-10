@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.1.0';
-const CLI_VERSION = '1.1.0';
+const CONTRACT_VERSION = '1.2.0';
+const CLI_VERSION = '1.2.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -37,6 +37,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - posts list/show and publishes show/poll: schedules:read.
 - posts create: schedules:write. Live provider submission also requires publishes:submit on the server-side operation.
 - media upload: content:write. Send exact local bytes with --file, an explicit --content-type, and a unique idempotency key. Remote URL fetching is not supported.
+- drafts create/show: content:write. Create a tenant-scoped imported-media draft with a stable opaque externalId, ordered ready mediaIds, and optional label/HTTPS returnUrl. Open the returned cockpit link for the user to complete the canonical Relay composer; the resulting post link appears after that one-time transition.
 - destinations list: destinations:read.
 - publishes retry: publishes:retry. Retry only a failed job after inspection; Relay rejects jobs whose outcome still requires reconciliation.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
@@ -69,6 +70,7 @@ Read-only example: PUBLISH_RELAY_API_KEY=<workspace-service-key> node publish-re
 Destination discovery example: add destinations list with the same --base-url and --require-workspace, then use the returned destination id in providerAccountIds. The list never returns credentials or provider defaults.
 Mutation example: add posts create with --body-file <request.json> and --idempotency-key <unique-operation-key> only after the read-first workspace check.
 Media example: add media upload with --file <image-path> --content-type image/png and --idempotency-key <unique-operation-key>.
+Draft handoff example: upload each local asset, then run drafts create with a JSON body containing externalId and the returned mediaIds plus a unique idempotency key. Retain the returned self and cockpit links; do not build a second scheduler UI in the source client.
 YouTube scheduling example: set title and any sparse provider override in the posts create body, select the connected destination, then retain data.jobs[].effectiveProviderSettings from the response. Do not repeat unchanged privacy, Made for Kids, notification, tags, or category defaults on every request.
 Retry example: after publishes show confirms state=failed and no reconciliation is required, run publishes retry <job-id> with a unique --idempotency-key. Poll the same job link afterward; never retry accepted_pending or unknown outcomes blindly.
 

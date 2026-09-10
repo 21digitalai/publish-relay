@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -90,6 +90,39 @@ export async function getExternalDraftById(
   return findExternalDraft(database, { ...input, externalId: draft.externalId });
 }
 
+export async function getExternalDraftForWorkspace(
+  database: NodePgDatabase,
+  input: { workspaceId: string; draftId: string },
+): Promise<ExternalDraftRecord | null> {
+  const rows = await database
+    .select()
+    .from(externalDrafts)
+    .where(
+      and(eq(externalDrafts.workspaceId, input.workspaceId), eq(externalDrafts.id, input.draftId)),
+    )
+    .limit(1);
+  const draft = rows[0];
+  if (!draft) return null;
+  const workspaceRows = await database
+    .select({ slug: workspaces.slug })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .limit(1);
+  const workspace = workspaceRows[0];
+  if (!workspace) return null;
+  const media = await database
+    .select({ id: externalDraftMedia.mediaId })
+    .from(externalDraftMedia)
+    .where(
+      and(
+        eq(externalDraftMedia.workspaceId, input.workspaceId),
+        eq(externalDraftMedia.draftId, input.draftId),
+      ),
+    )
+    .orderBy(asc(externalDraftMedia.position));
+  return { ...draft, workspaceSlug: workspace.slug, mediaIds: media.map((item) => item.id) };
+}
+
 export async function insertExternalDraft(
   database: NodePgDatabase,
   input: {
@@ -158,4 +191,39 @@ export async function insertExternalDraft(
   const workspace = workspaceRows[0];
   if (!workspace) throw new Error('Draft workspace is unavailable');
   return { ...draft, workspaceSlug: workspace.slug, mediaIds: input.mediaIds };
+}
+
+export async function transitionExternalDraft(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    draftId: string;
+    postId: string;
+    userId: string;
+    requestId: string;
+  },
+): Promise<boolean> {
+  const transitioned = await database
+    .update(externalDrafts)
+    .set({ postId: input.postId, transitionedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(externalDrafts.workspaceId, input.workspaceId),
+        eq(externalDrafts.id, input.draftId),
+        isNull(externalDrafts.postId),
+      ),
+    )
+    .returning({ id: externalDrafts.id });
+  if (!transitioned[0]) return false;
+  await database.insert(auditEvents).values({
+    workspaceId: input.workspaceId,
+    actorType: 'user',
+    actorId: input.userId,
+    action: 'external_draft.transitioned',
+    targetType: 'external_draft',
+    targetId: input.draftId,
+    requestId: input.requestId,
+    metadata: { postId: input.postId },
+  });
+  return true;
 }

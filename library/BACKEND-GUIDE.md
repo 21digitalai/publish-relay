@@ -2,6 +2,8 @@
 
 ## Accepted foundation
 
+- Generic external clients create tenant-scoped imported drafts through `POST /api/v1/drafts` and inspect them through the principal-scoped detail route. Creation uses the canonical idempotency ledger and a separate actor/externalId replay identity. Draft media must already be ready and owned by the workspace. The authenticated cockpit reads the same draft under tenant RLS and atomically links it to exactly one canonical post during composer submission; no parallel scheduling or media lifecycle exists.
+
 - Node.js 24 + strict TypeScript modular monolith using Fastify.
 - PostgreSQL as the only durable state store.
 - REST API for UI and project integrations.

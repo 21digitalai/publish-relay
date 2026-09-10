@@ -1727,6 +1727,19 @@ select:focus-visible {
 .composer-sheet h2 {
   margin: 3px 0 0;
 }
+.imported-draft-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--brand) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--brand) 8%, var(--surface-2));
+}
+.imported-draft-banner span {
+  color: var(--text-muted);
+}
 .account-picker,
 .schedule-choice {
   margin: 24px 0;

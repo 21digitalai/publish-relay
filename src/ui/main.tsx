@@ -4,7 +4,13 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
-import { CalendarPage, JobDetailPage, QueuePage, WorkspaceLayout } from './workflow.js';
+import {
+  CalendarPage,
+  ExternalDraftPage,
+  JobDetailPage,
+  QueuePage,
+  WorkspaceLayout,
+} from './workflow.js';
 
 interface Account {
   id: string;
@@ -1846,6 +1852,7 @@ export function App() {
   if (/\/w\/[^/]+\/queue$/.test(path)) return <QueuePage />;
   if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;
   if (/\/w\/[^/]+\/jobs\/[^/]+$/.test(path)) return <JobDetailPage />;
+  if (/\/w\/[^/]+\/drafts\/[^/]+$/.test(path)) return <ExternalDraftPage />;
   if (/\/w\/[^/]+\/settings\/(workspace|automation|integrations)$/.test(path))
     return <SettingsPage />;
   return <AccountsPage />;

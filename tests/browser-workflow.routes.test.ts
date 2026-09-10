@@ -14,6 +14,9 @@ const verifyCsrfToken = vi.fn(() => true);
 const executeBrowserMutation = vi.fn();
 const storeStagedMediaInTransaction = vi.fn();
 const deleteUnattachedMedia = vi.fn();
+const getExternalDraftForWorkspace = vi.fn();
+const transitionExternalDraft = vi.fn();
+const createPostInTransaction = vi.fn();
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest,
@@ -30,6 +33,14 @@ vi.mock('../src/modules/content/media.service.js', async (importOriginal) => ({
 vi.mock('../src/modules/content/media-retention.service.js', async (importOriginal) => ({
   ...(await importOriginal()),
   deleteUnattachedMedia,
+}));
+vi.mock('../src/modules/content/external-draft.repository.js', () => ({
+  getExternalDraftForWorkspace,
+  transitionExternalDraft,
+}));
+vi.mock('../src/modules/content/post.service.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  createPostInTransaction,
 }));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   cancelPendingJob,
@@ -118,6 +129,43 @@ describe('browser workflow read contract', () => {
     await application.close();
   });
 
+  it('hydrates an imported draft through the authenticated workspace only', async () => {
+    const draftId = '00000000-0000-4000-8000-000000000820';
+    getExternalDraftForWorkspace.mockResolvedValue({
+      id: draftId,
+      label: 'Approved clip',
+      mediaIds: ['00000000-0000-4000-8000-000000000821'],
+      postId: null,
+      sourceActorId: 'must-not-leak',
+    });
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, {
+      auth: {} as AuthService,
+      database: {} as never,
+    });
+    const response = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/drafts/${draftId}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(getExternalDraftForWorkspace).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId,
+      draftId,
+    });
+    expect(response.json()).toEqual({
+      data: {
+        id: draftId,
+        label: 'Approved clip',
+        mediaIds: ['00000000-0000-4000-8000-000000000821'],
+        postId: null,
+      },
+      error: null,
+    });
+    expect(response.body).not.toContain('must-not-leak');
+    await application.close();
+  });
+
   it('maps browser post authorization, validation, and unexpected failures to safe envelopes', async () => {
     const payload = {
       content: { type: 'text', text: 'Safe browser post' },
@@ -163,6 +211,43 @@ describe('browser workflow read contract', () => {
     expect(failed.statusCode).toBe(500);
     expect(failed.json()).toEqual({ data: null, error: 'Internal server error' });
     expect(failed.body).not.toContain('database-secret-detail');
+    await application.close();
+  });
+
+  it('atomically transitions the selected imported draft with the created post', async () => {
+    const draftId = '00000000-0000-4000-8000-000000000820';
+    createPostInTransaction.mockResolvedValue({ postId, revisionId: 'revision', jobIds: [] });
+    transitionExternalDraft.mockResolvedValue(true);
+    executeBrowserMutation.mockImplementationOnce(
+      async (_database, _input, mutation: (transaction: never) => Promise<unknown>) => ({
+        kind: 'executed',
+        response: await mutation({} as never),
+      }),
+    );
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, { auth: {} as AuthService, database: {} as never });
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: {
+        'idempotency-key': 'transition-draft',
+        'x-csrf-token': 'csrf',
+        cookie: 'publish_relay_csrf=csrf',
+      },
+      payload: {
+        content: { type: 'text', text: 'Scheduled from imported media' },
+        mediaIds: ['00000000-0000-4000-8000-000000000821'],
+        providerAccountIds: ['00000000-0000-4000-8000-000000000804'],
+        scheduledAt: '2030-09-02T10:00:00.000Z',
+        externalDraftId: draftId,
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(transitionExternalDraft).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId, draftId, postId, userId: 'user' }),
+    );
     await application.close();
   });
 

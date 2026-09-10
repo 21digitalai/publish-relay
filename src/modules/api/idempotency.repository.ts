@@ -16,7 +16,7 @@ export type IdempotentMutationResult =
 
 export interface IdempotentMutationInput {
   workspaceId: string;
-  apiKeyId: string;
+  actor: { type: 'api-key' | 'delegated'; id: string };
   operation: string;
   idempotencyKey: string;
   requestFingerprint: string;
@@ -35,7 +35,8 @@ export async function executeIdempotentMutation(
         .insert(apiMutationResults)
         .values({
           workspaceId: input.workspaceId,
-          apiKeyId: input.apiKeyId,
+          actorType: input.actor.type,
+          actorId: input.actor.id,
           operation: input.operation,
           idempotencyKey: input.idempotencyKey,
           requestFingerprint: input.requestFingerprint,
@@ -68,7 +69,8 @@ export async function executeIdempotentMutation(
         .where(
           and(
             eq(apiMutationResults.workspaceId, input.workspaceId),
-            eq(apiMutationResults.apiKeyId, input.apiKeyId),
+            eq(apiMutationResults.actorType, input.actor.type),
+            eq(apiMutationResults.actorId, input.actor.id),
             eq(apiMutationResults.operation, input.operation),
             eq(apiMutationResults.idempotencyKey, input.idempotencyKey),
           ),

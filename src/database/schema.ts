@@ -254,7 +254,8 @@ export const apiMutationResults = pgTable(
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
-    apiKeyId: uuid('api_key_id').notNull(),
+    actorType: text('actor_type').notNull(),
+    actorId: uuid('actor_id').notNull(),
     operation: text('operation').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
     requestFingerprint: text('request_fingerprint').notNull(),
@@ -265,16 +266,12 @@ export const apiMutationResults = pgTable(
   (table) => [
     uniqueIndex('api_mutation_results_scope_unique').on(
       table.workspaceId,
-      table.apiKeyId,
+      table.actorType,
+      table.actorId,
       table.operation,
       table.idempotencyKey,
     ),
     index('api_mutation_results_workspace_created_idx').on(table.workspaceId, table.createdAt),
-    foreignKey({
-      columns: [table.workspaceId, table.apiKeyId],
-      foreignColumns: [apiKeys.workspaceId, apiKeys.id],
-      name: 'api_mutation_results_workspace_api_key_fk',
-    }).onDelete('cascade'),
   ],
 );
 

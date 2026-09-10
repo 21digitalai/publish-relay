@@ -218,6 +218,13 @@
       "when": 1789039226723,
       "tag": "0030_delegated_token_resolution",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1789042304634,
+      "tag": "0031_graceful_photon",
+      "breakpoints": true
     }
   ]
 }

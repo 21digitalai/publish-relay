@@ -4,7 +4,10 @@ import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { executeIdempotentMutation } from '../src/modules/api/idempotency.repository.js';
+import {
+  executeIdempotentMutation,
+  type IdempotentMutationInput,
+} from '../src/modules/api/idempotency.repository.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -21,6 +24,7 @@ const migrations = [
   '0011_bored_grim_reaper.sql',
   '0012_enable_api_mutation_result_rls.sql',
   '0013_illegal_texas_twister.sql',
+  '0031_graceful_photon.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000701';
 const apiKeyId = '00000000-0000-4000-8000-000000000703';
@@ -50,9 +54,9 @@ describe('API mutation idempotency repository', () => {
     const mutation = vi.fn(() =>
       Promise.resolve({ statusCode: 201, body: { data: { id: 'post-1' } } }),
     );
-    const input = {
+    const input: IdempotentMutationInput = {
       workspaceId,
-      apiKeyId,
+      actor: { type: 'api-key', id: apiKeyId },
       operation: 'posts.create',
       idempotencyKey: 'request-1',
       requestFingerprint: 'fingerprint-1',
@@ -70,9 +74,9 @@ describe('API mutation idempotency repository', () => {
   });
 
   it('returns a conflict without executing when the fingerprint changes', async () => {
-    const input = {
+    const input: IdempotentMutationInput = {
       workspaceId,
-      apiKeyId,
+      actor: { type: 'api-key', id: apiKeyId },
       operation: 'posts.create',
       idempotencyKey: 'request-2',
       requestFingerprint: 'fingerprint-1',
@@ -88,10 +92,36 @@ describe('API mutation idempotency repository', () => {
     expect(mutation).not.toHaveBeenCalled();
   });
 
-  it('rolls back the reservation when the mutation fails', async () => {
-    const input = {
+  it('isolates idempotency keys by machine actor type and id', async () => {
+    const common = {
       workspaceId,
-      apiKeyId,
+      operation: 'posts.create',
+      idempotencyKey: 'shared-client-key',
+      requestFingerprint: 'fingerprint-1',
+    };
+    const mutation = vi.fn(() => Promise.resolve({ statusCode: 201, body: { ok: true } }));
+
+    await expect(
+      executeIdempotentMutation(
+        db,
+        { ...common, actor: { type: 'api-key', id: apiKeyId } },
+        mutation,
+      ),
+    ).resolves.toMatchObject({ kind: 'executed' });
+    await expect(
+      executeIdempotentMutation(
+        db,
+        { ...common, actor: { type: 'delegated', id: apiKeyId } },
+        mutation,
+      ),
+    ).resolves.toMatchObject({ kind: 'executed' });
+    expect(mutation).toHaveBeenCalledTimes(2);
+  });
+
+  it('rolls back the reservation when the mutation fails', async () => {
+    const input: IdempotentMutationInput = {
+      workspaceId,
+      actor: { type: 'api-key', id: apiKeyId },
       operation: 'posts.create',
       idempotencyKey: 'request-3',
       requestFingerprint: 'fingerprint-1',

@@ -133,7 +133,7 @@ export function registerMediaRoutes(
           database,
           {
             workspaceId: principal.workspaceId,
-            apiKeyId: principal.id,
+            actor: { type: 'api-key', id: principal.id },
             operation: 'media.create',
             idempotencyKey,
             requestFingerprint: fingerprint,
@@ -197,7 +197,7 @@ export function registerMediaRoutes(
         database,
         {
           workspaceId: principal.workspaceId,
-          apiKeyId: principal.id,
+          actor: { type: 'api-key', id: principal.id },
           operation: 'media.create',
           idempotencyKey,
           requestFingerprint: fingerprint,

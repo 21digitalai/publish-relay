@@ -233,7 +233,7 @@ export function registerPostRoutes(
         database,
         {
           workspaceId: principal.workspaceId,
-          apiKeyId: principal.id,
+          actor: { type: 'api-key', id: principal.id },
           operation: 'publishes.retry',
           idempotencyKey,
           requestFingerprint: mutationFingerprint({ jobId }),
@@ -311,7 +311,7 @@ export function registerPostRoutes(
         database,
         {
           workspaceId: principal.workspaceId,
-          apiKeyId: principal.id,
+          actor: { type: 'api-key', id: principal.id },
           operation: 'posts.create',
           idempotencyKey,
           requestFingerprint: mutationFingerprint(body),

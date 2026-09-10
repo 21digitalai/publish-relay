@@ -107,6 +107,49 @@ test('renders the honest recovery unavailable state', async ({ page }) => {
   await expect(page.getByText('We will not claim that an email was sent')).toBeVisible();
 });
 
+test('hydrates an imported draft in the canonical composer on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  const draftId = '00000000-0000-4000-8000-000000000850';
+  await page.route(`**/api/workflow/drafts/${draftId}`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: draftId,
+          label: 'Approved launch clip',
+          mediaIds: ['00000000-0000-4000-8000-000000000851'],
+          postId: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/jobs?**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [], next: null }, error: null }),
+    }),
+  );
+  const path = await workspacePath(page, `drafts/${draftId}`);
+  await page.goto(path);
+  await expect(page.getByRole('heading', { name: 'Create post' })).toBeVisible();
+  await expect(page.getByText('Approved launch clip')).toBeVisible();
+  await expect(page.getByText('1 attached media item ready')).toBeVisible();
+  await expect(page.locator('.composer-sheet')).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('external-draft-desktop.png'),
+    fullPage: true,
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.composer-sheet')).toBeVisible();
+  await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
+  await page.screenshot({ path: testInfo.outputPath('external-draft-mobile.png'), fullPage: true });
+});
+
 test('approves the registered Open Clips loopback client and exposes revocation', async ({
   page,
 }, testInfo) => {

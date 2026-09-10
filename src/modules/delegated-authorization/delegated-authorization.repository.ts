@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { registeredClients } from '../../database/schema.js';
+import { auditEvents, registeredClients } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type {
   DelegatedAuthorizationStore,
@@ -52,6 +52,16 @@ export function createPostgresDelegatedAuthorizationStore(
             VALUES (${input.grantId}, ${input.workspaceId}, ${input.userId},
               ${input.clientId}, ${input.scopes})
           `);
+          await transaction.insert(auditEvents).values({
+            workspaceId: input.workspaceId,
+            actorType: 'user',
+            actorId: input.userId,
+            action: 'delegated_grant.approved',
+            targetType: 'delegated_grant',
+            targetId: input.grantId,
+            requestId: input.requestId,
+            metadata: { clientId: input.clientId, scopes: input.scopes },
+          });
           await transaction.execute(sql`
             INSERT INTO delegated_authorization_codes (
               workspace_id, grant_id, client_id, code_hash, redirect_uri,
@@ -113,7 +123,7 @@ export function createPostgresDelegatedAuthorizationStore(
       });
     },
 
-    async revokeGrant(workspaceId, userId, grantId, now) {
+    async revokeGrant(workspaceId, userId, grantId, now, requestId) {
       return withTenantTransaction(database, { workspaceId, userId }, async (transaction) => {
         const result = await transaction.execute<{ id: string }>(sql`
           UPDATE delegated_grants SET revoked_at = ${now}, updated_at = ${now}
@@ -126,6 +136,16 @@ export function createPostgresDelegatedAuthorizationStore(
           UPDATE delegated_tokens SET revoked_at = ${now}, updated_at = ${now}
           WHERE workspace_id = ${workspaceId} AND grant_id = ${grantId} AND revoked_at IS NULL
         `);
+        await transaction.insert(auditEvents).values({
+          workspaceId,
+          actorType: 'user',
+          actorId: userId,
+          action: 'delegated_grant.revoked',
+          targetType: 'delegated_grant',
+          targetId: grantId,
+          requestId,
+          metadata: {},
+        });
         return true;
       });
     },

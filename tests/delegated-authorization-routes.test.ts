@@ -255,6 +255,7 @@ describe('delegated authorization HTTP routes', () => {
       identity.userId,
       grantId,
       expect.any(Date),
+      expect.any(String),
     );
 
     const revoked = await application.inject({

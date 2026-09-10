@@ -98,6 +98,7 @@ export function registerDelegatedAuthorizationRoutes(
         workspaceId: identity.workspaceId,
         userId: identity.userId,
         scopes: input.requestedScopes as string[],
+        requestId: request.id,
       });
       const redirect = new URL(input.redirectUri);
       redirect.searchParams.set('code', result.code);
@@ -167,6 +168,7 @@ export function registerDelegatedAuthorizationRoutes(
       identity.workspaceId,
       identity.userId,
       parsed.data.grantId,
+      request.id,
     );
     return revoked
       ? { data: { revoked: true }, error: null }

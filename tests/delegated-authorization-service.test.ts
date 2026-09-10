@@ -48,6 +48,7 @@ describe('delegated authorization service', () => {
   it('approves only a registered exact redirect and persists no plaintext code', async () => {
     const { store, service } = harness();
     const result = await service.approve({
+      requestId: 'request-1',
       grantId: 'grant-1',
       workspaceId: 'workspace-1',
       userId: 'user-1',

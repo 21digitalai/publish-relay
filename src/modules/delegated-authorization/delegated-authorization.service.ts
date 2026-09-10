@@ -41,6 +41,7 @@ export interface DelegatedAuthorizationStore {
     input: AuthorizationCodeRecord & {
       codeHash: string;
       expiresAt: Date;
+      requestId: string;
     },
   ): Promise<void>;
   exchangeCode(input: {
@@ -63,7 +64,13 @@ export interface DelegatedAuthorizationStore {
   }): Promise<RefreshTokenRecord | null>;
   authenticateAccessToken(accessTokenHash: string, now: Date): Promise<DelegatedPrincipal | null>;
   listGrants(workspaceId: string, userId: string): Promise<DelegatedGrantSummary[]>;
-  revokeGrant(workspaceId: string, userId: string, grantId: string, now: Date): Promise<boolean>;
+  revokeGrant(
+    workspaceId: string,
+    userId: string,
+    grantId: string,
+    now: Date,
+    requestId: string,
+  ): Promise<boolean>;
 }
 
 export class DelegatedTokenError extends Error {
@@ -83,7 +90,9 @@ export class DelegatedAuthorizationService {
     return client;
   }
 
-  async approve(input: AuthorizationRequest & DelegatedPrincipal): Promise<{ code: string }> {
+  async approve(
+    input: AuthorizationRequest & DelegatedPrincipal & { requestId: string },
+  ): Promise<{ code: string }> {
     const client = await this.inspectAuthorization(input);
     const { scopes } = validateAuthorizationRequest(input, client);
     const code = createAuthorizationCode();
@@ -139,8 +148,13 @@ export class DelegatedAuthorizationService {
     return this.store.listGrants(workspaceId, userId);
   }
 
-  revoke(workspaceId: string, userId: string, grantId: string): Promise<boolean> {
-    return this.store.revokeGrant(workspaceId, userId, grantId, this.now());
+  revoke(
+    workspaceId: string,
+    userId: string,
+    grantId: string,
+    requestId: string,
+  ): Promise<boolean> {
+    return this.store.revokeGrant(workspaceId, userId, grantId, this.now(), requestId);
   }
 }
 

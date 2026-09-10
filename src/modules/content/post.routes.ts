@@ -11,6 +11,7 @@ import {
   validateIdempotencyKey,
 } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
+import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
 import {
   ActionPolicyDeniedError,
   allowAllActionPolicy,
@@ -18,6 +19,7 @@ import {
 } from '../policy/action-policy.js';
 import { authorizeApiKeyRequest } from '../identity/api-key.routes.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
+import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
 import { createPostRequestSchema } from './post.contract.js';
 import { PostValidationError } from './post.errors.js';
 import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
@@ -37,11 +39,11 @@ function resourceLinks(result: { postId: string; revisionId: string; jobIds: str
 
 async function admitRead(
   rateLimiter: ApiRateLimiter,
-  principal: { workspaceId: string; id: string },
+  principal: { workspaceId: string; actorId: string },
   requestId: string,
   reply: FastifyReply,
 ): Promise<boolean> {
-  const decision = rateLimiter.check(principal.workspaceId, principal.id, 'read');
+  const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
   void reply.header('X-RateLimit-Limit', decision.limit);
   void reply.header('X-RateLimit-Remaining', decision.remaining);
   if (decision.allowed) return true;
@@ -59,10 +61,16 @@ export function registerPostRoutes(
   rateLimiter: ApiRateLimiter,
   cursorCodec: CursorCodec,
   actionPolicy: ActionPolicy = allowAllActionPolicy,
+  delegatedAuthorization?: DelegatedAuthorizationService,
 ): void {
   application.get('/api/v1/posts', async (request, reply) => {
     try {
-      const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'schedules:read',
+      );
       if (!principal)
         return await reply
           .code(401)
@@ -105,7 +113,7 @@ export function registerPostRoutes(
         ),
       );
     } catch (error) {
-      if (error instanceof ApiKeyAuthorizationError)
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       if (error instanceof ActionPolicyDeniedError)
         return await reply
@@ -125,7 +133,12 @@ export function registerPostRoutes(
 
   application.get('/api/v1/posts/:postId', async (request, reply) => {
     try {
-      const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'schedules:read',
+      );
       if (!principal)
         return await reply
           .code(401)
@@ -146,7 +159,7 @@ export function registerPostRoutes(
         ),
       );
     } catch (error) {
-      if (error instanceof ApiKeyAuthorizationError)
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       if (error instanceof z.ZodError)
         return await reply
@@ -161,7 +174,12 @@ export function registerPostRoutes(
 
   application.get('/api/v1/jobs/:jobId', async (request, reply) => {
     try {
-      const principal = await authorizeApiKeyRequest(request, apiKeys, 'schedules:read');
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'schedules:read',
+      );
       if (!principal)
         return await reply
           .code(401)
@@ -181,7 +199,7 @@ export function registerPostRoutes(
         ),
       );
     } catch (error) {
-      if (error instanceof ApiKeyAuthorizationError)
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       if (error instanceof z.ZodError)
         return await reply

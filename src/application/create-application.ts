@@ -109,6 +109,7 @@ export function createApplication(
         rateLimiter,
         new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
         actionPolicy,
+        delegatedAuthorization,
       );
       if (mediaStorage)
         registerMediaRoutes(

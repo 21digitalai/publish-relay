@@ -8,6 +8,8 @@ const migrations = [
   new URL('../migrations/0028_nosy_dracula.sql', import.meta.url),
   new URL('../migrations/0029_handy_human_fly.sql', import.meta.url),
   new URL('../migrations/0030_delegated_token_resolution.sql', import.meta.url),
+  new URL('../migrations/0032_little_stellaris.sql', import.meta.url),
+  new URL('../migrations/0036_delegated_programmatic_revocation.sql', import.meta.url),
 ];
 
 let database: PGlite;
@@ -22,6 +24,7 @@ beforeEach(async () => {
     GRANT EXECUTE ON FUNCTION public.exchange_delegated_authorization_code(text, text, text, text, text, text, timestamptz, timestamptz, timestamptz) TO publish_relay_web;
     GRANT EXECUTE ON FUNCTION public.resolve_delegated_access_token(text, timestamptz) TO publish_relay_web;
     GRANT EXECUTE ON FUNCTION public.rotate_delegated_refresh_token(text, text, text, timestamptz, timestamptz, timestamptz) TO publish_relay_web;
+    GRANT EXECUTE ON FUNCTION public.revoke_delegated_token_family(text, text, timestamptz, text) TO publish_relay_web;
   `);
 });
 
@@ -126,6 +129,20 @@ describe('delegated authorization persistence', () => {
       exchangeCode('a'.repeat(43), 'access-race-b', 'refresh-race-b'),
     ]);
     expect(results.map((result) => result.rows.length).sort()).toEqual([0, 1]);
+  });
+
+  it('revokes only the token-owning client grant family and is opaque on repeats', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000161';
+    await seedGrant(workspaceId);
+    await database.exec('SET ROLE publish_relay_web;');
+    await database.query(`SELECT revoke_delegated_token_family('access-same', 'wrong-client', now(), 'request-wrong')`);
+    expect((await database.query<{ count: number }>(`SELECT count(*)::int AS count FROM resolve_delegated_access_token('access-same', now())`)).rows[0]?.count).toBe(1);
+    await database.query(`SELECT revoke_delegated_token_family('refresh-same', 'open-clips-dev', now(), 'request-ok')`);
+    await database.query(`SELECT revoke_delegated_token_family('refresh-same', 'open-clips-dev', now(), 'request-repeat')`);
+    expect((await database.query<{ count: number }>(`SELECT count(*)::int AS count FROM resolve_delegated_access_token('access-same', now())`)).rows[0]?.count).toBe(0);
+    await database.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    const audit = await database.query<{ count: number }>(`SELECT count(*)::int AS count FROM audit_events WHERE action = 'delegated_grant.revoked'`);
+    expect(audit.rows[0]?.count).toBe(1);
   });
 });
 

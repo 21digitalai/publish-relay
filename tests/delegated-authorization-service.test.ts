@@ -48,13 +48,52 @@ function harness() {
 describe('delegated authorization service', () => {
   it('hashes a public client token and revokes only through the opaque store boundary', async () => {
     const { store, service } = harness();
-    await service.revokeClientToken({ token: 'access-secret', clientId: 'open-clips-dev', requestId: 'request-2' });
+    await service.revokeClientToken({
+      token: 'access-secret',
+      clientId: 'open-clips-dev',
+      requestId: 'request-2',
+    });
     expect(store.revokeByToken).toHaveBeenCalledWith({
       tokenHash: createHash('sha256').update('access-secret').digest('hex'),
       clientId: 'open-clips-dev',
       now,
       requestId: 'request-2',
     });
+  });
+  it('requires the registered secret for confidential-client revocation', async () => {
+    const { store, service } = harness();
+    vi.mocked(store.findClient).mockResolvedValue({
+      id: 'confidential-client',
+      clientType: 'confidential',
+      secretHash: createHash('sha256').update('correct-secret').digest('hex'),
+      redirectUris: ['https://client.example/callback'],
+      allowedScopes: ['destinations:read'],
+    });
+
+    await expect(
+      service.revokeClientToken({
+        token: 'access-secret',
+        clientId: 'confidential-client',
+        requestId: 'missing',
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_client' });
+    await expect(
+      service.revokeClientToken({
+        token: 'access-secret',
+        clientId: 'confidential-client',
+        clientSecret: 'wrong',
+        requestId: 'wrong',
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_client' });
+    expect(store.revokeByToken).not.toHaveBeenCalled();
+
+    await service.revokeClientToken({
+      token: 'access-secret',
+      clientId: 'confidential-client',
+      clientSecret: 'correct-secret',
+      requestId: 'ok',
+    });
+    expect(store.revokeByToken).toHaveBeenCalledOnce();
   });
   it('approves only a registered exact redirect and persists no plaintext code', async () => {
     const { store, service } = harness();

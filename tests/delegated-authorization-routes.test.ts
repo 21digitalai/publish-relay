@@ -1,4 +1,5 @@
 import cookie from '@fastify/cookie';
+import { createHash } from 'node:crypto';
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,7 +36,7 @@ const authorizationQuery = new URLSearchParams({
   scope: 'destinations:read schedules:read destinations:read',
 });
 
-function buildService() {
+function buildService(confidential = false) {
   const exchangeCode = vi.fn().mockResolvedValue({
     grantId: '00000000-0000-4000-8000-000000000001',
     workspaceId: '00000000-0000-4000-8000-000000000002',
@@ -55,9 +56,21 @@ function buildService() {
   const revokeGrant = vi.fn().mockResolvedValue(true);
   const revokeByToken = vi.fn().mockResolvedValue(undefined);
   const store: DelegatedAuthorizationStore = {
-    findClient: vi
-      .fn()
-      .mockImplementation((clientId) => Promise.resolve(clientId === client.id ? client : null)),
+    findClient: vi.fn().mockImplementation((clientId) =>
+      Promise.resolve(
+        clientId === client.id
+          ? {
+              ...client,
+              ...(confidential
+                ? {
+                    clientType: 'confidential' as const,
+                    secretHash: createHash('sha256').update('correct-secret').digest('hex'),
+                  }
+                : { clientType: 'public' as const }),
+            }
+          : null,
+      ),
+    ),
     createGrantAndCode,
     exchangeCode,
     rotateRefreshToken: vi.fn().mockResolvedValue(null),
@@ -76,10 +89,10 @@ function buildService() {
   };
 }
 
-async function buildApplication(shellHtml?: string) {
+async function buildApplication(shellHtml?: string, confidential = false) {
   const application = Fastify();
   await application.register(cookie);
-  const built = buildService();
+  const built = buildService(confidential);
   registerDelegatedAuthorizationRoutes(application, built.service, {} as AuthService, shellHtml);
   return { application, ...built };
 }
@@ -93,7 +106,8 @@ describe('delegated authorization HTTP routes', () => {
   it('revokes a delegated token family with an opaque no-store response', async () => {
     const { application, revokeByToken } = await buildApplication();
     const response = await application.inject({
-      method: 'POST', url: '/connect/revoke',
+      method: 'POST',
+      url: '/connect/revoke',
       payload: { token: 'refresh-secret', client_id: 'open-clips-dev' },
     });
     expect(response.statusCode).toBe(200);
@@ -101,6 +115,33 @@ describe('delegated authorization HTTP routes', () => {
     expect(response.headers['cache-control']).toBe('no-store');
     expect(revokeByToken).toHaveBeenCalledOnce();
     expect(JSON.stringify(vi.mocked(revokeByToken).mock.calls)).not.toContain('refresh-secret');
+    await application.close();
+  });
+
+  it('rejects missing and wrong confidential secrets and accepts the correct secret', async () => {
+    const { application, revokeByToken } = await buildApplication(undefined, true);
+    for (const payload of [
+      { token: 'refresh-secret', client_id: client.id },
+      { token: 'refresh-secret', client_id: client.id, client_secret: 'wrong' },
+    ]) {
+      const response = await application.inject({
+        method: 'POST',
+        url: '/connect/revoke',
+        payload,
+      });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toEqual({ error: 'invalid_client' });
+      expect(response.headers['cache-control']).toBe('no-store');
+    }
+    expect(revokeByToken).not.toHaveBeenCalled();
+
+    const accepted = await application.inject({
+      method: 'POST',
+      url: '/connect/revoke',
+      payload: { token: 'refresh-secret', client_id: client.id, client_secret: 'correct-secret' },
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(revokeByToken).toHaveBeenCalledOnce();
     await application.close();
   });
 

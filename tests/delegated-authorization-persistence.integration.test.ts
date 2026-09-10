@@ -134,15 +134,108 @@ describe('delegated authorization persistence', () => {
   it('revokes only the token-owning client grant family and is opaque on repeats', async () => {
     const workspaceId = '00000000-0000-4000-8000-000000000161';
     await seedGrant(workspaceId);
+    const unrelatedWorkspaceId = '00000000-0000-4000-8000-000000000162';
+    await seedUnrelatedGrantAndApiKey(unrelatedWorkspaceId);
     await database.exec('SET ROLE publish_relay_web;');
-    await database.query(`SELECT revoke_delegated_token_family('access-same', 'wrong-client', now(), 'request-wrong')`);
-    expect((await database.query<{ count: number }>(`SELECT count(*)::int AS count FROM resolve_delegated_access_token('access-same', now())`)).rows[0]?.count).toBe(1);
-    await database.query(`SELECT revoke_delegated_token_family('refresh-same', 'open-clips-dev', now(), 'request-ok')`);
-    await database.query(`SELECT revoke_delegated_token_family('refresh-same', 'open-clips-dev', now(), 'request-repeat')`);
-    expect((await database.query<{ count: number }>(`SELECT count(*)::int AS count FROM resolve_delegated_access_token('access-same', now())`)).rows[0]?.count).toBe(0);
+    await database.query(
+      `SELECT revoke_delegated_token_family('foreign-access', 'open-clips-dev', now(), 'request-foreign')`,
+    );
+    await database.query(
+      `SELECT revoke_delegated_token_family('access-same', 'wrong-client', now(), 'request-wrong')`,
+    );
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM resolve_delegated_access_token('access-same', now())`,
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+    await database.query(
+      `SELECT revoke_delegated_token_family('refresh-same', 'open-clips-dev', now(), 'request-ok')`,
+    );
+    await database.query(
+      `SELECT revoke_delegated_token_family('refresh-same', 'open-clips-dev', now(), 'request-repeat')`,
+    );
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM resolve_delegated_access_token('access-same', now())`,
+        )
+      ).rows[0]?.count,
+    ).toBe(0);
     await database.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
-    const audit = await database.query<{ count: number }>(`SELECT count(*)::int AS count FROM audit_events WHERE action = 'delegated_grant.revoked'`);
+    const audit = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM audit_events WHERE action = 'delegated_grant.revoked'`,
+    );
     expect(audit.rows[0]?.count).toBe(1);
+    await database.query(`SELECT set_config('app.workspace_id', '${unrelatedWorkspaceId}', false)`);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM delegated_grants WHERE revoked_at IS NULL`,
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM delegated_tokens WHERE revoked_at IS NULL`,
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM api_keys WHERE revoked_at IS NULL`,
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+  });
+
+  it('revokes a replacement minted immediately before revocation wins the family race', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000171';
+    await seedGrant(workspaceId);
+    await database.exec('SET ROLE publish_relay_web;');
+    expect(
+      (
+        await database.query(`SELECT * FROM rotate_delegated_refresh_token(
+      'refresh-same', 'race-access-next', 'race-refresh-next', now() + interval '15 minutes',
+      now() + interval '30 days', now())`)
+      ).rows,
+    ).toHaveLength(1);
+    await database.query(
+      `SELECT revoke_delegated_token_family('race-refresh-next', 'open-clips-dev', now(), 'race-revoke')`,
+    );
+    expect(
+      (
+        await database.query(
+          `SELECT * FROM resolve_delegated_access_token('race-access-next', now())`,
+        )
+      ).rows,
+    ).toHaveLength(0);
+  });
+
+  it('rejects refresh when revocation wins the family race', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000172';
+    await seedGrant(workspaceId);
+    await database.exec('SET ROLE publish_relay_web;');
+    await database.query(
+      `SELECT revoke_delegated_token_family('access-same', 'open-clips-dev', now(), 'race-revoke-first')`,
+    );
+    expect(
+      (
+        await database.query(`SELECT * FROM rotate_delegated_refresh_token(
+      'refresh-same', 'late-access', 'late-refresh', now() + interval '15 minutes',
+      now() + interval '30 days', now())`)
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await database.query(
+          `SELECT count(*)::int AS count FROM delegated_tokens WHERE access_token_hash = 'late-access'`,
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
   });
 });
 
@@ -224,5 +317,20 @@ async function seedArtifacts(workspaceId: string): Promise<void> {
     INSERT INTO delegated_tokens
       (workspace_id, grant_id, access_token_hash, refresh_token_hash, scopes, access_expires_at, refresh_expires_at)
       VALUES ('${workspaceId}', '${grantId}', 'access-same', 'refresh-same', ARRAY['destinations:read'], now() + interval '15 minutes', now() + interval '30 days');
+  `);
+}
+
+async function seedUnrelatedGrantAndApiKey(workspaceId: string): Promise<void> {
+  await database.exec(`
+    INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Foreign Workspace', '${workspaceId}');
+    INSERT INTO registered_clients (id, display_name, client_type, redirect_uris, allowed_scopes)
+      VALUES ('foreign-client', 'Foreign Client', 'public', ARRAY['https://foreign.example/callback'], ARRAY['destinations:read']);
+    INSERT INTO delegated_grants (id, workspace_id, user_id, client_id, scopes) VALUES
+      ('00000000-0000-4000-8000-000000000163', '${workspaceId}', '00000000-0000-4000-8000-000000000199', 'foreign-client', ARRAY['destinations:read']);
+    INSERT INTO delegated_tokens
+      (workspace_id, grant_id, access_token_hash, refresh_token_hash, scopes, access_expires_at, refresh_expires_at)
+      VALUES ('${workspaceId}', '00000000-0000-4000-8000-000000000163', 'foreign-access', 'foreign-refresh', ARRAY['destinations:read'], now() + interval '15 minutes', now() + interval '30 days');
+    INSERT INTO api_keys (workspace_id, created_by_user_id, label, prefix, secret_hash, capabilities)
+      VALUES ('${workspaceId}', '00000000-0000-4000-8000-000000000199', 'Unrelated key', 'pr_test', 'unrelated-hash', ARRAY['destinations:read']);
   `);
 }

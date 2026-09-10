@@ -11,6 +11,8 @@ import { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
 import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
 import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
+import { DelegatedAuthorizationService } from '../modules/delegated-authorization/delegated-authorization.service.js';
+import { createPostgresDelegatedAuthorizationStore } from '../modules/delegated-authorization/delegated-authorization.repository.js';
 
 const config = loadRuntimeConfig();
 if (!config.DATABASE_URL) throw new Error('DATABASE_URL is required for the web process');
@@ -59,6 +61,7 @@ const application = createApplication(
         callbackUrl: new URL('/api/oauth/youtube/callback', publicOrigin).toString(),
       }
     : undefined,
+  new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(database)),
 );
 application.addHook('onClose', async () => pool.end());
 

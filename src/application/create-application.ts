@@ -31,6 +31,8 @@ import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.r
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
+import type { DelegatedAuthorizationService } from '../modules/delegated-authorization/delegated-authorization.service.js';
+import { registerDelegatedAuthorizationRoutes } from '../modules/delegated-authorization/delegated-authorization.routes.js';
 
 export function createApplication(
   config: RuntimeConfig,
@@ -42,6 +44,7 @@ export function createApplication(
   mediaStorage?: MediaStorage,
   actionPolicy: ActionPolicy = allowAllActionPolicy,
   youtubeOauth?: { keys: MasterKeyProvider; client: YouTubeHttpClient; callbackUrl: string },
+  delegatedAuthorization?: DelegatedAuthorizationService,
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
@@ -142,6 +145,8 @@ export function createApplication(
     registerXOauthRoutes(application, { auth, database, actionPolicy, ...xOauth });
   if (auth && database && youtubeOauth)
     registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
+  if (auth && delegatedAuthorization)
+    registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth);
 
   return application;
 }

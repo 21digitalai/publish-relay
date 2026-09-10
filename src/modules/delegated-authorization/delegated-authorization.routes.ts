@@ -103,6 +103,7 @@ export function registerDelegatedAuthorizationRoutes(
   });
 
   application.post('/connect/token', async (request, reply) => {
+    void reply.header('Cache-Control', 'no-store');
     const parsed = tokenSchema.safeParse(request.body);
     if (!parsed.success)
       return reply
@@ -118,7 +119,6 @@ export function registerDelegatedAuthorizationRoutes(
               codeVerifier: parsed.data.code_verifier,
             })
           : await service.refresh(parsed.data.refresh_token);
-      void reply.header('Cache-Control', 'no-store');
       return {
         access_token: token.accessToken,
         refresh_token: token.refreshToken,

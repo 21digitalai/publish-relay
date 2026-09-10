@@ -70,6 +70,7 @@ describe('delegated authorization HTTP routes', () => {
       error: 'invalid_request',
       error_description: 'Invalid token request',
     });
+    expect(response.headers['cache-control']).toBe('no-store');
     expect(exchangeCode).not.toHaveBeenCalled();
     await application.close();
   });
@@ -90,6 +91,7 @@ describe('delegated authorization HTTP routes', () => {
       error: 'invalid_grant',
       error_description: 'Refresh token is invalid or expired',
     });
+    expect(response.headers['cache-control']).toBe('no-store');
     await application.close();
   });
 });

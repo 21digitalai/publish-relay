@@ -62,6 +62,17 @@ export async function createExternalDraft(
   input: CreateExternalDraftInput & { requestId: string },
 ): Promise<{ draft: ExternalDraftRecord; replayed: boolean }> {
   validateInput(input);
+  return withTenantTransaction(database, { workspaceId: principal.workspaceId }, (transaction) =>
+    createExternalDraftInTransaction(transaction, principal, input),
+  );
+}
+
+export async function createExternalDraftInTransaction(
+  transaction: NodePgDatabase,
+  principal: MachinePrincipal,
+  input: CreateExternalDraftInput & { requestId: string },
+): Promise<{ draft: ExternalDraftRecord; replayed: boolean }> {
+  validateInput(input);
   const normalized = {
     externalId: input.externalId.trim(),
     mediaIds: input.mediaIds,
@@ -69,33 +80,29 @@ export async function createExternalDraft(
     ...(input.returnUrl ? { returnUrl: input.returnUrl } : {}),
   };
   const requestFingerprint = mutationFingerprint(normalized);
-  return withTenantTransaction(
-    database,
-    { workspaceId: principal.workspaceId },
-    async (transaction) => {
-      const identity = {
-        workspaceId: principal.workspaceId,
-        actorType: principal.kind === 'api-key' ? ('api_key' as const) : ('delegated' as const),
-        actorId: principal.actorId,
-        externalId: normalized.externalId,
-      } as const;
-      const existing = await findExternalDraft(transaction, identity);
-      if (existing) {
-        if (existing.requestFingerprint !== requestFingerprint)
-          throw new ExternalDraftConflictError();
-        return { draft: existing, replayed: true };
-      }
-      const created = await insertExternalDraft(transaction, {
-        ...identity,
-        ...(principal.kind === 'delegated' ? { sourceClientId: principal.clientId } : {}),
-        ...normalized,
-        requestFingerprint,
-        requestId: input.requestId,
-      });
-      if (created) return { draft: created, replayed: false };
-      const raced = await findExternalDraft(transaction, identity);
-      if (raced?.requestFingerprint === requestFingerprint) return { draft: raced, replayed: true };
-      throw new ExternalDraftConflictError();
-    },
-  );
+  return (async () => {
+    const identity = {
+      workspaceId: principal.workspaceId,
+      actorType: principal.kind === 'api-key' ? ('api_key' as const) : ('delegated' as const),
+      actorId: principal.actorId,
+      externalId: normalized.externalId,
+    } as const;
+    const existing = await findExternalDraft(transaction, identity);
+    if (existing) {
+      if (existing.requestFingerprint !== requestFingerprint)
+        throw new ExternalDraftConflictError();
+      return { draft: existing, replayed: true };
+    }
+    const created = await insertExternalDraft(transaction, {
+      ...identity,
+      ...(principal.kind === 'delegated' ? { sourceClientId: principal.clientId } : {}),
+      ...normalized,
+      requestFingerprint,
+      requestId: input.requestId,
+    });
+    if (created) return { draft: created, replayed: false };
+    const raced = await findExternalDraft(transaction, identity);
+    if (raced?.requestFingerprint === requestFingerprint) return { draft: raced, replayed: true };
+    throw new ExternalDraftConflictError();
+  })();
 }

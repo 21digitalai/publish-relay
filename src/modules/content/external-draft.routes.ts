@@ -3,13 +3,15 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import { errorEnvelope, successEnvelope } from '../api/contract.js';
+import { executeIdempotentMutation } from '../api/idempotency.repository.js';
+import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
 import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
 import type { ExternalDraftRecord } from './external-draft.repository.js';
 import {
-  createExternalDraft,
+  createExternalDraftInTransaction,
   ExternalDraftConflictError,
   ExternalDraftValidationError,
   getExternalDraft,
@@ -77,17 +79,42 @@ export function registerExternalDraftRoutes(
           .code(429)
           .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
       const body = createSchema.parse(request.body);
-      const result = await createExternalDraft(database, principal, {
+      const input = {
         externalId: body.externalId,
         mediaIds: body.mediaIds,
         ...(body.label !== undefined ? { label: body.label } : {}),
         ...(body.returnUrl !== undefined ? { returnUrl: body.returnUrl } : {}),
         requestId: request.id,
-      });
-      if (result.replayed) void reply.header('Idempotency-Replayed', 'true');
-      return await reply
-        .code(result.replayed ? 200 : 201)
-        .send(successEnvelope(representation(result.draft), request.id));
+      };
+      const suppliedKey = request.headers['idempotency-key'];
+      const idempotencyKey = validateIdempotencyKey(
+        typeof suppliedKey === 'string' ? suppliedKey : undefined,
+      );
+      const result = await executeIdempotentMutation(
+        database,
+        {
+          workspaceId: principal.workspaceId,
+          actor: { type: principal.kind, id: principal.actorId },
+          operation: 'external-draft.create',
+          idempotencyKey,
+          requestFingerprint: mutationFingerprint(body),
+        },
+        async (transaction) => {
+          const created = await createExternalDraftInTransaction(transaction, principal, input);
+          return {
+            statusCode: created.replayed ? 200 : 201,
+            body: successEnvelope(representation(created.draft), request.id),
+          };
+        },
+      );
+      if (result.kind === 'conflict')
+        return await reply
+          .code(409)
+          .send(
+            errorEnvelope('idempotency_conflict', 'Idempotency key was already used', request.id),
+          );
+      if (result.kind === 'replayed') void reply.header('Idempotency-Replayed', 'true');
+      return await reply.code(result.response.statusCode).send(result.response.body);
     } catch (error) {
       const known = sendKnownError(error, request.id);
       if (known) return await reply.code(known.status).send(known.body);

@@ -72,6 +72,14 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         post: {
           operationId: 'createExternalDraft',
           security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', minLength: 8, maxLength: 200 },
+            },
+          ],
           requestBody: {
             required: true,
             content: {

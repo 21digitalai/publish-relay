@@ -16,6 +16,8 @@ interface Account {
     privacyStatus?: 'public' | 'unlisted' | 'private';
     madeForKids?: boolean;
     notifySubscribers?: boolean;
+    tags?: string[];
+    categoryId?: string;
   };
 }
 
@@ -703,6 +705,8 @@ function AccountRow({
   const [notifySubscribers, setNotifySubscribers] = useState(
     account.adapterDefaults.notifySubscribers === true,
   );
+  const [tags, setTags] = useState(account.adapterDefaults.tags?.join(', ') ?? '');
+  const [categoryId, setCategoryId] = useState(account.adapterDefaults.categoryId ?? '');
   return (
     <article className="account-row">
       <div className="account-identity">
@@ -746,10 +750,17 @@ function AccountRow({
           onSubmit={(event) => {
             event.preventDefault();
             const fields = new FormData(event.currentTarget);
+            const normalizedTags = formText(fields, 'tags')
+              .split(',')
+              .map((tag) => tag.trim())
+              .filter(Boolean);
+            const normalizedCategory = formText(fields, 'categoryId').trim();
             const defaults = {
               privacyStatus: formText(fields, 'privacyStatus') as 'public' | 'unlisted' | 'private',
               madeForKids: formText(fields, 'madeForKids') === 'yes',
               notifySubscribers: formText(fields, 'notifySubscribers') === 'true',
+              ...(normalizedTags.length > 0 ? { tags: normalizedTags } : {}),
+              ...(normalizedCategory ? { categoryId: normalizedCategory } : {}),
             };
             setDefaultsError(null);
             setDefaultsAnnouncement(null);
@@ -814,6 +825,35 @@ function AccountRow({
             </span>
             Notify subscribers
           </button>
+          <label className="youtube-defaults-text-field">
+            <span>
+              Tags <small>(optional)</small>
+            </span>
+            <input
+              name="tags"
+              value={tags}
+              placeholder="launch, tutorial"
+              onChange={(event) => {
+                setTags(event.currentTarget.value);
+              }}
+            />
+            <small>Comma-separated; blank adds nothing.</small>
+          </label>
+          <label className="youtube-defaults-text-field">
+            <span>
+              Category <small>(optional)</small>
+            </span>
+            <input
+              name="categoryId"
+              value={categoryId}
+              inputMode="numeric"
+              placeholder="e.g. 22"
+              onChange={(event) => {
+                setCategoryId(event.currentTarget.value);
+              }}
+            />
+            <small>Use the YouTube category ID; blank adds nothing.</small>
+          </label>
           <button className="secondary-button" type="submit" disabled={savingDefaults}>
             {savingDefaults ? 'Saving…' : 'Save defaults'}
           </button>

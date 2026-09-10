@@ -723,7 +723,7 @@ select:focus-visible {
 .youtube-defaults {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 1fr repeat(3, minmax(140px, auto)) auto;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
   align-items: end;
   gap: 12px;
   padding: 14px;
@@ -763,17 +763,29 @@ select:focus-visible {
   padding: 0 12px;
 }
 .defaults-select-menu {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+  position: fixed;
+  z-index: 1000;
   display: grid;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-0);
   box-shadow: var(--shadow-lg);
+}
+.youtube-defaults > strong {
+  grid-column: 1 / -1;
+}
+.youtube-defaults-text-field input {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-0);
+  color: var(--text);
+  font: inherit;
+}
+.youtube-defaults-text-field small {
+  color: var(--faint);
 }
 .defaults-select-menu button {
   padding: 9px 10px;

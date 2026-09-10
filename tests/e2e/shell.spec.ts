@@ -177,7 +177,13 @@ test('edits YouTube destination defaults through the account row', async ({ page
   let savedHeaders: Record<string, string> = {};
   let savedMethod = '';
   let patchCount = 0;
-  let persistedDefaults = { privacyStatus: 'unlisted', madeForKids: false };
+  let persistedDefaults: {
+    privacyStatus: string;
+    madeForKids: boolean;
+    notifySubscribers?: boolean;
+    tags?: string[];
+    categoryId?: string;
+  } = { privacyStatus: 'unlisted', madeForKids: false };
   await page.route('**/api/provider-accounts', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -223,10 +229,13 @@ test('edits YouTube destination defaults through the account row', async ({ page
   await expect(page.getByRole('button', { name: /Connect YouTube/ })).toBeVisible();
   await expect(page.getByText('Publishing defaults')).toBeVisible();
   await page.getByRole('button', { name: 'Visibility' }).click();
+  await expect(page.getByRole('listbox', { name: 'Visibility' })).toBeInViewport();
   await page.getByRole('option', { name: 'Public' }).click();
   await page.getByRole('button', { name: 'Made for kids' }).click();
   await page.getByRole('option', { name: 'Yes' }).click();
   await page.getByRole('switch', { name: 'Notify subscribers' }).click();
+  await page.getByLabel('Tags (optional)').fill('launch, tutorial');
+  await page.getByLabel('Category (optional)').fill('22');
   const saveButton = page.getByRole('button', { name: 'Save defaults' });
   await saveButton.click();
   await expect
@@ -235,6 +244,8 @@ test('edits YouTube destination defaults through the account row', async ({ page
       privacyStatus: 'public',
       madeForKids: true,
       notifySubscribers: true,
+      tags: ['launch', 'tutorial'],
+      categoryId: '22',
     });
   expect(savedMethod).toBe('PATCH');
   expect(savedHeaders['x-csrf-token']).toBeTruthy();
@@ -249,10 +260,21 @@ test('edits YouTube destination defaults through the account row', async ({ page
     'aria-checked',
     'true',
   );
+  await expect(page.getByLabel('Tags (optional)')).toHaveValue('launch, tutorial');
+  await expect(page.getByLabel('Category (optional)')).toHaveValue('22');
+  await page.getByRole('button', { name: 'Made for kids' }).focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('listbox', { name: 'Made for kids' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Made for kids' })).toBeFocused();
   await page.getByRole('button', { name: 'Visibility' }).click();
   await page.getByRole('option', { name: 'Private' }).click();
+  await page.getByLabel('Tags (optional)').fill('');
+  await page.getByLabel('Category (optional)').fill('');
   await page.getByRole('button', { name: 'Save defaults' }).click();
   await expect(page.getByRole('alert')).toContainText('Defaults service is unavailable');
+  expect(savedBody).not.toHaveProperty('tags');
+  expect(savedBody).not.toHaveProperty('categoryId');
 });
 
 test('persists credential-free fake-provider connect and disconnect through reload', async ({

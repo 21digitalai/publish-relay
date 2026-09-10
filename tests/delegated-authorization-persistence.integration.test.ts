@@ -7,15 +7,16 @@ const migrations = [
   new URL('../migrations/0000_identity_tenancy.sql', import.meta.url),
   new URL('../migrations/0028_nosy_dracula.sql', import.meta.url),
   new URL('../migrations/0029_handy_human_fly.sql', import.meta.url),
+  new URL('../migrations/0030_delegated_token_resolution.sql', import.meta.url),
 ];
 
 let database: PGlite;
 
 beforeEach(async () => {
   database = new PGlite();
+  await database.exec('CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;');
   for (const migration of migrations) await database.exec(await readFile(migration, 'utf8'));
   await database.exec(`
-    CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
   `);
@@ -53,6 +54,46 @@ describe('delegated authorization persistence', () => {
     const workspaceId = '00000000-0000-4000-8000-000000000121';
     await seedGrant(workspaceId);
     await expect(seedArtifacts(workspaceId)).rejects.toThrow(/unique/);
+  });
+
+  it('resolves opaque credentials without weakening tenant table RLS', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000131';
+    await seedGrant(workspaceId);
+    await database.exec('SET ROLE publish_relay_app;');
+
+    const code = await database.query<{ workspaceId: string }>(`
+      SELECT workspace_id AS "workspaceId" FROM consume_delegated_authorization_code(
+        'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', now()
+      )
+    `);
+    expect(code.rows[0]?.workspaceId).toBe(workspaceId);
+    const replay = await database.query(`
+      SELECT * FROM consume_delegated_authorization_code(
+        'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', now()
+      )
+    `);
+    expect(replay.rows).toHaveLength(0);
+
+    const access = await database.query<{ workspaceId: string }>(`
+      SELECT workspace_id AS "workspaceId"
+      FROM resolve_delegated_access_token('access-same', now())
+    `);
+    expect(access.rows[0]?.workspaceId).toBe(workspaceId);
+
+    const refresh = await database.query<{ workspaceId: string }>(`
+      SELECT workspace_id AS "workspaceId" FROM rotate_delegated_refresh_token(
+        'refresh-same', 'access-next', 'refresh-next',
+        now() + interval '15 minutes', now() + interval '30 days', now()
+      )
+    `);
+    expect(refresh.rows[0]?.workspaceId).toBe(workspaceId);
+    const refreshReplay = await database.query(`
+      SELECT * FROM rotate_delegated_refresh_token(
+        'refresh-same', 'access-third', 'refresh-third',
+        now() + interval '15 minutes', now() + interval '30 days', now()
+      )
+    `);
+    expect(refreshReplay.rows).toHaveLength(0);
   });
 });
 

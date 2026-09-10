@@ -211,6 +211,13 @@
       "when": 1789038151783,
       "tag": "0029_handy_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1789039226723,
+      "tag": "0030_delegated_token_resolution",
+      "breakpoints": true
     }
   ]
 }

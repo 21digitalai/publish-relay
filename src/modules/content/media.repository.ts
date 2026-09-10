@@ -1,7 +1,7 @@
 import { and, eq, lt, notExists } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { mediaObjects, revisionMedia } from '../../database/schema.js';
+import { externalDraftMedia, mediaObjects, revisionMedia } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
 export async function getReadyMediaForDownload(
@@ -109,6 +109,17 @@ export async function claimUnattachedMediaForDeletion(
               .from(revisionMedia)
               .where(
                 and(eq(revisionMedia.workspaceId, workspaceId), eq(revisionMedia.mediaId, mediaId)),
+              ),
+          ),
+          notExists(
+            transaction
+              .select({ mediaId: externalDraftMedia.mediaId })
+              .from(externalDraftMedia)
+              .where(
+                and(
+                  eq(externalDraftMedia.workspaceId, workspaceId),
+                  eq(externalDraftMedia.mediaId, mediaId),
+                ),
               ),
           ),
         ),

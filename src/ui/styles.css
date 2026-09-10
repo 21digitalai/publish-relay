@@ -771,6 +771,8 @@ select:focus-visible {
   border-radius: 8px;
   background: var(--surface-0);
   box-shadow: var(--shadow-lg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .youtube-defaults > strong {
   grid-column: 1 / -1;

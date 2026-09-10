@@ -1,6 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+const MENU_GAP = 4;
+const VIEWPORT_PADDING = 8;
+const ESTIMATED_OPTION_HEIGHT = 38;
+const MENU_VERTICAL_PADDING = 10;
+
 export function DefaultsSelect({
   label,
   name,
@@ -29,13 +34,17 @@ export function DefaultsSelect({
       const trigger = triggerRef.current;
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
-      const estimatedHeight = options.length * 38 + 10;
-      const openAbove =
-        rect.bottom + estimatedHeight > window.innerHeight && rect.top > estimatedHeight;
+      const estimatedHeight = options.length * ESTIMATED_OPTION_HEIGHT + MENU_VERTICAL_PADDING;
+      const availableBelow = window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_PADDING;
+      const availableAbove = rect.top - MENU_GAP - VIEWPORT_PADDING;
+      const openAbove = availableBelow < estimatedHeight && availableAbove > availableBelow;
+      const availableHeight = Math.max(openAbove ? availableAbove : availableBelow, 0);
+      const menuHeight = Math.min(estimatedHeight, availableHeight);
       setMenuPosition({
         left: rect.left,
-        top: openAbove ? rect.top - estimatedHeight - 4 : rect.bottom + 4,
+        top: openAbove ? rect.top - menuHeight - MENU_GAP : rect.bottom + MENU_GAP,
         width: rect.width,
+        maxHeight: availableHeight,
       });
     };
     const closeOnOutsideClick = (event: PointerEvent) => {

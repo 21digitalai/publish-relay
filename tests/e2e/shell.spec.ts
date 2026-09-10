@@ -236,6 +236,7 @@ test('edits YouTube destination defaults through the account row', async ({ page
   await page.getByRole('switch', { name: 'Notify subscribers' }).click();
   await page.getByLabel('Tags (optional)').fill('launch, tutorial');
   await page.getByRole('button', { name: 'Category (optional)' }).click();
+  await expect(page.getByRole('listbox', { name: 'Category (optional)' })).toBeInViewport();
   await page.getByRole('option', { name: 'People & Blogs' }).click();
   const saveButton = page.getByRole('button', { name: 'Save defaults' });
   await saveButton.click();
@@ -277,6 +278,14 @@ test('edits YouTube destination defaults through the account row', async ({ page
   await page.getByRole('button', { name: 'Visibility' }).click();
   await page.getByRole('option', { name: 'Private' }).click();
   await page.getByLabel('Tags (optional)').fill('');
+  await page.getByRole('button', { name: 'Category (optional)' }).focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('option', { name: 'No category' })).toBeFocused();
+  await expect(page.getByRole('listbox', { name: 'Category (optional)' })).toBeInViewport();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('option', { name: 'Nonprofits & Activism' })).toBeFocused();
+  await expect(page.getByRole('option', { name: 'Nonprofits & Activism' })).toBeInViewport();
+  await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Category (optional)' }).focus();
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('option', { name: 'No category' })).toBeFocused();

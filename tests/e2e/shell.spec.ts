@@ -150,6 +150,65 @@ test('hydrates an imported draft in the canonical composer on desktop and mobile
   await page.screenshot({ path: testInfo.outputPath('external-draft-mobile.png'), fullPage: true });
 });
 
+test('keeps imported-draft scheduling disabled until hydration succeeds and after failure', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  await page.route('**/api/workflow/jobs?**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [], next: null }, error: null }),
+    }),
+  );
+  const draftId = '00000000-0000-4000-8000-000000000860';
+  let releaseDraft: (() => void) | undefined;
+  const draftGate = new Promise<void>((resolve) => {
+    releaseDraft = resolve;
+  });
+  await page.route(`**/api/workflow/drafts/${draftId}`, async (route) => {
+    await draftGate;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: draftId,
+          label: 'Delayed clip',
+          mediaIds: ['00000000-0000-4000-8000-000000000861'],
+          postId: null,
+        },
+        error: null,
+      }),
+    });
+  });
+  const path = await workspacePath(page, `drafts/${draftId}`);
+  await page.goto(path);
+  await page.getByLabel('Post body').fill('Ready only after hydration');
+  const schedule = page.getByRole('button', { name: 'Schedule 2 posts' });
+  await expect(schedule).toBeDisabled();
+  releaseDraft?.();
+  await expect(page.getByText('1 attached media item ready')).toBeVisible();
+  await expect(schedule).toBeEnabled();
+
+  let postRequests = 0;
+  await page.route('**/api/workflow/posts', (route) => {
+    postRequests += 1;
+    return route.abort();
+  });
+  await page.route(`**/api/workflow/drafts/${draftId}`, (route) =>
+    route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'Draft not found' }),
+    }),
+  );
+  await page.reload();
+  await page.getByLabel('Post body').fill('Must remain blocked');
+  await expect(page.getByRole('alert')).toContainText('Draft not found');
+  await expect(schedule).toBeDisabled();
+  expect(postRequests).toBe(0);
+});
+
 test('approves the registered Open Clips loopback client and exposes revocation', async ({
   page,
 }, testInfo) => {

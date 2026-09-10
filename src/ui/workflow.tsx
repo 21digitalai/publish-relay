@@ -320,6 +320,9 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [body, setBody] = useState('');
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
   const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
+  const [draftState, setDraftState] = useState<'loading' | 'ready' | 'error'>(
+    draftId ? 'loading' : 'ready',
+  );
   const [video, setVideo] = useState<File | null>(null);
   const [videoTitle, setVideoTitle] = useState('');
   const [videoDescription, setVideoDescription] = useState('');
@@ -393,6 +396,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     (includesYouTube && !isYouTube) ||
     selectedAccounts.length === 0 ||
     state !== 'ready' ||
+    draftState !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
   useEffect(() => {
     if (!draftId) return;
@@ -405,10 +409,14 @@ function Composer({ onClose }: { onClose: () => void }) {
         if (!response.ok || !envelope.data)
           throw new Error(envelope.error ?? 'Draft could not be loaded.');
         if (envelope.data.postId) throw new Error('This draft has already been scheduled.');
+        if (envelope.data.mediaIds.length === 0)
+          throw new Error('This draft has no attached media.');
         setDraftLabel(envelope.data.label);
         setDraftMediaIds(envelope.data.mediaIds);
+        setDraftState('ready');
       })
       .catch((reason: unknown) => {
+        setDraftState('error');
         setError(reason instanceof Error ? reason.message : 'Draft could not be loaded.');
       });
   }, [draftId]);
@@ -481,6 +489,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     videoTitle,
   ]);
   const submit = async () => {
+    if (draftState !== 'ready') return;
     setState('saving');
     setError(null);
     const targetTime = scheduled ? scheduledAt : new Date();
@@ -619,8 +628,11 @@ function Composer({ onClose }: { onClose: () => void }) {
               <div className="imported-draft-banner" role="status">
                 <strong>{draftLabel ?? 'Imported draft'}</strong>
                 <span>
-                  {draftMediaIds.length} attached media item{draftMediaIds.length === 1 ? '' : 's'}{' '}
-                  ready
+                  {draftState === 'loading'
+                    ? 'Loading attached media…'
+                    : draftState === 'ready'
+                      ? `${String(draftMediaIds.length)} attached media item${draftMediaIds.length === 1 ? '' : 's'} ready`
+                      : 'Imported media unavailable'}
                 </span>
               </div>
             )}

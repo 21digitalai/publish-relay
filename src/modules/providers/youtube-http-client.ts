@@ -56,12 +56,7 @@ export interface YouTubeHttpClientOptions {
 export type YouTubeUploadProgress =
   { status: 'incomplete'; nextOffset: number } | { status: 'complete'; videoId: string };
 
-export type YouTubeRequestErrorKind =
-  | 'auth'
-  | 'quota'
-  | 'validation'
-  | 'transient'
-  | 'permanent';
+export type YouTubeRequestErrorKind = 'auth' | 'quota' | 'validation' | 'transient' | 'permanent';
 
 export class YouTubeRequestError extends Error {
   public readonly retryAfterSeconds?: number;
@@ -83,8 +78,7 @@ function retryAfterSeconds(response: Response): number | undefined {
   const value = response.headers.get('retry-after');
   if (!value) return undefined;
   const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0)
-    return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
   const date = Date.parse(value);
   return Number.isFinite(date)
     ? Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(0, Math.ceil((date - Date.now()) / 1000)))
@@ -93,7 +87,8 @@ function retryAfterSeconds(response: Response): number | undefined {
 
 function errorKind(status: number, reason?: string): YouTubeRequestErrorKind {
   if (status === 401) return 'auth';
-  if (status === 429 || reason === 'quotaExceeded' || reason === 'dailyLimitExceeded') return 'quota';
+  if (status === 429 || reason === 'quotaExceeded' || reason === 'dailyLimitExceeded')
+    return 'quota';
   if (status === 400 || status === 404 || status === 410 || status === 422) return 'validation';
   if (status >= 500) return 'transient';
   if (status === 403) return 'auth';
@@ -135,7 +130,8 @@ export class YouTubeHttpClient {
       client_id: this.options.clientId,
       redirect_uri: input.redirectUri,
       response_type: 'code',
-      scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
+      scope:
+        'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
       access_type: 'offline',
       prompt: 'consent',
       state: input.state,

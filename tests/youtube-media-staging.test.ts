@@ -76,7 +76,8 @@ describe('stageYouTubeMedia', () => {
         .fn()
         .mockResolvedValue('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=one'),
       queryUpload: vi.fn().mockResolvedValue({ status: 'incomplete', nextOffset: 2 }),
-      uploadChunk: vi.fn()
+      uploadChunk: vi
+        .fn()
         .mockResolvedValueOnce({ status: 'incomplete', nextOffset: 4 })
         .mockResolvedValueOnce({ status: 'complete', videoId: 'video-1' }),
     };
@@ -159,12 +160,32 @@ describe('stageYouTubeMedia', () => {
   it('zeroes loaded media when initialization validation or credential loading fails', async () => {
     const invalid = Buffer.from('invalid');
     vi.mocked(findStagingArtifact).mockResolvedValueOnce(null);
-    vi.mocked(createStagingArtifact).mockResolvedValueOnce({ ...artifact, isOwner: true, providerReferenceCredentialId: null });
-    vi.mocked(getStagingArtifactById).mockResolvedValueOnce({ ...artifact, providerReferenceCredentialId: null });
+    vi.mocked(createStagingArtifact).mockResolvedValueOnce({
+      ...artifact,
+      isOwner: true,
+      providerReferenceCredentialId: null,
+    });
+    vi.mocked(getStagingArtifactById).mockResolvedValueOnce({
+      ...artifact,
+      providerReferenceCredentialId: null,
+    });
     const initiateUpload = vi.fn();
-    await expect(stageYouTubeMedia({} as never, { load: vi.fn().mockResolvedValue({ bytes: invalid, mimeType: 'text/plain' }) }, { initiateUpload } as never, {} as never, {
-      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access', metadata: {}, notifySubscribers: false,
-    })).rejects.toThrow('requires video/mp4');
+    await expect(
+      stageYouTubeMedia(
+        {} as never,
+        { load: vi.fn().mockResolvedValue({ bytes: invalid, mimeType: 'text/plain' }) },
+        { initiateUpload } as never,
+        {} as never,
+        {
+          workspaceId: 'workspace-1',
+          jobId: 'job-1',
+          mediaId: 'media-1',
+          accessToken: 'access',
+          metadata: {},
+          notifySubscribers: false,
+        },
+      ),
+    ).rejects.toThrow('requires video/mp4');
     expect(invalid.every((byte) => byte === 0)).toBe(true);
     expect(initiateUpload).not.toHaveBeenCalled();
 
@@ -172,9 +193,22 @@ describe('stageYouTubeMedia', () => {
     vi.mocked(findStagingArtifact).mockResolvedValueOnce(artifact);
     vi.mocked(getStagingArtifactById).mockResolvedValue(artifact);
     vi.mocked(getActiveCredential).mockResolvedValueOnce(null);
-    await expect(stageYouTubeMedia({} as never, { load: vi.fn().mockResolvedValue({ bytes: missing, mimeType: 'video/mp4' }) }, {} as never, {} as never, {
-      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access', metadata: {}, notifySubscribers: false,
-    })).rejects.toThrow('session credential is unavailable');
+    await expect(
+      stageYouTubeMedia(
+        {} as never,
+        { load: vi.fn().mockResolvedValue({ bytes: missing, mimeType: 'video/mp4' }) },
+        {} as never,
+        {} as never,
+        {
+          workspaceId: 'workspace-1',
+          jobId: 'job-1',
+          mediaId: 'media-1',
+          accessToken: 'access',
+          metadata: {},
+          notifySubscribers: false,
+        },
+      ),
+    ).rejects.toThrow('session credential is unavailable');
     expect(missing.every((byte) => byte === 0)).toBe(true);
   });
 
@@ -182,14 +216,29 @@ describe('stageYouTubeMedia', () => {
     vi.mocked(findStagingArtifact).mockResolvedValue(artifact);
     vi.mocked(getStagingArtifactById).mockResolvedValue(artifact);
     vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
-    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=one'));
+    vi.mocked(decryptCredential).mockResolvedValue(
+      Buffer.from('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=one'),
+    );
     const client = {
       queryUpload: vi.fn().mockResolvedValue({ status: 'incomplete', nextOffset: 2 }),
       uploadChunk: vi.fn().mockResolvedValue({ status: 'incomplete', nextOffset: 2 }),
     };
-    await expect(stageYouTubeMedia({} as never, { load: vi.fn().mockResolvedValue({ bytes: Buffer.from('video'), mimeType: 'video/mp4' }) }, client as never, {} as never, {
-      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access', metadata: {}, notifySubscribers: false,
-    })).rejects.toThrow('offset did not advance');
+    await expect(
+      stageYouTubeMedia(
+        {} as never,
+        { load: vi.fn().mockResolvedValue({ bytes: Buffer.from('video'), mimeType: 'video/mp4' }) },
+        client as never,
+        {} as never,
+        {
+          workspaceId: 'workspace-1',
+          jobId: 'job-1',
+          mediaId: 'media-1',
+          accessToken: 'access',
+          metadata: {},
+          notifySubscribers: false,
+        },
+      ),
+    ).rejects.toThrow('offset did not advance');
     expect(updateStagingByteProgress).not.toHaveBeenCalled();
   });
 
@@ -243,13 +292,19 @@ describe('stageYouTubeMedia', () => {
       queryUpload: vi.fn().mockResolvedValue({ status: 'complete', videoId: 'video-1' }),
     };
     const source = {
-      load: vi.fn().mockImplementation(() =>
-        Promise.resolve({ bytes: Buffer.from('video'), mimeType: 'video/mp4' }),
-      ),
+      load: vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve({ bytes: Buffer.from('video'), mimeType: 'video/mp4' }),
+        ),
     };
     const input = {
-      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access',
-      metadata: {}, notifySubscribers: false,
+      workspaceId: 'workspace-1',
+      jobId: 'job-1',
+      mediaId: 'media-1',
+      accessToken: 'access',
+      metadata: {},
+      notifySubscribers: false,
     };
 
     await expect(
@@ -307,14 +362,25 @@ describe('stageYouTubeMedia', () => {
       initiateUpload: vi
         .fn()
         .mockResolvedValueOnce('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=lost')
-        .mockResolvedValueOnce('https://www.googleapis.com/upload/youtube/v3/videos?upload_id=replacement'),
+        .mockResolvedValueOnce(
+          'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=replacement',
+        ),
       queryUpload: vi.fn().mockResolvedValue({ status: 'complete', videoId: 'video-1' }),
     };
-    const source = { load: vi.fn().mockImplementation(() =>
-      Promise.resolve({ bytes: Buffer.from('video'), mimeType: 'video/mp4' })) };
+    const source = {
+      load: vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve({ bytes: Buffer.from('video'), mimeType: 'video/mp4' }),
+        ),
+    };
     const input = {
-      workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access',
-      metadata: {}, notifySubscribers: false,
+      workspaceId: 'workspace-1',
+      jobId: 'job-1',
+      mediaId: 'media-1',
+      accessToken: 'access',
+      metadata: {},
+      notifySubscribers: false,
     };
 
     await expect(
@@ -338,16 +404,22 @@ describe('stageYouTubeMedia', () => {
     vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
     vi.mocked(decryptCredential).mockRejectedValue(new Error('decrypt failed'));
 
-    await expect(stageYouTubeMedia(
-      {} as never,
-      { load: vi.fn().mockResolvedValue({ bytes: mediaBytes, mimeType: 'video/mp4' }) },
-      {} as never,
-      {} as never,
-      {
-        workspaceId: 'workspace-1', jobId: 'job-1', mediaId: 'media-1', accessToken: 'access',
-        metadata: {}, notifySubscribers: false,
-      },
-    )).rejects.toThrow('decrypt failed');
+    await expect(
+      stageYouTubeMedia(
+        {} as never,
+        { load: vi.fn().mockResolvedValue({ bytes: mediaBytes, mimeType: 'video/mp4' }) },
+        {} as never,
+        {} as never,
+        {
+          workspaceId: 'workspace-1',
+          jobId: 'job-1',
+          mediaId: 'media-1',
+          accessToken: 'access',
+          metadata: {},
+          notifySubscribers: false,
+        },
+      ),
+    ).rejects.toThrow('decrypt failed');
 
     expect(mediaBytes.every((byte) => byte === 0)).toBe(true);
   });

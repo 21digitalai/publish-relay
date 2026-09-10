@@ -117,7 +117,9 @@ async function createRevisionTargets(
           resolveYouTubeSettings(account.adapterDefaults, content.providerOptions?.youtube),
         ] as const;
       } catch (error) {
-        throw new PostValidationError(error instanceof Error ? error.message : 'Invalid YouTube settings');
+        throw new PostValidationError(
+          error instanceof Error ? error.message : 'Invalid YouTube settings',
+        );
       }
     }),
   );

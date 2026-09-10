@@ -91,7 +91,9 @@ describe('YouTube media dispatch', () => {
     vi.mocked(claimDueJobs).mockResolvedValue([claimedJob]);
     vi.mocked(stageYouTubeMedia).mockResolvedValue({ videoId: 'video-1' });
 
-    await expect(dispatchDueYouTubeJobs(runtime, new Date('2026-09-01T00:00:00Z'))).resolves.toBe(1);
+    await expect(dispatchDueYouTubeJobs(runtime, new Date('2026-09-01T00:00:00Z'))).resolves.toBe(
+      1,
+    );
 
     expect(claimDueJobs).toHaveBeenCalledWith(
       expect.anything(),
@@ -123,7 +125,9 @@ describe('YouTube media dispatch', () => {
       new YouTubeRequestError(0, 'transient', 'unknown upload outcome', { outcomeUnknown: true }),
     );
 
-    await expect(dispatchDueYouTubeJobs(runtime, new Date('2026-09-01T00:00:00Z'))).resolves.toBe(0);
+    await expect(dispatchDueYouTubeJobs(runtime, new Date('2026-09-01T00:00:00Z'))).resolves.toBe(
+      0,
+    );
     expect(finishDispatchAttempt).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ outcome: 'unknown', reconciliationKey: 'youtube:job-1' }),
@@ -145,7 +149,9 @@ describe('YouTube media dispatch', () => {
     expect(resolveReconciliation).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        jobId: 'job-1', outcome: 'published', externalPostId: 'video-1',
+        jobId: 'job-1',
+        outcome: 'published',
+        externalPostId: 'video-1',
       }),
     );
   });

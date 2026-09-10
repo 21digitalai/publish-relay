@@ -152,7 +152,9 @@ export function registerDelegatedAuthorizationRoutes(
     void reply.header('Cache-Control', 'no-store');
     const parsed = revocationSchema.safeParse(request.body);
     if (!parsed.success)
-      return reply.code(400).send({ error: 'invalid_request', error_description: 'Invalid revocation request' });
+      return reply
+        .code(400)
+        .send({ error: 'invalid_request', error_description: 'Invalid revocation request' });
     try {
       await service.revokeClientToken({
         token: parsed.data.token,

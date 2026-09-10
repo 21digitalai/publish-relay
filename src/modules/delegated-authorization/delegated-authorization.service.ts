@@ -167,9 +167,14 @@ export class DelegatedAuthorizationService {
     requestId: string;
   }): Promise<void> {
     const client = await this.store.findClient(input.clientId);
-    if (!client) throw new DelegatedAuthorizationError('invalid_client', 'Client authentication failed');
+    if (!client)
+      throw new DelegatedAuthorizationError('invalid_client', 'Client authentication failed');
     if (client.clientType === 'confidential') {
-      if (!input.clientSecret || !client.secretHash || !verifySecret(input.clientSecret, client.secretHash))
+      if (
+        !input.clientSecret ||
+        !client.secretHash ||
+        !verifySecret(input.clientSecret, client.secretHash)
+      )
         throw new DelegatedAuthorizationError('invalid_client', 'Client authentication failed');
     }
     if (!this.store.revokeByToken) throw new Error('Delegated token revocation is unavailable');

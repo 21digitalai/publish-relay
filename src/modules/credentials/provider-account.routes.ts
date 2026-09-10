@@ -53,29 +53,32 @@ export function registerProviderAccountRoutes(
     return { data: { disconnected: true }, error: null };
   });
 
-  application.patch('/api/provider-accounts/:accountId/youtube-defaults', async (request, reply) => {
-    const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
-    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    if (
-      !verifyCsrfToken(
-        request.cookies[CSRF_COOKIE],
-        request.headers['x-csrf-token'] as string | undefined,
+  application.patch(
+    '/api/provider-accounts/:accountId/youtube-defaults',
+    async (request, reply) => {
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (
+        !verifyCsrfToken(
+          request.cookies[CSRF_COOKIE],
+          request.headers['x-csrf-token'] as string | undefined,
+        )
       )
-    )
-      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
-    const params = accountParamsSchema.safeParse(request.params);
-    const defaults = youtubeDestinationDefaultsSchema.safeParse(request.body);
-    if (!params.success || !defaults.success)
-      return reply.code(400).send({ data: null, error: 'Invalid YouTube defaults' });
-    const result = await updateYouTubeAccountDefaults(dependencies.database, {
-      workspaceId: identity.workspaceId,
-      userId: identity.userId,
-      accountId: params.data.accountId,
-      requestId: request.id,
-      defaults: defaults.data,
-    });
-    if (result === 'missing')
-      return reply.code(404).send({ data: null, error: 'YouTube account was not found' });
-    return { data: { adapterDefaults: defaults.data }, error: null };
-  });
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = accountParamsSchema.safeParse(request.params);
+      const defaults = youtubeDestinationDefaultsSchema.safeParse(request.body);
+      if (!params.success || !defaults.success)
+        return reply.code(400).send({ data: null, error: 'Invalid YouTube defaults' });
+      const result = await updateYouTubeAccountDefaults(dependencies.database, {
+        workspaceId: identity.workspaceId,
+        userId: identity.userId,
+        accountId: params.data.accountId,
+        requestId: request.id,
+        defaults: defaults.data,
+      });
+      if (result === 'missing')
+        return reply.code(404).send({ data: null, error: 'YouTube account was not found' });
+      return { data: { adapterDefaults: defaults.data }, error: null };
+    },
+  );
 }

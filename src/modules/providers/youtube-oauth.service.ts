@@ -66,7 +66,8 @@ export async function completeYouTubeOauthConnection(
     {
       discoverAccounts: async (serializedCredential) => {
         const parsed = JSON.parse(serializedCredential) as { accessToken?: unknown };
-        if (typeof parsed.accessToken !== 'string') throw new Error('YouTube credential is invalid');
+        if (typeof parsed.accessToken !== 'string')
+          throw new Error('YouTube credential is invalid');
         const channels = await client.discoverChannels(parsed.accessToken);
         return channels.map((channel) => ({
           providerAccountId: channel.id,

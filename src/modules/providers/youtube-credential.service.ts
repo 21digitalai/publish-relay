@@ -62,14 +62,17 @@ export async function getFreshYouTubeCredential(
   } finally {
     refreshedPlaintext.fill(0);
   }
-  const rotated = await withTenantTransaction(database, { workspaceId: input.workspaceId }, (transaction) =>
-    rotateCredential(
-      transaction,
-      input.workspaceId,
-      input.credentialId,
-      current.stored.version,
-      encrypted,
-    ),
+  const rotated = await withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    (transaction) =>
+      rotateCredential(
+        transaction,
+        input.workspaceId,
+        input.credentialId,
+        current.stored.version,
+        encrypted,
+      ),
   );
   if (rotated) return refreshed;
 

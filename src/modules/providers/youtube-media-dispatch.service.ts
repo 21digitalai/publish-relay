@@ -23,10 +23,7 @@ import {
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { getFreshYouTubeCredential } from './youtube-credential.service.js';
 import { YouTubeRequestError, type YouTubeHttpClient } from './youtube-http-client.js';
-import {
-  stageYouTubeMedia,
-  type YouTubeMediaSource,
-} from './youtube-media-staging.service.js';
+import { stageYouTubeMedia, type YouTubeMediaSource } from './youtube-media-staging.service.js';
 
 const settingsSchema = z.object({
   schemaVersion: z.literal(1),
@@ -141,20 +138,31 @@ async function uploadClaimedJob(
   });
   if (!attempt) return 'unresolved';
   try {
-    const credential = await getFreshYouTubeCredential(runtime.database, runtime.keys, runtime.client, {
-      workspaceId: job.workspaceId,
-      credentialId: context.credentialId,
-      now,
-    });
-    const uploaded = await stageYouTubeMedia(runtime.database, runtime.source, runtime.client, runtime.keys, {
-      workspaceId: job.workspaceId,
-      jobId: job.id,
-      mediaId: context.mediaId,
-      accessToken: credential.accessToken,
-      metadata: uploadMetadata(context.settings),
-      notifySubscribers: context.settings.notifySubscribers,
-      now,
-    });
+    const credential = await getFreshYouTubeCredential(
+      runtime.database,
+      runtime.keys,
+      runtime.client,
+      {
+        workspaceId: job.workspaceId,
+        credentialId: context.credentialId,
+        now,
+      },
+    );
+    const uploaded = await stageYouTubeMedia(
+      runtime.database,
+      runtime.source,
+      runtime.client,
+      runtime.keys,
+      {
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        mediaId: context.mediaId,
+        accessToken: credential.accessToken,
+        metadata: uploadMetadata(context.settings),
+        notifySubscribers: context.settings.notifySubscribers,
+        now,
+      },
+    );
     await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,
@@ -201,7 +209,8 @@ export async function dispatchDueYouTubeJobs(
     requireMedia: true,
   });
   let published = 0;
-  for (const job of jobs) if ((await uploadClaimedJob(runtime, job, now)) === 'published') published += 1;
+  for (const job of jobs)
+    if ((await uploadClaimedJob(runtime, job, now)) === 'published') published += 1;
   return published;
 }
 
@@ -233,20 +242,31 @@ export async function reconcileYouTubeJobs(
       const job = rows[0];
       if (!job) continue;
       const context = await loadJobContext(runtime.database, job.workspaceId, job.id);
-      const credential = await getFreshYouTubeCredential(runtime.database, runtime.keys, runtime.client, {
-        workspaceId: job.workspaceId,
-        credentialId: context.credentialId,
-        now,
-      });
-      const uploaded = await stageYouTubeMedia(runtime.database, runtime.source, runtime.client, runtime.keys, {
-        workspaceId: job.workspaceId,
-        jobId: job.id,
-        mediaId: context.mediaId,
-        accessToken: credential.accessToken,
-        metadata: uploadMetadata(context.settings),
-        notifySubscribers: context.settings.notifySubscribers,
-        now,
-      });
+      const credential = await getFreshYouTubeCredential(
+        runtime.database,
+        runtime.keys,
+        runtime.client,
+        {
+          workspaceId: job.workspaceId,
+          credentialId: context.credentialId,
+          now,
+        },
+      );
+      const uploaded = await stageYouTubeMedia(
+        runtime.database,
+        runtime.source,
+        runtime.client,
+        runtime.keys,
+        {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          mediaId: context.mediaId,
+          accessToken: credential.accessToken,
+          metadata: uploadMetadata(context.settings),
+          notifySubscribers: context.settings.notifySubscribers,
+          now,
+        },
+      );
       if (
         await resolveReconciliation(runtime.database, {
           workspaceId: job.workspaceId,

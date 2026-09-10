@@ -100,13 +100,13 @@ async function initializeUpload(
       sessionBytes = Buffer.from(sessionUrl);
       const encrypted = await encryptCredential(sessionBytes, keys);
       await withTenantTransaction(database, input, async (transaction) => {
-      const credential = await createCredential(transaction, input.workspaceId, encrypted);
-      await attachStagingReferenceCredential(
-        transaction,
-        input.workspaceId,
+        const credential = await createCredential(transaction, input.workspaceId, encrypted);
+        await attachStagingReferenceCredential(
+          transaction,
+          input.workspaceId,
           current.id,
-        credential.id,
-      );
+          credential.id,
+        );
       });
     } finally {
       sessionBytes?.fill(0);

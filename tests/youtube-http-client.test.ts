@@ -89,9 +89,7 @@ describe('YouTubeHttpClient', () => {
       'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=session';
     const request = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(null, { status: 200, headers: { location: sessionUrl } }),
-      )
+      .mockResolvedValueOnce(new Response(null, { status: 200, headers: { location: sessionUrl } }))
       .mockResolvedValueOnce(new Response(null, { status: 308, headers: { range: 'bytes=0-255' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-1' }), { status: 200 }));
     const client = new YouTubeHttpClient({
@@ -129,18 +127,21 @@ describe('YouTubeHttpClient', () => {
     'https://www.googleapis.com.attacker.example/upload/youtube/v3/videos?upload_id=session',
     'https://user@www.googleapis.com/upload/youtube/v3/videos?upload_id=session',
     'not a url',
-  ])('rejects an untrusted upload session URL before sending credentials: %s', async (sessionUrl) => {
-    const request = vi.fn<typeof fetch>();
-    const client = new YouTubeHttpClient({
-      clientId: 'id',
-      clientSecret: 'secret',
-      fetch: request,
-    });
-    await expect(client.queryUpload(sessionUrl, 'access-secret', 512)).rejects.toThrow(
-      /upload session URL/,
-    );
-    expect(request).not.toHaveBeenCalled();
-  });
+  ])(
+    'rejects an untrusted upload session URL before sending credentials: %s',
+    async (sessionUrl) => {
+      const request = vi.fn<typeof fetch>();
+      const client = new YouTubeHttpClient({
+        clientId: 'id',
+        clientSecret: 'secret',
+        fetch: request,
+      });
+      await expect(client.queryUpload(sessionUrl, 'access-secret', 512)).rejects.toThrow(
+        /upload session URL/,
+      );
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects an untrusted upload session URL returned during initiation', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
@@ -175,7 +176,11 @@ describe('YouTubeHttpClient', () => {
         { status: 403, headers: { 'retry-after': '45' } },
       ),
     );
-    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
+    const client = new YouTubeHttpClient({
+      clientId: 'id',
+      clientSecret: 'secret',
+      fetch: request,
+    });
     await expect(
       client.initiateUpload({
         accessToken: 'access',
@@ -192,24 +197,33 @@ describe('YouTubeHttpClient', () => {
     { status: 400, reason: undefined, kind: 'validation' },
     { status: 503, reason: undefined, kind: 'transient' },
     { status: 409, reason: undefined, kind: 'permanent' },
-  ] as const)('classifies HTTP $status upload failures as $kind', async ({ status, reason, kind }) => {
-    const request = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({ error: { message: 'Upload rejected', errors: [{ reason }] } }),
-        { status },
-      ),
-    );
-    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
-    await expect(
-      client.initiateUpload({
-        accessToken: 'access',
-        totalBytes: 512,
-        mimeType: 'video/mp4',
-        metadata: {},
-        notifySubscribers: false,
-      }),
-    ).rejects.toMatchObject({ status, kind });
-  });
+  ] as const)(
+    'classifies HTTP $status upload failures as $kind',
+    async ({ status, reason, kind }) => {
+      const request = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({ error: { message: 'Upload rejected', errors: [{ reason }] } }),
+            { status },
+          ),
+        );
+      const client = new YouTubeHttpClient({
+        clientId: 'id',
+        clientSecret: 'secret',
+        fetch: request,
+      });
+      await expect(
+        client.initiateUpload({
+          accessToken: 'access',
+          totalBytes: 512,
+          mimeType: 'video/mp4',
+          metadata: {},
+          notifySubscribers: false,
+        }),
+      ).rejects.toMatchObject({ status, kind });
+    },
+  );
 
   it.each([
     ['oversized delta-seconds', '999999999'],
@@ -221,7 +235,11 @@ describe('YouTubeHttpClient', () => {
         headers: { 'retry-after': retryAfter },
       }),
     );
-    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
+    const client = new YouTubeHttpClient({
+      clientId: 'id',
+      clientSecret: 'secret',
+      fetch: request,
+    });
     await expect(
       client.initiateUpload({
         accessToken: 'access',
@@ -237,7 +255,11 @@ describe('YouTubeHttpClient', () => {
     const sessionUrl =
       'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=session';
     const request = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('socket closed'));
-    const client = new YouTubeHttpClient({ clientId: 'id', clientSecret: 'secret', fetch: request });
+    const client = new YouTubeHttpClient({
+      clientId: 'id',
+      clientSecret: 'secret',
+      fetch: request,
+    });
     const error = await client
       .uploadChunk({
         sessionUrl,

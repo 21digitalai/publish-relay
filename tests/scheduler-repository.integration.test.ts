@@ -299,20 +299,27 @@ describe('scheduler repository', () => {
         now,
       }),
     ).toBe(false);
-    const result = await database.query<{ attempts: number; state: string; external_post_id: string }>(`
+    const result = await database.query<{
+      attempts: number;
+      state: string;
+      external_post_id: string;
+    }>(`
       SELECT (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS attempts,
              state,
              (SELECT external_post_id FROM publication_attempts WHERE job_id = '${jobId}' ORDER BY attempt_number DESC LIMIT 1) AS external_post_id
       FROM publication_jobs WHERE id = '${jobId}'
     `);
     expect(result.rows[0]).toEqual({
-      attempts: 1, state: 'published', external_post_id: 'youtube-video-1',
+      attempts: 1,
+      state: 'published',
+      external_post_id: 'youtube-video-1',
     });
     await database.exec(`UPDATE provider_connections SET provider = 'youtube'
       WHERE id = '00000000-0000-4000-8000-000000000304'`);
     const detail = await getBrowserJobDetail(db, workspaceId, jobId);
     expect(detail?.providerResult).toEqual({
-      id: 'youtube-video-1', url: 'https://www.youtube.com/watch?v=youtube-video-1',
+      id: 'youtube-video-1',
+      url: 'https://www.youtube.com/watch?v=youtube-video-1',
     });
   });
 
@@ -382,19 +389,30 @@ describe('scheduler repository', () => {
 
     expect(
       await claimReconciliationJobs(db, {
-        workerId: 'x-reconciler', now, leaseMs: 30_000, limit: 10, provider: 'x',
+        workerId: 'x-reconciler',
+        now,
+        leaseMs: 30_000,
+        limit: 10,
+        provider: 'x',
       }),
     ).toEqual([jobId]);
     await database.exec(`UPDATE publication_jobs SET lease_owner = NULL, lease_expires_at = NULL`);
     expect(
       await claimReconciliationJobs(db, {
-        workerId: 'youtube-reconciler', now, leaseMs: 30_000, limit: 10, provider: 'youtube',
+        workerId: 'youtube-reconciler',
+        now,
+        leaseMs: 30_000,
+        limit: 10,
+        provider: 'youtube',
       }),
     ).toEqual([youtubeJobId]);
     await database.exec(`UPDATE publication_jobs SET lease_owner = NULL, lease_expires_at = NULL`);
     expect(
       await claimReconciliationJobs(db, {
-        workerId: 'all-reconciler', now, leaseMs: 30_000, limit: 10,
+        workerId: 'all-reconciler',
+        now,
+        leaseMs: 30_000,
+        limit: 10,
       }),
     ).toEqual([jobId, youtubeJobId]);
   });

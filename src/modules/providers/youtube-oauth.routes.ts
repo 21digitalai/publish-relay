@@ -29,7 +29,12 @@ export function registerYouTubeOauthRoutes(
   application.post('/api/oauth/youtube', async (request, reply) => {
     const identity = await authenticateRequest(request, dependencies.auth);
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    if (!verifyCsrfToken(request.cookies[CSRF_COOKIE], request.headers['x-csrf-token'] as string | undefined))
+    if (
+      !verifyCsrfToken(
+        request.cookies[CSRF_COOKIE],
+        request.headers['x-csrf-token'] as string | undefined,
+      )
+    )
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
     try {
       const result = await beginYouTubeOauthConnection(
@@ -62,10 +67,17 @@ export function registerYouTubeOauthRoutes(
       dependencies.database,
       dependencies.keys,
       dependencies.client,
-      { workspaceId: identity.workspaceId, userId: identity.userId, ...query.data, requestId: request.id },
+      {
+        workspaceId: identity.workspaceId,
+        userId: identity.userId,
+        ...query.data,
+        requestId: request.id,
+      },
     );
     return result
       ? reply.redirect('/app?oauth=youtube-connected')
-      : reply.code(400).send({ data: null, error: 'YouTube OAuth transaction is invalid or expired' });
+      : reply
+          .code(400)
+          .send({ data: null, error: 'YouTube OAuth transaction is invalid or expired' });
   });
 }

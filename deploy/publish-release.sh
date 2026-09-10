@@ -31,7 +31,9 @@ cp -a "${source_directory}/." "$release_directory/"
 chown -R "${service_user}:${service_user}" "$release_directory"
 
 sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --prefix "$release_directory"
-sudo -u "$service_user" env DATABASE_URL="$MIGRATION_DATABASE_URL" "$node_bin" "$npm_cli" run db:migrate:production --prefix "$release_directory"
+DATABASE_URL="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
+  sudo --preserve-env=DATABASE_URL,PGPASSWORD --chdir="$release_directory" \
+  -u "$service_user" "$node_bin" dist/database/migrate.js
 ln -sfn "$release_directory" "${current_link}.next"
 mv -Tf "${current_link}.next" "$current_link"
 systemctl restart publish-relay-web publish-relay-worker

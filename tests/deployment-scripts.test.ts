@@ -26,12 +26,15 @@ function createDeployFixture(): {
   source: string;
   currentLink: string;
   log: string;
+  nodeBin: string;
+  releaseRoot: string;
 } {
   const root = mkdtempSync(join(tmpdir(), 'publish-relay-deploy-'));
   const bin = join(root, 'bin');
   const source = join(root, 'source');
   const log = join(root, 'commands.log');
   const currentLink = join(root, 'current');
+  const releaseRoot = join(root, 'releases');
   mkdirSync(bin);
   mkdirSync(join(source, 'dist', 'database'), { recursive: true });
   writeFileSync(join(source, 'package-lock.json'), '{}');
@@ -39,13 +42,16 @@ function createDeployFixture(): {
   writeExecutable(join(bin, 'install'), 'mkdir -p "${@: -1}"');
   writeExecutable(join(bin, 'chown'), 'exit 0');
   writeExecutable(join(bin, 'mv'), '[[ "$1" == "-Tf" ]] && shift; command /bin/mv "$@"');
-  writeExecutable(join(bin, 'sudo'), 'shift 2; exec "$@"');
+  writeExecutable(
+    join(bin, 'sudo'),
+    'while [[ "$1" == --* ]]; do [[ "$1" == --chdir=* ]] && cd "${1#*=}"; shift; done; [[ "$1" == "-u" ]] && shift 2; exec "$@"',
+  );
   const nodeBin = join(bin, 'node24');
   const npmCli = join(bin, 'npm-cli.js');
   writeFileSync(npmCli, 'fixture npm CLI');
   writeExecutable(
     nodeBin,
-    'if [[ "$1" == "--version" ]]; then echo v24.8.0; exit 0; fi; shift; echo "npm $*" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 || "$*" != *"db:migrate:production"* ]]',
+    'if [[ "$1" == "--version" ]]; then echo v24.8.0; exit 0; fi; [[ "$1" == *"npm-cli.js" ]] && { shift; echo "npm $*" >> "$COMMAND_LOG"; exit 0; }; echo "node=$0 cwd=$PWD script=$1 database=$([[ -n "${DATABASE_URL:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing)" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 ]]',
   );
   writeExecutable(join(bin, 'systemctl'), 'echo "systemctl $*" >> "$COMMAND_LOG"');
   writeExecutable(join(bin, 'curl'), 'echo "curl $*" >> "$COMMAND_LOG"');
@@ -54,17 +60,20 @@ function createDeployFixture(): {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       COMMAND_LOG: log,
-      PUBLISH_RELAY_RELEASE_ROOT: join(root, 'releases'),
+      PUBLISH_RELAY_RELEASE_ROOT: releaseRoot,
       PUBLISH_RELAY_CURRENT_LINK: currentLink,
       PUBLISH_RELAY_SERVICE_USER: 'test-user',
       PUBLISH_RELAY_NODE_BIN: nodeBin,
       PUBLISH_RELAY_NPM_CLI: npmCli,
       PUBLISH_RELAY_HEALTH_URL: 'http://127.0.0.1:3999/health/ready',
       MIGRATION_DATABASE_URL: 'postgresql://migrator@127.0.0.1/publish_relay',
+      PGPASSWORD: 'fixture-password',
     },
     source,
     currentLink,
     log,
+    nodeBin,
+    releaseRoot,
   };
 }
 
@@ -144,7 +153,10 @@ describe('deployment scripts', () => {
     );
     const commands = readFileSync(fixture.log, 'utf8');
     expect(commands).toContain('npm ci --omit=dev --ignore-scripts');
-    expect(commands).toContain('npm run db:migrate:production');
+    expect(commands).toContain(
+      `node=${fixture.nodeBin} cwd=${join(fixture.releaseRoot, 'release-1')} script=dist/database/migrate.js database=set password=set`,
+    );
+    expect(commands).not.toContain('fixture-password');
     expect(commands).toContain(
       'curl --fail --silent --show-error http://127.0.0.1:3999/health/ready',
     );

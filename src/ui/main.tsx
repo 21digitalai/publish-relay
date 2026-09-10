@@ -1258,11 +1258,20 @@ interface ManagedApiKey {
   revokedAt: string | null;
 }
 
+interface DelegatedGrant {
+  id: string;
+  clientId: string;
+  scopes: string[];
+  createdAt: string;
+}
+
 function SettingsPage() {
   const isAutomation = window.location.pathname.endsWith('/settings/automation');
+  const isIntegrations = window.location.pathname.endsWith('/settings/integrations');
   const workspaceBase = window.location.pathname.split('/settings/')[0] ?? '';
   const [workspace, setWorkspace] = useState({ name: '', slug: '', timezone: 'UTC' });
   const [keys, setKeys] = useState<ManagedApiKey[]>([]);
+  const [grants, setGrants] = useState<DelegatedGrant[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [message, setMessage] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
@@ -1274,6 +1283,8 @@ function SettingsPage() {
   const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
+  const [grantRevokeId, setGrantRevokeId] = useState<string | null>(null);
+  const [revokingGrantId, setRevokingGrantId] = useState<string | null>(null);
   const [keyListRefreshFailed, setKeyListRefreshFailed] = useState(false);
   const loadApiKeys = async () => {
     const response = await fetch('/api/settings/api-keys');
@@ -1287,12 +1298,17 @@ function SettingsPage() {
     setKeyListRefreshFailed(false);
   };
   useEffect(() => {
-    const endpoint = isAutomation ? '/api/settings/api-keys' : '/api/workspaces/current';
+    const endpoint = isAutomation
+      ? '/api/settings/api-keys'
+      : isIntegrations
+        ? '/api/settings/delegated-grants'
+        : '/api/workspaces/current';
     void fetch(endpoint)
       .then(async (response) => {
         const result = (await response.json()) as { data: unknown; error: string | null };
         if (!response.ok) throw new Error(result.error ?? 'Settings could not be loaded');
         if (isAutomation) setKeys((result.data as { items: ManagedApiKey[] }).items);
+        else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
         else setWorkspace(result.data as typeof workspace);
         setLoadState('ready');
       })
@@ -1300,7 +1316,7 @@ function SettingsPage() {
         setMessage(error instanceof Error ? error.message : 'Settings could not be loaded');
         setLoadState('error');
       });
-  }, [isAutomation]);
+  }, [isAutomation, isIntegrations]);
   const saveWorkspace = async () => {
     if (isSavingWorkspace) return;
     setIsSavingWorkspace(true);
@@ -1373,7 +1389,7 @@ function SettingsPage() {
       </header>
       <nav className="settings-tabs" aria-label="Settings sections">
         <a
-          className={`settings-tab ${!isAutomation ? 'active' : ''}`}
+          className={`settings-tab ${!isAutomation && !isIntegrations ? 'active' : ''}`}
           href={`${workspaceBase}/settings/workspace`}
         >
           Workspace
@@ -1384,6 +1400,12 @@ function SettingsPage() {
         >
           Automation
         </a>
+        <a
+          className={`settings-tab ${isIntegrations ? 'active' : ''}`}
+          href={`${workspaceBase}/settings/integrations`}
+        >
+          Integrations
+        </a>
       </nav>
       {loadState === 'loading' && <p role="status">Loading settings…</p>}
       {message && (
@@ -1391,7 +1413,7 @@ function SettingsPage() {
           {message}
         </div>
       )}
-      {loadState === 'ready' && !isAutomation && (
+      {loadState === 'ready' && !isAutomation && !isIntegrations && (
         <section className="settings-card" aria-labelledby="workspace-settings-title">
           <h2 id="workspace-settings-title">Workspace profile</h2>
           <label className="field-label">
@@ -1636,6 +1658,78 @@ function SettingsPage() {
           </section>
         </div>
       )}
+      {loadState === 'ready' && isIntegrations && (
+        <section className="settings-card" aria-labelledby="integrations-title">
+          <h2 id="integrations-title">Connected applications</h2>
+          <p className="field-hint">
+            These applications can act through the access you approved. Revoking a connection
+            signs it out without changing your API keys or connected channels.
+          </p>
+          {grants.length === 0 ? (
+            <p>No applications connected.</p>
+          ) : (
+            grants.map((grant) => (
+              <article className="api-key-row" key={grant.id}>
+                <div>
+                  <strong>{grant.clientId}</strong>
+                  <small>Connected {new Date(grant.createdAt).toLocaleDateString()}</small>
+                  <small>Access: {grant.scopes.join(' · ')}</small>
+                </div>
+                {grantRevokeId === grant.id ? (
+                  <div className="inline-confirm">
+                    <span>Revoke this connection?</span>
+                    <button
+                      className="danger-button"
+                      disabled={revokingGrantId === grant.id}
+                      onClick={() => {
+                        run(async () => {
+                          if (revokingGrantId) return;
+                          setRevokingGrantId(grant.id);
+                          try {
+                            const response = await fetch(
+                              `/api/settings/delegated-grants/${grant.id}`,
+                              {
+                                method: 'DELETE',
+                                headers: { 'x-csrf-token': getCsrfToken() },
+                              },
+                            );
+                            if (!response.ok) throw new Error('Connection could not be revoked');
+                            setGrants((current) => current.filter((item) => item.id !== grant.id));
+                            setGrantRevokeId(null);
+                            setMessage('Application connection revoked');
+                          } finally {
+                            setRevokingGrantId(null);
+                          }
+                        });
+                      }}
+                    >
+                      {revokingGrantId === grant.id ? 'Revoking…' : 'Confirm revoke'}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={revokingGrantId === grant.id}
+                      onClick={() => {
+                        setGrantRevokeId(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="secondary-button"
+                    onClick={() => {
+                      setGrantRevokeId(grant.id);
+                    }}
+                  >
+                    Revoke connection
+                  </button>
+                )}
+              </article>
+            ))
+          )}
+        </section>
+      )}
     </WorkspaceLayout>
   );
 }
@@ -1649,7 +1743,8 @@ export function App() {
   if (/\/w\/[^/]+\/queue$/.test(path)) return <QueuePage />;
   if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;
   if (/\/w\/[^/]+\/jobs\/[^/]+$/.test(path)) return <JobDetailPage />;
-  if (/\/w\/[^/]+\/settings\/(workspace|automation)$/.test(path)) return <SettingsPage />;
+  if (/\/w\/[^/]+\/settings\/(workspace|automation|integrations)$/.test(path))
+    return <SettingsPage />;
   return <AccountsPage />;
 }
 

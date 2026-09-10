@@ -1175,6 +1175,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
 }, testInfo) => {
   let createRequests = 0;
   let revokeRequests = 0;
+  let grantRevokeRequests = 0;
   let keys: Record<string, unknown>[] = [];
   let failNextKeyListRefresh = false;
   await establishWorkspaceSession(page);
@@ -1250,6 +1251,20 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
       body: JSON.stringify({ data: { items: keys }, error: null }),
     });
   });
+  await page.route('**/api/settings/delegated-grants**', async (route) => {
+    if (route.request().method() === 'DELETE') {
+      grantRevokeRequests += 1;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: '{"data":{"revoked":true},"error":null}',
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":[{"id":"grant-1","clientId":"Open Clips","scopes":["destinations:read","schedules:write"],"createdAt":"2026-09-10T10:00:00.000Z"}],"error":null}',
+    });
+  });
   await page.goto(await workspacePath(page, 'settings/workspace'));
   await expect(page.getByRole('heading', { name: 'Workspace profile' })).toBeVisible();
   await page.getByLabel('Name').fill('Atlas Studio');
@@ -1285,6 +1300,17 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   await page.getByRole('button', { name: 'Retry key list' }).click();
   await expect(page.getByText('Partial key')).toBeVisible();
   expect(createRequests).toBe(3);
+  await page.getByRole('link', { name: 'Integrations' }).click();
+  await expect(page.getByRole('heading', { name: 'Connected applications' })).toBeVisible();
+  await expect(page.getByText('Open Clips', { exact: true })).toBeVisible();
+  await expect(page.getByText('Access: destinations:read · schedules:write')).toBeVisible();
+  await page.getByRole('button', { name: 'Revoke connection' }).click();
+  await expect(page.getByText('Revoke this connection?')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('settings-integrations.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Confirm revoke' }).click();
+  await expect(page.getByText('No applications connected.')).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Application connection revoked');
+  expect(grantRevokeRequests).toBe(1);
 });
 
 test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({

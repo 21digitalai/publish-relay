@@ -80,7 +80,7 @@ Routes:
 - `/w/:workspace/calendar`
 - `/w/:workspace/jobs/:jobId`
 - `/w/:workspace/accounts`
-- `/w/:workspace/settings/{workspace,members,profile}`
+- `/w/:workspace/settings/{workspace,automation,integrations}`
 
 Workspace selection is a searchable popover showing name, role, and active-account count. Raw IDs never appear in normal workflows.
 
@@ -186,6 +186,7 @@ Job detail is a route-backed drawer on desktop and a page on mobile. Sections: s
 - `WorkflowLoading` in `src/ui/workflow.tsx` is the canonical geometry-matched loading primitive for queue, calendar, and detail surfaces. Motion timing uses the shared `--motion-*` tokens in `src/ui/styles.css`; shimmer and entrance transforms are removed under reduced motion.
 - `LiveRegion` in `src/ui/feedback.tsx` owns polite mutation announcements after server-confirmed state changes across workflow and account surfaces. Visible persistent errors remain separate `role="alert"` content.
 - Account adapter settings and Composer provider overrides reuse the canonical `DefaultsSelect` listbox in `src/ui/defaults-select.tsx` rather than native selects; its body-level fixed portal prevents account cards and mobile containers from clipping menus. Account booleans use `.defaults-toggle` switches. Both expose explicit ARIA state and remain keyboard operable.
+- Settings Integrations reuses the existing settings tab shell, card, API-key row, and inline confirmation primitives. It displays friendly client IDs, approved scopes, and connection dates; revocation is an explicit two-step action and never exposes tokens or internal workspace/user IDs.
 - Queue empty: Nothing scheduled yet + Create post.
 - Filter empty: No jobs match these filters + Clear filters.
 - Accounts empty: Connect your first account with explanation.

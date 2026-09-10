@@ -3,11 +3,13 @@ import { z } from 'zod';
 
 import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
+import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
 import type { ApiKeyCapability } from './api-key.js';
 import type { ApiKeyPrincipal, ApiKeyService } from './api-key.service.js';
 import type { AuthService } from './auth.service.js';
 import { authorizeRequest, CSRF_COOKIE } from './auth.routes.js';
 import { verifyCsrfToken } from './session.js';
+import { authorizeMachineRequest } from './machine-auth.js';
 
 const createKeySchema = z.object({
   label: z.string().trim().min(1).max(100),
@@ -50,14 +52,15 @@ export function registerApiKeyRoutes(
   service: ApiKeyService,
   rateLimiter?: ApiRateLimiter,
   auth?: AuthService,
+  delegatedAuthorization?: DelegatedAuthorizationService,
 ): void {
   application.get('/api/v1/account', async (request, reply) => {
-    const principal = await authorizeApiKeyRequest(request, service);
+    const principal = await authorizeMachineRequest(request, service, delegatedAuthorization);
     if (!principal)
       return reply
         .code(401)
         .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
-    const decision = rateLimiter?.check(principal.workspaceId, principal.id, 'read');
+    const decision = rateLimiter?.check(principal.workspaceId, principal.actorId, 'read');
     if (decision) {
       void reply.header('X-RateLimit-Limit', decision.limit);
       void reply.header('X-RateLimit-Remaining', decision.remaining);
@@ -68,15 +71,26 @@ export function registerApiKeyRoutes(
           .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
       }
     }
+    void reply.header('Cache-Control', 'no-store');
     return successEnvelope(
-      {
-        id: principal.id,
-        workspaceId: principal.workspaceId,
-        workspaceLabel: principal.workspaceLabel,
-        prefix: principal.prefix,
-        capabilities: principal.capabilities,
-        expiresAt: principal.expiresAt,
-      },
+      principal.kind === 'delegated'
+        ? {
+            principalType: 'delegated',
+            clientId: principal.clientId,
+            grantId: principal.actorId,
+            workspaceId: principal.workspaceId,
+            workspaceLabel: principal.workspaceLabel,
+            capabilities: principal.capabilities,
+            expiresAt: principal.accessExpiresAt,
+          }
+        : {
+            id: principal.id,
+            workspaceId: principal.workspaceId,
+            workspaceLabel: principal.workspaceLabel,
+            prefix: principal.prefix,
+            capabilities: principal.capabilities,
+            expiresAt: principal.expiresAt,
+          },
       request.id,
     );
   });

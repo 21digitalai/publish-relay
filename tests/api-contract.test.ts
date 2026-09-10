@@ -52,7 +52,9 @@ describe('API v1 contract', () => {
         '/api/v1/account': {
           get: {
             operationId: 'getAccount',
-            responses: { '200': { description: 'Authenticated API key identity' } },
+            responses: {
+              '200': { description: 'Authenticated API key or delegated connection identity' },
+            },
           },
         },
       },

@@ -7,6 +7,7 @@ import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
 import { registerApiDocumentationRoute } from '../src/modules/api/openapi.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
+import type { DelegatedAuthorizationService } from '../src/modules/delegated-authorization/delegated-authorization.service.js';
 
 describe('API key HTTP boundary', () => {
   it('serves the versioned OpenAPI document', async () => {
@@ -77,6 +78,53 @@ describe('API key HTTP boundary', () => {
     });
     expect(response.statusCode).toBe(401);
     expect(authenticate).not.toHaveBeenCalled();
+  });
+
+  it('returns an allowlisted delegated connection receipt without credential or user fields', async () => {
+    const authenticateApiKey = vi.fn().mockResolvedValue(null);
+    const authenticateDelegated = vi.fn().mockResolvedValue({
+      grantId: '00000000-0000-4000-8000-000000000101',
+      workspaceId: '00000000-0000-4000-8000-000000000102',
+      workspaceLabel: 'Atlas',
+      userId: '00000000-0000-4000-8000-000000000103',
+      clientId: 'open-clips-dev',
+      scopes: ['content:write', 'destinations:read'],
+      accessExpiresAt: new Date('2026-09-10T17:00:00.000Z'),
+    });
+    const application = Fastify();
+    registerApiKeyRoutes(
+      application,
+      { authenticate: authenticateApiKey } as unknown as ApiKeyService,
+      undefined,
+      undefined,
+      { authenticate: authenticateDelegated } as unknown as DelegatedAuthorizationService,
+    );
+    const response = await application.inject({
+      method: 'GET',
+      url: '/api/v1/account',
+      headers: {
+        authorization: 'Bearer delegated-token',
+        'x-publish-relay-workspace': '00000000-0000-4000-8000-000000000102',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.json()).toMatchObject({
+      data: {
+        principalType: 'delegated',
+        clientId: 'open-clips-dev',
+        grantId: '00000000-0000-4000-8000-000000000101',
+        workspaceId: '00000000-0000-4000-8000-000000000102',
+        workspaceLabel: 'Atlas',
+        capabilities: ['content:write', 'destinations:read'],
+        expiresAt: '2026-09-10T17:00:00.000Z',
+      },
+    });
+    const data = response.json<{ data: Record<string, unknown> }>().data;
+    expect(data).not.toHaveProperty('userId');
+    expect(data).not.toHaveProperty('accessToken');
+    expect(data).not.toHaveProperty('refreshToken');
   });
 
   it('rate limits an authenticated API key and returns bounded retry headers', async () => {

@@ -5,6 +5,7 @@ import { auditEvents, registeredClients } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type {
   DelegatedAuthorizationStore,
+  DelegatedAccessPrincipal,
   DelegatedPrincipal,
 } from './delegated-authorization.service.js';
 
@@ -13,6 +14,8 @@ interface CredentialRow extends DelegatedPrincipal, Record<string, unknown> {
   codeChallenge: string;
   tokenId: string;
 }
+
+interface AccessCredentialRow extends DelegatedAccessPrincipal, Record<string, unknown> {}
 
 interface GrantRow extends Record<string, unknown> {
   id: string;
@@ -102,9 +105,10 @@ export function createPostgresDelegatedAuthorizationStore(
     },
 
     async authenticateAccessToken(accessTokenHash, now) {
-      const result = await database.execute<CredentialRow>(sql`
+      const result = await database.execute<AccessCredentialRow>(sql`
         SELECT grant_id AS "grantId", workspace_id AS "workspaceId", user_id AS "userId",
-          client_id AS "clientId", scopes
+          workspace_label AS "workspaceLabel", client_id AS "clientId", scopes,
+          access_expires_at AS "accessExpiresAt"
         FROM resolve_delegated_access_token(${accessTokenHash}, ${now})
       `);
       return rows(result)[0] ?? null;

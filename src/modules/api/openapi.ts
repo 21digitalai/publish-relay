@@ -10,14 +10,25 @@ import {
 } from '../content/post.contract.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
-const accountSchema = z.object({
-  id: z.uuid(),
-  workspaceId: z.uuid(),
-  workspaceLabel: z.string().min(1),
-  prefix: z.string().min(1),
-  capabilities: z.array(z.string()),
-  expiresAt: z.date().nullable(),
-});
+const accountSchema = z.union([
+  z.object({
+    id: z.uuid(),
+    workspaceId: z.uuid(),
+    workspaceLabel: z.string().min(1),
+    prefix: z.string().min(1),
+    capabilities: z.array(z.string()),
+    expiresAt: z.date().nullable(),
+  }),
+  z.object({
+    principalType: z.literal('delegated'),
+    clientId: z.string().min(1),
+    grantId: z.uuid(),
+    workspaceId: z.uuid(),
+    workspaceLabel: z.string().min(1),
+    capabilities: z.array(z.string()),
+    expiresAt: z.date(),
+  }),
+]);
 const destinationCollectionSchema = z.object({
   items: z.array(
     z.object({
@@ -229,7 +240,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           security: [{ bearerAuth: [], workspace: [] }],
           responses: {
             '200': {
-              description: 'Authenticated API key identity',
+              description: 'Authenticated API key or delegated connection identity',
               content: {
                 'application/json': {
                   schema: openApiJsonSchema(successResponseSchema(accountSchema)),

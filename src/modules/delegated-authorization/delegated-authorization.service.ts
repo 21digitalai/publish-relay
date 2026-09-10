@@ -19,6 +19,11 @@ export interface DelegatedPrincipal {
   scopes: string[];
 }
 
+export interface DelegatedAccessPrincipal extends DelegatedPrincipal {
+  workspaceLabel: string;
+  accessExpiresAt: Date;
+}
+
 export interface DelegatedGrantSummary {
   id: string;
   clientId: string;
@@ -62,7 +67,10 @@ export interface DelegatedAuthorizationStore {
       refreshExpiresAt: Date;
     };
   }): Promise<RefreshTokenRecord | null>;
-  authenticateAccessToken(accessTokenHash: string, now: Date): Promise<DelegatedPrincipal | null>;
+  authenticateAccessToken(
+    accessTokenHash: string,
+    now: Date,
+  ): Promise<DelegatedAccessPrincipal | null>;
   listGrants(workspaceId: string, userId: string): Promise<DelegatedGrantSummary[]>;
   revokeGrant(
     workspaceId: string,
@@ -140,7 +148,7 @@ export class DelegatedAuthorizationService {
     return pair.public;
   }
 
-  authenticate(accessToken: string): Promise<DelegatedPrincipal | null> {
+  authenticate(accessToken: string): Promise<DelegatedAccessPrincipal | null> {
     return this.store.authenticateAccessToken(hashSecret(accessToken), this.now());
   }
 

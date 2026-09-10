@@ -10,9 +10,11 @@ export type MachinePrincipal =
       kind: 'delegated';
       actorId: string;
       workspaceId: string;
+      workspaceLabel: string;
       userId: string;
       clientId: string;
       capabilities: ApiKeyCapability[];
+      accessExpiresAt: Date;
     };
 
 export class MachineAuthorizationError extends Error {
@@ -52,8 +54,10 @@ export async function authorizeMachineRequest(
     kind: 'delegated',
     actorId: delegated.grantId,
     workspaceId: delegated.workspaceId,
+    workspaceLabel: delegated.workspaceLabel,
     userId: delegated.userId,
     clientId: delegated.clientId,
     capabilities: delegated.scopes as ApiKeyCapability[],
+    accessExpiresAt: delegated.accessExpiresAt,
   };
 }

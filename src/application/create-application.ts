@@ -92,7 +92,7 @@ export function createApplication(
       mutationKey: 60,
       windowMs: 60_000,
     });
-    registerApiKeyRoutes(application, apiKeys, rateLimiter, auth);
+    registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
     if (database) {
       registerDestinationRoutes(
         application,

@@ -11,9 +11,11 @@ const principal = {
   kind: 'delegated' as const,
   actorId: '11111111-1111-4111-8111-111111111111',
   workspaceId: '22222222-2222-4222-8222-222222222222',
+  workspaceLabel: 'External drafts',
   userId: '33333333-3333-4333-8333-333333333333',
   clientId: 'external-client',
   capabilities: ['content:write' as const],
+  accessExpiresAt: new Date('2026-09-10T17:00:00.000Z'),
 };
 
 describe('external draft validation', () => {

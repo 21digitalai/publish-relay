@@ -232,6 +232,13 @@
       "when": 1789042711416,
       "tag": "0032_little_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1789044400000,
+      "tag": "0033_open_clips_development_client",
+      "breakpoints": true
     }
   ]
 }

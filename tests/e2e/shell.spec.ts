@@ -107,6 +107,76 @@ test('renders the honest recovery unavailable state', async ({ page }) => {
   await expect(page.getByText('We will not claim that an email was sent')).toBeVisible();
 });
 
+test('approves the registered Open Clips loopback client and exposes revocation', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('http://127.0.0.1:43123/callback**', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<h1>Open Clips connected</h1>' }),
+  );
+  await page.route('**/connect/authorize', async (route) => {
+    if (route.request().method() === 'GET') return route.continue();
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          authorizationRedirect:
+            'http://127.0.0.1:43123/callback?code=opaque-code&state=open-clips-state',
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/settings/delegated-grants**', async (route) => {
+    if (route.request().method() === 'DELETE')
+      return route.fulfill({
+        contentType: 'application/json',
+        body: '{"data":{"revoked":true},"error":null}',
+      });
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: [
+          {
+            id: 'grant-1',
+            clientId: 'open-clips-dev',
+            scopes: ['destinations:read', 'schedules:write'],
+            createdAt: '2026-09-10T10:00:00.000Z',
+          },
+        ],
+        error: null,
+      }),
+    });
+  });
+  const query = new URLSearchParams({
+    client_id: 'open-clips-dev',
+    redirect_uri: 'http://127.0.0.1:43123/callback',
+    state: 'open-clips-state',
+    code_challenge: 'c'.repeat(43),
+    code_challenge_method: 'S256',
+    scope: 'destinations:read schedules:read schedules:write content:write publishes:retry',
+  });
+  await page.goto(`/connect/authorize?${query}`);
+  await expect(page.getByRole('heading', { name: 'Approve access' })).toBeVisible();
+  await expect(page.getByText('open-clips-dev', { exact: true })).toBeVisible();
+  await expect(page.getByText('publishes:retry', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('open-clips-consent.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Approve connection' }).click();
+  await page.waitForURL(
+    (url) =>
+      url.origin === 'http://127.0.0.1:43123' &&
+      url.pathname === '/callback' &&
+      url.searchParams.has('code') &&
+      url.searchParams.get('state') === 'open-clips-state',
+  );
+  expect([...new URL(page.url()).searchParams.keys()].sort()).toEqual(['code', 'state']);
+  await page.goto(await workspacePath(page, 'settings/integrations'));
+  await expect(page.getByText('open-clips-dev', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Revoke connection' }).click();
+  await page.getByRole('button', { name: 'Confirm revoke' }).click();
+  await expect(page.getByText('No applications connected.')).toBeVisible();
+});
+
 test('registers, persists the first workspace update, and reloads the protected onboarding route', async ({
   browser,
   page,

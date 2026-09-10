@@ -23,7 +23,13 @@ description: "Create, inspect, and reconcile workspace-scoped Publish Relay post
 
 # Publish Relay
 
-Read the manifest and API contract first. Authenticate with a workspace service key and request only the capabilities needed by the command.
+Read the manifest and API contract first. Authenticate with either a workspace API key or a delegated access token and request only the capabilities needed by the command.
+
+## Delegated connection
+
+Public clients use authorization code + PKCE S256. Generate a fresh verifier, challenge, and opaque state, then open /connect/authorize with client_id, an exactly registered redirect_uri, state, code_challenge, code_challenge_method=S256, and a space-delimited scope. After the user logs in and approves, verify the returned state and exchange the short-lived code at POST /connect/token. The callback contains no durable credential; access and refresh tokens exist only in the token response and must be encrypted at rest by the client.
+
+Send the delegated access token as Bearer authentication with X-Publish-Relay-Workspace on the same /api/v1 routes used by API keys. Refresh through POST /connect/token with grant_type=refresh_token before retrying an expired request. Disconnect by revoking the grant in Relay Settings > Integrations; reconnect creates a new grant and never reuses an unrelated API key or old grant. The Open Clips development registration is client_id=open-clips-dev with exact callback http://127.0.0.1:43123/callback and scopes destinations:read schedules:read schedules:write content:write publishes:retry.
 
 ## Capabilities
 
@@ -35,7 +41,7 @@ Read the manifest and API contract first. Authenticate with a workspace service 
 - publishes retry: publishes:retry. Retry only a failed job after inspection; Relay rejects jobs whose outcome still requires reconciliation.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
 
-Set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE. Profiles may name the API-key environment variable but must never contain its value. Before a mutation, run account current and require the expected workspace with --require-workspace.
+For the shipped CLI, set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE. Profiles may name the API-key environment variable but must never contain its value. Delegated clients call the same HTTP contract directly with their encrypted token store. Before a mutation, verify the expected workspace through a read endpoint and keep X-Publish-Relay-Workspace explicit.
 
 Use a unique idempotency key for every intended mutation. Reuse it only to replay the same request. Keep all list pagination server-side and follow returned cursors.
 

@@ -20,6 +20,8 @@ import { authenticateRequest } from '../../src/modules/identity/auth.routes.js';
 import { createPostgresAuthStore } from '../../src/modules/identity/auth.repository.js';
 import { AuthService } from '../../src/modules/identity/auth.service.js';
 import { verifyCsrfToken } from '../../src/modules/identity/session.js';
+import { createPostgresDelegatedAuthorizationStore } from '../../src/modules/delegated-authorization/delegated-authorization.repository.js';
+import { DelegatedAuthorizationService } from '../../src/modules/delegated-authorization/delegated-authorization.service.js';
 
 const database = new PGlite();
 const migrationNames = (await readdir(new URL('../../migrations/', import.meta.url)))
@@ -40,6 +42,11 @@ const application = createApplication(
   undefined,
   resolve(process.cwd(), 'dist/ui'),
   typedDatabase,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(typedDatabase)),
 );
 const fixtureKey = Buffer.alloc(32, 7);
 application.post('/api/oauth/x', async (request, reply) => {

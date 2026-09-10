@@ -129,6 +129,46 @@ describe('delegated authorization persistence', () => {
   });
 });
 
+describe('Open Clips development registration migration', () => {
+  it('registers the exact loopback callback and bounded delegated scopes', async () => {
+    const migration = await readFile(
+      new URL('../migrations/0033_open_clips_development_client.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toContain("'open-clips-dev'");
+    expect(migration).toContain("'http://127.0.0.1:43123/callback'");
+    expect(migration).toContain("'destinations:read'");
+    expect(migration).toContain("'schedules:read'");
+    expect(migration).toContain("'schedules:write'");
+    expect(migration).toContain("'content:write'");
+    expect(migration).toContain("'publishes:retry'");
+    expect(migration).not.toContain("'publishes:submit'");
+    await database.exec(migration);
+    const result = await database.query<{
+      displayName: string;
+      redirectUris: string[];
+      allowedScopes: string[];
+    }>(`
+      SELECT display_name AS "displayName", redirect_uris AS "redirectUris",
+        allowed_scopes AS "allowedScopes"
+      FROM registered_clients WHERE id = 'open-clips-dev'
+    `);
+    expect(result.rows).toEqual([
+      {
+        displayName: 'Open Clips (development)',
+        redirectUris: ['http://127.0.0.1:43123/callback'],
+        allowedScopes: [
+          'destinations:read',
+          'schedules:read',
+          'schedules:write',
+          'content:write',
+          'publishes:retry',
+        ],
+      },
+    ]);
+  });
+});
+
 function exchangeCode(challenge: string, accessHash: string, refreshHash: string) {
   return database.query(`
     SELECT * FROM exchange_delegated_authorization_code(

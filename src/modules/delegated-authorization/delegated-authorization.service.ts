@@ -2,11 +2,11 @@ import {
   createAuthorizationCode,
   createDelegatedToken,
   DELEGATED_ACCESS_TOKEN_TTL_SECONDS,
+  derivePkceChallenge,
   hashSecret,
   type AuthorizationRequest,
   type RegisteredClient,
   validateAuthorizationRequest,
-  verifyPkce,
 } from './protocol.js';
 
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -30,23 +30,20 @@ interface RefreshTokenRecord extends DelegatedPrincipal {
 
 export interface DelegatedAuthorizationStore {
   findClient(clientId: string): Promise<RegisteredClient | null>;
-  createGrantAndCode(input: AuthorizationCodeRecord & {
-    codeHash: string;
-    expiresAt: Date;
-  }): Promise<void>;
-  consumeCode(input: {
+  createGrantAndCode(
+    input: AuthorizationCodeRecord & {
+      codeHash: string;
+      expiresAt: Date;
+    },
+  ): Promise<void>;
+  exchangeCode(input: {
     codeHash: string;
     clientId: string;
     redirectUri: string;
+    codeChallenge: string;
     now: Date;
-  }): Promise<AuthorizationCodeRecord | null>;
-  createTokenPair(input: DelegatedPrincipal & {
-    accessTokenHash: string;
-    accessExpiresAt: Date;
-    refreshTokenHash: string;
-    refreshExpiresAt: Date;
-    rotatedFromTokenId?: string;
-  }): Promise<void>;
+    replacement: TokenPairPersistence;
+  }): Promise<DelegatedPrincipal | null>;
   rotateRefreshToken(input: {
     refreshTokenHash: string;
     now: Date;
@@ -99,16 +96,18 @@ export class DelegatedAuthorizationService {
     codeVerifier: string;
   }): Promise<TokenPair> {
     const now = this.now();
-    const authorization = await this.store.consumeCode({
+    const codeChallenge = derivePkceChallenge(input.codeVerifier);
+    if (!codeChallenge) throw new DelegatedTokenError('Authorization code is invalid or expired');
+    const pair = createTokenPair(now);
+    const authorization = await this.store.exchangeCode({
       codeHash: hashSecret(input.code),
       clientId: input.clientId,
       redirectUri: input.redirectUri,
+      codeChallenge,
       now,
+      replacement: pair.persisted,
     });
-    if (!authorization || !verifyPkce(input.codeVerifier, authorization.codeChallenge))
-      throw new DelegatedTokenError('Authorization code is invalid or expired');
-    const pair = createTokenPair(now);
-    await this.store.createTokenPair({ ...authorization, ...pair.persisted });
+    if (!authorization) throw new DelegatedTokenError('Authorization code is invalid or expired');
     return pair.public;
   }
 
@@ -140,12 +139,14 @@ export interface TokenPair {
   expiresIn: number;
 }
 
-function createTokenPair(now: Date): { public: TokenPair; persisted: {
+interface TokenPairPersistence {
   accessTokenHash: string;
   accessExpiresAt: Date;
   refreshTokenHash: string;
   refreshExpiresAt: Date;
-} } {
+}
+
+function createTokenPair(now: Date): { public: TokenPair; persisted: TokenPairPersistence } {
   const access = createDelegatedToken();
   const refresh = createDelegatedToken();
   return {

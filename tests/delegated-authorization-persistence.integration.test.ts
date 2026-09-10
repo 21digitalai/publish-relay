@@ -14,11 +14,14 @@ let database: PGlite;
 
 beforeEach(async () => {
   database = new PGlite();
-  await database.exec('CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;');
   for (const migration of migrations) await database.exec(await readFile(migration, 'utf8'));
   await database.exec(`
-    GRANT USAGE ON SCHEMA public TO publish_relay_app;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
+    CREATE ROLE publish_relay_web NOLOGIN NOBYPASSRLS;
+    GRANT USAGE ON SCHEMA public TO publish_relay_web;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_web;
+    GRANT EXECUTE ON FUNCTION public.exchange_delegated_authorization_code(text, text, text, text, text, text, timestamptz, timestamptz, timestamptz) TO publish_relay_web;
+    GRANT EXECUTE ON FUNCTION public.resolve_delegated_access_token(text, timestamptz) TO publish_relay_web;
+    GRANT EXECUTE ON FUNCTION public.rotate_delegated_refresh_token(text, text, text, timestamptz, timestamptz, timestamptz) TO publish_relay_web;
   `);
 });
 
@@ -28,7 +31,7 @@ describe('delegated authorization persistence', () => {
   it('isolates every grant-owned credential artifact by workspace', async () => {
     await seedGrant('00000000-0000-4000-8000-000000000101');
     await database.exec(`
-      SET ROLE publish_relay_app;
+      SET ROLE publish_relay_web;
       SELECT set_config('app.workspace_id', '00000000-0000-4000-8000-000000000102', false);
     `);
 
@@ -59,17 +62,21 @@ describe('delegated authorization persistence', () => {
   it('resolves opaque credentials without weakening tenant table RLS', async () => {
     const workspaceId = '00000000-0000-4000-8000-000000000131';
     await seedGrant(workspaceId);
-    await database.exec('SET ROLE publish_relay_app;');
+    await database.exec('SET ROLE publish_relay_web;');
 
     const code = await database.query<{ workspaceId: string }>(`
-      SELECT workspace_id AS "workspaceId" FROM consume_delegated_authorization_code(
-        'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', now()
+      SELECT workspace_id AS "workspaceId" FROM exchange_delegated_authorization_code(
+        'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', repeat('a', 43),
+        'access-issued', 'refresh-issued', now() + interval '15 minutes',
+        now() + interval '30 days', now()
       )
     `);
     expect(code.rows[0]?.workspaceId).toBe(workspaceId);
     const replay = await database.query(`
-      SELECT * FROM consume_delegated_authorization_code(
-        'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', now()
+      SELECT * FROM exchange_delegated_authorization_code(
+        'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', repeat('a', 43),
+        'access-replay', 'refresh-replay', now() + interval '15 minutes',
+        now() + interval '30 days', now()
       )
     `);
     expect(replay.rows).toHaveLength(0);
@@ -95,7 +102,42 @@ describe('delegated authorization persistence', () => {
     `);
     expect(refreshReplay.rows).toHaveLength(0);
   });
+
+  it('keeps the code usable after a verifier mismatch or token insert rollback', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000141';
+    await seedGrant(workspaceId);
+    await database.exec('SET ROLE publish_relay_web;');
+    const mismatch = await exchangeCode('wrong-challenge', 'access-wrong', 'refresh-wrong');
+    expect(mismatch.rows).toHaveLength(0);
+
+    await expect(exchangeCode('a'.repeat(43), 'access-same', 'refresh-conflict')).rejects.toThrow(
+      /unique/,
+    );
+    const successful = await exchangeCode('a'.repeat(43), 'access-recovered', 'refresh-recovered');
+    expect(successful.rows).toHaveLength(1);
+  });
+
+  it('allows only one exchange when requests race for the same code', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000151';
+    await seedGrant(workspaceId);
+    await database.exec('SET ROLE publish_relay_web;');
+    const results = await Promise.all([
+      exchangeCode('a'.repeat(43), 'access-race-a', 'refresh-race-a'),
+      exchangeCode('a'.repeat(43), 'access-race-b', 'refresh-race-b'),
+    ]);
+    expect(results.map((result) => result.rows.length).sort()).toEqual([0, 1]);
+  });
 });
+
+function exchangeCode(challenge: string, accessHash: string, refreshHash: string) {
+  return database.query(`
+    SELECT * FROM exchange_delegated_authorization_code(
+      'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', '${challenge}',
+      '${accessHash}', '${refreshHash}', now() + interval '15 minutes',
+      now() + interval '30 days', now()
+    )
+  `);
+}
 
 async function seedGrant(workspaceId: string, includeArtifacts = true): Promise<void> {
   await database.exec(`

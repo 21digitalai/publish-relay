@@ -66,11 +66,16 @@ export function verifySecret(value: string, expectedHash: string): boolean {
 }
 
 export function verifyPkce(codeVerifier: string, expectedChallenge: string): boolean {
-  if (!isPkceValue(codeVerifier) || !isPkceValue(expectedChallenge)) return false;
-  const actual = createHash('sha256').update(codeVerifier, 'ascii').digest('base64url');
+  const actual = derivePkceChallenge(codeVerifier);
+  if (!actual || !isPkceValue(expectedChallenge)) return false;
   const actualBytes = Buffer.from(actual);
   const expectedBytes = Buffer.from(expectedChallenge);
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+}
+
+export function derivePkceChallenge(codeVerifier: string): string | null {
+  if (!isPkceValue(codeVerifier)) return null;
+  return createHash('sha256').update(codeVerifier, 'ascii').digest('base64url');
 }
 
 function isPkceValue(value: string): boolean {

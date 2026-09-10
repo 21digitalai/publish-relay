@@ -58,31 +58,17 @@ export function createPostgresDelegatedAuthorizationStore(
       );
     },
 
-    async consumeCode(input) {
+    async exchangeCode(input) {
       const result = await database.execute<CredentialRow>(sql`
         SELECT grant_id AS "grantId", workspace_id AS "workspaceId", user_id AS "userId",
-          client_id AS "clientId", scopes, redirect_uri AS "redirectUri",
-          code_challenge AS "codeChallenge"
-        FROM consume_delegated_authorization_code(
-          ${input.codeHash}, ${input.clientId}, ${input.redirectUri}, ${input.now}
+          client_id AS "clientId", scopes
+        FROM exchange_delegated_authorization_code(
+          ${input.codeHash}, ${input.clientId}, ${input.redirectUri}, ${input.codeChallenge},
+          ${input.replacement.accessTokenHash}, ${input.replacement.refreshTokenHash},
+          ${input.replacement.accessExpiresAt}, ${input.replacement.refreshExpiresAt}, ${input.now}
         )
       `);
       return rows(result)[0] ?? null;
-    },
-
-    async createTokenPair(input) {
-      await withTenantTransaction(database, { workspaceId: input.workspaceId }, (transaction) =>
-        transaction.execute(sql`
-          INSERT INTO delegated_tokens (
-            workspace_id, grant_id, access_token_hash, refresh_token_hash, scopes,
-            access_expires_at, refresh_expires_at, rotated_from_token_id
-          ) VALUES (
-            ${input.workspaceId}, ${input.grantId}, ${input.accessTokenHash},
-            ${input.refreshTokenHash}, ${input.scopes}, ${input.accessExpiresAt},
-            ${input.refreshExpiresAt}, ${input.rotatedFromTokenId ?? null}
-          )
-        `),
-      );
     },
 
     async rotateRefreshToken(input) {

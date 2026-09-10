@@ -15,9 +15,11 @@ export function DefaultsSelect({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [menuPosition, setMenuPosition] = useState<React.CSSProperties>({});
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const listboxId = useId();
   const selected = options.find(([option]) => option === value)?.[1] ?? value;
 
@@ -52,6 +54,26 @@ export function DefaultsSelect({
     };
   }, [open, options.length]);
 
+  useEffect(() => {
+    if (open) optionRefs.current[activeIndex]?.focus();
+  }, [activeIndex, open]);
+
+  const openMenu = (direction: 'first' | 'last' | 'selected' = 'selected') => {
+    const selectedIndex = options.findIndex(([option]) => option === value);
+    setActiveIndex(
+      direction === 'first'
+        ? 0
+        : direction === 'last'
+          ? options.length - 1
+          : Math.max(selectedIndex, 0),
+    );
+    setOpen(true);
+  };
+
+  const moveActiveOption = (offset: number) => {
+    setActiveIndex((current) => (current + offset + options.length) % options.length);
+  };
+
   const selectOption = (option: string) => {
     onChange(option);
     setOpen(false);
@@ -70,13 +92,18 @@ export function DefaultsSelect({
         aria-haspopup="listbox"
         aria-controls={listboxId}
         onClick={() => {
-          setOpen((current) => !current);
+          if (open) setOpen(false);
+          else openMenu();
         }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') setOpen(false);
-          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          if (event.key === 'ArrowDown') {
             event.preventDefault();
-            setOpen(true);
+            openMenu('first');
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            openMenu('last');
           }
         }}
       >
@@ -92,8 +119,11 @@ export function DefaultsSelect({
             aria-label={label}
             style={menuPosition}
           >
-            {options.map(([option, text]) => (
+            {options.map(([option, text], index) => (
               <button
+                ref={(element) => {
+                  optionRefs.current[index] = element;
+                }}
                 type="button"
                 role="option"
                 aria-selected={option === value}
@@ -107,6 +137,22 @@ export function DefaultsSelect({
                     event.preventDefault();
                     setOpen(false);
                     triggerRef.current?.focus();
+                  }
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    moveActiveOption(1);
+                  }
+                  if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    moveActiveOption(-1);
+                  }
+                  if (event.key === 'Home') {
+                    event.preventDefault();
+                    setActiveIndex(0);
+                  }
+                  if (event.key === 'End') {
+                    event.preventDefault();
+                    setActiveIndex(options.length - 1);
                   }
                 }}
               >

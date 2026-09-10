@@ -21,6 +21,25 @@ interface Account {
   };
 }
 
+const YOUTUBE_CATEGORIES: [string, string][] = [
+  ['', 'No category'],
+  ['1', 'Film & Animation'],
+  ['2', 'Autos & Vehicles'],
+  ['10', 'Music'],
+  ['15', 'Pets & Animals'],
+  ['17', 'Sports'],
+  ['19', 'Travel & Events'],
+  ['20', 'Gaming'],
+  ['22', 'People & Blogs'],
+  ['23', 'Comedy'],
+  ['24', 'Entertainment'],
+  ['25', 'News & Politics'],
+  ['26', 'Howto & Style'],
+  ['27', 'Education'],
+  ['28', 'Science & Technology'],
+  ['29', 'Nonprofits & Activism'],
+];
+
 function getCsrfToken(): string {
   const entry = document.cookie
     .split('; ')
@@ -839,21 +858,13 @@ function AccountRow({
             />
             <small>Comma-separated; blank adds nothing.</small>
           </label>
-          <label className="youtube-defaults-text-field">
-            <span>
-              Category <small>(optional)</small>
-            </span>
-            <input
-              name="categoryId"
-              value={categoryId}
-              inputMode="numeric"
-              placeholder="e.g. 22"
-              onChange={(event) => {
-                setCategoryId(event.currentTarget.value);
-              }}
-            />
-            <small>Use the YouTube category ID; blank adds nothing.</small>
-          </label>
+          <DefaultsSelect
+            label="Category (optional)"
+            name="categoryId"
+            value={categoryId}
+            options={YOUTUBE_CATEGORIES}
+            onChange={setCategoryId}
+          />
           <button className="secondary-button" type="submit" disabled={savingDefaults}>
             {savingDefaults ? 'Saving…' : 'Save defaults'}
           </button>

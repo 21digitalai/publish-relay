@@ -265,6 +265,56 @@ describe('agent media upload PostgreSQL boundary', () => {
     'idempotency-key': 'media-upload-1',
   };
 
+  it('uploads and replays media through delegated content scope with actor isolation', async () => {
+    authenticate.mockResolvedValue(null);
+    authenticateDelegated.mockResolvedValue({
+      grantId: delegatedGrantId,
+      workspaceId,
+      userId,
+      clientId: 'open-clips-local',
+      scopes: ['content:write'],
+    });
+    const delegatedHeaders = {
+      ...headers,
+      authorization: 'Bearer delegated-token',
+      'idempotency-key': 'delegated-media-upload',
+    };
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: delegatedHeaders,
+      payload: png,
+    });
+    const replayed = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: delegatedHeaders,
+      payload: png,
+    });
+    expect(created.statusCode).toBe(201);
+    expect(replayed.headers['idempotency-replayed']).toBe('true');
+    const mutation = await database.query<{ actor_type: string; actor_id: string }>(`
+      SELECT actor_type, actor_id FROM api_mutation_results
+      WHERE idempotency_key = 'delegated-media-upload'
+    `);
+    expect(mutation.rows).toEqual([{ actor_type: 'delegated', actor_id: delegatedGrantId }]);
+
+    authenticateDelegated.mockResolvedValueOnce({
+      grantId: delegatedGrantId,
+      workspaceId,
+      userId,
+      clientId: 'open-clips-local',
+      scopes: ['destinations:read'],
+    });
+    const denied = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: { ...delegatedHeaders, 'idempotency-key': 'delegated-media-denied' },
+      payload: png,
+    });
+    expect(denied.statusCode).toBe(403);
+  });
+
   it('stores exact bytes once, replays identity, conflicts on changed bytes, and feeds post creation', async () => {
     const first = await application.inject({
       method: 'POST',
@@ -1517,6 +1567,33 @@ describe('agent publication retry PostgreSQL boundary', () => {
       );
     `);
   }
+
+  it('retries through delegated publish scope with grant event attribution', async () => {
+    await seedJob();
+    authenticate.mockResolvedValue(null);
+    authenticateDelegated.mockResolvedValue({
+      grantId: delegatedGrantId,
+      workspaceId,
+      userId,
+      clientId: 'open-clips-local',
+      scopes: ['publishes:retry'],
+    });
+    const response = await application.inject({
+      method: 'POST',
+      url: `/api/v1/jobs/${jobId}/retry`,
+      headers: { ...headers, authorization: 'Bearer delegated-token' },
+    });
+    expect(response.statusCode).toBe(202);
+    const event = await database.query<{ actor_type: string; actor_id: string }>(`
+      SELECT metadata->>'actorType' AS actor_type, metadata->>'actorId' AS actor_id
+      FROM publication_job_events
+      WHERE job_id = '${jobId}' AND reason = 'operator_retry'
+    `);
+    expect(event.rows).toEqual([{ actor_type: 'delegated', actor_id: delegatedGrantId }]);
+    expect(evaluateAction).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: { type: 'delegated', id: delegatedGrantId } }),
+    );
+  });
 
   it('requires authentication and publishes:retry capability', async () => {
     authenticate.mockResolvedValueOnce(null);

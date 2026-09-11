@@ -148,6 +148,9 @@ describe('deployment scripts', () => {
     const content = readFileSync(join(projectRoot, 'deploy/macos/publish-relay-local.sh'), 'utf8');
     expect(content).toContain('local.publish-relay.postgres');
     expect(content).toContain('<key>KeepAlive</key><true/>');
+    expect(content).toContain('$HOME/Library/LaunchAgents');
+    expect(content).toContain('launchctl enable "$domain/$label"');
+    expect(content).toContain('rm -f "$(plist_path "$label")"');
     expect(content).toContain('publish-relay/local-master-key');
     expect(content).toContain('publish-relay/local-cursor-secret');
     expect(content).toContain('publish_relay_migrator_login');

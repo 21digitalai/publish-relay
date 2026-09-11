@@ -16,6 +16,8 @@ node_bin="${PUBLISH_RELAY_NODE_BIN:-/opt/publish-relay/node24/bin/node}"
 npm_cli="${PUBLISH_RELAY_NPM_CLI:-/opt/publish-relay/node24/lib/node_modules/npm/bin/npm-cli.js}"
 psql_bin="${PUBLISH_RELAY_PSQL_BIN:-/usr/bin/psql}"
 health_url="${PUBLISH_RELAY_HEALTH_URL:-http://127.0.0.1:3106/health/ready}"
+health_attempts="${PUBLISH_RELAY_HEALTH_ATTEMPTS:-12}"
+health_interval_seconds="${PUBLISH_RELAY_HEALTH_INTERVAL_SECONDS:-2}"
 : "${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}"
 
 [[ "$release_id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid release id" >&2; exit 64; }
@@ -26,6 +28,8 @@ health_url="${PUBLISH_RELAY_HEALTH_URL:-http://127.0.0.1:3106/health/ready}"
 [[ -f "$npm_cli" ]] || { echo "Node 24 npm CLI is missing: $npm_cli" >&2; exit 69; }
 [[ -x "$psql_bin" ]] || { echo "PostgreSQL client is missing: $psql_bin" >&2; exit 69; }
 [[ "$($node_bin --version)" =~ ^v24\. ]] || { echo "selected Node executable is not Node 24" >&2; exit 69; }
+[[ "$health_attempts" =~ ^[1-9][0-9]*$ ]] || { echo "health attempts must be a positive integer" >&2; exit 64; }
+[[ "$health_interval_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "health interval must be a non-negative number" >&2; exit 64; }
 
 install -d -o "$service_user" -g "$service_user" "$release_root"
 install -d -o "$service_user" -g "$service_user" "$release_directory"
@@ -47,4 +51,14 @@ ln -sfn "$release_directory" "${current_link}.next"
 mv -Tf "${current_link}.next" "$current_link"
 systemctl restart publish-relay-web publish-relay-worker
 systemctl is-active --quiet publish-relay-web publish-relay-worker
-curl --fail --silent --show-error "$health_url" >/dev/null
+for ((health_attempt = 1; health_attempt <= health_attempts; health_attempt += 1)); do
+  if curl --fail --silent --show-error "$health_url" >/dev/null; then
+    exit 0
+  fi
+  if ((health_attempt < health_attempts)); then
+    sleep "$health_interval_seconds"
+  fi
+done
+
+echo "readiness probe failed after ${health_attempts} attempts: ${health_url}" >&2
+exit 7

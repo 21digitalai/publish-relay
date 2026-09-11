@@ -66,7 +66,10 @@ function createDeployFixture(): {
   );
   writeExecutable(join(bin, 'ln'), 'echo "ln $*" >> "$COMMAND_LOG"; command /bin/ln "$@"');
   writeExecutable(join(bin, 'systemctl'), 'echo "systemctl $*" >> "$COMMAND_LOG"');
-  writeExecutable(join(bin, 'curl'), 'echo "curl $*" >> "$COMMAND_LOG"');
+  writeExecutable(
+    join(bin, 'curl'),
+    'echo "curl $*" >> "$COMMAND_LOG"; attempt_file="${CURL_ATTEMPT_FILE:-$COMMAND_LOG.curl-attempts}"; attempt=0; [[ -f "$attempt_file" ]] && attempt="$(cat "$attempt_file")"; attempt=$((attempt + 1)); echo "$attempt" > "$attempt_file"; [[ "${FAIL_READINESS:-0}" != 1 && "$attempt" -ge "${READINESS_SUCCEEDS_ON_ATTEMPT:-1}" ]]',
+  );
   return {
     environment: {
       ...process.env,
@@ -79,6 +82,8 @@ function createDeployFixture(): {
       PUBLISH_RELAY_NPM_CLI: npmCli,
       PUBLISH_RELAY_PSQL_BIN: psqlBin,
       PUBLISH_RELAY_HEALTH_URL: 'http://127.0.0.1:3999/health/ready',
+      PUBLISH_RELAY_HEALTH_ATTEMPTS: '3',
+      PUBLISH_RELAY_HEALTH_INTERVAL_SECONDS: '0',
       MIGRATION_DATABASE_URL: 'postgresql://migrator@127.0.0.1/publish_relay',
       PGPASSWORD: 'fixture-password',
     },
@@ -206,6 +211,30 @@ describe('deployment scripts', () => {
     );
     expect(result.status).toBe(69);
     expect(() => readFileSync(fixture.log)).toThrow();
+  });
+
+  it('retries readiness until the restarted service becomes healthy', () => {
+    const fixture = createDeployFixture();
+    execFileSync(
+      'bash',
+      [join(projectRoot, 'deploy/publish-release.sh'), 'release-readiness-retry', fixture.source],
+      { env: { ...fixture.environment, READINESS_SUCCEEDS_ON_ATTEMPT: '2' } },
+    );
+    const commands = readFileSync(fixture.log, 'utf8');
+    expect(commands.match(/curl --fail/g)).toHaveLength(2);
+    expect(readlinkSync(fixture.currentLink)).toContain('release-readiness-retry');
+  });
+
+  it('fails the release when readiness remains unhealthy after bounded retries', () => {
+    const fixture = createDeployFixture();
+    const result = spawnSync(
+      'bash',
+      [join(projectRoot, 'deploy/publish-release.sh'), 'release-readiness-failure', fixture.source],
+      { env: { ...fixture.environment, FAIL_READINESS: '1' }, encoding: 'utf8' },
+    );
+    expect(result.status).toBe(7);
+    expect(result.stderr).toContain('readiness probe failed after 3 attempts');
+    expect(readFileSync(fixture.log, 'utf8').match(/curl --fail/g)).toHaveLength(3);
   });
 
   it('does not switch the current release when the production migration fails', () => {

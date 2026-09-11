@@ -177,5 +177,7 @@ Provider runtime registration is isolated: missing provider-specific credentials
 
 # Browser create response
 
+Production releases probe readiness only after both systemd units restart. The canonical release script uses a bounded configurable retry window (12 attempts, two seconds apart by default), retains curl's fail-closed behavior, and exits nonzero after exhaustion so deployment orchestration can invoke the existing rollback path rather than treating a late or failed startup as success.
+
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.
 - Browser Composer uploads remain unattached until post creation succeeds. Its authenticated CSRF-protected media delete endpoint atomically tombstones only tenant-owned ready media with no revision reference, then removes the local object; attached media is never deleted through this abandonment path.

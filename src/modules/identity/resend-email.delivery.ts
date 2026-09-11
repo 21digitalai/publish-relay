@@ -6,7 +6,7 @@ interface ResendResponse {
 
 export class ResendEmailDelivery implements EmailDelivery {
   constructor(
-    private readonly config: { apiKey: string; from: string },
+    private readonly config: { apiKey: string; from: string; timeoutMs?: number },
     private readonly request: typeof fetch = fetch,
   ) {
     if (!config.apiKey || !config.from) throw new Error('Resend email configuration is required');
@@ -25,6 +25,7 @@ export class ResendEmailDelivery implements EmailDelivery {
         'content-type': 'application/json',
         'idempotency-key': input.correlationId,
       },
+      signal: AbortSignal.timeout(this.config.timeoutMs ?? 10_000),
       body: JSON.stringify({
         from: this.config.from,
         to: [input.recipient],

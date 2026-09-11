@@ -1,7 +1,12 @@
 import { eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { auditEvents, registeredClients } from '../../database/schema.js';
+import {
+  auditEvents,
+  delegatedAuthorizationCodes,
+  delegatedGrants,
+  registeredClients,
+} from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type {
   DelegatedAuthorizationStore,
@@ -52,11 +57,13 @@ export function createPostgresDelegatedAuthorizationStore(
         database,
         { workspaceId: input.workspaceId, userId: input.userId },
         async (transaction) => {
-          await transaction.execute(sql`
-            INSERT INTO delegated_grants (id, workspace_id, user_id, client_id, scopes)
-            VALUES (${input.grantId}, ${input.workspaceId}, ${input.userId},
-              ${input.clientId}, ${input.scopes})
-          `);
+          await transaction.insert(delegatedGrants).values({
+            id: input.grantId,
+            workspaceId: input.workspaceId,
+            userId: input.userId,
+            clientId: input.clientId,
+            scopes: input.scopes,
+          });
           await transaction.insert(auditEvents).values({
             workspaceId: input.workspaceId,
             actorType: 'user',
@@ -67,15 +74,16 @@ export function createPostgresDelegatedAuthorizationStore(
             requestId: input.requestId,
             metadata: { clientId: input.clientId, scopes: input.scopes },
           });
-          await transaction.execute(sql`
-            INSERT INTO delegated_authorization_codes (
-              workspace_id, grant_id, client_id, code_hash, redirect_uri,
-              scopes, code_challenge, expires_at
-            ) VALUES (
-              ${input.workspaceId}, ${input.grantId}, ${input.clientId}, ${input.codeHash},
-              ${input.redirectUri}, ${input.scopes}, ${input.codeChallenge}, ${input.expiresAt}
-            )
-          `);
+          await transaction.insert(delegatedAuthorizationCodes).values({
+            workspaceId: input.workspaceId,
+            grantId: input.grantId,
+            clientId: input.clientId,
+            codeHash: input.codeHash,
+            redirectUri: input.redirectUri,
+            scopes: input.scopes,
+            codeChallenge: input.codeChallenge,
+            expiresAt: input.expiresAt,
+          });
         },
       );
     },

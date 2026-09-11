@@ -174,6 +174,34 @@ export const authRateLimitBuckets = pgTable(
   ],
 );
 
+export const authEmailOutbox = pgTable(
+  'auth_email_outbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    challengeId: uuid('challenge_id')
+      .notNull()
+      .references(() => loginChallenges.id, { onDelete: 'cascade' }),
+    keyVersion: text('key_version').notNull(),
+    wrappedKey: bytea('wrapped_key').notNull(),
+    wrappedKeyNonce: bytea('wrapped_key_nonce').notNull(),
+    wrappedKeyTag: bytea('wrapped_key_tag').notNull(),
+    ciphertext: bytea('ciphertext').notNull(),
+    nonce: bytea('nonce').notNull(),
+    tag: bytea('tag').notNull(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
+    leaseOwner: text('lease_owner'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    lastErrorCode: text('last_error_code'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('auth_email_outbox_challenge_unique').on(table.challengeId),
+    index('auth_email_outbox_available_idx').on(table.availableAt, table.leaseExpiresAt),
+  ],
+);
+
 export const apiKeys = pgTable(
   'api_keys',
   {

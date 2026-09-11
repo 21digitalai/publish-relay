@@ -288,6 +288,13 @@
       "when": 1789146644544,
       "tag": "0040_ambiguous_loners",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789148424063,
+      "tag": "0041_chilly_bug",
+      "breakpoints": true
     }
   ]
 }

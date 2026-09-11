@@ -8,7 +8,7 @@ import { createPostgresAuthStore } from '../modules/identity/auth.repository.js'
 import { AuthService } from '../modules/identity/auth.service.js';
 import { createPostgresMagicLinkStore } from '../modules/identity/magic-link.repository.js';
 import { MagicLinkService, type EmailDelivery } from '../modules/identity/magic-link.service.js';
-import { ResendEmailDelivery } from '../modules/identity/resend-email.delivery.js';
+import { AuthEmailOutboxDelivery } from '../modules/identity/auth-email-outbox.js';
 import { createPostgresApiKeyStore } from '../modules/identity/api-key.repository.js';
 import { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
@@ -40,6 +40,7 @@ if (
 )
   throw new Error('X OAuth runtime configuration is required for the web process');
 const mediaStorage = new LocalMediaStorage(config.MEDIA_STORAGE_ROOT);
+const masterKeys = new RuntimeMasterKeyProvider(activeKeyVersion);
 await mediaStorage.cleanupStaleStaging({
   staleBefore: new Date(Date.now() - (config.MEDIA_STAGING_STALE_MS ?? DEFAULT_STAGING_STALE_MS)),
 });
@@ -50,7 +51,7 @@ const application = createApplication(
   undefined,
   database,
   {
-    keys: new RuntimeMasterKeyProvider(activeKeyVersion),
+    keys: masterKeys,
     client: new XHttpClient({ consumerKey: xConsumerKey, consumerSecret: xConsumerSecret }),
     callbackUrl: new URL('/api/oauth/x/callback', publicOrigin).toString(),
   },
@@ -58,7 +59,7 @@ const application = createApplication(
   undefined,
   config.PUBLISH_RELAY_GOOGLE_CLIENT_ID && config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET
     ? {
-        keys: new RuntimeMasterKeyProvider(activeKeyVersion),
+        keys: masterKeys,
         client: new YouTubeHttpClient({
           clientId: config.PUBLISH_RELAY_GOOGLE_CLIENT_ID,
           clientSecret: config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET,
@@ -70,10 +71,7 @@ const application = createApplication(
   new MagicLinkService(
     createPostgresMagicLinkStore(database),
     config.NODE_ENV === 'production'
-      ? new ResendEmailDelivery({
-          apiKey: config.PUBLISH_RELAY_RESEND_API_KEY!,
-          from: config.PUBLISH_RELAY_AUTH_EMAIL_FROM!,
-        })
+      ? new AuthEmailOutboxDelivery(database, masterKeys)
       : ({
           sendMagicLink: async () => {
             throw new Error('Email delivery is disabled outside production');

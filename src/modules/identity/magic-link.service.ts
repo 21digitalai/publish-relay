@@ -48,10 +48,11 @@ export interface MagicLinkStore {
 
 export interface EmailDelivery {
   sendMagicLink: (input: {
+    challengeId?: string;
     recipient: string;
     url: string;
     correlationId: string;
-  }) => Promise<{ messageId: string }>;
+  }) => Promise<{ messageId: string; queued?: boolean }>;
 }
 
 export interface MagicLinkRequestResult {
@@ -183,12 +184,15 @@ export class MagicLinkService {
 
     try {
       const delivered = await this.delivery.sendMagicLink({
+        challengeId,
         recipient: email,
         url: url.toString(),
         correlationId: input.correlationId,
       });
-      await this.store.markDelivery(challengeId, 'sent', delivered.messageId);
-      this.metrics.increment('delivery_succeeded');
+      if (!delivered.queued) {
+        await this.store.markDelivery(challengeId, 'sent', delivered.messageId);
+        this.metrics.increment('delivery_succeeded');
+      }
     } catch (error) {
       await this.store.markDelivery(challengeId, 'failed');
       this.metrics.increment('delivery_failed');

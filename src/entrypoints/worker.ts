@@ -21,6 +21,8 @@ import {
   dispatchDueYouTubeJobs,
   reconcileYouTubeJobs,
 } from '../modules/providers/youtube-media-dispatch.service.js';
+import { dispatchAuthEmailOutbox } from '../modules/identity/auth-email-outbox.js';
+import { ResendEmailDelivery } from '../modules/identity/resend-email.delivery.js';
 
 const config = loadRuntimeConfig();
 const shutdownController = new AbortController();
@@ -73,6 +75,13 @@ const youtubeRuntime =
         leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
       }
     : null;
+const authEmailDelivery =
+  config.PUBLISH_RELAY_RESEND_API_KEY && config.PUBLISH_RELAY_AUTH_EMAIL_FROM
+    ? new ResendEmailDelivery({
+        apiKey: config.PUBLISH_RELAY_RESEND_API_KEY,
+        from: config.PUBLISH_RELAY_AUTH_EMAIL_FROM,
+      })
+    : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
@@ -89,6 +98,14 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 while (!shutdownController.signal.aborted) {
+  if (authEmailDelivery) {
+    const authEmail = await dispatchAuthEmailOutbox(database, keys, authEmailDelivery, {
+      workerId: config.WORKER_ID ?? 'publish-relay-worker',
+      leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+    });
+    if (authEmail.sent || authEmail.failed)
+      process.stdout.write(`${JSON.stringify({ event: 'auth_email_cycle', ...authEmail })}\n`);
+  }
   if (xRuntime) {
     await reconcileXJobs(xRuntime);
     await dispatchDueXJobs(xRuntime);

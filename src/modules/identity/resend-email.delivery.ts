@@ -13,6 +13,7 @@ export class ResendEmailDelivery implements EmailDelivery {
   }
 
   async sendMagicLink(input: {
+    challengeId?: string;
     recipient: string;
     url: string;
     correlationId: string;

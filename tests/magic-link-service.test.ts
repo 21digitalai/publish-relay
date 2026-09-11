@@ -127,6 +127,19 @@ describe('MagicLinkService', () => {
     expect(store.markDelivery).toHaveBeenCalledWith('challenge-1', 'failed');
   });
 
+  it('leaves queued delivery pending until the durable worker confirms the provider send', async () => {
+    const store = createStore();
+    const delivery = createDelivery();
+    vi.mocked(delivery.sendMagicLink).mockResolvedValue({ messageId: 'outbox-1', queued: true });
+    await expect(createService(store, delivery).requestLogin(request)).resolves.toEqual({
+      accepted: true,
+    });
+    expect(delivery.sendMagicLink).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 'challenge-1' }),
+    );
+    expect(store.markDelivery).not.toHaveBeenCalled();
+  });
+
   it('records bounded lifecycle metrics without email or token labels', async () => {
     const store = createStore();
     const service = createService(store, createDelivery());

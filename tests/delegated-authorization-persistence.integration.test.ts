@@ -1,7 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
 import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { createPostgresDelegatedAuthorizationStore } from '../src/modules/delegated-authorization/delegated-authorization.repository.js';
 
 const migrations = [
   new URL('../migrations/0000_identity_tenancy.sql', import.meta.url),
@@ -54,6 +58,101 @@ describe('delegated authorization persistence', () => {
       UPDATE delegated_grants SET revoked_at = now() WHERE workspace_id = '${workspaceId}';
     `);
     await expect(seedGrant(workspaceId, false)).resolves.toBeUndefined();
+  });
+
+  it('atomically replaces an active grant and its credential family on reconnect', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000112';
+    const userId = '00000000-0000-4000-8000-000000000199';
+    const replacementGrantId = '00000000-0000-4000-8000-000000000113';
+    await seedGrant(workspaceId);
+    const original = await database.query<{ id: string }>(
+      `SELECT id FROM delegated_grants WHERE workspace_id = '${workspaceId}'`,
+    );
+    const originalGrantId = original.rows[0]?.id;
+    expect(originalGrantId).toBeDefined();
+
+    const store = createPostgresDelegatedAuthorizationStore(
+      drizzle(database) as unknown as NodePgDatabase,
+    );
+    await store.createGrantAndCode({
+      requestId: 'request-reconnect',
+      grantId: replacementGrantId,
+      workspaceId,
+      userId,
+      clientId: 'open-clips-dev',
+      codeHash: 'code-replacement',
+      redirectUri: 'http://127.0.0.1/callback',
+      scopes: ['destinations:read'],
+      codeChallenge: 'b'.repeat(43),
+      expiresAt: new Date('2026-09-11T12:00:00Z'),
+    });
+
+    const grants = await database.query<{ id: string; revokedAt: Date | null }>(`
+      SELECT id, revoked_at AS "revokedAt"
+      FROM delegated_grants WHERE workspace_id = '${workspaceId}' ORDER BY created_at, id
+    `);
+    const revokedGrant = grants.rows.find((grant) => grant.id === originalGrantId);
+    expect(revokedGrant?.revokedAt).toBeInstanceOf(Date);
+    expect(grants.rows.some((grant) => grant.id === replacementGrantId)).toBe(true);
+    expect(grants.rows.filter((grant) => grant.revokedAt === null)).toEqual([
+      { id: replacementGrantId, revokedAt: null },
+    ]);
+
+    const tokens = await database.query<{ grantId: string; revokedAt: Date | null }>(`
+      SELECT grant_id AS "grantId", revoked_at AS "revokedAt"
+      FROM delegated_tokens WHERE workspace_id = '${workspaceId}'
+    `);
+    expect(tokens.rows).toHaveLength(1);
+    expect(tokens.rows[0]?.grantId).toBe(originalGrantId);
+    expect(tokens.rows[0]?.revokedAt).toBeInstanceOf(Date);
+
+    const audits = await database.query<{
+      action: string;
+      targetId: string;
+      metadata: { reason?: string; replacementGrantId?: string };
+    }>(`
+      SELECT action, target_id AS "targetId", metadata
+      FROM audit_events WHERE workspace_id = '${workspaceId}' ORDER BY created_at, id
+    `);
+    expect(audits.rows).toHaveLength(2);
+    expect(audits.rows).toEqual(
+      expect.arrayContaining([
+        {
+          action: 'delegated_grant.revoked',
+          targetId: originalGrantId,
+          metadata: { reason: 'reconnected', replacementGrantId },
+        },
+        {
+          action: 'delegated_grant.approved',
+          targetId: replacementGrantId,
+          metadata: { clientId: 'open-clips-dev', scopes: ['destinations:read'] },
+        },
+      ]),
+    );
+
+    const codes = await database.query<{ grantId: string; codeHash: string }>(`
+      SELECT grant_id AS "grantId", code_hash AS "codeHash"
+      FROM delegated_authorization_codes WHERE workspace_id = '${workspaceId}' ORDER BY created_at
+    `);
+    expect(codes.rows).toEqual(
+      expect.arrayContaining([
+        { grantId: originalGrantId, codeHash: 'code-same' },
+        { grantId: replacementGrantId, codeHash: 'code-replacement' },
+      ]),
+    );
+    expect(
+      (await database.query(`SELECT * FROM resolve_delegated_access_token('access-same', now())`))
+        .rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await database.query(`SELECT * FROM exchange_delegated_authorization_code(
+          'code-same', 'open-clips-dev', 'http://127.0.0.1/callback', repeat('a', 43),
+          'access-old-code', 'refresh-old-code', now() + interval '15 minutes',
+          now() + interval '30 days', now()
+        )`)
+      ).rows,
+    ).toHaveLength(0);
   });
 
   it('rejects duplicate authorization, access, and refresh hashes', async () => {

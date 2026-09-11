@@ -3,6 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Readable } from 'node:stream';
 import { z } from 'zod';
 
+import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
@@ -339,10 +340,15 @@ export function registerBrowserWorkflowRoutes(
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     const params = draftParamsSchema.safeParse(request.params);
     if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid draft id' });
-    const draft = await getExternalDraftForWorkspace(dependencies.database, {
-      workspaceId: identity.workspaceId,
-      draftId: params.data.draftId,
-    });
+    const draft = await withTenantTransaction(
+      dependencies.database,
+      { workspaceId: identity.workspaceId, userId: identity.userId },
+      (transaction) =>
+        getExternalDraftForWorkspace(transaction, {
+          workspaceId: identity.workspaceId,
+          draftId: params.data.draftId,
+        }),
+    );
     if (!draft) return reply.code(404).send({ data: null, error: 'Draft was not found' });
     return reply.send({
       data: { id: draft.id, label: draft.label, mediaIds: draft.mediaIds, postId: draft.postId },

@@ -17,11 +17,13 @@ const deleteUnattachedMedia = vi.fn();
 const getExternalDraftForWorkspace = vi.fn();
 const transitionExternalDraft = vi.fn();
 const createPostInTransaction = vi.fn();
+const withTenantTransaction = vi.fn(async (database, _options, operation) => operation(database));
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest,
   CSRF_COOKIE: 'publish_relay_csrf',
 }));
+vi.mock('../src/database/tenant-transaction.js', () => ({ withTenantTransaction }));
 vi.mock('../src/modules/identity/session.js', () => ({ verifyCsrfToken }));
 vi.mock('../src/modules/content/browser-idempotency.repository.js', () => ({
   executeBrowserMutation,
@@ -153,6 +155,11 @@ describe('browser workflow read contract', () => {
       workspaceId,
       draftId,
     });
+    expect(withTenantTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      { workspaceId, userId: 'user' },
+      expect.any(Function),
+    );
     expect(response.json()).toEqual({
       data: {
         id: draftId,

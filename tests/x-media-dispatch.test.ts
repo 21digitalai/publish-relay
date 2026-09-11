@@ -52,6 +52,8 @@ const databaseTransaction = {
   from: vi.fn(() => databaseTransaction),
   innerJoin: vi.fn(() => databaseTransaction),
   leftJoin: vi.fn(() => databaseTransaction),
+  insert: vi.fn(() => databaseTransaction),
+  values: vi.fn(() => Promise.resolve()),
   where: vi.fn(() => databaseTransaction),
   orderBy: vi.fn(() =>
     Promise.resolve([
@@ -69,10 +71,14 @@ const databaseTransaction = {
 describe('X media dispatch composition', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('preserves migrated thread order as one X Premium text payload', () => {
+  it('preserves migrated thread order as native provider parts', () => {
     expect(
       normalizeStoredXContent({ kind: 'thread', posts: ['Opening', 'Middle', 'Closing'] }),
-    ).toEqual({ kind: 'text', text: 'Opening\n\nMiddle\n\nClosing' });
+    ).toEqual({
+      kind: 'thread',
+      text: 'Opening',
+      posts: ['Opening', 'Middle', 'Closing'],
+    });
   });
 
   it('rejects malformed migrated thread content instead of publishing media by itself', () => {
@@ -171,7 +177,7 @@ describe('X media dispatch composition', () => {
     );
   });
 
-  it('sends migrated thread text and staged media together in the provider request', async () => {
+  it('sends migrated thread parts as ordered native replies with media only on root', async () => {
     vi.mocked(claimDueJobs).mockResolvedValue([
       {
         id: 'job-thread',
@@ -184,15 +190,17 @@ describe('X media dispatch composition', () => {
         leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
       },
     ]);
-    databaseTransaction.orderBy.mockResolvedValueOnce([
-      {
-        credentialId: 'credential-1',
-        accountId: 'x-account-1',
-        content: { kind: 'thread', posts: ['Opening', 'Closing'] } as never,
-        mediaId: 'media-1',
-        mimeType: 'image/png',
-      },
-    ]);
+    databaseTransaction.orderBy
+      .mockResolvedValueOnce([
+        {
+          credentialId: 'credential-1',
+          accountId: 'x-account-1',
+          content: { kind: 'thread', posts: ['Opening', 'Closing'] } as never,
+          mediaId: 'media-1',
+          mimeType: 'image/png',
+        },
+      ])
+      .mockResolvedValueOnce([]);
     vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
     vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
     vi.mocked(stageXMedia).mockResolvedValue({ mediaId: 'x-media-1', state: 'succeeded' });
@@ -209,8 +217,13 @@ describe('X media dispatch composition', () => {
       }),
     ).resolves.toBe(1);
 
-    expect(createPost).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Opening\n\nClosing', mediaIds: ['x-media-1'] }),
+    expect(createPost).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ text: 'Opening', mediaIds: ['x-media-1'] }),
+    );
+    expect(createPost).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ text: 'Closing', mediaIds: [], replyToTweetId: 'post-1' }),
     );
   });
 

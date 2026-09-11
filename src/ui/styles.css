@@ -1317,8 +1317,13 @@ select:focus-visible {
 }
 .external-result-link {
   display: inline-flex;
-  margin-top: 16px;
   text-decoration: none;
+}
+.external-result-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
 }
 .inline-confirm {
   display: flex;

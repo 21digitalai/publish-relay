@@ -92,7 +92,11 @@ interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview' | 'media'> {
   media?: DetailMediaDto[];
   attempts?: AttemptDto[];
   activity?: ActivityDto[];
-  providerResult?: { id: string; url: string | null } | null;
+  providerResult?: {
+    id: string;
+    url: string | null;
+    threadParts?: { position: number; id: string; url: string }[];
+  } | null;
   creator?: ActorDto;
   lastMutator?: ActorDto;
 }
@@ -1732,9 +1736,18 @@ export function JobDetailPage() {
             </aside>
           </div>
           {detail?.providerResult?.url && (
-            <a className="primary-button external-result-link" href={detail.providerResult.url}>
-              View on X
-            </a>
+            <div className="external-result-list" aria-label="Published X thread">
+              {(detail.providerResult.threadParts?.length
+                ? detail.providerResult.threadParts
+                : [{ position: 0, id: detail.providerResult.id, url: detail.providerResult.url }]
+              ).map((part) => (
+                <a className="primary-button external-result-link" href={part.url} key={part.id}>
+                  {detail.providerResult?.threadParts?.length
+                    ? `View post ${String(part.position + 1)} on X`
+                    : 'View on X'}
+                </a>
+              ))}
+            </div>
           )}
           {job.state === 'failed' && (
             <div className="recovery-panel" role="alert">

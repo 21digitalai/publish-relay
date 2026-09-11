@@ -12,6 +12,7 @@ import {
   providerConnections,
   publicationJobs,
   revisionMedia,
+  xThreadParts,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { getActiveCredential } from '../credentials/credential.repository.js';
@@ -26,13 +27,20 @@ import {
   resolveReconciliation,
   startDispatchAttempt,
 } from '../scheduler/job.repository.js';
-import { XProviderAdapter, type XClient } from './x-adapter.js';
+import {
+  publishXThread,
+  toXPublishFailure,
+  XProviderAdapter,
+  type XClient,
+  type XPublishedThreadPart,
+} from './x-adapter.js';
 import { XHttpClient, type XHttpClientOptions } from './x-http-client.js';
 import {
   stageXMedia,
   type XMediaSource,
   type XMediaUploadClient,
 } from './x-media-staging.service.js';
+import type { PublishOutcome } from './contract.js';
 
 export interface XMediaDispatchInput {
   workspaceId: string;
@@ -62,9 +70,10 @@ interface StoredXContent {
 }
 
 export function normalizeStoredXContent(content: StoredXContent): {
-  kind: 'text' | 'quote';
+  kind: 'text' | 'quote' | 'thread';
   text: string;
   quotedPostId?: string;
+  posts?: string[];
 } {
   const kind = typeof content.kind === 'string' ? content.kind : content.type;
   if (kind === 'thread') {
@@ -72,7 +81,7 @@ export function normalizeStoredXContent(content: StoredXContent): {
       throw new Error('Stored X thread content is invalid');
     const posts = (content.posts as string[]).map((post) => post.trim()).filter(Boolean);
     if (posts.length === 0) throw new Error('Stored X thread content is empty');
-    return { kind: 'text', text: posts.join('\n\n') };
+    return { kind: 'thread', text: posts[0] ?? '', posts };
   }
   const text = typeof content.text === 'string' ? content.text : '';
   if (kind === 'quote') {
@@ -82,6 +91,43 @@ export function normalizeStoredXContent(content: StoredXContent): {
   }
   if (kind !== 'text') throw new Error(`Stored X content kind is unsupported: ${String(kind)}`);
   return { kind: 'text', text };
+}
+
+async function loadPublishedXThreadParts(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+): Promise<XPublishedThreadPart[]> {
+  return withTenantTransaction(database, { workspaceId }, (transaction) =>
+    transaction
+      .select({
+        position: xThreadParts.position,
+        externalPostId: xThreadParts.externalPostId,
+        externalUrl: xThreadParts.externalUrl,
+      })
+      .from(xThreadParts)
+      .where(and(eq(xThreadParts.workspaceId, workspaceId), eq(xThreadParts.jobId, jobId)))
+      .orderBy(asc(xThreadParts.position)),
+  );
+}
+
+async function savePublishedXThreadPart(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+  part: XPublishedThreadPart,
+  now: Date,
+): Promise<void> {
+  await withTenantTransaction(database, { workspaceId }, async (transaction) => {
+    await transaction.insert(xThreadParts).values({
+      workspaceId,
+      jobId,
+      position: part.position,
+      externalPostId: part.externalPostId,
+      externalUrl: part.externalUrl,
+      publishedAt: now,
+    });
+  });
 }
 
 export function createLocalXMediaSource(
@@ -238,30 +284,6 @@ export async function dispatchDueXJobs(
       );
       if (stagedMedia.state === 'pending') continue;
       const normalized = normalizeStoredXContent(context.content);
-      const text = normalized.text;
-      const content =
-        normalized.kind === 'quote' && normalized.quotedPostId
-          ? {
-              kind: 'quote' as const,
-              text,
-              quotedPostId: normalized.quotedPostId,
-              media: context.media,
-            }
-          : { kind: 'text' as const, text, media: context.media };
-      const adapter = new XProviderAdapter(
-        runtime.createClient(plaintext.toString('utf8')) as XMediaUploadClient & XClient,
-      );
-      const staged = await adapter.stage(
-        context.accountId,
-        {
-          ...content,
-          media: content.media.map((media, index) => ({
-            ...media,
-            id: stagedMedia.mediaIds[index] ?? media.id,
-          })),
-        },
-        idempotencyKey,
-      );
       const attempt = await startDispatchAttempt(runtime.database, {
         workspaceId: job.workspaceId,
         jobId: job.id,
@@ -270,10 +292,64 @@ export async function dispatchDueXJobs(
         now,
       });
       if (!attempt) continue;
-      const outcome = await adapter.publish(staged);
-      const failed = outcome.status === 'failed';
+      const client = runtime.createClient(plaintext.toString('utf8')) as XMediaUploadClient &
+        XClient;
+      const adapter = new XProviderAdapter(client);
+      let outcome: PublishOutcome;
+      if (normalized.kind === 'thread' && normalized.posts) {
+        const completed = await loadPublishedXThreadParts(
+          runtime.database,
+          job.workspaceId,
+          job.id,
+        );
+        try {
+          const published = await publishXThread(
+            client,
+            normalized.posts.map((text, position) => ({
+              text,
+              mediaIds: position === 0 ? stagedMedia.mediaIds : [],
+            })),
+            idempotencyKey,
+            completed,
+            (part) =>
+              savePublishedXThreadPart(runtime.database, job.workspaceId, job.id, part, new Date()),
+          );
+          const root = published[0];
+          if (!root) throw new Error('X thread did not publish a root post');
+          outcome = {
+            status: 'published',
+            externalPostId: root.externalPostId,
+            externalUrl: root.externalUrl,
+          };
+        } catch (error) {
+          outcome = toXPublishFailure(error);
+        }
+      } else {
+        const content =
+          normalized.kind === 'quote' && normalized.quotedPostId
+            ? {
+                kind: 'quote' as const,
+                text: normalized.text,
+                quotedPostId: normalized.quotedPostId,
+                media: context.media,
+              }
+            : { kind: 'text' as const, text: normalized.text, media: context.media };
+        const staged = await adapter.stage(
+          context.accountId,
+          {
+            ...content,
+            media: content.media.map((media, index) => ({
+              ...media,
+              id: stagedMedia.mediaIds[index] ?? media.id,
+            })),
+          },
+          idempotencyKey,
+        );
+        outcome = await adapter.publish(staged);
+      }
       const retryAt =
-        failed && (outcome.code === 'rate_limit' || outcome.code === 'transient')
+        outcome.status === 'failed' &&
+        (outcome.code === 'rate_limit' || outcome.code === 'transient')
           ? new Date(now.getTime() + (outcome.retryAfterSeconds ?? 30) * 1000)
           : undefined;
       await finishDispatchAttempt(runtime.database, {

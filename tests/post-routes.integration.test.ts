@@ -58,6 +58,7 @@ const migrations = [
   '0034_simple_jamie_braddock.sql',
   '0035_delegated_account_receipt.sql',
   '0037_brown_wallflower.sql',
+  '0038_fancy_scorpion.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';

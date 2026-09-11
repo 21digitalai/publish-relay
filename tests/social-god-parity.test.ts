@@ -8,7 +8,7 @@ import {
 } from '../src/modules/parity/social-god.js';
 
 describe('Social God dry-run parity', () => {
-  it('maps legacy Postiz thread parts into the provider-supported X Premium text contract', () => {
+  it('retains legacy Postiz parts as a native ordered X thread', () => {
     const report = buildSocialGodParity({
       packages: [
         {
@@ -29,8 +29,8 @@ describe('Social God dry-run parity', () => {
     });
 
     expect(report.records[0]?.request?.body.content).toEqual({
-      kind: 'text',
-      text: 'Opening\n\nClosing',
+      kind: 'thread',
+      posts: ['Opening', 'Closing'],
     });
   });
 

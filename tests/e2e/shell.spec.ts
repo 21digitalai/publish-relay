@@ -1582,7 +1582,22 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
               error: null,
             },
           ],
-          providerResult: { id: 'post-1', url: 'https://x.com/miraeditorial/status/post-1' },
+          providerResult: {
+            id: 'post-1',
+            url: 'https://x.com/miraeditorial/status/post-1',
+            threadParts: [
+              {
+                position: 0,
+                id: 'post-1',
+                url: 'https://x.com/miraeditorial/status/post-1',
+              },
+              {
+                position: 1,
+                id: 'post-2',
+                url: 'https://x.com/miraeditorial/status/post-2',
+              },
+            ],
+          },
           providerAccount: {
             displayName: 'Mira Editorial',
             handle: 'miraeditorial',
@@ -1602,9 +1617,13 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
   await expect(page.getByText('API key · Editorial agent')).toBeVisible();
   await expect(page.getByText(/Media 1 unavailable/)).toBeVisible();
   await expect(page.getByText('Delivery attempt 1')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'View on X' })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'View post 1 on X' })).toHaveAttribute(
     'href',
     'https://x.com/miraeditorial/status/post-1',
+  );
+  await expect(page.getByRole('link', { name: 'View post 2 on X' })).toHaveAttribute(
+    'href',
+    'https://x.com/miraeditorial/status/post-2',
   );
   await expect(page.getByRole('link', { name: /Back to queue/ })).toHaveAttribute(
     'href',

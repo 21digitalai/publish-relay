@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   customType,
   foreignKey,
   integer,
@@ -686,6 +687,30 @@ export const publicationAttempts = pgTable(
       columns: [table.workspaceId, table.jobId],
       foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
       name: 'publication_attempts_workspace_job_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
+export const xThreadParts = pgTable(
+  'x_thread_parts',
+  {
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    jobId: uuid('job_id').notNull(),
+    position: integer('position').notNull(),
+    externalPostId: text('external_post_id').notNull(),
+    externalUrl: text('external_url').notNull(),
+    publishedAt: timestamp('published_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.jobId, table.position] }),
+    check('x_thread_parts_position_nonnegative', sql`${table.position} >= 0`),
+    uniqueIndex('x_thread_parts_external_post_unique').on(table.workspaceId, table.externalPostId),
+    foreignKey({
+      columns: [table.workspaceId, table.jobId],
+      foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
+      name: 'x_thread_parts_workspace_job_fk',
     }).onDelete('cascade'),
   ],
 );

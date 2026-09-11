@@ -24,10 +24,55 @@ export interface XClient {
     text: string;
     mediaIds: string[];
     quoteTweetId?: string;
+    replyToTweetId?: string;
     idempotencyKey: string;
   }): Promise<{ id: string; username: string }>;
   getPost(id: string): Promise<{ id: string; username: string } | null>;
   revoke(credential: string): Promise<void>;
+}
+
+export interface XThreadPart {
+  text: string;
+  mediaIds: string[];
+}
+
+export interface XPublishedThreadPart {
+  position: number;
+  externalPostId: string;
+  externalUrl: string;
+}
+
+export async function publishXThread(
+  client: XClient,
+  parts: readonly XThreadPart[],
+  idempotencyKey: string,
+  completed: readonly XPublishedThreadPart[] = [],
+  onPublished?: (part: XPublishedThreadPart) => Promise<void>,
+): Promise<XPublishedThreadPart[]> {
+  if (parts.length === 0) throw new Error('X thread must contain at least one post');
+  const published = [...completed].sort((left, right) => left.position - right.position);
+  if (published.some((part, position) => part.position !== position))
+    throw new Error('X thread progress must be a contiguous prefix');
+  for (let position = published.length; position < parts.length; position += 1) {
+    const part = parts[position];
+    if (!part || (!part.text.trim() && part.mediaIds.length === 0))
+      throw new Error(`X thread post ${String(position + 1)} must include text or media`);
+    const parent = published.at(-1);
+    const result = await client.createPost({
+      text: part.text,
+      mediaIds: part.mediaIds,
+      ...(parent ? { replyToTweetId: parent.externalPostId } : {}),
+      idempotencyKey: `${idempotencyKey}:part:${String(position)}`,
+    });
+    const record = {
+      position,
+      externalPostId: result.id,
+      externalUrl: `https://x.com/${result.username}/status/${result.id}`,
+    };
+    if (onPublished) await onPublished(record);
+    published.push(record);
+  }
+  return published;
 }
 
 function classifyError(error: XApiError): ProviderErrorCode {
@@ -38,7 +83,7 @@ function classifyError(error: XApiError): ProviderErrorCode {
   return 'permanent';
 }
 
-function failedOutcome(error: unknown): PublishOutcome {
+export function toXPublishFailure(error: unknown): PublishOutcome {
   const providerError = error as Partial<XApiError>;
   if (providerError.outcomeUnknown) return { status: 'unknown', reconciliationKey: 'x:unknown' };
   return {
@@ -115,7 +160,7 @@ export class XProviderAdapter implements ProviderAdapter {
         externalUrl: `https://x.com/${result.username}/status/${result.id}`,
       };
     } catch (error) {
-      const outcome = failedOutcome(error);
+      const outcome = toXPublishFailure(error);
       return outcome.status === 'unknown'
         ? { ...outcome, reconciliationKey: `x:manual:${staged.idempotencyKey}` }
         : outcome;
@@ -134,7 +179,7 @@ export class XProviderAdapter implements ProviderAdapter {
           }
         : { status: 'unknown', reconciliationKey };
     } catch (error) {
-      return failedOutcome(error);
+      return toXPublishFailure(error);
     }
   }
 

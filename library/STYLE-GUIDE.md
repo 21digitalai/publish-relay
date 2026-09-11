@@ -160,7 +160,7 @@ Ship Month, Week, Day, and Timeline/hour modes. Preserve date and filters betwee
 
 ## Job detail and recovery
 
-Publication trust surfaces keep normalized server truth visible: `.queue-media` is the bounded media summary inside the canonical queue row; `.detail-content-parts` preserves provider-ready thread order; `.detail-media-gallery` renders ordered media and `.missing-media` makes unavailable assets explicit. `.external-result-link` is rendered only from the server-provided canonical provider URL—the browser never constructs provider links.
+Publication trust surfaces keep normalized server truth visible: `.queue-media` is the bounded media summary inside the canonical queue row; `.detail-content-parts` preserves provider-ready thread order; `.detail-media-gallery` renders ordered media and `.missing-media` makes unavailable assets explicit. `.external-result-list` renders every durable native-thread result in order through the existing `.external-result-link` primitive. Links use only server-provided canonical provider URLs—the browser never constructs provider links.
 
 Job detail is a route-backed drawer on desktop and a page on mobile. Sections: status, account/provider, content/media, schedule/timezone, execution timeline, provider result, audit metadata, actions.
 

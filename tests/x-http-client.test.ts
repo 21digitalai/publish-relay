@@ -48,6 +48,7 @@ describe('X OAuth 1.0a HTTP client', () => {
         text: 'Exact text',
         mediaIds: ['media-1'],
         quoteTweetId: 'quote-1',
+        replyToTweetId: 'parent-1',
         idempotencyKey: 'caller-owned-key',
       }),
     ).resolves.toEqual({ id: 'post-1', username: 'daily' });
@@ -57,6 +58,7 @@ describe('X OAuth 1.0a HTTP client', () => {
       text: 'Exact text',
       media: { media_ids: ['media-1'] },
       quote_tweet_id: 'quote-1',
+      reply: { in_reply_to_tweet_id: 'parent-1' },
     });
   });
 

@@ -160,6 +160,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     text: string;
     mediaIds: string[];
     quoteTweetId?: string;
+    replyToTweetId?: string;
     idempotencyKey: string;
   }): Promise<{ id: string; username: string }> {
     void input.idempotencyKey;
@@ -169,6 +170,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
       text: input.text,
       ...(input.mediaIds.length === 0 ? {} : { media: { media_ids: input.mediaIds } }),
       ...(input.quoteTweetId ? { quote_tweet_id: input.quoteTweetId } : {}),
+      ...(input.replyToTweetId ? { reply: { in_reply_to_tweet_id: input.replyToTweetId } } : {}),
     };
     const created = await this.call<{ data: { id: string } }>(
       'POST',

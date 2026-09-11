@@ -44,6 +44,7 @@ const migrations = [
   '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
   '0037_brown_wallflower.sql',
+  '0038_fancy_scorpion.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';

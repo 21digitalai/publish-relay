@@ -11,6 +11,7 @@ import {
   publicationJobs,
   mediaObjects,
   revisionMedia,
+  xThreadParts,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
@@ -167,7 +168,7 @@ export async function getBrowserJobDetail(
       .limit(1);
     const job = rows[0];
     if (!job) return null;
-    const [media, attempts, activity] = await Promise.all([
+    const [media, attempts, activity, threadParts] = await Promise.all([
       transaction
         .select({
           id: mediaObjects.id,
@@ -227,6 +228,15 @@ export async function getBrowserJobDetail(
           ),
         )
         .orderBy(asc(publicationJobEvents.createdAt), asc(publicationJobEvents.id)),
+      transaction
+        .select({
+          position: xThreadParts.position,
+          id: xThreadParts.externalPostId,
+          url: xThreadParts.externalUrl,
+        })
+        .from(xThreadParts)
+        .where(and(eq(xThreadParts.workspaceId, workspaceId), eq(xThreadParts.jobId, jobId)))
+        .orderBy(asc(xThreadParts.position)),
     ]);
     const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
     const externalUrl = published?.externalPostId
@@ -244,7 +254,15 @@ export async function getBrowserJobDetail(
       })),
       attempts,
       activity,
-      providerResult: published ? { id: published.externalPostId, url: externalUrl } : null,
+      providerResult: published
+        ? {
+            id: published.externalPostId,
+            url: externalUrl,
+            ...(threadParts.length > 0 ? { threadParts } : {}),
+          }
+        : threadParts[0]
+          ? { id: threadParts[0].id, url: threadParts[0].url, threadParts }
+          : null,
     };
   });
 }

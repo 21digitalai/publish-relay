@@ -1,7 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 
-import { XProviderAdapter, type XClient } from '../src/modules/providers/x-adapter.js';
+import {
+  publishXThread,
+  XProviderAdapter,
+  type XClient,
+} from '../src/modules/providers/x-adapter.js';
 
 function createClient() {
   const currentAccount = vi.fn<XClient['currentAccount']>();
@@ -119,5 +123,94 @@ describe('X provider adapter', () => {
       status: 'unknown',
       reconciliationKey: 'x:post-2',
     });
+  });
+});
+
+describe('X native thread publishing', () => {
+  it('publishes ordered replies with media only on their intended part', async () => {
+    const createPost = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'root-1', username: 'dailyviber' })
+      .mockResolvedValueOnce({ id: 'reply-1', username: 'dailyviber' });
+    const client = { createPost } as unknown as XClient;
+    const saved: string[] = [];
+
+    const result = await publishXThread(
+      client,
+      [
+        { text: 'Article content', mediaIds: ['image-1'] },
+        { text: 'Here’s the repo: https://github.com/example/repo', mediaIds: [] },
+      ],
+      'job-1',
+      [],
+      (part) => {
+        saved.push(part.externalPostId);
+        return Promise.resolve();
+      },
+    );
+
+    expect(createPost).toHaveBeenNthCalledWith(1, {
+      text: 'Article content',
+      mediaIds: ['image-1'],
+      idempotencyKey: 'job-1:part:0',
+    });
+    expect(createPost).toHaveBeenNthCalledWith(2, {
+      text: 'Here’s the repo: https://github.com/example/repo',
+      mediaIds: [],
+      replyToTweetId: 'root-1',
+      idempotencyKey: 'job-1:part:1',
+    });
+    expect(saved).toEqual(['root-1', 'reply-1']);
+    expect(result.map((part) => part.externalPostId)).toEqual(['root-1', 'reply-1']);
+  });
+
+  it('resumes after a persisted root without publishing it again', async () => {
+    const createPost = vi.fn().mockResolvedValue({ id: 'reply-1', username: 'dailyviber' });
+
+    await publishXThread(
+      { createPost } as unknown as XClient,
+      [
+        { text: 'Article content', mediaIds: ['image-1'] },
+        { text: 'Here’s the repo: https://github.com/example/repo', mediaIds: [] },
+      ],
+      'job-1',
+      [
+        {
+          position: 0,
+          externalPostId: 'root-1',
+          externalUrl: 'https://x.com/dailyviber/status/root-1',
+        },
+      ],
+    );
+
+    expect(createPost).toHaveBeenCalledOnce();
+    expect(createPost).toHaveBeenCalledWith(
+      expect.objectContaining({ replyToTweetId: 'root-1', idempotencyKey: 'job-1:part:1' }),
+    );
+  });
+
+  it('stops at the failed part after persisting the successful prefix', async () => {
+    const createPost = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'root-1', username: 'dailyviber' })
+      .mockRejectedValueOnce(new Error('provider unavailable'));
+    const saved: string[] = [];
+
+    await expect(
+      publishXThread(
+        { createPost } as unknown as XClient,
+        [
+          { text: 'Root', mediaIds: [] },
+          { text: 'Reply', mediaIds: [] },
+        ],
+        'job-1',
+        [],
+        (part) => {
+          saved.push(part.externalPostId);
+          return Promise.resolve();
+        },
+      ),
+    ).rejects.toThrow('provider unavailable');
+    expect(saved).toEqual(['root-1']);
   });
 });

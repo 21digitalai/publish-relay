@@ -13,6 +13,8 @@ import { ApiRateLimiter } from '../modules/api/rate-limit.js';
 import { CursorCodec } from '../modules/api/contract.js';
 import type { AuthService } from '../modules/identity/auth.service.js';
 import { registerAuthRoutes } from '../modules/identity/auth.routes.js';
+import type { MagicLinkService } from '../modules/identity/magic-link.service.js';
+import { registerMagicLinkRoutes } from '../modules/identity/magic-link.routes.js';
 import type { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
 import { registerPostRoutes } from '../modules/content/post.routes.js';
@@ -46,6 +48,7 @@ export function createApplication(
   actionPolicy: ActionPolicy = allowAllActionPolicy,
   youtubeOauth?: { keys: MasterKeyProvider; client: YouTubeHttpClient; callbackUrl: string },
   delegatedAuthorization?: DelegatedAuthorizationService,
+  magicLinks?: MagicLinkService,
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
@@ -83,6 +86,10 @@ export function createApplication(
     registerAuthRoutes(application, auth, {
       secureCookies: config.NODE_ENV === 'production',
       shellHtml,
+    });
+  if (magicLinks)
+    registerMagicLinkRoutes(application, magicLinks, {
+      secureCookies: config.NODE_ENV === 'production',
     });
   if (apiKeys) {
     const rateLimiter = new ApiRateLimiter({

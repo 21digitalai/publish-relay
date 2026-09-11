@@ -76,7 +76,7 @@ export async function authorizeRequest(
   return identity;
 }
 
-function setSessionCookies(
+export function setSessionCookies(
   reply: FastifyReply,
   session: SessionResult,
   secureCookies: boolean,

@@ -69,6 +69,41 @@ export interface MagicLinkVerificationResult {
   redirectPath: string;
 }
 
+type MagicLinkMetric =
+  | 'request_accepted'
+  | 'request_suppressed'
+  | 'delivery_succeeded'
+  | 'delivery_failed'
+  | 'verification_succeeded'
+  | 'verification_failed';
+
+export class MagicLinkMetrics {
+  private readonly counts = new Map<MagicLinkMetric, number>();
+
+  increment(metric: MagicLinkMetric): void {
+    this.counts.set(metric, (this.counts.get(metric) ?? 0) + 1);
+  }
+
+  renderPrometheus(): string[] {
+    const names: MagicLinkMetric[] = [
+      'request_accepted',
+      'request_suppressed',
+      'delivery_succeeded',
+      'delivery_failed',
+      'verification_succeeded',
+      'verification_failed',
+    ];
+    return [
+      '# HELP publish_relay_magic_link_events_total Magic-link lifecycle events.',
+      '# TYPE publish_relay_magic_link_events_total counter',
+      ...names.map(
+        (name) =>
+          `publish_relay_magic_link_events_total{event="${name}"} ${String(this.counts.get(name) ?? 0)}`,
+      ),
+    ];
+  }
+}
+
 export class MagicLinkService {
   constructor(
     private readonly store: MagicLinkStore,
@@ -78,6 +113,7 @@ export class MagicLinkService {
       publicOrigin: string;
       exposeDevelopmentUrl: boolean;
     },
+    readonly metrics = new MagicLinkMetrics(),
   ) {}
 
   async verifyLogin(input: {
@@ -97,6 +133,7 @@ export class MagicLinkService {
       sessionExpiresAt: expiresAt,
       now,
     });
+    this.metrics.increment(identity ? 'verification_succeeded' : 'verification_failed');
     return identity ? { ...identity, token, csrfToken, expiresAt } : null;
   }
 
@@ -118,7 +155,11 @@ export class MagicLinkService {
     });
     const userId = await this.store.findEnabledUserIdByEmail(email);
     const isAllowed = await this.store.consumeRateLimit(material);
-    if (!userId || !isAllowed) return { accepted: true };
+    if (!userId || !isAllowed) {
+      this.metrics.increment('request_suppressed');
+      return { accepted: true };
+    }
+    this.metrics.increment('request_accepted');
 
     const challengeId = await this.store.createChallenge({
       userId,
@@ -136,6 +177,7 @@ export class MagicLinkService {
 
     if (this.config.exposeDevelopmentUrl) {
       await this.store.markDelivery(challengeId, 'sent');
+      this.metrics.increment('delivery_succeeded');
       return { accepted: true, developmentUrl: url.toString() };
     }
 
@@ -146,8 +188,10 @@ export class MagicLinkService {
         correlationId: input.correlationId,
       });
       await this.store.markDelivery(challengeId, 'sent', delivered.messageId);
+      this.metrics.increment('delivery_succeeded');
     } catch (error) {
       await this.store.markDelivery(challengeId, 'failed');
+      this.metrics.increment('delivery_failed');
       throw error;
     }
     return { accepted: true };

@@ -126,4 +126,18 @@ describe('MagicLinkService', () => {
     );
     expect(store.markDelivery).toHaveBeenCalledWith('challenge-1', 'failed');
   });
+
+  it('records bounded lifecycle metrics without email or token labels', async () => {
+    const store = createStore();
+    const service = createService(store, createDelivery());
+    await service.requestLogin(request);
+    await service.verifyLogin({ token: 'invalid-token', userAgent: 'browser', now: new Date(0) });
+
+    const output = service.metrics.renderPrometheus().join('\n');
+    expect(output).toContain('event="request_accepted"} 1');
+    expect(output).toContain('event="delivery_succeeded"} 1');
+    expect(output).toContain('event="verification_failed"} 1');
+    expect(output).not.toContain('owner@example.test');
+    expect(output).not.toContain('invalid-token');
+  });
 });

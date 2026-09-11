@@ -75,6 +75,7 @@ export function createApplication(
       '# HELP publish_relay_process_resident_memory_bytes Resident memory in bytes.',
       '# TYPE publish_relay_process_resident_memory_bytes gauge',
       `publish_relay_process_resident_memory_bytes ${String(memory.rss)}`,
+      ...(magicLinks ? magicLinks.metrics.renderPrometheus() : []),
       '',
     ].join('\n');
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(body);

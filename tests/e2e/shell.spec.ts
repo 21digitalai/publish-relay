@@ -262,6 +262,9 @@ test('approves the registered Open Clips loopback client and exposes revocation'
   await expect(page.getByRole('heading', { name: 'Approve access' })).toBeVisible();
   await expect(page.getByText('open-clips-dev', { exact: true })).toBeVisible();
   await expect(page.getByText('publishes:retry', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Approve access' })).toBeVisible();
+  await expect(page.getByText('open-clips-dev', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('open-clips-consent.png'), fullPage: true });
   await page.getByRole('button', { name: 'Approve connection' }).click();
   await page.waitForURL(
@@ -277,6 +280,9 @@ test('approves the registered Open Clips loopback client and exposes revocation'
   await page.getByRole('button', { name: 'Revoke connection' }).click();
   await page.getByRole('button', { name: 'Confirm revoke' }).click();
   await expect(page.getByText('No applications connected.')).toBeVisible();
+  await page.goto(`/connect/authorize?${query}`);
+  await expect(page.getByRole('heading', { name: 'Approve access' })).toBeVisible();
+  await expect(page.getByText('publishes:retry', { exact: true })).toBeVisible();
 });
 
 test('registers, persists the first workspace update, and reloads the protected onboarding route', async ({

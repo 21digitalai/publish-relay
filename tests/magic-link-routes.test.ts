@@ -8,6 +8,8 @@ import type { MagicLinkService } from '../src/modules/identity/magic-link.servic
 const service = {
   requestLogin: vi.fn(),
   verifyLogin: vi.fn(),
+  requestSignup: vi.fn(),
+  verifySignup: vi.fn(),
 } as unknown as MagicLinkService;
 
 function createApp() {
@@ -80,5 +82,45 @@ describe('magic-link routes', () => {
     expect(response.statusCode).toBe(302);
     expect(response.headers.location).toBe('/login?magicLink=invalid');
     expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('requests and verifies explicit signup without exposing draft fields', async () => {
+    vi.mocked(service.requestSignup).mockResolvedValue({
+      accepted: true,
+      developmentUrl: 'https://relay.example/verify-signup?token=secret',
+    });
+    const requested = await createApp().inject({
+      method: 'POST',
+      url: '/api/auth/magic-link/signup',
+      headers: { 'user-agent': 'test-browser' },
+      payload: {
+        displayName: 'Relay Owner',
+        email: 'owner@example.test',
+        workspaceName: 'Relay',
+        termsAccepted: true,
+      },
+    });
+    expect(requested.statusCode).toBe(202);
+    expect(requested.json().data).toEqual({
+      accepted: true,
+      message: 'Check your email to finish creating your account.',
+      developmentUrl: 'https://relay.example/verify-signup?token=secret',
+    });
+    vi.mocked(service.verifySignup).mockResolvedValue({
+      userId: 'user-1',
+      workspaceId: 'workspace-1',
+      role: 'owner',
+      token: 'session-token',
+      csrfToken: 'csrf-token',
+      expiresAt: new Date('2030-01-01'),
+      redirectPath: '/app',
+    });
+    const verified = await createApp().inject({
+      method: 'GET',
+      url: `/api/auth/magic-link/verify-signup?token=${'t'.repeat(43)}`,
+      headers: { 'user-agent': 'test-browser' },
+    });
+    expect(verified.statusCode).toBe(302);
+    expect(verified.headers.location).toBe('/app');
   });
 });

@@ -9,13 +9,14 @@ import {
   type EncryptedCredential,
   type MasterKeyProvider,
 } from '../credentials/envelope.js';
-import type { EmailDelivery, MagicLinkChallengeInput } from './magic-link.service.js';
+import type { EmailDelivery, MagicLinkChallengeInput, SignupDraft } from './magic-link.service.js';
 
 interface AuthEmailPayload {
   challengeId?: string;
   recipient: string;
   url: string;
   correlationId: string;
+  signup?: SignupDraft;
 }
 
 export class AuthEmailOutboxDelivery implements EmailDelivery {
@@ -49,6 +50,28 @@ export class AuthEmailOutboxDelivery implements EmailDelivery {
       .returning({ id: authEmailOutbox.id });
     if (!queued) throw new Error('Auth email was not queued');
     return { messageId: queued.id, queued: true };
+  }
+
+  async readSignupDraft(tokenHash: string): Promise<SignupDraft | null> {
+    const result = await this.database.execute<EncryptedCredential & Record<string, unknown>>(sql`
+      SELECT item.key_version AS "keyVersion", item.wrapped_key AS "wrappedKey",
+        item.wrapped_key_nonce AS "wrappedKeyNonce", item.wrapped_key_tag AS "wrappedKeyTag",
+        item.ciphertext, item.nonce, item.tag
+      FROM auth_email_outbox AS item
+      JOIN login_challenges AS challenge ON challenge.id = item.challenge_id
+      WHERE challenge.token_hash = ${tokenHash} AND challenge.purpose = 'signup'
+        AND challenge.delivery_state = 'sent' AND challenge.consumed_at IS NULL
+        AND challenge.expires_at > now()
+      LIMIT 1
+    `);
+    const encrypted = result.rows[0];
+    if (!encrypted) return null;
+    const plaintext = await decryptCredential(encrypted, this.keys);
+    try {
+      return parsePayload(plaintext).signup ?? null;
+    } finally {
+      plaintext.fill(0);
+    }
   }
 }
 

@@ -44,6 +44,28 @@ export interface MagicLinkStore {
     role: MembershipRole;
     redirectPath: string;
   } | null>;
+  consumeSignupChallenge: (input: SignupConsumeInput) => Promise<{
+    userId: string;
+    workspaceId: string;
+    role: MembershipRole;
+    redirectPath: string;
+  } | null>;
+}
+
+export interface SignupDraft {
+  displayName: string;
+  email: string;
+  workspaceName: string;
+  termsAccepted: true;
+}
+
+export interface SignupConsumeInput extends Omit<SignupDraft, 'termsAccepted'> {
+  tokenHash: string;
+  userAgentHash: string;
+  sessionTokenHash: string;
+  csrfSecretHash: string;
+  sessionExpiresAt: Date;
+  now: Date;
 }
 
 export interface EmailDelivery {
@@ -55,8 +77,9 @@ export interface EmailDelivery {
   }) => Promise<{ messageId: string; queued?: boolean }>;
   queueMagicLinkChallenge?: (
     challenge: MagicLinkChallengeInput,
-    input: { recipient: string; url: string; correlationId: string },
+    input: { recipient: string; url: string; correlationId: string; signup?: SignupDraft },
   ) => Promise<{ challengeId: string }>;
+  readSignupDraft?: (tokenHash: string) => Promise<SignupDraft | null>;
 }
 
 export interface MagicLinkRequestResult {
@@ -140,6 +163,87 @@ export class MagicLinkService {
     });
     this.metrics.increment(identity ? 'verification_succeeded' : 'verification_failed');
     return identity ? { ...identity, token, csrfToken, expiresAt } : null;
+  }
+
+  async verifySignup(input: {
+    token: string;
+    userAgent: string;
+    now?: Date;
+  }): Promise<MagicLinkVerificationResult | null> {
+    if (!this.delivery.readSignupDraft) return null;
+    const now = input.now ?? new Date();
+    const tokenHash = hashOpaqueToken(input.token);
+    const draft = await this.delivery.readSignupDraft(tokenHash);
+    if (!draft) return null;
+    const token = createOpaqueToken();
+    const csrfToken = createOpaqueToken();
+    const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30);
+    const identity = await this.store.consumeSignupChallenge({
+      tokenHash,
+      userAgentHash: hashMagicLinkBinding(input.userAgent, this.config.pepper),
+      displayName: draft.displayName,
+      email: draft.email,
+      workspaceName: draft.workspaceName,
+      sessionTokenHash: hashOpaqueToken(token),
+      csrfSecretHash: hashOpaqueToken(csrfToken),
+      sessionExpiresAt: expiresAt,
+      now,
+    });
+    this.metrics.increment(identity ? 'verification_succeeded' : 'verification_failed');
+    return identity ? { ...identity, token, csrfToken, expiresAt } : null;
+  }
+
+  async requestSignup(input: {
+    displayName: string;
+    email: string;
+    workspaceName: string;
+    termsAccepted: true;
+    networkKey: string;
+    userAgent: string;
+    correlationId: string;
+    now?: Date;
+  }): Promise<MagicLinkRequestResult> {
+    const email = normalizeMagicLinkEmail(input.email);
+    const material = createMagicLinkSecretMaterial({
+      email,
+      networkKey: input.networkKey,
+      userAgent: input.userAgent,
+      pepper: this.config.pepper,
+    });
+    const existingUserId = await this.store.findEnabledUserIdByEmail(email);
+    const isAllowed = await this.store.consumeRateLimit(material);
+    if (existingUserId || !isAllowed || !this.delivery.queueMagicLinkChallenge) {
+      this.metrics.increment('request_suppressed');
+      return { accepted: true };
+    }
+    const challenge = {
+      userId: null,
+      tokenHash: material.tokenHash,
+      emailKeyHash: material.emailKeyHash,
+      networkKeyHash: material.networkKeyHash,
+      userAgentHash: material.userAgentHash,
+      purpose: 'signup' as const,
+      redirectPath: '/app',
+      expiresAt: magicLinkExpiresAt(input.now ?? new Date()),
+      correlationId: input.correlationId,
+    };
+    const url = new URL('/api/auth/magic-link/verify-signup', this.config.publicOrigin);
+    url.searchParams.set('token', material.token);
+    const queued = await this.delivery.queueMagicLinkChallenge(challenge, {
+      recipient: email,
+      url: url.toString(),
+      correlationId: input.correlationId,
+      signup: {
+        displayName: input.displayName.trim(),
+        email,
+        workspaceName: input.workspaceName.trim(),
+        termsAccepted: true,
+      },
+    });
+    this.metrics.increment('request_accepted');
+    if (!this.config.exposeDevelopmentUrl) return { accepted: true };
+    await this.store.markDelivery(queued.challengeId, 'sent');
+    return { accepted: true, developmentUrl: url.toString() };
   }
 
   async requestLogin(input: {

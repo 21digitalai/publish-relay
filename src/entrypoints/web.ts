@@ -7,7 +7,7 @@ import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import { createPostgresAuthStore } from '../modules/identity/auth.repository.js';
 import { AuthService } from '../modules/identity/auth.service.js';
 import { createPostgresMagicLinkStore } from '../modules/identity/magic-link.repository.js';
-import { MagicLinkService, type EmailDelivery } from '../modules/identity/magic-link.service.js';
+import { MagicLinkService } from '../modules/identity/magic-link.service.js';
 import { AuthEmailOutboxDelivery } from '../modules/identity/auth-email-outbox.js';
 import { createPostgresApiKeyStore } from '../modules/identity/api-key.repository.js';
 import { ApiKeyService } from '../modules/identity/api-key.service.js';
@@ -70,13 +70,7 @@ const application = createApplication(
   resolveHumanAuthMode(config) === 'magic_link' && magicLinkPepper
     ? new MagicLinkService(
         createPostgresMagicLinkStore(database),
-        config.NODE_ENV === 'production'
-          ? new AuthEmailOutboxDelivery(database, masterKeys)
-          : ({
-              sendMagicLink: async () => {
-                throw new Error('Email delivery is disabled outside production');
-              },
-            } satisfies EmailDelivery),
+        new AuthEmailOutboxDelivery(database, masterKeys),
         {
           pepper: magicLinkPepper,
           publicOrigin,

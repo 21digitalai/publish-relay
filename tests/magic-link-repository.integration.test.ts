@@ -18,6 +18,12 @@ beforeEach(async () => {
     await readFile(new URL('../migrations/0001_solid_spiral.sql', import.meta.url), 'utf8'),
   );
   await database.exec(
+    await readFile(new URL('../migrations/0013_illegal_texas_twister.sql', import.meta.url), 'utf8'),
+  );
+  await database.exec(
+    await readFile(new URL('../migrations/0023_clear_shocker.sql', import.meta.url), 'utf8'),
+  );
+  await database.exec(
     await readFile(new URL('../migrations/0040_ambiguous_loners.sql', import.meta.url), 'utf8'),
   );
 });
@@ -30,8 +36,8 @@ describe('PostgreSQL magic-link repository', () => {
     const workspaceId = '00000000-0000-4000-8000-000000000912';
     await database.exec(`
       INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Magic', 'magic');
-      INSERT INTO users (id, email, password_hash, default_workspace_id)
-        VALUES ('${userId}', 'magic@example.test', NULL, '${workspaceId}');
+      INSERT INTO users (id, display_name, email, password_hash, default_workspace_id)
+        VALUES ('${userId}', 'Magic Owner', 'magic@example.test', NULL, '${workspaceId}');
       SELECT set_config('app.workspace_id', '${workspaceId}', false);
       INSERT INTO memberships (workspace_id, user_id, role)
         VALUES ('${workspaceId}', '${userId}', 'owner');
@@ -83,12 +89,45 @@ describe('PostgreSQL magic-link repository', () => {
     ).resolves.toBeNull();
   });
 
+  it('atomically creates one signup aggregate and rolls a duplicate race back', async () => {
+    await database.exec(`
+      INSERT INTO login_challenges
+        (token_hash, email_key_hash, network_key_hash, user_agent_hash, purpose,
+         redirect_path, delivery_state, correlation_id, expires_at)
+      VALUES ('signup-token', 'email-hash', 'network-hash', 'agent-hash', 'signup',
+        '/app', 'sent', 'request-signup', '2030-01-01T00:00:00Z');
+    `);
+    const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
+    const input = {
+      tokenHash: 'signup-token',
+      userAgentHash: 'agent-hash',
+      displayName: 'Relay Owner',
+      email: 'signup@example.test',
+      workspaceName: 'Relay Workspace',
+      sessionTokenHash: 'signup-session',
+      csrfSecretHash: 'signup-csrf',
+      sessionExpiresAt: new Date('2030-02-01T00:00:00Z'),
+      now: new Date('2029-12-01T00:00:00Z'),
+    };
+    const results = await Promise.all([
+      store.consumeSignupChallenge(input),
+      store.consumeSignupChallenge(input),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    const counts = await database.query<{ users: number; workspaces: number; sessions: number }>(`
+      SELECT (SELECT count(*) FROM users)::int AS users,
+        (SELECT count(*) FROM workspaces)::int AS workspaces,
+        (SELECT count(*) FROM sessions)::int AS sessions
+    `);
+    expect(counts.rows).toEqual([{ users: 1, workspaces: 1, sessions: 1 }]);
+  });
+
   it('finds only enabled accounts and persists no raw identity material', async () => {
     const userId = '00000000-0000-4000-8000-000000000901';
     await database.exec(`
-      INSERT INTO users (id, email, password_hash) VALUES
-        ('${userId}', 'owner@example.test', NULL),
-        ('00000000-0000-4000-8000-000000000902', 'disabled@example.test', NULL);
+      INSERT INTO users (id, display_name, email, password_hash) VALUES
+        ('${userId}', 'Owner', 'owner@example.test', NULL),
+        ('00000000-0000-4000-8000-000000000902', 'Disabled', 'disabled@example.test', NULL);
       UPDATE users SET is_disabled = true WHERE email = 'disabled@example.test';
     `);
     const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);

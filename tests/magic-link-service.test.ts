@@ -13,6 +13,7 @@ function createStore(): MagicLinkStore {
     createChallenge: vi.fn().mockResolvedValue('challenge-1'),
     markDelivery: vi.fn(),
     consumeLoginChallenge: vi.fn().mockResolvedValue(null),
+    consumeSignupChallenge: vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -152,5 +153,43 @@ describe('MagicLinkService', () => {
     expect(output).toContain('event="verification_failed"} 1');
     expect(output).not.toContain('owner@example.test');
     expect(output).not.toContain('invalid-token');
+  });
+
+  it('queues an encrypted signup draft and consumes it through the atomic store boundary', async () => {
+    const store = createStore();
+    const delivery = createDelivery();
+    delivery.queueMagicLinkChallenge = vi.fn().mockResolvedValue({ challengeId: 'signup-1' });
+    delivery.readSignupDraft = vi.fn().mockResolvedValue({
+      displayName: 'Relay Owner',
+      email: 'owner@example.test',
+      workspaceName: 'Relay',
+      termsAccepted: true,
+    });
+    vi.mocked(store.findEnabledUserIdByEmail).mockResolvedValue(null);
+    vi.mocked(store.consumeSignupChallenge).mockResolvedValue({
+      userId: 'user-1',
+      workspaceId: 'workspace-1',
+      role: 'owner',
+      redirectPath: '/app',
+    });
+    const service = createService(store, delivery, true);
+    const requested = await service.requestSignup({
+      displayName: ' Relay Owner ',
+      email: 'owner@example.test',
+      workspaceName: ' Relay ',
+      termsAccepted: true,
+      networkKey: 'network',
+      userAgent: 'browser',
+      correlationId: 'signup-1',
+      now: new Date(0),
+    });
+    expect(requested.developmentUrl).toContain('/api/auth/magic-link/verify-signup?token=');
+    expect(delivery.queueMagicLinkChallenge).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: 'signup', userId: null }),
+      expect.objectContaining({ signup: expect.objectContaining({ displayName: 'Relay Owner' }) }),
+    );
+    await expect(
+      service.verifySignup({ token: 'signup-token', userAgent: 'browser', now: new Date(0) }),
+    ).resolves.toMatchObject({ userId: 'user-1', workspaceId: 'workspace-1' });
   });
 });

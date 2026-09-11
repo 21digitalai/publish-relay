@@ -5,13 +5,25 @@ import {
   auditEvents,
   authRateLimitBuckets,
   loginChallenges,
+  memberships,
   sessions,
   users,
+  workspaces,
 } from '../../database/schema.js';
 import type { MagicLinkStore } from './magic-link.service.js';
 
 const EMAIL_REQUESTS_PER_MINUTE = 5;
 const NETWORK_REQUESTS_PER_MINUTE = 20;
+
+function createWorkspaceSlug(name: string): string {
+  const base =
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'workspace';
+  return `${base}-${crypto.randomUUID().slice(0, 8)}`;
+}
 
 export interface PostgresMagicLinkStore extends MagicLinkStore {
   cleanupExpired: () => Promise<number>;
@@ -145,6 +157,80 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
           userId: challenge.user_id,
           workspaceId: challenge.workspace_id,
           role: challenge.role,
+          redirectPath: challenge.redirect_path,
+        };
+      });
+    },
+
+    async consumeSignupChallenge(input) {
+      return database.transaction(async (transaction) => {
+        const result = await transaction.execute<{
+          challenge_id: string;
+          redirect_path: string;
+          correlation_id: string;
+        }>(sql`
+          SELECT id AS challenge_id, redirect_path, correlation_id
+          FROM login_challenges
+          WHERE token_hash = ${input.tokenHash} AND user_agent_hash = ${input.userAgentHash}
+            AND purpose = 'signup' AND delivery_state = 'sent' AND consumed_at IS NULL
+            AND expires_at > now()
+          FOR UPDATE
+        `);
+        const challenge = result.rows[0];
+        if (!challenge) return null;
+        await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${input.email}))`);
+        const [existingUser] = await transaction
+          .select({ id: users.id })
+          .from(users)
+          .where(sql`lower(${users.email}) = ${input.email}`)
+          .limit(1);
+        if (existingUser) return null;
+        const [user] = await transaction
+          .insert(users)
+          .values({ displayName: input.displayName, email: input.email, passwordHash: null })
+          .returning({ id: users.id });
+        if (!user) return null;
+        const [workspace] = await transaction
+          .insert(workspaces)
+          .values({ name: input.workspaceName, slug: createWorkspaceSlug(input.workspaceName) })
+          .returning({ id: workspaces.id });
+        if (!workspace) throw new Error('Signup workspace was not created');
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${workspace.id}, true)`,
+        );
+        await transaction.insert(memberships).values({
+          workspaceId: workspace.id,
+          userId: user.id,
+          role: 'owner',
+        });
+        await transaction
+          .update(users)
+          .set({ defaultWorkspaceId: workspace.id })
+          .where(eq(users.id, user.id));
+        await transaction
+          .update(loginChallenges)
+          .set({ consumedAt: input.now, updatedAt: input.now })
+          .where(eq(loginChallenges.id, challenge.challenge_id));
+        await transaction.insert(sessions).values({
+          userId: user.id,
+          workspaceId: workspace.id,
+          tokenHash: input.sessionTokenHash,
+          csrfSecretHash: input.csrfSecretHash,
+          expiresAt: input.sessionExpiresAt,
+        });
+        await transaction.insert(auditEvents).values({
+          workspaceId: workspace.id,
+          actorType: 'user',
+          actorId: user.id,
+          action: 'auth.magic_link.consumed',
+          targetType: 'session',
+          requestId: challenge.correlation_id,
+          metadata: { purpose: 'signup' },
+        });
+        return {
+          userId: user.id,
+          workspaceId: workspace.id,
+          role: 'owner' as const,
           redirectPath: challenge.redirect_path,
         };
       });

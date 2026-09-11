@@ -101,6 +101,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
     null,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const isRegister = mode === 'register';
   const isForgot = mode === 'forgot';
   const usesMagicLinks = document.body.dataset.humanAuthMode === 'magic_link';
@@ -158,8 +159,10 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                   ? {
                       displayName: formText(fields, 'displayName'),
                       email: formText(fields, 'email'),
-                      password: formText(fields, 'password'),
                       workspaceName,
+                      ...(usesMagicLinks
+                        ? { termsAccepted }
+                        : { password: formText(fields, 'password') }),
                     }
                   : usesPasswordLogin
                     ? {
@@ -173,7 +176,9 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                 try {
                   const response = await fetch(
                     isRegister
-                      ? '/api/auth/register'
+                      ? usesMagicLinks
+                        ? '/api/auth/magic-link/signup'
+                        : '/api/auth/register'
                       : usesPasswordLogin
                         ? '/api/auth/login'
                         : '/api/auth/magic-link/request',
@@ -188,9 +193,18 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     error: string | null;
                   };
                   if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
-                  if (isRegister) {
+                  if (isRegister && !usesMagicLinks) {
                     sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
                     window.location.href = '/onboarding/workspace';
+                  } else if (isRegister) {
+                    setMagicLink({
+                      message:
+                        result.data?.message ?? 'Check your email to finish creating your account.',
+                      ...(result.data?.developmentUrl
+                        ? { developmentUrl: result.data.developmentUrl }
+                        : {}),
+                    });
+                    setIsSubmitting(false);
                   } else if (usesPasswordLogin) {
                     window.location.href = continuation ?? '/app';
                   } else {
@@ -222,7 +236,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                 <input className="text-input" name="displayName" autoComplete="name" required />
               </label>
             )}
-            {(isRegister || usesPasswordLogin) && (
+            {isRegister && (
               <label className="field-label">
                 Workspace name
                 <input className="text-input" name="workspaceName" required />
@@ -238,7 +252,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                 required
               />
             </label>
-            {isRegister && (
+            {((isRegister && !usesMagicLinks) || usesPasswordLogin) && (
               <label className="field-label">
                 Password
                 <span className="password-field">
@@ -262,10 +276,27 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                 </span>
               </label>
             )}
-            {isRegister && (
+            {isRegister && !usesMagicLinks && (
               <p className="field-hint">
                 Use at least 12 characters, including a number and symbol.
               </p>
+            )}
+            {isRegister && usesMagicLinks && (
+              <div className="auth-terms">
+                <button
+                  type="button"
+                  className="auth-terms-checkbox"
+                  role="checkbox"
+                  aria-checked={termsAccepted}
+                  aria-label="I agree to the terms and privacy policy."
+                  onClick={() => {
+                    setTermsAccepted((value) => !value);
+                  }}
+                >
+                  <span aria-hidden="true">{termsAccepted ? '✓' : ''}</span>
+                </button>
+                <span>I agree to the terms and privacy policy.</span>
+              </div>
             )}
             <button className="primary-button" type="submit" disabled={isSubmitting}>
               {isSubmitting

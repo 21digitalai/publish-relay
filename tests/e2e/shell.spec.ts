@@ -362,13 +362,34 @@ test('registers, persists the first workspace update, and reloads the protected 
   page,
 }, testInfo) => {
   const suffix = Math.random().toString(36).slice(2);
+  await page.route('**/api/auth/magic-link/signup', (route) =>
+    route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { accepted: true, message: 'Check your email to finish creating your account.' },
+        error: null,
+      }),
+    }),
+  );
   await page.goto('/register');
   await page.getByLabel('Name', { exact: true }).fill('Relay Owner');
   await page.getByLabel('Workspace name').fill(`Atlas Studio ${suffix}`);
   await page.getByLabel('Email').fill(`owner-${suffix}@example.test`);
-  await page.getByLabel('Password').fill('long-password-123!');
+  await page.getByRole('checkbox', { name: 'I agree to the terms and privacy policy.' }).click();
   await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page).toHaveURL(/\/onboarding\/workspace$/);
+  await expect(page.getByRole('status')).toContainText('Check your email');
+  await page.unroute('**/api/auth/magic-link/signup');
+  const registration = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Relay Owner',
+      email: `owner-${suffix}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: `Atlas Studio ${suffix}`,
+    },
+  });
+  expect(registration.ok()).toBe(true);
+  await page.goto('/onboarding/workspace');
   await page.getByLabel('Workspace name').fill('Atlas Publishing');
   const collisionContext = await browser.newContext();
   const collisionResponse = await collisionContext.request.post('/api/auth/register', {

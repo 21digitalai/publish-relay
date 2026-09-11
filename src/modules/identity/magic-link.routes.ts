@@ -8,6 +8,12 @@ const requestSchema = z.object({
   email: z.email(),
   redirectPath: z.string().max(2_048).optional(),
 });
+const signupRequestSchema = z.object({
+  displayName: z.string().trim().min(1).max(100),
+  email: z.email(),
+  workspaceName: z.string().trim().min(1).max(100),
+  termsAccepted: z.literal(true),
+});
 const verifySchema = z.object({ token: z.string().min(32).max(256) });
 
 export function registerMagicLinkRoutes(
@@ -36,6 +42,26 @@ export function registerMagicLinkRoutes(
     });
   });
 
+  application.post('/api/auth/magic-link/signup', async (request, reply) => {
+    const input = signupRequestSchema.safeParse(request.body);
+    if (!input.success)
+      return reply.code(400).send({ data: null, error: 'Complete all signup details' });
+    const result = await magicLinks.requestSignup({
+      ...input.data,
+      networkKey: request.ip,
+      userAgent: request.headers['user-agent'] ?? '',
+      correlationId: request.id,
+    });
+    return reply.code(202).send({
+      data: {
+        accepted: true,
+        message: 'Check your email to finish creating your account.',
+        ...(result.developmentUrl ? { developmentUrl: result.developmentUrl } : {}),
+      },
+      error: null,
+    });
+  });
+
   application.get('/api/auth/magic-link/verify', async (request, reply) => {
     const input = verifySchema.safeParse(request.query);
     if (!input.success) return reply.redirect('/login?magicLink=invalid');
@@ -44,6 +70,18 @@ export function registerMagicLinkRoutes(
       userAgent: request.headers['user-agent'] ?? '',
     });
     if (!session) return reply.redirect('/login?magicLink=invalid');
+    setSessionCookies(reply, session, options.secureCookies);
+    return reply.redirect(session.redirectPath);
+  });
+
+  application.get('/api/auth/magic-link/verify-signup', async (request, reply) => {
+    const input = verifySchema.safeParse(request.query);
+    if (!input.success) return reply.redirect('/register?magicLink=invalid');
+    const session = await magicLinks.verifySignup({
+      token: input.data.token,
+      userAgent: request.headers['user-agent'] ?? '',
+    });
+    if (!session) return reply.redirect('/register?magicLink=invalid');
     setSessionCookies(reply, session, options.secureCookies);
     return reply.redirect(session.redirectPath);
   });

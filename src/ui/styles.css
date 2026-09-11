@@ -178,6 +178,31 @@ select:focus-visible {
   color: var(--muted);
   cursor: pointer;
 }
+
+.auth-terms {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.auth-terms-checkbox {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--brand-ink);
+}
+
+.auth-terms-checkbox[aria-checked='true'] {
+  border-color: var(--brand);
+  background: var(--brand);
+}
 .field-hint,
 .auth-switch {
   color: var(--muted);

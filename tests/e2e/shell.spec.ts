@@ -82,23 +82,34 @@ async function mockConnectedAccounts(page: Page) {
   );
 }
 
-test('renders the login surface and reports an inline authentication error', async ({
+test('renders the email-only login surface and development magic-link receipt', async ({
   page,
 }, testInfo) => {
-  await page.route('**/api/auth/login', (route) =>
+  await page.route('**/api/auth/magic-link/request', (route) =>
     route.fulfill({
-      status: 401,
+      status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ data: null, error: 'Invalid email or password' }),
+      body: JSON.stringify({
+        data: {
+          accepted: true,
+          message: 'If an account exists, a sign-in link is on its way.',
+          developmentUrl: '/api/auth/magic-link/verify?token=development-token',
+        },
+        error: null,
+      }),
     }),
   );
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in to your cockpit' })).toBeVisible();
   await page.getByLabel('Email').fill('owner@example.test');
-  await page.getByLabel('Password').fill('incorrect-password');
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('alert')).toContainText('Invalid email or password');
-  await page.screenshot({ path: testInfo.outputPath('auth-error.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
+  await expect(page.getByRole('status')).toContainText('If an account exists');
+  await expect(page.getByRole('link', { name: 'Open development sign-in link' })).toHaveAttribute(
+    'href',
+    '/api/auth/magic-link/verify?token=development-token',
+  );
+  await expect(page.getByLabel('Password')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('magic-link-receipt.png'), fullPage: true });
 });
 
 test('renders the honest recovery unavailable state', async ({ page }) => {

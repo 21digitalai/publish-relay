@@ -40,12 +40,18 @@ const runtimeConfigSchema = z
     X_API_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID: z.string().min(1).optional(),
     PUBLISH_RELAY_PUBLIC_ORIGIN: z.url().optional(),
+    PUBLISH_RELAY_MAGIC_LINK_PEPPER: z.string().min(32).optional(),
+    PUBLISH_RELAY_RESEND_API_KEY: z.string().min(1).optional(),
+    PUBLISH_RELAY_AUTH_EMAIL_FROM: z.string().email().optional(),
   })
   .superRefine((config, context) => {
     if (config.NODE_ENV !== 'production') return;
     for (const name of [
       'PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION',
       'PUBLISH_RELAY_PUBLIC_ORIGIN',
+      'PUBLISH_RELAY_MAGIC_LINK_PEPPER',
+      'PUBLISH_RELAY_RESEND_API_KEY',
+      'PUBLISH_RELAY_AUTH_EMAIL_FROM',
     ] as const)
       if (!config[name])
         context.addIssue({ code: 'custom', path: [name], message: `${name} is required` });

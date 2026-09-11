@@ -10,6 +10,12 @@ import {
   resolveWorkerSecurityRuntime,
 } from '../src/config/runtime-master-keys.js';
 
+const productionAuth = {
+  PUBLISH_RELAY_MAGIC_LINK_PEPPER: 'm'.repeat(32),
+  PUBLISH_RELAY_RESEND_API_KEY: 'resend-key',
+  PUBLISH_RELAY_AUTH_EMAIL_FROM: 'login@relay.example.test',
+};
+
 describe('production runtime secret configuration', () => {
   it('loads the active and historical master-key versions without exposing their values', async () => {
     const active = Buffer.alloc(32, 1).toString('base64');
@@ -37,6 +43,7 @@ describe('production runtime secret configuration', () => {
     expect(() =>
       loadRuntimeConfig({
         NODE_ENV: 'production',
+        ...productionAuth,
         PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: 'v1',
         PUBLISH_RELAY_X_CONSUMER_KEY: 'consumer',
         PUBLISH_RELAY_X_CONSUMER_SECRET: 'secret',
@@ -48,6 +55,7 @@ describe('production runtime secret configuration', () => {
   it('disables X when absent and fails closed for partial provider configuration', () => {
     const production = loadRuntimeConfig({
       NODE_ENV: 'production',
+      ...productionAuth,
       PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: 'v1',
       PUBLISH_RELAY_PUBLIC_ORIGIN: 'https://relay.example.test',
     });
@@ -91,6 +99,7 @@ describe('production runtime secret configuration', () => {
   it('requires a distinct worker database URL in production', () => {
     const production = loadRuntimeConfig({
       NODE_ENV: 'production',
+      ...productionAuth,
       DATABASE_URL: 'postgresql://web@127.0.0.1/publish_relay',
       PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: 'v1',
       PUBLISH_RELAY_X_CONSUMER_KEY: 'consumer',

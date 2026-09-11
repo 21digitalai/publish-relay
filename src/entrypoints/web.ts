@@ -6,6 +6,9 @@ import { loadRuntimeConfig } from '../config/runtime-config.js';
 import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import { createPostgresAuthStore } from '../modules/identity/auth.repository.js';
 import { AuthService } from '../modules/identity/auth.service.js';
+import { createPostgresMagicLinkStore } from '../modules/identity/magic-link.repository.js';
+import { MagicLinkService, type EmailDelivery } from '../modules/identity/magic-link.service.js';
+import { ResendEmailDelivery } from '../modules/identity/resend-email.delivery.js';
 import { createPostgresApiKeyStore } from '../modules/identity/api-key.repository.js';
 import { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
@@ -25,12 +28,14 @@ const activeKeyVersion = config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION;
 const xConsumerKey = config.PUBLISH_RELAY_X_CONSUMER_KEY ?? config.X_API_KEY;
 const xConsumerSecret = config.PUBLISH_RELAY_X_CONSUMER_SECRET ?? config.X_API_SECRET;
 const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
+const magicLinkPepper = config.PUBLISH_RELAY_MAGIC_LINK_PEPPER;
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
 if (
   !activeKeyVersion ||
   !xConsumerKey ||
   !xConsumerSecret ||
   !publicOrigin ||
+  !magicLinkPepper ||
   !config.MEDIA_STORAGE_ROOT
 )
   throw new Error('X OAuth runtime configuration is required for the web process');
@@ -62,6 +67,24 @@ const application = createApplication(
       }
     : undefined,
   new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(database)),
+  new MagicLinkService(
+    createPostgresMagicLinkStore(database),
+    config.NODE_ENV === 'production'
+      ? new ResendEmailDelivery({
+          apiKey: config.PUBLISH_RELAY_RESEND_API_KEY!,
+          from: config.PUBLISH_RELAY_AUTH_EMAIL_FROM!,
+        })
+      : ({
+          sendMagicLink: async () => {
+            throw new Error('Email delivery is disabled outside production');
+          },
+        } satisfies EmailDelivery),
+    {
+      pepper: magicLinkPepper,
+      publicOrigin,
+      exposeDevelopmentUrl: config.NODE_ENV !== 'production',
+    },
+  ),
 );
 application.addHook('onClose', async () => pool.end());
 

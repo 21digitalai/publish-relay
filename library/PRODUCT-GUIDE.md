@@ -8,7 +8,7 @@ Users can register, connect multiple social accounts, schedule content through t
 
 - Generic clients may hand approved local media to a tenant-scoped draft and send the user into Relay's canonical cockpit composer. Relay owns retention, destination choice, scheduling, and the one-time draft-to-post receipt; source clients keep only their opaque correlation and optional HTTPS return link.
 
-- Authentication and protected application shell.
+- Passwordless human authentication and protected application shell: hosted deployments email 15-minute one-time links, while development displays the link without sending email. Login is email-only and does not create accounts; signup remains explicit.
 - Multi-tenant workspaces/projects.
 - Multiple provider accounts per workspace.
 - X as the first complete provider.
@@ -26,7 +26,7 @@ Users can register, connect multiple social accounts, schedule content through t
 - Core exposes neutral policy and factual usage boundaries with an allow-all standalone implementation; it does not know why a future injected implementation may deny an action.
 - Every capacity-changing command evaluates the same typed action-policy contract once before mutation. Inputs contain only actor/workspace identity, requested Core facts, current usage facts, request context, and the active transaction. Denials expose stable neutral codes and safe metadata; standalone Core injects the allow-all implementation.
 - Connecting or reconnecting X is admitted before the external OAuth handshake begins, so denial leaves no provider request, credential, OAuth transaction, connection, account, storage, or idempotency residue.
-- Current registration/login remains part of Core. A future local auth mode may enter a default owner/workspace directly without removing tenant identity from the domain.
+- Registration/login remains part of Core. Human browser login uses magic links and secure server sessions; API keys remain machine-only. A future local auth mode may enter a default owner/workspace directly without removing tenant identity from the domain.
 
 - Marketing homepage.
 - Thirty-provider parity with Postiz.

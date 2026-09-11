@@ -28,7 +28,7 @@ describe('magic-link routes', () => {
       headers: { 'user-agent': 'test-browser' },
       payload: { email: 'owner@example.test', redirectPath: '/app' },
     });
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(202);
     expect(response.json()).toEqual({
       data: {
         accepted: true,

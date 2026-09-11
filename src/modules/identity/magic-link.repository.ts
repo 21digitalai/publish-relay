@@ -97,7 +97,7 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
             AND challenge.purpose = 'login'
             AND challenge.delivery_state = 'sent'
             AND challenge.consumed_at IS NULL
-            AND challenge.expires_at > ${input.now}
+            AND challenge.expires_at > now()
             AND users.is_disabled = false
           FOR UPDATE OF challenge
         `);
@@ -113,6 +113,16 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
             and(
               eq(loginChallenges.id, challenge.challenge_id),
               sql`${loginChallenges.consumedAt} is null`,
+            ),
+          );
+        await transaction
+          .update(sessions)
+          .set({ revokedAt: input.now, updatedAt: input.now })
+          .where(
+            and(
+              eq(sessions.workspaceId, challenge.workspace_id),
+              eq(sessions.userId, challenge.user_id),
+              sql`${sessions.revokedAt} is null`,
             ),
           );
         await transaction.insert(sessions).values({

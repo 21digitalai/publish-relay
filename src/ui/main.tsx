@@ -148,6 +148,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
               setIsSubmitting(true);
               const fields = new FormData(form);
               const workspaceName = formText(fields, 'workspaceName');
+              const continuation = new URLSearchParams(window.location.search).get('next');
               const payload = isRegister
                 ? {
                     displayName: formText(fields, 'displayName'),
@@ -157,6 +158,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                   }
                 : {
                     email: formText(fields, 'email'),
+                    ...(continuation ? { redirectPath: continuation } : {}),
                   };
               try {
                 const response = await fetch(

@@ -26,14 +26,14 @@ export function registerMagicLinkRoutes(
       userAgent: request.headers['user-agent'] ?? '',
       correlationId: request.id,
     });
-    return {
+    return reply.code(202).send({
       data: {
         accepted: true,
         message: 'If an account exists, a sign-in link is on its way.',
         ...(result.developmentUrl ? { developmentUrl: result.developmentUrl } : {}),
       },
       error: null,
-    };
+    });
   });
 
   application.get('/api/auth/magic-link/verify', async (request, reply) => {

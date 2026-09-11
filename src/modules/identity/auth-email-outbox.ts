@@ -1,14 +1,15 @@
 import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { randomUUID } from 'node:crypto';
 
-import { authEmailOutbox } from '../../database/schema.js';
+import { authEmailOutbox, loginChallenges } from '../../database/schema.js';
 import {
   decryptCredential,
   encryptCredential,
   type EncryptedCredential,
   type MasterKeyProvider,
 } from '../credentials/envelope.js';
-import type { EmailDelivery } from './magic-link.service.js';
+import type { EmailDelivery, MagicLinkChallengeInput } from './magic-link.service.js';
 
 interface AuthEmailPayload {
   challengeId?: string;
@@ -22,6 +23,22 @@ export class AuthEmailOutboxDelivery implements EmailDelivery {
     private readonly database: NodePgDatabase,
     private readonly keys: MasterKeyProvider,
   ) {}
+
+  async queueMagicLinkChallenge(
+    challenge: MagicLinkChallengeInput,
+    input: Omit<AuthEmailPayload, 'challengeId'>,
+  ): Promise<{ challengeId: string }> {
+    const challengeId = randomUUID();
+    const encrypted = await encryptCredential(
+      Buffer.from(JSON.stringify({ ...input, challengeId })),
+      this.keys,
+    );
+    await this.database.transaction(async (transaction) => {
+      await transaction.insert(loginChallenges).values({ id: challengeId, ...challenge });
+      await transaction.insert(authEmailOutbox).values({ challengeId, ...encrypted });
+    });
+    return { challengeId };
+  }
 
   async sendMagicLink(input: AuthEmailPayload): Promise<{ messageId: string; queued: true }> {
     if (!input.challengeId) throw new Error('Auth email challenge identity is required');

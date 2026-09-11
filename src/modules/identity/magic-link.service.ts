@@ -53,6 +53,10 @@ export interface EmailDelivery {
     url: string;
     correlationId: string;
   }) => Promise<{ messageId: string; queued?: boolean }>;
+  queueMagicLinkChallenge?: (
+    challenge: MagicLinkChallengeInput,
+    input: { recipient: string; url: string; correlationId: string },
+  ) => Promise<{ challengeId: string }>;
 }
 
 export interface MagicLinkRequestResult {
@@ -162,7 +166,7 @@ export class MagicLinkService {
     }
     this.metrics.increment('request_accepted');
 
-    const challengeId = await this.store.createChallenge({
+    const challenge = {
       userId,
       tokenHash: material.tokenHash,
       emailKeyHash: material.emailKeyHash,
@@ -172,9 +176,20 @@ export class MagicLinkService {
       redirectPath,
       expiresAt: magicLinkExpiresAt(input.now ?? new Date()),
       correlationId: input.correlationId,
-    });
+    } satisfies MagicLinkChallengeInput;
     const url = new URL('/api/auth/magic-link/verify', this.config.publicOrigin);
     url.searchParams.set('token', material.token);
+
+    if (this.delivery.queueMagicLinkChallenge && !this.config.exposeDevelopmentUrl) {
+      await this.delivery.queueMagicLinkChallenge(challenge, {
+        recipient: email,
+        url: url.toString(),
+        correlationId: input.correlationId,
+      });
+      return { accepted: true };
+    }
+
+    const challengeId = await this.store.createChallenge(challenge);
 
     if (this.config.exposeDevelopmentUrl) {
       await this.store.markDelivery(challengeId, 'sent');

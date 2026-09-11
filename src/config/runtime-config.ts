@@ -40,6 +40,7 @@ const runtimeConfigSchema = z
     X_API_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID: z.string().min(1).optional(),
     PUBLISH_RELAY_PUBLIC_ORIGIN: z.url().optional(),
+    PUBLISH_RELAY_HUMAN_AUTH_MODE: z.enum(['password', 'magic_link']).optional(),
     PUBLISH_RELAY_MAGIC_LINK_PEPPER: z.string().min(32).optional(),
     PUBLISH_RELAY_RESEND_API_KEY: z.string().min(1).optional(),
     PUBLISH_RELAY_AUTH_EMAIL_FROM: z.string().email().optional(),
@@ -49,12 +50,17 @@ const runtimeConfigSchema = z
     for (const name of [
       'PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION',
       'PUBLISH_RELAY_PUBLIC_ORIGIN',
-      'PUBLISH_RELAY_MAGIC_LINK_PEPPER',
-      'PUBLISH_RELAY_RESEND_API_KEY',
-      'PUBLISH_RELAY_AUTH_EMAIL_FROM',
     ] as const)
       if (!config[name])
         context.addIssue({ code: 'custom', path: [name], message: `${name} is required` });
+    if (config.PUBLISH_RELAY_HUMAN_AUTH_MODE === 'magic_link')
+      for (const name of [
+        'PUBLISH_RELAY_MAGIC_LINK_PEPPER',
+        'PUBLISH_RELAY_RESEND_API_KEY',
+        'PUBLISH_RELAY_AUTH_EMAIL_FROM',
+      ] as const)
+        if (!config[name])
+          context.addIssue({ code: 'custom', path: [name], message: `${name} is required` });
     if (config.PUBLISH_RELAY_PUBLIC_ORIGIN?.startsWith('https://') !== true)
       context.addIssue({
         code: 'custom',
@@ -67,6 +73,10 @@ export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 
 export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   return runtimeConfigSchema.parse(environment);
+}
+
+export function resolveHumanAuthMode(config: RuntimeConfig): 'password' | 'magic_link' {
+  return config.PUBLISH_RELAY_HUMAN_AUTH_MODE ?? 'password';
 }
 
 export function resolveWorkerDatabaseUrl(config: RuntimeConfig): string {

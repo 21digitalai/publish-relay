@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
 import { createApplication } from '../application/create-application.js';
-import { loadRuntimeConfig } from '../config/runtime-config.js';
+import { loadRuntimeConfig, resolveHumanAuthMode } from '../config/runtime-config.js';
 import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import { createPostgresAuthStore } from '../modules/identity/auth.repository.js';
 import { AuthService } from '../modules/identity/auth.service.js';
@@ -35,7 +35,6 @@ if (
   !xConsumerKey ||
   !xConsumerSecret ||
   !publicOrigin ||
-  !magicLinkPepper ||
   !config.MEDIA_STORAGE_ROOT
 )
   throw new Error('X OAuth runtime configuration is required for the web process');
@@ -68,21 +67,23 @@ const application = createApplication(
       }
     : undefined,
   new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(database)),
-  new MagicLinkService(
-    createPostgresMagicLinkStore(database),
-    config.NODE_ENV === 'production'
-      ? new AuthEmailOutboxDelivery(database, masterKeys)
-      : ({
-          sendMagicLink: async () => {
-            throw new Error('Email delivery is disabled outside production');
-          },
-        } satisfies EmailDelivery),
-    {
-      pepper: magicLinkPepper,
-      publicOrigin,
-      exposeDevelopmentUrl: config.NODE_ENV !== 'production',
-    },
-  ),
+  resolveHumanAuthMode(config) === 'magic_link' && magicLinkPepper
+    ? new MagicLinkService(
+        createPostgresMagicLinkStore(database),
+        config.NODE_ENV === 'production'
+          ? new AuthEmailOutboxDelivery(database, masterKeys)
+          : ({
+              sendMagicLink: async () => {
+                throw new Error('Email delivery is disabled outside production');
+              },
+            } satisfies EmailDelivery),
+        {
+          pepper: magicLinkPepper,
+          publicOrigin,
+          exposeDevelopmentUrl: config.NODE_ENV !== 'production',
+        },
+      )
+    : undefined,
 );
 application.addHook('onClose', async () => pool.end());
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   loadRuntimeConfig,
+  resolveHumanAuthMode,
   resolveWorkerDatabaseUrl,
   resolveXProviderCredentials,
 } from '../src/config/runtime-config.js';
@@ -17,6 +18,27 @@ const productionAuth = {
 };
 
 describe('production runtime secret configuration', () => {
+  it('defaults human authentication to password and gates magic-link secrets explicitly', () => {
+    const passwordConfig = loadRuntimeConfig({
+      NODE_ENV: 'production',
+      PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: 'v1',
+      PUBLISH_RELAY_PUBLIC_ORIGIN: 'https://relay.example.test',
+    });
+    expect(resolveHumanAuthMode(passwordConfig)).toBe('password');
+    expect(() =>
+      loadRuntimeConfig({
+        NODE_ENV: 'production',
+        PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION: 'v1',
+        PUBLISH_RELAY_PUBLIC_ORIGIN: 'https://relay.example.test',
+        PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link',
+      }),
+    ).toThrow(/PUBLISH_RELAY_MAGIC_LINK_PEPPER/);
+    expect(
+      resolveHumanAuthMode(
+        loadRuntimeConfig({ NODE_ENV: 'test', PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link' }),
+      ),
+    ).toBe('magic_link');
+  });
   it('loads the active and historical master-key versions without exposing their values', async () => {
     const active = Buffer.alloc(32, 1).toString('base64');
     const old = Buffer.alloc(32, 2).toString('base64');

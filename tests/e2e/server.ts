@@ -37,7 +37,13 @@ await database.exec(`
 const typedDatabase = drizzle(database) as unknown as NodePgDatabase;
 const auth = new AuthService(createPostgresAuthStore(typedDatabase));
 const application = createApplication(
-  { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 43199, WORKER_POLL_INTERVAL_MS: 1000 },
+  {
+    NODE_ENV: 'test',
+    HOST: '127.0.0.1',
+    PORT: 43199,
+    WORKER_POLL_INTERVAL_MS: 1000,
+    PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link',
+  },
   auth,
   undefined,
   resolve(process.cwd(), 'dist/ui'),

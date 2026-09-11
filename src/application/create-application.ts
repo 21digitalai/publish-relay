@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { RuntimeConfig } from '../config/runtime-config.js';
+import { resolveHumanAuthMode, type RuntimeConfig } from '../config/runtime-config.js';
 import { registerApiDocumentationRoute } from '../modules/api/openapi.js';
 import { registerAgentDiscoveryRoutes } from '../modules/api/agent-discovery.js';
 import { ApiRateLimiter } from '../modules/api/rate-limit.js';
@@ -52,7 +52,10 @@ export function createApplication(
 ): FastifyInstance {
   const application = Fastify({ logger: config.NODE_ENV !== 'test' });
   const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
-  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8');
+  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8').replace(
+    '<body>',
+    `<body data-human-auth-mode="${resolveHumanAuthMode(config)}">`,
+  );
 
   application.register(fastifyStatic, { root: uiRoot, wildcard: false });
 
@@ -88,7 +91,7 @@ export function createApplication(
       secureCookies: config.NODE_ENV === 'production',
       shellHtml,
     });
-  if (magicLinks)
+  if (magicLinks && resolveHumanAuthMode(config) === 'magic_link')
     registerMagicLinkRoutes(application, magicLinks, {
       secureCookies: config.NODE_ENV === 'production',
     });

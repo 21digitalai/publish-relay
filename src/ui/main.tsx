@@ -103,6 +103,8 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isRegister = mode === 'register';
   const isForgot = mode === 'forgot';
+  const usesMagicLinks = document.body.dataset.humanAuthMode === 'magic_link';
+  const usesPasswordLogin = !isRegister && !isForgot && !usesMagicLinks;
   return (
     <main className="auth-page">
       <section className="auth-panel" aria-labelledby="auth-title">
@@ -121,7 +123,9 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
         </h1>
         <p className="auth-intro">
           {isForgot
-            ? 'The same secure one-time link signs you back in. No password reset is needed.'
+            ? usesMagicLinks
+              ? 'The same secure one-time link signs you back in. No password reset is needed.'
+              : 'Password recovery is not available yet. Contact support for assistance.'
             : 'Manage every account, schedule, and recovery path in one focused place.'}
         </p>
         {error && (
@@ -138,122 +142,153 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
             )}
           </div>
         )}
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const form = event.currentTarget;
-            void (async () => {
-              setError(null);
-              setMagicLink(null);
-              setIsSubmitting(true);
-              const fields = new FormData(form);
-              const workspaceName = formText(fields, 'workspaceName');
-              const continuation = new URLSearchParams(window.location.search).get('next');
-              const payload = isRegister
-                ? {
-                    displayName: formText(fields, 'displayName'),
-                    email: formText(fields, 'email'),
-                    password: formText(fields, 'password'),
-                    workspaceName,
-                  }
-                : {
-                    email: formText(fields, 'email'),
-                    ...(continuation ? { redirectPath: continuation } : {}),
+        {(!isForgot || usesMagicLinks) && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              void (async () => {
+                setError(null);
+                setMagicLink(null);
+                setIsSubmitting(true);
+                const fields = new FormData(form);
+                const workspaceName = formText(fields, 'workspaceName');
+                const continuation = new URLSearchParams(window.location.search).get('next');
+                const payload = isRegister
+                  ? {
+                      displayName: formText(fields, 'displayName'),
+                      email: formText(fields, 'email'),
+                      password: formText(fields, 'password'),
+                      workspaceName,
+                    }
+                  : usesPasswordLogin
+                    ? {
+                        email: formText(fields, 'email'),
+                        password: formText(fields, 'password'),
+                      }
+                    : {
+                        email: formText(fields, 'email'),
+                        ...(continuation ? { redirectPath: continuation } : {}),
+                      };
+                try {
+                  const response = await fetch(
+                    isRegister
+                      ? '/api/auth/register'
+                      : usesPasswordLogin
+                        ? '/api/auth/login'
+                        : '/api/auth/magic-link/request',
+                    {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify(payload),
+                    },
+                  );
+                  const result = (await response.json()) as {
+                    data: { message?: string; developmentUrl?: string } | null;
+                    error: string | null;
                   };
-              try {
-                const response = await fetch(
-                  isRegister ? '/api/auth/register' : '/api/auth/magic-link/request',
-                  {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(payload),
-                  },
-                );
-                const result = (await response.json()) as {
-                  data: { message?: string; developmentUrl?: string } | null;
-                  error: string | null;
-                };
-                if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
-                if (isRegister) {
-                  sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
-                  window.location.href = '/onboarding/workspace';
-                } else {
-                  setMagicLink({
-                    message:
-                      result.data?.message ?? 'If an account exists, a sign-in link is on its way.',
-                    ...(result.data?.developmentUrl
-                      ? { developmentUrl: result.data.developmentUrl }
-                      : {}),
-                  });
+                  if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
+                  if (isRegister) {
+                    sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
+                    window.location.href = '/onboarding/workspace';
+                  } else if (usesPasswordLogin) {
+                    window.location.href = continuation ?? '/app';
+                  } else {
+                    setMagicLink({
+                      message:
+                        result.data?.message ??
+                        'If an account exists, a sign-in link is on its way.',
+                      ...(result.data?.developmentUrl
+                        ? { developmentUrl: result.data.developmentUrl }
+                        : {}),
+                    });
+                    setIsSubmitting(false);
+                  }
+                } catch (submissionError) {
+                  setError(
+                    submissionError instanceof Error
+                      ? submissionError.message
+                      : 'Authentication failed',
+                  );
                   setIsSubmitting(false);
                 }
-              } catch (submissionError) {
-                setError(
-                  submissionError instanceof Error
-                    ? submissionError.message
-                    : 'Authentication failed',
-                );
-                setIsSubmitting(false);
-              }
-            })();
-          }}
-          noValidate
-        >
-          {isRegister && (
+              })();
+            }}
+            noValidate
+          >
+            {isRegister && (
+              <label className="field-label">
+                Name
+                <input className="text-input" name="displayName" autoComplete="name" required />
+              </label>
+            )}
+            {(isRegister || usesPasswordLogin) && (
+              <label className="field-label">
+                Workspace name
+                <input className="text-input" name="workspaceName" required />
+              </label>
+            )}
             <label className="field-label">
-              Name
-              <input className="text-input" name="displayName" autoComplete="name" required />
+              Email
+              <input
+                className="text-input"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+              />
             </label>
-          )}
-          {isRegister && (
-            <label className="field-label">
-              Workspace name
-              <input className="text-input" name="workspaceName" required />
-            </label>
-          )}
-          <label className="field-label">
-            Email
-            <input className="text-input" name="email" type="email" autoComplete="email" required />
-          </label>
-          {isRegister && (
-            <label className="field-label">
-              Password
-              <span className="password-field">
-                <input
-                  className="text-input"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  required
-                />
-                <button
-                  className="reveal-password"
-                  type="button"
-                  onClick={() => {
-                    setShowPassword((value) => !value);
-                  }}
-                  aria-pressed={showPassword}
-                >
-                  {showPassword ? 'Hide' : 'Show'}
-                </button>
-              </span>
-            </label>
-          )}
-          {isRegister && (
-            <p className="field-hint">Use at least 12 characters, including a number and symbol.</p>
-          )}
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting
-              ? isRegister
-                ? 'Creating account…'
-                : 'Sending link…'
-              : isRegister
-                ? 'Create account'
-                : isForgot
-                  ? 'Email me a recovery link'
-                  : 'Email me a sign-in link'}
-          </button>
-        </form>
+            {isRegister && (
+              <label className="field-label">
+                Password
+                <span className="password-field">
+                  <input
+                    className="text-input"
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete={isRegister ? 'new-password' : 'current-password'}
+                    required
+                  />
+                  <button
+                    className="reveal-password"
+                    type="button"
+                    onClick={() => {
+                      setShowPassword((value) => !value);
+                    }}
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </span>
+              </label>
+            )}
+            {isRegister && (
+              <p className="field-hint">
+                Use at least 12 characters, including a number and symbol.
+              </p>
+            )}
+            <button className="primary-button" type="submit" disabled={isSubmitting}>
+              {isSubmitting
+                ? isRegister
+                  ? 'Creating account…'
+                  : usesPasswordLogin
+                    ? 'Signing in…'
+                    : 'Sending link…'
+                : isRegister
+                  ? 'Create account'
+                  : usesPasswordLogin
+                    ? 'Sign in'
+                    : isForgot
+                      ? 'Email me a recovery link'
+                      : 'Email me a sign-in link'}
+            </button>
+          </form>
+        )}
+        {usesPasswordLogin && (
+          <a className="auth-secondary-link" href="/forgot-password">
+            Forgot password?
+          </a>
+        )}
         <p className="auth-switch">
           {isRegister
             ? 'Already have an account?'

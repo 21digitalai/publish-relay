@@ -1,7 +1,11 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
-import { loadRuntimeConfig, resolveWorkerDatabaseUrl } from '../config/runtime-config.js';
+import {
+  loadRuntimeConfig,
+  resolveHumanAuthMode,
+  resolveWorkerDatabaseUrl,
+} from '../config/runtime-config.js';
 import { resolveWorkerSecurityRuntime } from '../config/runtime-master-keys.js';
 import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
 import {
@@ -76,7 +80,9 @@ const youtubeRuntime =
       }
     : null;
 const authEmailDelivery =
-  config.PUBLISH_RELAY_RESEND_API_KEY && config.PUBLISH_RELAY_AUTH_EMAIL_FROM
+  resolveHumanAuthMode(config) === 'magic_link' &&
+  config.PUBLISH_RELAY_RESEND_API_KEY &&
+  config.PUBLISH_RELAY_AUTH_EMAIL_FROM
     ? new ResendEmailDelivery({
         apiKey: config.PUBLISH_RELAY_RESEND_API_KEY,
         from: config.PUBLISH_RELAY_AUTH_EMAIL_FROM,

@@ -45,6 +45,15 @@ function createProductionApplication(store: AuthStore) {
 }
 
 describe('authentication HTTP boundary', () => {
+  it('renders the password-compatible shell by default', async () => {
+    const response = await createTestApplication(createStore()).inject({
+      method: 'GET',
+      url: '/login',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('data-human-auth-mode="password"');
+  });
+
   it('registers an account and returns only the identity contract', async () => {
     const store = createStore();
     const response = await createTestApplication(store).inject({

@@ -117,6 +117,8 @@ An external-draft cockpit link opens the canonical Composer sheet directly. A co
 
 The composer is a 640px right sheet on desktop, full-screen on mobile, and may expand to 880px for preview.
 
+For X-only destinations, the canonical Composer can append ordered reply fields. Each reply remains visibly nested under the root, can be removed independently, and is submitted through the same post-creation lifecycle as `content.kind=thread`; the root owns the Composer's attached media unless a future approved picker exposes per-reply assignment.
+
 Order:
 
 1. Visual multi-account picker grouped by provider.

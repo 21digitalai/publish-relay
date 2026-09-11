@@ -236,6 +236,28 @@ describe('X native thread publishing', () => {
     expect(events).toEqual(['intent:job-1:part:0', 'provider']);
   });
 
+  it('releases only a definitely rejected part so a retry can resume its published prefix', async () => {
+    const createPost = vi.fn().mockRejectedValueOnce(new Error('provider unavailable'));
+    const released: string[] = [];
+
+    await expect(
+      publishXThread(
+        { createPost } as unknown as XClient,
+        [{ text: 'Reply', mediaIds: [] }],
+        'job-1',
+        [],
+        undefined,
+        () => Promise.resolve(),
+        (_position, key) => {
+          released.push(key);
+          return Promise.resolve();
+        },
+      ),
+    ).rejects.toThrow('provider unavailable');
+
+    expect(released).toEqual(['job-1:part:0']);
+  });
+
   it('does not call X when a prior dispatch intent is ambiguous', async () => {
     const createPost = vi.fn();
     await expect(

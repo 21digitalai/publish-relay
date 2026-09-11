@@ -49,6 +49,7 @@ export async function publishXThread(
   completed: readonly XPublishedThreadPart[] = [],
   onPublished?: (part: XPublishedThreadPart) => Promise<void>,
   onDispatching?: (position: number, dispatchKey: string) => Promise<void>,
+  onDefiniteFailure?: (position: number, dispatchKey: string) => Promise<void>,
 ): Promise<XPublishedThreadPart[]> {
   if (parts.length === 0) throw new Error('X thread must contain at least one post');
   const published = [...completed].sort((left, right) => left.position - right.position);
@@ -71,7 +72,10 @@ export async function publishXThread(
       });
     } catch (error) {
       if ((error as Partial<XApiError>).outcomeUnknown)
-        throw Object.assign(error as object, { reconciliationKey: `x:manual:${dispatchKey}` });
+        throw Object.assign(error instanceof Error ? error : new Error('X request failed'), {
+          reconciliationKey: `x:manual:${dispatchKey}`,
+        });
+      if (onDefiniteFailure) await onDefiniteFailure(position, dispatchKey);
       throw error;
     }
     const record = {

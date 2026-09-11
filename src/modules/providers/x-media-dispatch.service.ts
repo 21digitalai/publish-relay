@@ -187,6 +187,28 @@ async function savePublishedXThreadPart(
   });
 }
 
+async function clearFailedXThreadPart(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+  position: number,
+  dispatchKey: string,
+): Promise<void> {
+  await withTenantTransaction(database, { workspaceId }, async (transaction) => {
+    await transaction
+      .delete(xThreadParts)
+      .where(
+        and(
+          eq(xThreadParts.workspaceId, workspaceId),
+          eq(xThreadParts.jobId, jobId),
+          eq(xThreadParts.position, position),
+          eq(xThreadParts.dispatchKey, dispatchKey),
+          eq(xThreadParts.state, 'dispatching'),
+        ),
+      );
+  });
+}
+
 function resolveThreadMediaIds(
   assignedIds: readonly string[],
   media: readonly { id: string }[],
@@ -397,6 +419,14 @@ export async function dispatchDueXJobs(
                 position,
                 dispatchKey,
                 new Date(),
+              ),
+            (position, dispatchKey) =>
+              clearFailedXThreadPart(
+                runtime.database,
+                job.workspaceId,
+                job.id,
+                position,
+                dispatchKey,
               ),
           );
           const root = published[0];

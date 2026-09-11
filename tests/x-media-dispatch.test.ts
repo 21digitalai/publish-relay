@@ -53,6 +53,7 @@ const databaseTransaction = {
   innerJoin: vi.fn(() => databaseTransaction),
   leftJoin: vi.fn(() => databaseTransaction),
   insert: vi.fn(() => databaseTransaction),
+  delete: vi.fn(() => databaseTransaction),
   update: vi.fn(() => databaseTransaction),
   set: vi.fn(() => databaseTransaction),
   values: vi.fn(() => databaseTransaction),

@@ -2250,3 +2250,16 @@ select:focus-visible {
     animation: none;
   }
 }
+.composer-thread-parts {
+  display: grid;
+  gap: 12px;
+}
+
+.composer-thread-parts .field-label {
+  padding-left: 16px;
+  border-left: 2px solid var(--border-strong);
+}
+
+.composer-thread-parts .tertiary-button {
+  justify-self: start;
+}

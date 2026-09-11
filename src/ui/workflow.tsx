@@ -88,7 +88,11 @@ interface QueueJobDto {
 }
 
 interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview' | 'media'> {
-  content: { text?: string; kind?: string; posts?: string[] };
+  content: {
+    text?: string;
+    kind?: string;
+    posts?: (string | { text: string; mediaIds?: string[] })[];
+  };
   media?: DetailMediaDto[];
   attempts?: AttemptDto[];
   activity?: ActivityDto[];
@@ -234,7 +238,10 @@ function detailToJob(dto: JobDetailDto): Job {
 }
 
 function contentParts(content: JobDetailDto['content']): string[] {
-  if (Array.isArray(content.posts)) return content.posts.filter((part) => part.trim());
+  if (Array.isArray(content.posts))
+    return content.posts
+      .map((part) => (typeof part === 'string' ? part : part.text))
+      .filter((part) => part.trim());
   return content.text?.trim() ? [content.text] : [];
 }
 
@@ -325,6 +332,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [collisionWindowEnd, setCollisionWindowEnd] = useState<Date | null>(null);
   const [body, setBody] = useState('');
+  const [replies, setReplies] = useState<string[]>([]);
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
   const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
   const [draftState, setDraftState] = useState<'loading' | 'ready' | 'error'>(
@@ -379,6 +387,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const selected = accounts.filter((account) => selectedAccounts.includes(account.id));
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
+  const isXOnly = selected.length > 0 && selected.every((account) => account.provider === 'x');
   const youtubeHasMadeForKids = selected[0]?.adapterDefaults.madeForKids !== undefined;
   const scheduleError =
     scheduled && scheduleOptions.length === 0
@@ -399,7 +408,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const invalid =
     (isYouTube
       ? !video || !videoTitle.trim() || (!youtubeHasMadeForKids && madeForKids === 'default')
-      : !body.trim()) ||
+      : !body.trim() || replies.some((reply) => !reply.trim())) ||
     (includesYouTube && !isYouTube) ||
     selectedAccounts.length === 0 ||
     state !== 'ready' ||
@@ -484,6 +493,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     intentKey.current = crypto.randomUUID();
   }, [
     body,
+    replies,
     localSchedule,
     madeForKids,
     notifySubscribers,
@@ -546,7 +556,15 @@ function Composer({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({
           content: isYouTube
             ? { kind: 'video', text: '', providerOptions: { youtube: youtubeOverrides } }
-            : { type: 'text', text: body.trim() },
+            : replies.length > 0
+              ? {
+                  kind: 'thread',
+                  posts: [
+                    { text: body.trim(), mediaIds },
+                    ...replies.map((text) => ({ text: text.trim(), mediaIds: [] })),
+                  ],
+                }
+              : { type: 'text', text: body.trim() },
           mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
@@ -700,6 +718,50 @@ function Composer({ onClose }: { onClose: () => void }) {
                   : `${String(body.length)}/280 per X post`}
               </small>
             </label>
+            {isXOnly && !isYouTube && (
+              <div className="composer-thread-parts">
+                {replies.map((reply, index) => (
+                  <label className="field-label" key={index}>
+                    Reply {String(index + 1)}
+                    <textarea
+                      className="composer-body"
+                      value={reply}
+                      onChange={(event) => {
+                        setReplies((current) =>
+                          current.map((part, position) =>
+                            position === index ? event.target.value : part,
+                          ),
+                        );
+                      }}
+                      placeholder="Write the next post in this thread"
+                    />
+                    <button
+                      className="tertiary-button"
+                      type="button"
+                      onClick={() => {
+                        setReplies((current) =>
+                          current.filter((_, position) => position !== index),
+                        );
+                      }}
+                    >
+                      Remove reply
+                    </button>
+                  </label>
+                ))}
+                <button
+                  className="secondary-button add-thread-reply"
+                  type="button"
+                  onClick={() => {
+                    setReplies((current) => [...current, '']);
+                  }}
+                >
+                  Add reply
+                </button>
+                {replies.some((reply) => !reply.trim()) && (
+                  <p className="inline-validation">Every thread reply needs text.</p>
+                )}
+              </div>
+            )}
             {isYouTube && (
               <div className="youtube-composer-options">
                 <label className="field-label">

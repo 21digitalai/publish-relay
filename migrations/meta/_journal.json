@@ -274,6 +274,13 @@
       "when": 1789142450352,
       "tag": "0038_fancy_scorpion",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789143728228,
+      "tag": "0039_small_madrox",
+      "breakpoints": true
     }
   ]
 }

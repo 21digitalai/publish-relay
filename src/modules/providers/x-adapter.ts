@@ -48,6 +48,7 @@ export async function publishXThread(
   idempotencyKey: string,
   completed: readonly XPublishedThreadPart[] = [],
   onPublished?: (part: XPublishedThreadPart) => Promise<void>,
+  onDispatching?: (position: number, dispatchKey: string) => Promise<void>,
 ): Promise<XPublishedThreadPart[]> {
   if (parts.length === 0) throw new Error('X thread must contain at least one post');
   const published = [...completed].sort((left, right) => left.position - right.position);
@@ -58,12 +59,21 @@ export async function publishXThread(
     if (!part || (!part.text.trim() && part.mediaIds.length === 0))
       throw new Error(`X thread post ${String(position + 1)} must include text or media`);
     const parent = published.at(-1);
-    const result = await client.createPost({
-      text: part.text,
-      mediaIds: part.mediaIds,
-      ...(parent ? { replyToTweetId: parent.externalPostId } : {}),
-      idempotencyKey: `${idempotencyKey}:part:${String(position)}`,
-    });
+    const dispatchKey = `${idempotencyKey}:part:${String(position)}`;
+    if (onDispatching) await onDispatching(position, dispatchKey);
+    let result: { id: string; username: string };
+    try {
+      result = await client.createPost({
+        text: part.text,
+        mediaIds: part.mediaIds,
+        ...(parent ? { replyToTweetId: parent.externalPostId } : {}),
+        idempotencyKey: dispatchKey,
+      });
+    } catch (error) {
+      if ((error as Partial<XApiError>).outcomeUnknown)
+        throw Object.assign(error as object, { reconciliationKey: `x:manual:${dispatchKey}` });
+      throw error;
+    }
     const record = {
       position,
       externalPostId: result.id,

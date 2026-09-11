@@ -168,7 +168,7 @@ export async function getBrowserJobDetail(
       .limit(1);
     const job = rows[0];
     if (!job) return null;
-    const [media, attempts, activity, threadParts] = await Promise.all([
+    const [media, attempts, activity, storedThreadParts] = await Promise.all([
       transaction
         .select({
           id: mediaObjects.id,
@@ -238,6 +238,9 @@ export async function getBrowserJobDetail(
         .where(and(eq(xThreadParts.workspaceId, workspaceId), eq(xThreadParts.jobId, jobId)))
         .orderBy(asc(xThreadParts.position)),
     ]);
+    const threadParts = storedThreadParts.flatMap((part) =>
+      part.id && part.url ? [{ position: part.position, id: part.id, url: part.url }] : [],
+    );
     const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
     const externalUrl = published?.externalPostId
       ? job.providerAccount.provider === 'x'

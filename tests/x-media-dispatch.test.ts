@@ -53,7 +53,11 @@ const databaseTransaction = {
   innerJoin: vi.fn(() => databaseTransaction),
   leftJoin: vi.fn(() => databaseTransaction),
   insert: vi.fn(() => databaseTransaction),
-  values: vi.fn(() => Promise.resolve()),
+  update: vi.fn(() => databaseTransaction),
+  set: vi.fn(() => databaseTransaction),
+  values: vi.fn(() => databaseTransaction),
+  onConflictDoNothing: vi.fn(() => databaseTransaction),
+  returning: vi.fn(() => Promise.resolve([{ position: 0 }])),
   where: vi.fn(() => databaseTransaction),
   orderBy: vi.fn(() =>
     Promise.resolve([
@@ -77,7 +81,26 @@ describe('X media dispatch composition', () => {
     ).toEqual({
       kind: 'thread',
       text: 'Opening',
-      posts: ['Opening', 'Middle', 'Closing'],
+      posts: [{ text: 'Opening' }, { text: 'Middle' }, { text: 'Closing' }],
+    });
+  });
+
+  it('preserves explicit per-part media assignments', () => {
+    expect(
+      normalizeStoredXContent({
+        kind: 'thread',
+        posts: [
+          { text: 'Opening', mediaIds: [] },
+          { text: 'Visual reply', mediaIds: ['media-2'] },
+        ],
+      }),
+    ).toEqual({
+      kind: 'thread',
+      text: 'Opening',
+      posts: [
+        { text: 'Opening', mediaIds: [] },
+        { text: 'Visual reply', mediaIds: ['media-2'] },
+      ],
     });
   });
 

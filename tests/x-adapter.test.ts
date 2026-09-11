@@ -213,4 +213,55 @@ describe('X native thread publishing', () => {
     ).rejects.toThrow('provider unavailable');
     expect(saved).toEqual(['root-1']);
   });
+
+  it('records durable dispatch intent before calling X', async () => {
+    const events: string[] = [];
+    const createPost = vi.fn(() => {
+      events.push('provider');
+      return Promise.resolve({ id: 'root-1', username: 'dailyviber' });
+    });
+
+    await publishXThread(
+      { createPost } as unknown as XClient,
+      [{ text: 'Root', mediaIds: [] }],
+      'job-1',
+      [],
+      undefined,
+      (_position, key) => {
+        events.push(`intent:${key}`);
+        return Promise.resolve();
+      },
+    );
+
+    expect(events).toEqual(['intent:job-1:part:0', 'provider']);
+  });
+
+  it('does not call X when a prior dispatch intent is ambiguous', async () => {
+    const createPost = vi.fn();
+    await expect(
+      publishXThread(
+        { createPost } as unknown as XClient,
+        [{ text: 'Root', mediaIds: [] }],
+        'job-1',
+        [],
+        undefined,
+        () => Promise.reject(new Error('ambiguous prior dispatch')),
+      ),
+    ).rejects.toThrow('ambiguous prior dispatch');
+    expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it('retains the ambiguous part correlation when X create has an unknown outcome', async () => {
+    const unknown = Object.assign(new Error('connection lost'), { outcomeUnknown: true });
+    await expect(
+      publishXThread(
+        { createPost: vi.fn(() => Promise.reject(unknown)) } as unknown as XClient,
+        [{ text: 'Root', mediaIds: [] }],
+        'job-1',
+      ),
+    ).rejects.toMatchObject({
+      outcomeUnknown: true,
+      reconciliationKey: 'x:manual:job-1:part:0',
+    });
+  });
 });

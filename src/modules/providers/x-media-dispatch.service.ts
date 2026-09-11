@@ -69,19 +69,33 @@ interface StoredXContent {
   quotedPostId?: unknown;
 }
 
+interface StoredXThreadPart {
+  text?: unknown;
+  mediaIds?: unknown;
+}
+
 export function normalizeStoredXContent(content: StoredXContent): {
   kind: 'text' | 'quote' | 'thread';
   text: string;
   quotedPostId?: string;
-  posts?: string[];
+  posts?: { text: string; mediaIds?: string[] }[];
 } {
   const kind = typeof content.kind === 'string' ? content.kind : content.type;
   if (kind === 'thread') {
-    if (!Array.isArray(content.posts) || content.posts.some((post) => typeof post !== 'string'))
-      throw new Error('Stored X thread content is invalid');
-    const posts = (content.posts as string[]).map((post) => post.trim()).filter(Boolean);
+    if (!Array.isArray(content.posts)) throw new Error('Stored X thread content is invalid');
+    const posts = content.posts
+      .map((value) => {
+        if (typeof value === 'string') return { text: value.trim() };
+        const part = value as StoredXThreadPart;
+        if (typeof part.text !== 'string' || !Array.isArray(part.mediaIds))
+          throw new Error('Stored X thread content is invalid');
+        if (part.mediaIds.some((id) => typeof id !== 'string'))
+          throw new Error('Stored X thread media assignment is invalid');
+        return { text: part.text.trim(), mediaIds: part.mediaIds as string[] };
+      })
+      .filter((part) => part.text || (part.mediaIds?.length ?? 0) > 0);
     if (posts.length === 0) throw new Error('Stored X thread content is empty');
-    return { kind: 'thread', text: posts[0] ?? '', posts };
+    return { kind: 'thread', text: posts[0]?.text ?? '', posts };
   }
   const text = typeof content.text === 'string' ? content.text : '';
   if (kind === 'quote') {
@@ -107,8 +121,44 @@ async function loadPublishedXThreadParts(
       })
       .from(xThreadParts)
       .where(and(eq(xThreadParts.workspaceId, workspaceId), eq(xThreadParts.jobId, jobId)))
-      .orderBy(asc(xThreadParts.position)),
+      .orderBy(asc(xThreadParts.position))
+      .then((rows) =>
+        rows.flatMap((row) =>
+          row.externalPostId && row.externalUrl
+            ? [{ ...row, externalPostId: row.externalPostId, externalUrl: row.externalUrl }]
+            : [],
+        ),
+      ),
   );
+}
+
+async function beginXThreadPart(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+  position: number,
+  dispatchKey: string,
+  now: Date,
+): Promise<void> {
+  await withTenantTransaction(database, { workspaceId }, async (transaction) => {
+    const inserted = await transaction
+      .insert(xThreadParts)
+      .values({
+        workspaceId,
+        jobId,
+        position,
+        dispatchKey,
+        state: 'dispatching',
+        dispatchStartedAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ position: xThreadParts.position });
+    if (inserted.length === 0)
+      throw Object.assign(
+        new Error(`X thread part ${String(position + 1)} has an ambiguous prior dispatch`),
+        { outcomeUnknown: true, reconciliationKey: `x:manual:${dispatchKey}` },
+      );
+  });
 }
 
 async function savePublishedXThreadPart(
@@ -119,14 +169,35 @@ async function savePublishedXThreadPart(
   now: Date,
 ): Promise<void> {
   await withTenantTransaction(database, { workspaceId }, async (transaction) => {
-    await transaction.insert(xThreadParts).values({
-      workspaceId,
-      jobId,
-      position: part.position,
-      externalPostId: part.externalPostId,
-      externalUrl: part.externalUrl,
-      publishedAt: now,
-    });
+    await transaction
+      .update(xThreadParts)
+      .set({
+        state: 'published',
+        externalPostId: part.externalPostId,
+        externalUrl: part.externalUrl,
+        publishedAt: now,
+      })
+      .where(
+        and(
+          eq(xThreadParts.workspaceId, workspaceId),
+          eq(xThreadParts.jobId, jobId),
+          eq(xThreadParts.position, part.position),
+        ),
+      );
+  });
+}
+
+function resolveThreadMediaIds(
+  assignedIds: readonly string[],
+  media: readonly { id: string }[],
+  stagedIds: readonly string[],
+): string[] {
+  return assignedIds.map((id) => {
+    const position = media.findIndex((item) => item.id === id);
+    const stagedId = stagedIds[position];
+    if (position < 0 || !stagedId)
+      throw new Error(`X thread references unavailable revision media ${id}`);
+    return stagedId;
   });
 }
 
@@ -305,14 +376,28 @@ export async function dispatchDueXJobs(
         try {
           const published = await publishXThread(
             client,
-            normalized.posts.map((text, position) => ({
-              text,
-              mediaIds: position === 0 ? stagedMedia.mediaIds : [],
+            normalized.posts.map((part, position) => ({
+              text: part.text,
+              mediaIds:
+                part.mediaIds !== undefined
+                  ? resolveThreadMediaIds(part.mediaIds, context.media, stagedMedia.mediaIds)
+                  : position === 0
+                    ? stagedMedia.mediaIds
+                    : [],
             })),
             idempotencyKey,
             completed,
             (part) =>
               savePublishedXThreadPart(runtime.database, job.workspaceId, job.id, part, new Date()),
+            (position, dispatchKey) =>
+              beginXThreadPart(
+                runtime.database,
+                job.workspaceId,
+                job.id,
+                position,
+                dispatchKey,
+                new Date(),
+              ),
           );
           const root = published[0];
           if (!root) throw new Error('X thread did not publish a root post');
@@ -322,7 +407,14 @@ export async function dispatchDueXJobs(
             externalUrl: root.externalUrl,
           };
         } catch (error) {
-          outcome = toXPublishFailure(error);
+          const failure = toXPublishFailure(error);
+          outcome =
+            failure.status === 'unknown' && 'reconciliationKey' in (error as object)
+              ? {
+                  status: 'unknown',
+                  reconciliationKey: (error as { reconciliationKey: string }).reconciliationKey,
+                }
+              : failure;
         }
       } else {
         const content =

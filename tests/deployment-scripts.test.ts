@@ -50,7 +50,7 @@ function createDeployFixture(): {
   );
   writeExecutable(
     join(bin, 'sudo'),
-    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*|-D) echo "sudo: hardened policy rejects chdir" >&2; exit 1 ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGDATABASE,PGPASSWORD" ]]; then exec "${base[@]}" PGDATABASE="${PGDATABASE:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
+    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*|-D) echo "sudo: hardened policy rejects chdir" >&2; exit 1 ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGPASSWORD" ]]; then exec "${base[@]}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
   );
   const nodeBin = join(bin, 'node24');
   const npmCli = join(bin, 'npm-cli.js');
@@ -62,7 +62,7 @@ function createDeployFixture(): {
   const psqlBin = join(bin, 'psql');
   writeExecutable(
     psqlBin,
-    'echo "psql cwd=$PWD database=$([[ -n "${PGDATABASE:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing) $*" >> "$COMMAND_LOG"; [[ "${FAIL_BOOTSTRAP:-0}" != 1 ]]',
+    'echo "psql cwd=$PWD pgdatabase=$([[ -n "${PGDATABASE:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing) $*" >> "$COMMAND_LOG"; [[ "${FAIL_BOOTSTRAP:-0}" != 1 ]]',
   );
   writeExecutable(join(bin, 'ln'), 'echo "ln $*" >> "$COMMAND_LOG"; command /bin/ln "$@"');
   writeExecutable(join(bin, 'systemctl'), 'echo "systemctl $*" >> "$COMMAND_LOG"');
@@ -171,7 +171,7 @@ describe('deployment scripts', () => {
       `node=${fixture.nodeBin} cwd=${releaseDirectory} script=dist/database/migrate.js database=set password=set`,
     );
     expect(commands).toContain(
-      `psql cwd=${releaseDirectory} database=set password=set -v ON_ERROR_STOP=1 -f deploy/bootstrap-database-authorities.sql`,
+      `psql cwd=${releaseDirectory} pgdatabase=missing password=set -v ON_ERROR_STOP=1 -f deploy/bootstrap-database-authorities.sql postgresql://migrator@127.0.0.1/publish_relay`,
     );
     expect(commands).not.toContain('fixture-password');
     expect(commands.indexOf('script=dist/database/migrate.js')).toBeLessThan(

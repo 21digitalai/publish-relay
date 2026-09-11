@@ -38,10 +38,10 @@ sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --
   DATABASE_URL="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
     sudo --preserve-env=DATABASE_URL,PGPASSWORD \
     -u "$service_user" "$node_bin" dist/database/migrate.js
-  PGDATABASE="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
-    sudo --preserve-env=PGDATABASE,PGPASSWORD \
+  PGPASSWORD="${PGPASSWORD:-}" \
+    sudo --preserve-env=PGPASSWORD \
     -u "$service_user" "$psql_bin" -v ON_ERROR_STOP=1 \
-    -f deploy/bootstrap-database-authorities.sql
+    -f deploy/bootstrap-database-authorities.sql "$MIGRATION_DATABASE_URL"
 )
 ln -sfn "$release_directory" "${current_link}.next"
 mv -Tf "${current_link}.next" "$current_link"

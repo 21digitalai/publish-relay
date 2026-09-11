@@ -33,13 +33,16 @@ cp -a "${source_directory}/." "$release_directory/"
 chown -R "${service_user}:${service_user}" "$release_directory"
 
 sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --prefix "$release_directory"
-DATABASE_URL="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
-  sudo --preserve-env=DATABASE_URL,PGPASSWORD --chdir="$release_directory" \
-  -u "$service_user" "$node_bin" dist/database/migrate.js
-PGDATABASE="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
-  sudo --preserve-env=PGDATABASE,PGPASSWORD --chdir="$release_directory" \
-  -u "$service_user" "$psql_bin" -v ON_ERROR_STOP=1 \
-  -f deploy/bootstrap-database-authorities.sql
+(
+  cd "$release_directory"
+  DATABASE_URL="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
+    sudo --preserve-env=DATABASE_URL,PGPASSWORD \
+    -u "$service_user" "$node_bin" dist/database/migrate.js
+  PGDATABASE="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
+    sudo --preserve-env=PGDATABASE,PGPASSWORD \
+    -u "$service_user" "$psql_bin" -v ON_ERROR_STOP=1 \
+    -f deploy/bootstrap-database-authorities.sql
+)
 ln -sfn "$release_directory" "${current_link}.next"
 mv -Tf "${current_link}.next" "$current_link"
 systemctl restart publish-relay-web publish-relay-worker

@@ -50,7 +50,7 @@ function createDeployFixture(): {
   );
   writeExecutable(
     join(bin, 'sudo'),
-    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*) cd "${1#*=}" ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGDATABASE,PGPASSWORD" ]]; then exec "${base[@]}" PGDATABASE="${PGDATABASE:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
+    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*|-D) echo "sudo: hardened policy rejects chdir" >&2; exit 1 ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGDATABASE,PGPASSWORD" ]]; then exec "${base[@]}" PGDATABASE="${PGDATABASE:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
   );
   const nodeBin = join(bin, 'node24');
   const npmCli = join(bin, 'npm-cli.js');
@@ -187,6 +187,9 @@ describe('deployment scripts', () => {
       'curl --fail --silent --show-error http://127.0.0.1:3999/health/ready',
     );
     expect(readlinkSync(fixture.currentLink)).toContain('release-1');
+    expect(readFileSync(join(projectRoot, 'deploy/publish-release.sh'), 'utf8')).not.toContain(
+      '--chdir',
+    );
   });
 
   it('fails closed before install when the selected Node 24 toolchain is missing', () => {

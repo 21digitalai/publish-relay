@@ -150,6 +150,55 @@ test('hydrates an imported draft in the canonical composer on desktop and mobile
   await page.screenshot({ path: testInfo.outputPath('external-draft-mobile.png'), fullPage: true });
 });
 
+test('authors, removes, and submits an ordered X reply chain', async ({ page }, testInfo) => {
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  await page.route('**/api/workflow/jobs?**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [], next: null }, error: null }),
+    }),
+  );
+  let submitted: Record<string, unknown> | null = null;
+  await page.route('**/api/workflow/posts', async (route) => {
+    submitted = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { jobs: [{}] }, error: null }),
+    });
+  });
+
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByText('Mira Studio (@mirastudio)').click();
+  await page.getByLabel('Post body').fill('Daily Viber article content');
+  await page.getByRole('button', { name: 'Add reply' }).click();
+  await page.getByLabel('Reply 1').fill('Discard this draft reply');
+  await page.getByRole('button', { name: 'Remove reply' }).click();
+  await expect(page.getByLabel('Reply 1')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add reply' }).click();
+  await page.getByLabel('Reply 1').fill("Here's the repo: https://github.com/example/daily-viber");
+  await expect(page.getByText('Every thread reply needs text.')).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath(`x-thread-composer-${testInfo.project.name}.png`),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+
+  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  expect(submitted).toMatchObject({
+    content: {
+      kind: 'thread',
+      posts: [
+        { text: 'Daily Viber article content', mediaIds: [] },
+        { text: "Here's the repo: https://github.com/example/daily-viber", mediaIds: [] },
+      ],
+    },
+    providerAccountIds: ['00000000-0000-4000-8000-000000000201'],
+  });
+});
+
 test('keeps imported-draft scheduling disabled until hydration succeeds and after failure', async ({
   page,
 }) => {

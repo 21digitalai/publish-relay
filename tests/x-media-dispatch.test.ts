@@ -251,6 +251,92 @@ describe('X media dispatch composition', () => {
     );
   });
 
+  it('clears a definite failed reply intent and retries only that reply on the worker path', async () => {
+    const claimedJob = {
+      id: 'job-thread-retry',
+      workspaceId: 'workspace-1',
+      revisionId: 'revision-thread',
+      providerAccountId: 'account-1',
+      state: 'leased' as const,
+      attemptNumber: 1,
+      leaseOwner: 'worker-1',
+      leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
+    };
+    vi.mocked(claimDueJobs).mockResolvedValue([claimedJob]);
+    databaseTransaction.orderBy
+      .mockResolvedValueOnce([
+        {
+          credentialId: 'credential-1',
+          accountId: 'x-account-1',
+          content: { kind: 'thread', posts: ['Opening', 'Closing'] } as never,
+          mediaId: null as never,
+          mimeType: null as never,
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          credentialId: 'credential-1',
+          accountId: 'x-account-1',
+          content: { kind: 'thread', posts: ['Opening', 'Closing'] } as never,
+          mediaId: null as never,
+          mimeType: null as never,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          position: 0,
+          externalPostId: 'root-post',
+          externalUrl: 'https://x.com/dailyviber/status/root-post',
+        },
+      ] as never);
+    databaseTransaction.returning
+      .mockResolvedValueOnce([{ position: 0 }])
+      .mockResolvedValueOnce([{ position: 1 }])
+      .mockResolvedValueOnce([{ position: 1 }]);
+    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
+    const createPost = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'root-post', username: 'dailyviber' })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('definite provider rejection'), {
+          status: 503,
+          outcomeUnknown: false,
+        }),
+      )
+      .mockResolvedValueOnce({ id: 'reply-post', username: 'dailyviber' });
+    const runtime = {
+      database: {} as never,
+      keys: {} as never,
+      source: {} as XMediaSource,
+      createClient: vi.fn(() => ({ createPost }) as unknown as XMediaUploadClient),
+      workerId: 'worker-1',
+      leaseMs: 30_000,
+    };
+
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:00:00Z'))).resolves.toBe(1);
+    expect(databaseTransaction.delete).toHaveBeenCalledOnce();
+    expect(finishDispatchAttempt).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ jobId: 'job-thread-retry', outcome: 'transient' }),
+    );
+
+    await expect(dispatchDueXMedia(runtime, new Date('2026-09-01T00:02:00Z'))).resolves.toBe(1);
+    expect(createPost).toHaveBeenCalledTimes(3);
+    expect(createPost).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        text: 'Closing',
+        mediaIds: [],
+        replyToTweetId: 'root-post',
+      }),
+    );
+    expect(
+      createPost.mock.calls.filter(([input]) => (input as { text: string }).text === 'Opening'),
+    ).toHaveLength(1);
+  });
+
   it('dispatches only the explicitly claimed canary job with exact text and staged media', async () => {
     vi.mocked(claimExactDueJob).mockResolvedValue({
       id: 'canary-job',

@@ -101,7 +101,7 @@ test('renders the email-only login surface and development magic-link receipt', 
   );
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in to your cockpit' })).toBeVisible();
-  await page.getByLabel('Email').fill('owner@example.test');
+  await page.getByRole('textbox', { name: 'Email' }).fill('owner@example.test');
   await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
   await expect(page.getByRole('status')).toContainText('If an account exists');
   await expect(page.getByRole('link', { name: 'Open development sign-in link' })).toHaveAttribute(
@@ -112,10 +112,22 @@ test('renders the email-only login surface and development magic-link receipt', 
   await page.screenshot({ path: testInfo.outputPath('magic-link-receipt.png'), fullPage: true });
 });
 
-test('renders the honest recovery unavailable state', async ({ page }) => {
+test('uses the same neutral magic-link operation for account recovery', async ({ page }) => {
+  await page.route('**/api/auth/magic-link/request', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { accepted: true, message: 'If an account exists, a sign-in link is on its way.' },
+        error: null,
+      }),
+    }),
+  );
   await page.goto('/forgot-password');
-  await expect(page.getByRole('heading', { name: 'Recovery is not available yet' })).toBeVisible();
-  await expect(page.getByText('We will not claim that an email was sent')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Email a recovery link' })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Email' }).fill('owner@example.test');
+  await page.getByRole('button', { name: 'Email me a recovery link' }).click();
+  await expect(page.getByRole('status')).toContainText('If an account exists');
 });
 
 test('hydrates an imported draft in the canonical composer on desktop and mobile', async ({

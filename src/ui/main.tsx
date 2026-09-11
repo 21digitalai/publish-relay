@@ -94,7 +94,7 @@ function Mark({ provider }: { provider: string }) {
   );
 }
 
-function AuthPage({ mode }: { mode: 'login' | 'register' }) {
+function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [magicLink, setMagicLink] = useState<{ message: string; developmentUrl?: string } | null>(
@@ -102,18 +102,27 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isRegister = mode === 'register';
+  const isForgot = mode === 'forgot';
   return (
     <main className="auth-page">
       <section className="auth-panel" aria-labelledby="auth-title">
         <a className="brand-lockup" href="/login">
           <span className="brand-signal" /> Publish Relay
         </a>
-        <p className="eyebrow">{isRegister ? 'Create your workspace' : 'Welcome back'}</p>
+        <p className="eyebrow">
+          {isRegister ? 'Create your workspace' : isForgot ? 'Account recovery' : 'Welcome back'}
+        </p>
         <h1 id="auth-title">
-          {isRegister ? 'Start scheduling clearly' : 'Sign in to your cockpit'}
+          {isRegister
+            ? 'Start scheduling clearly'
+            : isForgot
+              ? 'Email a recovery link'
+              : 'Sign in to your cockpit'}
         </h1>
         <p className="auth-intro">
-          Manage every account, schedule, and recovery path in one focused place.
+          {isForgot
+            ? 'The same secure one-time link signs you back in. No password reset is needed.'
+            : 'Manage every account, schedule, and recovery path in one focused place.'}
         </p>
         {error && (
           <div className="form-summary" role="alert">
@@ -238,13 +247,19 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
                 : 'Sending link…'
               : isRegister
                 ? 'Create account'
-                : 'Email me a sign-in link'}
+                : isForgot
+                  ? 'Email me a recovery link'
+                  : 'Email me a sign-in link'}
           </button>
         </form>
         <p className="auth-switch">
-          {isRegister ? 'Already have an account?' : 'New to Publish Relay?'}{' '}
-          <a href={isRegister ? '/login' : '/register'}>
-            {isRegister ? 'Sign in' : 'Create account'}
+          {isRegister
+            ? 'Already have an account?'
+            : isForgot
+              ? 'Remembered where to sign in?'
+              : 'New to Publish Relay?'}{' '}
+          <a href={isRegister || isForgot ? '/login' : '/register'}>
+            {isRegister || isForgot ? 'Sign in' : 'Create account'}
           </a>
         </p>
       </section>
@@ -350,24 +365,7 @@ function ConsentPage() {
 }
 
 function ForgotPasswordPage() {
-  return (
-    <main className="auth-page">
-      <section className="auth-panel" aria-labelledby="recovery-title">
-        <a className="brand-lockup" href="/login">
-          <span className="brand-signal" /> Publish Relay
-        </a>
-        <p className="eyebrow">Account recovery</p>
-        <h1 id="recovery-title">Recovery is not available yet</h1>
-        <p className="auth-intro">
-          Contact support for assistance. We will not claim that an email was sent while recovery
-          delivery is unavailable.
-        </p>
-        <a className="primary-button" href="/login">
-          Return to sign in
-        </a>
-      </section>
-    </main>
-  );
+  return <AuthPage mode="forgot" />;
 }
 
 function OnboardingPage() {

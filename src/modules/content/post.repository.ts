@@ -218,7 +218,7 @@ export async function revisePostIntent(
       and(
         eq(publicationJobs.workspaceId, input.workspaceId),
         eq(publicationJobs.postId, input.postId),
-        inArray(publicationJobs.state, ['scheduled']),
+        inArray(publicationJobs.state, ['scheduled', 'needs_review']),
       ),
     )
     .returning({ id: publicationJobs.id });
@@ -278,7 +278,10 @@ export async function reschedulePostIntent(
       ),
     )
     .for('update');
-  if (jobs.length === 0 || jobs.some((job) => job.state !== 'scheduled'))
+  if (
+    jobs.length === 0 ||
+    jobs.some((job) => job.state !== 'scheduled' && job.state !== 'needs_review')
+  )
     throw new PostValidationError('Schedule can only be edited before every target dispatches');
   const media = await database
     .select({ id: revisionMedia.mediaId })

@@ -47,6 +47,7 @@ export const publicationJobState = pgEnum('publication_job_state', [
   'failed',
   'cancelled',
   'superseded',
+  'needs_review',
 ]);
 export const publicationAttemptOutcome = pgEnum('publication_attempt_outcome', [
   'published',

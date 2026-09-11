@@ -260,6 +260,13 @@
       "when": 1789049400000,
       "tag": "0036_delegated_programmatic_revocation",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1789119770930,
+      "tag": "0037_brown_wallflower",
+      "breakpoints": true
     }
   ]
 }

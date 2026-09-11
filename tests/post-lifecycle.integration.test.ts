@@ -49,6 +49,7 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
+  '0037_brown_wallflower.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

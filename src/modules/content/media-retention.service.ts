@@ -36,7 +36,7 @@ async function hasRequiredJobReference(
       select 1 from revision_media rm
       join publication_jobs pj on pj.workspace_id = rm.workspace_id and pj.revision_id = rm.revision_id
       where rm.workspace_id = ${workspaceId} and rm.media_id = ${mediaId}
-        and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending')
+        and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending', 'needs_review')
           or pj.reconciliation_required = true)
     ) as required
   `);
@@ -104,7 +104,7 @@ export async function cleanupRetainedMedia(
             join publication_jobs pj
               on pj.workspace_id = rm.workspace_id and pj.revision_id = rm.revision_id
             where rm.workspace_id = media.workspace_id and rm.media_id = media.id
-              and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending')
+              and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending', 'needs_review')
                 or pj.reconciliation_required = true)
           )
         order by media.cleanup_eligible_at, media.id

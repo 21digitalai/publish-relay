@@ -14,7 +14,8 @@ type JobState =
   | 'retrying'
   | 'published'
   | 'cancelled'
-  | 'superseded';
+  | 'superseded'
+  | 'needs_review';
 
 interface Job {
   id: string;
@@ -72,6 +73,7 @@ const STATE_LABELS: Record<JobState, string> = {
   dispatching: 'Dispatching',
   accepted_pending: 'Provider processing',
   superseded: 'Superseded',
+  needs_review: 'Needs review',
 };
 
 interface QueueJobDto {
@@ -186,6 +188,7 @@ function toJob(dto: QueueJobDto): Job {
     'published',
     'cancelled',
     'superseded',
+    'needs_review',
   ];
   const state: JobState =
     dto.state === 'retry_wait'
@@ -1097,7 +1100,13 @@ export function QueuePage() {
               (view === 'Needs attention'
                 ? ['failed', 'retrying'].includes(job.state)
                 : view === 'Upcoming'
-                  ? ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
+                  ? [
+                      'scheduled',
+                      'leased',
+                      'dispatching',
+                      'accepted_pending',
+                      'needs_review',
+                    ].includes(job.state)
                   : STATE_LABELS[job.state] === view)) &&
             (status === 'any' || job.state === status) &&
             (provider === 'any' || job.provider.toLowerCase() === provider) &&
@@ -1113,7 +1122,9 @@ export function QueuePage() {
           const group = (job: Job) =>
             ['failed', 'retrying'].includes(job.state)
               ? 0
-              : ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
+              : ['scheduled', 'leased', 'dispatching', 'accepted_pending', 'needs_review'].includes(
+                    job.state,
+                  )
                 ? 1
                 : 2;
           const difference = group(left) - group(right);

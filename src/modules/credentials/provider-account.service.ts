@@ -146,7 +146,13 @@ export async function disconnectProviderAccount(
           and(
             eq(publicationJobs.workspaceId, input.workspaceId),
             eq(publicationJobs.providerAccountId, input.accountId),
-            inArray(publicationJobs.state, ['scheduled', 'leased', 'dispatching', 'retry_wait']),
+            inArray(publicationJobs.state, [
+              'scheduled',
+              'leased',
+              'dispatching',
+              'retry_wait',
+              'needs_review',
+            ]),
           ),
         )
         .limit(1);

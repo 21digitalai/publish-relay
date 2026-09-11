@@ -57,6 +57,7 @@ const migrations = [
   '0033_open_clips_development_client.sql',
   '0034_simple_jamie_braddock.sql',
   '0035_delegated_account_receipt.sql',
+  '0037_brown_wallflower.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';

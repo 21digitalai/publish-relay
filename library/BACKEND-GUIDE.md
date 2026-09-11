@@ -177,6 +177,8 @@ Provider runtime registration is isolated: missing provider-specific credentials
 
 # Browser create response
 
+The due-job claim boundary enforces one hard missed-post rule before leasing: a still-scheduled job more than 30 minutes late transitions to `needs_review`, retains its original `scheduled_at`, creates no publication attempt, and is never automatically rescheduled. A job exactly 30 minutes late remains eligible. Both batch and exact-job claim paths use the same rule.
+
 Production releases probe readiness only after both systemd units restart. The canonical release script uses a bounded configurable retry window (12 attempts, two seconds apart by default), retains curl's fail-closed behavior, and exits nonzero after exhaustion so deployment orchestration can invoke the existing rollback path rather than treating a late or failed startup as success.
 
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.

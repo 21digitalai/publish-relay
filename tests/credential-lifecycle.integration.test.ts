@@ -59,6 +59,7 @@ const migrations = [
   '0016_common_barracuda.sql',
   '0025_lucky_legion.sql',
   '0019_media_retention_lifecycle.sql',
+  '0037_brown_wallflower.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

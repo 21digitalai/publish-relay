@@ -143,6 +143,7 @@ State vocabulary:
 - Published: green check + external link.
 - Retrying: amber rotate + next attempt.
 - Failed: red alert + short reason.
+- Needs review: amber alert + original past scheduled time; no posted implication.
 - Cancelled: muted strike-circle.
 
 ## Calendar

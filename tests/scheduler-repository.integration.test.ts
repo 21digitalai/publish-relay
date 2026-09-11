@@ -42,6 +42,7 @@ const migrations = [
   '0022_truthful_post_actors.sql',
   '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
+  '0037_brown_wallflower.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';
@@ -78,7 +79,7 @@ afterEach(async () => database.close());
 
 describe('scheduler repository', () => {
   it('atomically claims a due job only once until its lease expires', async () => {
-    const now = new Date('2026-08-31T16:00:00Z');
+    const now = new Date('2026-08-31T15:30:00Z');
     const [first, second] = await Promise.all([
       claimDueJobs(db, { workerId: 'worker-a', now, leaseMs: 30_000, limit: 1 }),
       claimDueJobs(db, { workerId: 'worker-b', now, leaseMs: 30_000, limit: 1 }),
@@ -104,6 +105,46 @@ describe('scheduler repository', () => {
     ).toBe(true);
   });
 
+  it('marks posts over 30 minutes late for review without dispatching or changing their schedule', async () => {
+    const now = new Date('2026-08-31T15:30:00.001Z');
+    await database.exec(`
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+      VALUES
+        ('00000000-0000-4000-8000-000000000321', '${workspaceId}', '00000000-0000-4000-8000-000000000306', '00000000-0000-4000-8000-000000000308', '00000000-0000-4000-8000-000000000305', '2026-08-31T14:56:00Z'),
+        ('00000000-0000-4000-8000-000000000322', '${workspaceId}', '00000000-0000-4000-8000-000000000306', '00000000-0000-4000-8000-000000000308', '00000000-0000-4000-8000-000000000305', '2026-08-31T14:57:00Z'),
+        ('00000000-0000-4000-8000-000000000323', '${workspaceId}', '00000000-0000-4000-8000-000000000306', '00000000-0000-4000-8000-000000000308', '00000000-0000-4000-8000-000000000305', '2026-08-31T14:58:00Z'),
+        ('00000000-0000-4000-8000-000000000324', '${workspaceId}', '00000000-0000-4000-8000-000000000306', '00000000-0000-4000-8000-000000000308', '00000000-0000-4000-8000-000000000305', '2026-08-31T14:59:00Z');
+    `);
+
+    expect(
+      await claimDueJobs(db, { workerId: 'worker-a', now, leaseMs: 30_000, limit: 10 }),
+    ).toEqual([]);
+
+    const result = await database.query<{
+      state: string;
+      scheduled_at: Date;
+      attempt_number: number;
+      reason: string;
+    }>(`
+      SELECT job.state, job.scheduled_at, job.attempt_number, event.reason
+      FROM publication_jobs job
+      JOIN publication_job_events event ON event.job_id = job.id
+      WHERE job.id = '${jobId}'
+    `);
+    expect(result.rows).toEqual([
+      {
+        state: 'needs_review',
+        scheduled_at: new Date('2026-08-31T15:00:00Z'),
+        attempt_number: 0,
+        reason: 'missed_schedule_grace',
+      },
+    ]);
+    const backlog = await database.query<{ state: string; count: string }>(`
+      SELECT state, count(*)::text AS count FROM publication_jobs GROUP BY state
+    `);
+    expect(backlog.rows).toEqual([{ state: 'needs_review', count: '5' }]);
+  });
+
   it('marks an expired dispatch for reconciliation instead of reclaiming it', async () => {
     await database.exec(`UPDATE publication_jobs SET state = 'dispatching', lease_owner = 'dead',
       lease_expires_at = '2026-08-31T15:00:00Z' WHERE id = '${jobId}'`);
@@ -123,7 +164,7 @@ describe('scheduler repository', () => {
   });
 
   it('starts one owned dispatch attempt and keeps the provider idempotency key stable', async () => {
-    const now = new Date('2026-08-31T16:00:00Z');
+    const now = new Date('2026-08-31T15:30:00Z');
     await claimDueJobs(db, { workerId: 'worker-a', now, leaseMs: 30_000, limit: 1 });
     const first = await startDispatchAttempt(db, {
       workspaceId,
@@ -157,7 +198,7 @@ describe('scheduler repository', () => {
   });
 
   it('records retry outcomes once and audits an idempotent operator retry boundary', async () => {
-    const now = new Date('2026-08-31T16:00:00Z');
+    const now = new Date('2026-08-31T15:30:00Z');
     await claimDueJobs(db, { workerId: 'worker-a', now, leaseMs: 30_000, limit: 1 });
     const attempt = await startDispatchAttempt(db, {
       workspaceId,
@@ -210,7 +251,7 @@ describe('scheduler repository', () => {
   });
 
   it('denies operator retry exactly once without changing job or event state', async () => {
-    const now = new Date('2026-08-31T16:00:00Z');
+    const now = new Date('2026-08-31T15:30:00Z');
     await database.exec(
       `UPDATE publication_jobs SET state = 'failed', next_attempt_at = null WHERE id = '${jobId}'`,
     );
@@ -246,7 +287,7 @@ describe('scheduler repository', () => {
   });
 
   it('reconciles an unknown outcome without creating a blind publish attempt', async () => {
-    const now = new Date('2026-08-31T16:00:00Z');
+    const now = new Date('2026-08-31T15:30:00Z');
     await claimDueJobs(db, { workerId: 'publisher', now, leaseMs: 30_000, limit: 1 });
     const attempt = await startDispatchAttempt(db, {
       workspaceId,
@@ -324,7 +365,7 @@ describe('scheduler repository', () => {
   });
 
   it('makes accepted-pending jobs eligible for reconciliation', async () => {
-    const now = new Date('2026-08-31T16:00:00Z');
+    const now = new Date('2026-08-31T15:30:00Z');
     await claimDueJobs(db, { workerId: 'publisher', now, leaseMs: 30_000, limit: 1 });
     const attempt = await startDispatchAttempt(db, {
       workspaceId,

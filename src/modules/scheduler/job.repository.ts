@@ -50,6 +50,25 @@ function resultRows<T>(result: { rows?: T[] } | T[]): T[] {
   return Array.isArray(result) ? result : (result.rows ?? []);
 }
 
+const MISSED_POST_GRACE_MS = 30 * 60 * 1000;
+
+async function markMissedScheduledJobsForReview(
+  database: NodePgDatabase,
+  now: Date,
+): Promise<void> {
+  const cutoff = new Date(now.getTime() - MISSED_POST_GRACE_MS);
+  await database.execute(sql`
+    WITH missed AS (
+      UPDATE publication_jobs
+      SET state = 'needs_review', updated_at = ${now}
+      WHERE state = 'scheduled' AND scheduled_at < ${cutoff}
+      RETURNING workspace_id, id
+    )
+    INSERT INTO publication_job_events (workspace_id, job_id, from_state, to_state, reason)
+    SELECT workspace_id, id, 'scheduled', 'needs_review', 'missed_schedule_grace' FROM missed
+  `);
+}
+
 export async function claimDueJobs(
   database: NodePgDatabase,
   input: {
@@ -62,6 +81,7 @@ export async function claimDueJobs(
   },
 ): Promise<ClaimedJob[]> {
   if (input.limit < 1) return [];
+  await markMissedScheduledJobsForReview(database, input.now);
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
   const result = await database.execute<ClaimedJob>(sql`
     WITH candidates AS (
@@ -109,6 +129,7 @@ export async function claimExactDueJob(
   database: NodePgDatabase,
   input: { jobId: string; workspaceId: string; workerId: string; now: Date; leaseMs: number },
 ): Promise<ClaimedJob | null> {
+  await markMissedScheduledJobsForReview(database, input.now);
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
   const result = await database.execute<ClaimedJob>(sql`
     WITH candidate AS (
@@ -468,11 +489,13 @@ export async function cancelPendingJob(
     database,
     { workspaceId: input.workspaceId },
     async (transaction) => {
-      const result = await transaction.execute<{ fromState: 'scheduled' | 'retry_wait' }>(sql`
+      const result = await transaction.execute<{
+        fromState: 'scheduled' | 'retry_wait' | 'needs_review';
+      }>(sql`
       WITH candidate AS (
         SELECT id, state FROM publication_jobs
         WHERE workspace_id = ${input.workspaceId} AND id = ${input.jobId}
-          AND state IN ('scheduled', 'retry_wait')
+          AND state IN ('scheduled', 'retry_wait', 'needs_review')
         FOR UPDATE
       )
       UPDATE publication_jobs AS job

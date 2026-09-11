@@ -24,6 +24,7 @@ export const browserJobStates = [
   'failed',
   'cancelled',
   'superseded',
+  'needs_review',
 ] as const;
 
 export type BrowserJobState = (typeof browserJobStates)[number];

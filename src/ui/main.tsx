@@ -85,11 +85,6 @@ function formText(fields: FormData, name: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-function safeLocalNext(): string {
-  const next = new URLSearchParams(window.location.search).get('next');
-  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/app';
-}
-
 function Mark({ provider }: { provider: string }) {
   const isX = provider.toLowerCase() === 'x';
   return (
@@ -102,6 +97,9 @@ function Mark({ provider }: { provider: string }) {
 function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [magicLink, setMagicLink] = useState<{ message: string; developmentUrl?: string } | null>(
+    null,
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isRegister = mode === 'register';
   return (
@@ -122,12 +120,22 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
             {error}
           </div>
         )}
+        {magicLink && (
+          <div className="magic-link-receipt" role="status">
+            <strong>Check your email</strong>
+            <span>{magicLink.message}</span>
+            {magicLink.developmentUrl && (
+              <a href={magicLink.developmentUrl}>Open development sign-in link</a>
+            )}
+          </div>
+        )}
         <form
           onSubmit={(event) => {
             event.preventDefault();
             const form = event.currentTarget;
             void (async () => {
               setError(null);
+              setMagicLink(null);
               setIsSubmitting(true);
               const fields = new FormData(form);
               const workspaceName = formText(fields, 'workspaceName');
@@ -140,23 +148,34 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
                   }
                 : {
                     email: formText(fields, 'email'),
-                    password: formText(fields, 'password'),
                   };
               try {
                 const response = await fetch(
-                  isRegister ? '/api/auth/register' : '/api/auth/login',
+                  isRegister ? '/api/auth/register' : '/api/auth/magic-link/request',
                   {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify(payload),
                   },
                 );
-                const result = (await response.json()) as { error: string | null };
+                const result = (await response.json()) as {
+                  data: { message?: string; developmentUrl?: string } | null;
+                  error: string | null;
+                };
                 if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
                 if (isRegister) {
                   sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
                   window.location.href = '/onboarding/workspace';
-                } else window.location.href = safeLocalNext();
+                } else {
+                  setMagicLink({
+                    message:
+                      result.data?.message ?? 'If an account exists, a sign-in link is on its way.',
+                    ...(result.data?.developmentUrl
+                      ? { developmentUrl: result.data.developmentUrl }
+                      : {}),
+                  });
+                  setIsSubmitting(false);
+                }
               } catch (submissionError) {
                 setError(
                   submissionError instanceof Error
@@ -185,38 +204,41 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
             Email
             <input className="text-input" name="email" type="email" autoComplete="email" required />
           </label>
-          <label className="field-label">
-            Password
-            <span className="password-field">
-              <input
-                className="text-input"
-                name="password"
-                type={showPassword ? 'text' : 'password'}
-                autoComplete={isRegister ? 'new-password' : 'current-password'}
-                required
-              />
-              <button
-                className="reveal-password"
-                type="button"
-                onClick={() => {
-                  setShowPassword((value) => !value);
-                }}
-                aria-pressed={showPassword}
-              >
-                {showPassword ? 'Hide' : 'Show'}
-              </button>
-            </span>
-          </label>
+          {isRegister && (
+            <label className="field-label">
+              Password
+              <span className="password-field">
+                <input
+                  className="text-input"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  required
+                />
+                <button
+                  className="reveal-password"
+                  type="button"
+                  onClick={() => {
+                    setShowPassword((value) => !value);
+                  }}
+                  aria-pressed={showPassword}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </span>
+            </label>
+          )}
           {isRegister && (
             <p className="field-hint">Use at least 12 characters, including a number and symbol.</p>
           )}
-          {!isRegister && (
-            <a className="forgot-link" href="/forgot-password">
-              Forgot password?
-            </a>
-          )}
           <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Working…' : isRegister ? 'Create account' : 'Sign in'}
+            {isSubmitting
+              ? isRegister
+                ? 'Creating account…'
+                : 'Sending link…'
+              : isRegister
+                ? 'Create account'
+                : 'Email me a sign-in link'}
           </button>
         </form>
         <p className="auth-switch">

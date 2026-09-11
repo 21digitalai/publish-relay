@@ -105,6 +105,12 @@ describe('deployment scripts', () => {
     expect(content).toMatch(/publish_relay_web[^;]+NOBYPASSRLS/);
     expect(content).toContain('publish_relay_worker');
     expect(content).toMatch(/publish_relay_worker[^;]+BYPASSRLS/);
+    expect(content).toContain('publish_relay_token_exchange');
+    expect(content).toMatch(/publish_relay_token_exchange[^;]+BYPASSRLS/);
+    expect(content).toMatch(
+      /exchange_delegated_authorization_code[\s\S]+OWNER TO publish_relay_token_exchange/,
+    );
+    expect(content).toMatch(/GRANT SELECT ON public\.workspaces TO publish_relay_token_exchange/);
     expect(content).not.toMatch(/PASSWORD|CREATE ROLE [^;]+\sLOGIN(?:\s|;)/);
     expect(readFileSync(join(projectRoot, 'src/entrypoints/web.ts'), 'utf8')).toContain(
       '-c role=publish_relay_web',

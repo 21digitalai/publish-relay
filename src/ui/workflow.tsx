@@ -1098,15 +1098,9 @@ export function QueuePage() {
             `${job.text} ${job.account}`.toLowerCase().includes(query.toLowerCase()) &&
             (view === 'All' ||
               (view === 'Needs attention'
-                ? ['failed', 'retrying'].includes(job.state)
+                ? ['failed', 'retrying', 'needs_review'].includes(job.state)
                 : view === 'Upcoming'
-                  ? [
-                      'scheduled',
-                      'leased',
-                      'dispatching',
-                      'accepted_pending',
-                      'needs_review',
-                    ].includes(job.state)
+                  ? ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
                   : STATE_LABELS[job.state] === view)) &&
             (status === 'any' || job.state === status) &&
             (provider === 'any' || job.provider.toLowerCase() === provider) &&
@@ -1120,11 +1114,9 @@ export function QueuePage() {
           if (sort === 'oldest') return time;
           if (sort === 'newest') return -time;
           const group = (job: Job) =>
-            ['failed', 'retrying'].includes(job.state)
+            ['failed', 'retrying', 'needs_review'].includes(job.state)
               ? 0
-              : ['scheduled', 'leased', 'dispatching', 'accepted_pending', 'needs_review'].includes(
-                    job.state,
-                  )
+              : ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
                 ? 1
                 : 2;
           const difference = group(left) - group(right);
@@ -1770,7 +1762,7 @@ export function JobDetailPage() {
           <footer className="detail-actions">
             <button
               className="secondary-button"
-              disabled={job.state !== 'scheduled'}
+              disabled={!['scheduled', 'needs_review'].includes(job.state)}
               onClick={() => {
                 setEditSchedule(localDateTimeValue(new Date(job.scheduledAt)));
                 setEditScheduleOption(0);
@@ -1783,7 +1775,7 @@ export function JobDetailPage() {
             </button>
             <button
               className="danger-button"
-              disabled={!['scheduled', 'retrying'].includes(job.state)}
+              disabled={!['scheduled', 'retrying', 'needs_review'].includes(job.state)}
               onClick={() => {
                 setDialog('cancel');
               }}

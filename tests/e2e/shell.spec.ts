@@ -935,6 +935,51 @@ test('reports collision guidance as unavailable instead of an empty result', asy
   await expect(page.getByText('Nearby schedule guidance is unavailable.')).toBeVisible();
 });
 
+test('shows missed posts as amber attention items with recovery actions', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-09-01T08:00:00.000Z'));
+  await establishWorkspaceSession(page);
+  const missedJob = {
+    id: 'job-needs-review',
+    postId: 'post-needs-review',
+    state: 'needs_review',
+    scheduledAt: '2026-09-01T06:00:00.000Z',
+    contentPreview: 'Review this missed publication.',
+    content: { type: 'text', text: 'Review this missed publication.' },
+    providerAccount: {
+      id: '00000000-0000-4000-8000-000000000201',
+      displayName: 'Daily Viber',
+      handle: 'dailyviber',
+      provider: 'x',
+    },
+  };
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [missedJob] }, error: null }),
+    }),
+  );
+  await page.route('**/api/workflow/jobs/job-needs-review', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: missedJob, error: null }),
+    }),
+  );
+
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Needs attention' }).click();
+  const row = page.locator('.queue-row', { hasText: 'Review this missed publication.' });
+  await expect(row.locator('.job-status.needs_review')).toContainText('Needs review');
+  await expect(row.locator('.job-status.needs_review')).toHaveCSS('color', 'rgb(255, 200, 87)');
+  await expect(row.locator('time')).toHaveAttribute('datetime', missedJob.scheduledAt);
+
+  await page.getByRole('button', { name: 'Upcoming' }).click();
+  await expect(row).toHaveCount(0);
+  await page.goto(await workspacePath(page, 'jobs/job-needs-review'));
+  await expect(page.locator('.job-status.needs_review')).toContainText('Needs review');
+  await expect(page.getByRole('button', { name: 'Edit schedule' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Cancel job' })).toBeEnabled();
+});
+
 test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await establishWorkspaceSession(page);

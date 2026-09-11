@@ -8,6 +8,7 @@ import { getBrowserJobDetail } from '../src/modules/content/post-read.repository
 
 import {
   claimDueJobs,
+  claimExactDueJob,
   claimReconciliationJobs,
   cancelPendingJob,
   finishDispatchAttempt,
@@ -143,6 +144,38 @@ describe('scheduler repository', () => {
       SELECT state, count(*)::text AS count FROM publication_jobs GROUP BY state
     `);
     expect(backlog.rows).toEqual([{ state: 'needs_review', count: '5' }]);
+  });
+
+  it('marks an exact overdue job for review without claiming it', async () => {
+    const scheduledAt = new Date('2026-08-31T15:00:00Z');
+    const claimed = await claimExactDueJob(db, {
+      jobId,
+      workspaceId,
+      workerId: 'exact-worker',
+      now: new Date('2026-08-31T15:30:00.001Z'),
+      leaseMs: 30_000,
+    });
+
+    expect(claimed).toBeNull();
+    const result = await database.query<{
+      state: string;
+      scheduled_at: Date;
+      attempt_number: number;
+      reason: string;
+    }>(`
+      SELECT job.state, job.scheduled_at, job.attempt_number, event.reason
+      FROM publication_jobs job
+      JOIN publication_job_events event ON event.job_id = job.id
+      WHERE job.id = '${jobId}'
+    `);
+    expect(result.rows).toEqual([
+      {
+        state: 'needs_review',
+        scheduled_at: scheduledAt,
+        attempt_number: 0,
+        reason: 'missed_schedule_grace',
+      },
+    ]);
   });
 
   it('marks an expired dispatch for reconciliation instead of reclaiming it', async () => {

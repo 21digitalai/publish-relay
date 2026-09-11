@@ -1468,6 +1468,9 @@ select:focus-visible {
 .job-status.retrying {
   color: var(--warning);
 }
+.job-status.needs_review {
+  color: var(--warning);
+}
 .job-status.published {
   color: var(--success);
 }

@@ -5,6 +5,7 @@ import {
   auditEvents,
   delegatedAuthorizationCodes,
   delegatedGrants,
+  delegatedTokens,
   registeredClients,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -57,6 +58,33 @@ export function createPostgresDelegatedAuthorizationStore(
         database,
         { workspaceId: input.workspaceId, userId: input.userId },
         async (transaction) => {
+          const replacedGrants = rows(
+            await transaction.execute<{ id: string }>(sql`
+              UPDATE delegated_grants
+              SET revoked_at = now(), updated_at = now()
+              WHERE workspace_id = ${input.workspaceId}
+                AND user_id = ${input.userId}
+                AND client_id = ${input.clientId}
+                AND revoked_at IS NULL
+              RETURNING id
+            `),
+          );
+          for (const replacedGrant of replacedGrants) {
+            await transaction
+              .update(delegatedTokens)
+              .set({ revokedAt: sql`now()`, updatedAt: sql`now()` })
+              .where(eq(delegatedTokens.grantId, replacedGrant.id));
+            await transaction.insert(auditEvents).values({
+              workspaceId: input.workspaceId,
+              actorType: 'user',
+              actorId: input.userId,
+              action: 'delegated_grant.revoked',
+              targetType: 'delegated_grant',
+              targetId: replacedGrant.id,
+              requestId: input.requestId,
+              metadata: { reason: 'reconnected', replacementGrantId: input.grantId },
+            });
+          }
           await transaction.insert(delegatedGrants).values({
             id: input.grantId,
             workspaceId: input.workspaceId,

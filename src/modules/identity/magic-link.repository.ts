@@ -1,7 +1,13 @@
 import { and, eq, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { authRateLimitBuckets, loginChallenges, sessions, users } from '../../database/schema.js';
+import {
+  auditEvents,
+  authRateLimitBuckets,
+  loginChallenges,
+  sessions,
+  users,
+} from '../../database/schema.js';
 import type { MagicLinkStore } from './magic-link.service.js';
 
 const EMAIL_REQUESTS_PER_MINUTE = 5;
@@ -78,9 +84,10 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
           workspace_id: string;
           role: 'owner' | 'admin' | 'editor' | 'viewer';
           redirect_path: string;
+          correlation_id: string;
         }>(sql`
           SELECT challenge.id AS challenge_id, challenge.user_id, users.default_workspace_id AS workspace_id,
-                 memberships.role, challenge.redirect_path
+                 memberships.role, challenge.redirect_path, challenge.correlation_id
           FROM login_challenges AS challenge
           JOIN users ON users.id = challenge.user_id
           JOIN memberships ON memberships.user_id = users.id
@@ -114,6 +121,15 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
           tokenHash: input.sessionTokenHash,
           csrfSecretHash: input.csrfSecretHash,
           expiresAt: input.sessionExpiresAt,
+        });
+        await transaction.insert(auditEvents).values({
+          workspaceId: challenge.workspace_id,
+          actorType: 'user',
+          actorId: challenge.user_id,
+          action: 'auth.magic_link.consumed',
+          targetType: 'session',
+          requestId: challenge.correlation_id,
+          metadata: { purpose: 'login' },
         });
         return {
           userId: challenge.user_id,

@@ -60,6 +60,13 @@ describe('PostgreSQL magic-link repository', () => {
     await expect(store.consumeLoginChallenge(input)).resolves.toBeNull();
     const rows = await database.query<{ token_hash: string }>('SELECT token_hash FROM sessions');
     expect(rows.rows).toEqual([{ token_hash: 'session-hash' }]);
+    const audit = await database.query<{ action: string; metadata: unknown }>(
+      'SELECT action, metadata FROM audit_events',
+    );
+    expect(audit.rows).toEqual([
+      { action: 'auth.magic_link.consumed', metadata: { purpose: 'login' } },
+    ]);
+    expect(JSON.stringify(audit.rows)).not.toContain('token-hash');
   });
 
   it('rejects a challenge presented from a different user-agent binding', async () => {

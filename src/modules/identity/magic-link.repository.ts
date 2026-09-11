@@ -1,7 +1,7 @@
 import { and, eq, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { authRateLimitBuckets, loginChallenges, users } from '../../database/schema.js';
+import { authRateLimitBuckets, loginChallenges, sessions, users } from '../../database/schema.js';
 import type { MagicLinkStore } from './magic-link.service.js';
 
 const EMAIL_REQUESTS_PER_MINUTE = 5;
@@ -68,6 +68,60 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
         .update(loginChallenges)
         .set({ deliveryState: state, providerMessageId, updatedAt: new Date() })
         .where(eq(loginChallenges.id, challengeId));
+    },
+
+    async consumeLoginChallenge(input) {
+      return database.transaction(async (transaction) => {
+        const result = await transaction.execute<{
+          challenge_id: string;
+          user_id: string;
+          workspace_id: string;
+          role: 'owner' | 'admin' | 'editor' | 'viewer';
+          redirect_path: string;
+        }>(sql`
+          SELECT challenge.id AS challenge_id, challenge.user_id, users.default_workspace_id AS workspace_id,
+                 memberships.role, challenge.redirect_path
+          FROM login_challenges AS challenge
+          JOIN users ON users.id = challenge.user_id
+          JOIN memberships ON memberships.user_id = users.id
+            AND memberships.workspace_id = users.default_workspace_id
+          WHERE challenge.token_hash = ${input.tokenHash}
+            AND challenge.user_agent_hash = ${input.userAgentHash}
+            AND challenge.purpose = 'login'
+            AND challenge.delivery_state = 'sent'
+            AND challenge.consumed_at IS NULL
+            AND challenge.expires_at > ${input.now}
+            AND users.is_disabled = false
+          FOR UPDATE OF challenge
+        `);
+        const challenge = result.rows[0];
+        if (!challenge) return null;
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${challenge.workspace_id}, true)`,
+        );
+        await transaction
+          .update(loginChallenges)
+          .set({ consumedAt: input.now, updatedAt: input.now })
+          .where(
+            and(
+              eq(loginChallenges.id, challenge.challenge_id),
+              sql`${loginChallenges.consumedAt} is null`,
+            ),
+          );
+        await transaction.insert(sessions).values({
+          userId: challenge.user_id,
+          workspaceId: challenge.workspace_id,
+          tokenHash: input.sessionTokenHash,
+          csrfSecretHash: input.csrfSecretHash,
+          expiresAt: input.sessionExpiresAt,
+        });
+        return {
+          userId: challenge.user_id,
+          workspaceId: challenge.workspace_id,
+          role: challenge.role,
+          redirectPath: challenge.redirect_path,
+        };
+      });
     },
 
     async cleanupExpired() {

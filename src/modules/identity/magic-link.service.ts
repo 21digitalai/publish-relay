@@ -1,9 +1,12 @@
 import {
   createMagicLinkSecretMaterial,
+  hashMagicLinkBinding,
   magicLinkExpiresAt,
   normalizeMagicLinkEmail,
   validateMagicLinkRedirect,
 } from './magic-link.js';
+import { createOpaqueToken, hashOpaqueToken } from './session.js';
+import type { MembershipRole } from './authorization.js';
 
 export type MagicLinkPurpose = 'login' | 'signup';
 
@@ -28,6 +31,19 @@ export interface MagicLinkStore {
     state: 'sent' | 'suppressed' | 'failed',
     providerMessageId?: string,
   ) => Promise<void>;
+  consumeLoginChallenge: (input: {
+    tokenHash: string;
+    userAgentHash: string;
+    sessionTokenHash: string;
+    csrfSecretHash: string;
+    sessionExpiresAt: Date;
+    now: Date;
+  }) => Promise<{
+    userId: string;
+    workspaceId: string;
+    role: MembershipRole;
+    redirectPath: string;
+  } | null>;
 }
 
 export interface EmailDelivery {
@@ -43,6 +59,16 @@ export interface MagicLinkRequestResult {
   developmentUrl?: string;
 }
 
+export interface MagicLinkVerificationResult {
+  userId: string;
+  workspaceId: string;
+  role: MembershipRole;
+  token: string;
+  csrfToken: string;
+  expiresAt: Date;
+  redirectPath: string;
+}
+
 export class MagicLinkService {
   constructor(
     private readonly store: MagicLinkStore,
@@ -53,6 +79,26 @@ export class MagicLinkService {
       exposeDevelopmentUrl: boolean;
     },
   ) {}
+
+  async verifyLogin(input: {
+    token: string;
+    userAgent: string;
+    now?: Date;
+  }): Promise<MagicLinkVerificationResult | null> {
+    const now = input.now ?? new Date();
+    const token = createOpaqueToken();
+    const csrfToken = createOpaqueToken();
+    const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30);
+    const identity = await this.store.consumeLoginChallenge({
+      tokenHash: hashOpaqueToken(input.token),
+      userAgentHash: hashMagicLinkBinding(input.userAgent, this.config.pepper),
+      sessionTokenHash: hashOpaqueToken(token),
+      csrfSecretHash: hashOpaqueToken(csrfToken),
+      sessionExpiresAt: expiresAt,
+      now,
+    });
+    return identity ? { ...identity, token, csrfToken, expiresAt } : null;
+  }
 
   async requestLogin(input: {
     email: string;

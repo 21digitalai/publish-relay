@@ -15,6 +15,9 @@ beforeEach(async () => {
     await readFile(new URL('../migrations/0000_identity_tenancy.sql', import.meta.url), 'utf8'),
   );
   await database.exec(
+    await readFile(new URL('../migrations/0001_solid_spiral.sql', import.meta.url), 'utf8'),
+  );
+  await database.exec(
     await readFile(new URL('../migrations/0040_ambiguous_loners.sql', import.meta.url), 'utf8'),
   );
 });
@@ -22,6 +25,57 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('PostgreSQL magic-link repository', () => {
+  it('atomically consumes one bound login challenge and issues exactly one session', async () => {
+    const userId = '00000000-0000-4000-8000-000000000911';
+    const workspaceId = '00000000-0000-4000-8000-000000000912';
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Magic', 'magic');
+      INSERT INTO users (id, email, password_hash, default_workspace_id)
+        VALUES ('${userId}', 'magic@example.test', NULL, '${workspaceId}');
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+      INSERT INTO memberships (workspace_id, user_id, role)
+        VALUES ('${workspaceId}', '${userId}', 'owner');
+      INSERT INTO login_challenges
+        (user_id, token_hash, email_key_hash, network_key_hash, user_agent_hash, purpose,
+         redirect_path, delivery_state, correlation_id, expires_at)
+        VALUES ('${userId}', 'token-hash', 'email-hash', 'network-hash', 'agent-hash',
+                'login', '/app', 'sent', 'request-1', '2030-01-01T00:00:00Z');
+    `);
+    const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
+    const input = {
+      tokenHash: 'token-hash',
+      userAgentHash: 'agent-hash',
+      sessionTokenHash: 'session-hash',
+      csrfSecretHash: 'csrf-hash',
+      sessionExpiresAt: new Date('2030-02-01T00:00:00Z'),
+      now: new Date('2029-12-01T00:00:00Z'),
+    };
+
+    await expect(store.consumeLoginChallenge(input)).resolves.toEqual({
+      userId,
+      workspaceId,
+      role: 'owner',
+      redirectPath: '/app',
+    });
+    await expect(store.consumeLoginChallenge(input)).resolves.toBeNull();
+    const rows = await database.query<{ token_hash: string }>('SELECT token_hash FROM sessions');
+    expect(rows.rows).toEqual([{ token_hash: 'session-hash' }]);
+  });
+
+  it('rejects a challenge presented from a different user-agent binding', async () => {
+    const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
+    await expect(
+      store.consumeLoginChallenge({
+        tokenHash: 'missing',
+        userAgentHash: 'wrong-agent',
+        sessionTokenHash: 'session-hash',
+        csrfSecretHash: 'csrf-hash',
+        sessionExpiresAt: new Date('2030-02-01T00:00:00Z'),
+        now: new Date('2029-12-01T00:00:00Z'),
+      }),
+    ).resolves.toBeNull();
+  });
+
   it('finds only enabled accounts and persists no raw identity material', async () => {
     const userId = '00000000-0000-4000-8000-000000000901';
     await database.exec(`

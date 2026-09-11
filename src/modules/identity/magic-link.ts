@@ -17,6 +17,11 @@ function hmac(value: string, pepper: string): string {
   return createHmac('sha256', pepper).update(value, 'utf8').digest('hex');
 }
 
+export function hashMagicLinkBinding(value: string, pepper: string): string {
+  if (!pepper) throw new Error('Magic-link challenge pepper is required');
+  return hmac(value, pepper);
+}
+
 export function normalizeMagicLinkEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -50,7 +55,7 @@ export function createMagicLinkSecretMaterial(input: {
     tokenHash: hashOpaqueToken(token),
     emailKeyHash: hmac(normalizeMagicLinkEmail(input.email), input.pepper),
     networkKeyHash: hmac(input.networkKey, input.pepper),
-    userAgentHash: hmac(input.userAgent, input.pepper),
+    userAgentHash: hashMagicLinkBinding(input.userAgent, input.pepper),
   };
 }
 

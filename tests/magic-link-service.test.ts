@@ -12,6 +12,7 @@ function createStore(): MagicLinkStore {
     consumeRateLimit: vi.fn().mockResolvedValue(true),
     createChallenge: vi.fn().mockResolvedValue('challenge-1'),
     markDelivery: vi.fn(),
+    consumeLoginChallenge: vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -36,6 +37,39 @@ const request = {
 };
 
 describe('MagicLinkService', () => {
+  it('returns raw session material only after the store atomically consumes the challenge', async () => {
+    const store = createStore();
+    vi.mocked(store.consumeLoginChallenge).mockResolvedValue({
+      userId: 'user-1',
+      workspaceId: 'workspace-1',
+      role: 'owner',
+      redirectPath: '/app',
+    });
+    const result = await createService(store, createDelivery()).verifyLogin({
+      token: 'one-time-token',
+      userAgent: 'browser',
+      now: new Date(0),
+    });
+
+    expect(result).toMatchObject({
+      userId: 'user-1',
+      workspaceId: 'workspace-1',
+      role: 'owner',
+      redirectPath: '/app',
+      expiresAt: new Date(30 * 24 * 60 * 60 * 1_000),
+    });
+    expect(result?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(result?.csrfToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(store.consumeLoginChallenge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        userAgentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        sessionTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        csrfSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    );
+  });
+
   it('persists hashed challenge material and sends the raw URL only through delivery', async () => {
     const store = createStore();
     const delivery = createDelivery();

@@ -168,6 +168,38 @@ describe('authentication HTTP boundary', () => {
     expect(response.cookies.every((cookie) => cookie.secure)).toBe(true);
   });
 
+  it('returns only a validated same-origin password-login continuation', async () => {
+    const store = createStore();
+    vi.mocked(store.findLogin).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      passwordHash: await hashPassword('long-password'),
+    });
+    const application = createTestApplication(store);
+    const safe = await application.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        email: 'owner@example.test',
+        password: 'long-password',
+        redirectPath: '/connect/authorize?x=1',
+      },
+    });
+    expect(safe.json().data.redirectPath).toBe('/connect/authorize?x=1');
+    const unsafe = await application.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        email: 'owner@example.test',
+        password: 'long-password',
+        redirectPath: 'https://attacker.example',
+      },
+    });
+    expect(unsafe.statusCode).toBe(400);
+    expect(unsafe.json()).toEqual({ data: null, error: 'Invalid login continuation' });
+  });
+
   it('updates the registered workspace in place with owner authorization and CSRF', async () => {
     const store = createStore();
     vi.mocked(store.findSession).mockResolvedValue({

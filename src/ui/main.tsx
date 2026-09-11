@@ -168,6 +168,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     ? {
                         email: formText(fields, 'email'),
                         password: formText(fields, 'password'),
+                        ...(continuation ? { redirectPath: continuation } : {}),
                       }
                     : {
                         email: formText(fields, 'email'),
@@ -189,7 +190,11 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     },
                   );
                   const result = (await response.json()) as {
-                    data: { message?: string; developmentUrl?: string } | null;
+                    data: {
+                      message?: string;
+                      developmentUrl?: string;
+                      redirectPath?: string;
+                    } | null;
                     error: string | null;
                   };
                   if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
@@ -206,7 +211,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     });
                     setIsSubmitting(false);
                   } else if (usesPasswordLogin) {
-                    window.location.href = continuation ?? '/app';
+                    window.location.href = result.data?.redirectPath ?? '/app';
                   } else {
                     setMagicLink({
                       message:

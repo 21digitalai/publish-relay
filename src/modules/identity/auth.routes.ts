@@ -6,10 +6,12 @@ import type { AuthIdentity, AuthService } from './auth.service.js';
 import type { SessionResult } from './auth.service.js';
 import { requireWorkspaceAction, type WorkspaceAction } from './authorization.js';
 import { sessionCookieOptions, verifyCsrfToken } from './session.js';
+import { validateMagicLinkRedirect } from './magic-link.js';
 
 export const SESSION_COOKIE = 'publish_relay_session';
 export const CSRF_COOKIE = 'publish_relay_csrf';
 const credentialsSchema = z.object({ email: z.email(), password: z.string().min(12) });
+const loginSchema = credentialsSchema.extend({ redirectPath: z.string().max(2_048).optional() });
 const registrationSchema = credentialsSchema.extend({
   displayName: z.string().trim().min(1).max(100),
   workspaceName: z.string().trim().min(1).max(100),
@@ -118,13 +120,24 @@ export function registerAuthRoutes(
   });
 
   application.post('/api/auth/login', async (request, reply) => {
-    const input = credentialsSchema.safeParse(request.body);
+    const input = loginSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send({ data: null, error: 'Invalid login details' });
+    let redirectPath: string;
+    try {
+      redirectPath = validateMagicLinkRedirect(input.data.redirectPath);
+    } catch {
+      return reply.code(400).send({ data: null, error: 'Invalid login continuation' });
+    }
     const session = await auth.login(input.data.email, input.data.password);
     if (!session) return reply.code(401).send({ data: null, error: 'Invalid email or password' });
     setSessionCookies(reply, session, options.secureCookies);
     return {
-      data: { userId: session.userId, workspaceId: session.workspaceId, role: session.role },
+      data: {
+        userId: session.userId,
+        workspaceId: session.workspaceId,
+        role: session.role,
+        redirectPath,
+      },
       error: null,
     };
   });

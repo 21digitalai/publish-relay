@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Rail } from './main.js';
 import { LiveRegion } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { externalResultLabel, providerDisplayName } from './provider-presentation.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
 type JobState =
@@ -1798,15 +1799,18 @@ export function JobDetailPage() {
             </aside>
           </div>
           {detail?.providerResult?.url && (
-            <div className="external-result-list" aria-label="Published X thread">
+            <div
+              className="external-result-list"
+              aria-label={`Published ${providerDisplayName(job.provider)} result`}
+            >
               {(detail.providerResult.threadParts?.length
                 ? detail.providerResult.threadParts
                 : [{ position: 0, id: detail.providerResult.id, url: detail.providerResult.url }]
               ).map((part) => (
                 <a className="primary-button external-result-link" href={part.url} key={part.id}>
                   {detail.providerResult?.threadParts?.length
-                    ? `View post ${String(part.position + 1)} on X`
-                    : 'View on X'}
+                    ? externalResultLabel(job.provider, part.position)
+                    : externalResultLabel(job.provider)}
                 </a>
               ))}
             </div>

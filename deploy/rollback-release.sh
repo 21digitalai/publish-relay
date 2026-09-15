@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 <release-id>" >&2
+# PUBLISH_RELAY_HEALTH_URL defaults to http://127.0.0.1:3106/health/ready in publish-release.
+# Old code is rebuilt from the approved Git commit, not retained on the VPS.
+if [[ $# -ne 2 ]]; then
+  echo "usage: $0 <new-release-id> <rebuilt-source-directory>" >&2
   exit 64
 fi
-
-release_root="${PUBLISH_RELAY_RELEASE_ROOT:-/opt/publish-relay/releases}"
-current_link="${PUBLISH_RELAY_CURRENT_LINK:-/opt/publish-relay/current}"
-health_url="${PUBLISH_RELAY_HEALTH_URL:-http://127.0.0.1:3106/health/ready}"
-release_directory="${release_root}/$1"
-[[ -d "$release_directory" ]] || { echo "release does not exist" >&2; exit 66; }
-ln -sfn "$release_directory" "${current_link}.next"
-mv -Tf "${current_link}.next" "$current_link"
-systemctl restart publish-relay-web publish-relay-worker
-systemctl is-active --quiet publish-relay-web publish-relay-worker
-curl --fail --silent --show-error "$health_url" >/dev/null
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+exec bash "$script_directory/publish-release.sh" "$@"

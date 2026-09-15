@@ -101,16 +101,15 @@ function plan(value: ReturnType<typeof fixture>, fresh = value.inventory) {
 }
 
 describe('read-only release retention policy', () => {
-  it('keeps active-oldest plus exactly three verified rollbacks, with exact allocated totals', () => {
+  it('retires current-plus-three proposals and keeps historical inventory with exact allocated totals', () => {
     const value = fixture();
     const result = plan(value);
-    expect(result.status).toBe('proposal-only');
-    expect(result.keep.map((row) => row.path)).toEqual(
-      ids.slice(0, 4).map((id) => join(value.root, id)),
-    );
-    expect(result.deleteCandidates.map((row) => row.path)).toEqual(
-      ids.slice(4).map((id) => join(value.root, id)),
-    );
+    expect(result.status).toBe('blocked');
+    expect(result.policy.rollbackCount).toBe(0);
+    expect(result.policy.normalReleaseCount).toBe(1);
+    expect(result.blockers).toContain('legacy-planner-retired-use-serialized-deployment');
+    expect(result.keep.map((row) => row.path)).toEqual(ids.map((id) => join(value.root, id)));
+    expect(result.deleteCandidates.map((row) => row.path)).toEqual([]);
     expect(result.allocatedBytes.keep + result.allocatedBytes.deleteCandidates).toBe(
       value.inventory.releases.reduce((sum, release) => sum + release.allocatedBytes, 0),
     );
@@ -134,7 +133,7 @@ describe('read-only release retention policy', () => {
     value.evidence.compatibleRollbacks.pop();
     value.evidence.pins = [{ id: ids[3], purpose: 'migration', receipt: 'precaution only' }];
     const result = plan(value);
-    expect(result.blockers).toContain('insufficient-verified-compatible-rollbacks');
+    expect(result.blockers).toContain('legacy-planner-retired-use-serialized-deployment');
     expect(result.keep).toHaveLength(8);
     expect(result.deleteCandidates).toEqual([]);
   });
@@ -145,7 +144,7 @@ describe('read-only release retention policy', () => {
       64,
     );
     required(value.evidence.compatibleRollbacks[1]).againstCurrent = ids[7];
-    expect(plan(value).selectedRollbackIds).toEqual([ids[3]]);
+    expect(plan(value).selectedRollbackIds).toEqual([]);
     expect(plan(value).deleteCandidates).toEqual([]);
   });
 

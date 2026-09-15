@@ -20,7 +20,7 @@ health_attempts="${PUBLISH_RELAY_HEALTH_ATTEMPTS:-12}"
 health_interval_seconds="${PUBLISH_RELAY_HEALTH_INTERVAL_SECONDS:-2}"
 : "${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}"
 
-[[ "$release_id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid release id" >&2; exit 64; }
+[[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "invalid release id" >&2; exit 64; }
 [[ -f "${source_directory}/package-lock.json" ]] || { echo "source directory is not a release" >&2; exit 66; }
 [[ -f "${source_directory}/dist/database/migrate.js" ]] || { echo "compiled migration entrypoint is missing" >&2; exit 66; }
 [[ ! -e "$release_directory" ]] || { echo "release already exists" >&2; exit 73; }
@@ -31,12 +31,20 @@ health_interval_seconds="${PUBLISH_RELAY_HEALTH_INTERVAL_SECONDS:-2}"
 [[ "$health_attempts" =~ ^[1-9][0-9]*$ ]] || { echo "health attempts must be a positive integer" >&2; exit 64; }
 [[ "$health_interval_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "health interval must be a non-negative number" >&2; exit 64; }
 
-install -d -o "$service_user" -g "$service_user" "$release_root"
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$script_directory/release-lifecycle.sh"
+[[ -d "$release_root" && ! -L "$release_root" ]] || { echo "Provision a real empty releases directory first" >&2; exit 66; }
+lifecycle_begin
+candidate_created=true
 install -d -o "$service_user" -g "$service_user" "$release_directory"
 cp -a "${source_directory}/." "$release_directory/"
 chown -R "${service_user}:${service_user}" "$release_directory"
 
 sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --prefix "$release_directory"
+lifecycle_guard artifact "$release_root" "$current_link" "$release_id"
+# Runtime may read release code, but must not mutate an old tree during cleanup checks.
+chown -hR "$(id -un):${service_user}" "$release_directory"
+chmod -R go-w "$release_directory"
 (
   cd "$release_directory"
   DATABASE_URL="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
@@ -47,18 +55,16 @@ sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --
     -u "$service_user" "$psql_bin" -v ON_ERROR_STOP=1 \
     -f deploy/bootstrap-database-authorities.sql "$MIGRATION_DATABASE_URL"
 )
-ln -sfn "$release_directory" "${current_link}.next"
-mv -Tf "${current_link}.next" "$current_link"
+switch_started=true
+lifecycle_switch "$release_directory" "$previous_release"
 systemctl restart publish-relay-web publish-relay-worker
-systemctl is-active --quiet publish-relay-web publish-relay-worker
-for ((health_attempt = 1; health_attempt <= health_attempts; health_attempt += 1)); do
-  if curl --fail --silent --show-error "$health_url" >/dev/null; then
-    exit 0
-  fi
-  if ((health_attempt < health_attempts)); then
-    sleep "$health_interval_seconds"
-  fi
-done
-
-echo "readiness probe failed after ${health_attempts} attempts: ${health_url}" >&2
-exit 7
+lifecycle_smoke "$release_directory"
+# Successful smoke commits the candidate; cleanup failure must not revert healthy code.
+deployment_committed=true
+if [[ -n "$previous_release" ]]; then
+  lifecycle_guard remove "$release_root" "$current_link" "$release_directory" "${previous_release##*/}" || {
+    echo "Old release cleanup blocked; preserve deployment lock for owner recovery" >&2
+    trap - EXIT
+    exit 1
+  }
+fi

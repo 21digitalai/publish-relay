@@ -14,7 +14,15 @@ Provision the fixed `NOLOGIN` group roles with `bootstrap-database-authorities.s
 
 Run the bootstrap again after forward migrations so grants cover newly created tables and sequences. The script is idempotent. Verify with `SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname LIKE 'publish_relay_%'`; only `publish_relay_worker` and the no-login `publish_relay_token_exchange` definer may report `true`. Do not put login passwords in the SQL file, release, unit, or deployment ticket.
 
-Deployment order is build artifact transfer, `publish-release.sh`, production-dependency install, compiled forward migration, database-authority bootstrap, atomic symlink switch, unit restart, and readiness verification. A failed migration or authority bootstrap stops before the symlink changes. Readiness tolerates bounded startup time (`PUBLISH_RELAY_HEALTH_ATTEMPTS`, default 12; `PUBLISH_RELAY_HEALTH_INTERVAL_SECONDS`, default 2) and exits nonzero after the final failed probe so the release caller retains its rollback signal. The release must contain `dist/database/migrate.js` and `deploy/bootstrap-database-authorities.sql`; production deployment never depends on the development-only `tsx` runtime. Application rollback uses `rollback-release.sh`; migrations must remain backward compatible under the expand/migrate/contract rule.
+Deployment uses the serialized [single-release lifecycle](RELEASE-RETENTION.md): exactly one
+release normally, two temporarily, then one after verified success or successful recovery.
+Provision the deployment-owned root first. The script installs production dependencies,
+runs compiled migration/bootstrap, switches atomically, restarts and smokes both services.
+A failure restores and verifies the prior application before cleaning the candidate; uncertain
+recovery leaves both artifacts and a lock for owner inspection. Existing deployments with
+new migration files require a separate reviewed recovery procedure. Later rollback rebuilds
+an approved Git commit and calls `rollback-release.sh <new-id> <built-source-directory>`;
+it does not require retained old code. No database restore is performed.
 
 The release script enters the immutable release directory before invoking the migration and authority-bootstrap commands through `sudo`. Do not use sudo's `--chdir`/`-D` option: production intentionally applies a hardened sudo policy that rejects it. Keep the explicit Node 24 and PostgreSQL binaries allowlistable. The password-free `MIGRATION_DATABASE_URL` is passed to `psql` as its explicit database argument so hardened sudo environment filtering cannot fall back to a local Unix socket; only `PGPASSWORD` is preserved for that child command.
 
@@ -24,6 +32,8 @@ Install an isolated Node 24 toolchain under `/opt/publish-relay/node24` before t
 
 Reverse proxy TLS termination must forward only to the isolated Publish Relay listener, initially `127.0.0.1:3106` (`HOST=127.0.0.1`, `PORT=3106`). `publish-release.sh` probes `PUBLISH_RELAY_HEALTH_URL`, defaulting to `http://127.0.0.1:3106/health/ready`. Keep `/metrics` restricted to host monitoring. Verify `/health/live`, `/health/ready`, login, protected-shell redirect behavior, worker restart survival, process metrics, journald logs, and absence of changes to existing services before cutover.
 
-## Release-retention planning
+## Release lifecycle and historical audit
 
-[Read-only release retention](RELEASE-RETENTION.md) owns the current-plus-three verified rollback policy and unlimited migration/recovery pins. The compiled audit CLI emits exact keep/candidate manifests and allocated bytes but has no deletion command or deploy integration. Historical or insufficiently verified inventories keep every release.
+[Single-release deployment and recovery](RELEASE-RETENTION.md) owns current source policy.
+Historical assessments remain read-only keep-all manifests; the old current-plus-three
+proposal policy is retired. Source approval is not live rollout or historical-delete approval.

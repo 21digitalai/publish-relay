@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { z } from 'zod';
 
-export const ROLLBACK_COUNT = 3;
+export const ROLLBACK_COUNT = 0;
 export const INVENTORY_MAX_AGE_MS = 5 * 60 * 1000;
 export const releaseId = z.string().regex(/^[a-f0-9]{7,40}-r[1-9][0-9]*$/);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);

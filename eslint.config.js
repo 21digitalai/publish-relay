@@ -39,6 +39,11 @@ export default tseslint.config(
     },
   },
   {
+    files: ['deploy/release-filesystem.mjs'],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: { parserOptions: { projectService: false } },
+  },
+  {
     files: ['src/ui/**/*.{ts,tsx}'],
     languageOptions: { globals: globals.browser },
     plugins: { 'react-hooks': reactHooks, 'react-refresh': reactRefresh },

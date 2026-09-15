@@ -53,20 +53,6 @@ function findBlockers(input: {
   return [...new Set(blockers)];
 }
 
-function selectRollbacks(inventory: ReleaseInventory, evidence: RetentionEvidence, now: number) {
-  return evidence.compatibleRollbacks
-    .filter(
-      (entry) =>
-        entry.id !== inventory.current &&
-        entry.againstCurrent === inventory.current &&
-        entry.againstDatabaseStateFingerprint === inventory.databaseStateFingerprint &&
-        Date.parse(entry.verifiedAt) <= now,
-    )
-    .sort((a, b) => Date.parse(b.verifiedAt) - Date.parse(a.verifiedAt) || a.id.localeCompare(b.id))
-    .slice(0, ROLLBACK_COUNT)
-    .map((entry) => entry.id);
-}
-
 export function retentionManifest(input: {
   inventory: unknown;
   freshInventory: unknown;
@@ -78,9 +64,9 @@ export function retentionManifest(input: {
   const evidence = validateEvidence(inventory, input.evidence);
   const now = input.now ?? Date.now();
   const blockers = findBlockers({ inventory, fresh, evidence, now });
-  const rollbacks = selectRollbacks(inventory, evidence, now);
-  if (rollbacks.length < ROLLBACK_COUNT)
-    blockers.push('insufficient-verified-compatible-rollbacks');
+  // Historical JSON receipts must never authorize cleanup under the new deployment policy.
+  const rollbacks: string[] = [];
+  blockers.push('legacy-planner-retired-use-serialized-deployment');
   const protectedIds = new Set([
     inventory.current,
     ...rollbacks,
@@ -115,7 +101,9 @@ export function retentionManifest(input: {
     policy: {
       current: inventory.current,
       rollbackCount: ROLLBACK_COUNT,
-      unlimitedExplicitPins: true,
+      normalReleaseCount: 1,
+      temporaryDeploymentMaximum: 2,
+      pinsRequireOwnerRecovery: true,
     },
     inventoryDigest: inventoryDigest(inventory),
     blockers: blockers.sort(),

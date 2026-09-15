@@ -1,99 +1,15 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import {
-  chmodSync,
-  mkdtempSync,
-  mkdirSync,
-  realpathSync,
-  readFileSync,
-  readlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, readFileSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { createDeployFixture, writeExecutable } from './deployment-fixture.js';
+
 import { loadRuntimeConfig } from '../src/config/runtime-config.js';
 
 const projectRoot = resolve(import.meta.dirname, '..');
-
-function writeExecutable(path: string, content: string): void {
-  writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\n${content}\n`);
-  chmodSync(path, 0o755);
-}
-
-function createDeployFixture(): {
-  environment: NodeJS.ProcessEnv;
-  source: string;
-  currentLink: string;
-  log: string;
-  nodeBin: string;
-  releaseRoot: string;
-} {
-  const root = mkdtempSync(join(tmpdir(), 'publish-relay-deploy-'));
-  const bin = join(root, 'bin');
-  const source = join(root, 'source');
-  const log = join(root, 'commands.log');
-  const currentLink = join(root, 'current');
-  const releaseRoot = join(root, 'releases');
-  mkdirSync(bin);
-  mkdirSync(join(source, 'dist', 'database'), { recursive: true });
-  mkdirSync(join(source, 'deploy'), { recursive: true });
-  writeFileSync(join(source, 'package-lock.json'), '{}');
-  writeFileSync(join(source, 'dist', 'database', 'migrate.js'), '');
-  writeFileSync(join(source, 'deploy', 'bootstrap-database-authorities.sql'), '');
-  writeExecutable(join(bin, 'install'), 'mkdir -p "${@: -1}"');
-  writeExecutable(join(bin, 'chown'), 'exit 0');
-  writeExecutable(
-    join(bin, 'mv'),
-    'echo "mv $*" >> "$COMMAND_LOG"; [[ "$1" == "-Tf" ]] && shift; command /bin/mv "$@"',
-  );
-  writeExecutable(
-    join(bin, 'sudo'),
-    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*|-D) echo "sudo: hardened policy rejects chdir" >&2; exit 1 ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGPASSWORD" ]]; then exec "${base[@]}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
-  );
-  const nodeBin = join(bin, 'node24');
-  const npmCli = join(bin, 'npm-cli.js');
-  writeFileSync(npmCli, 'fixture npm CLI');
-  writeExecutable(
-    nodeBin,
-    'if [[ "$1" == "--version" ]]; then echo v24.8.0; exit 0; fi; [[ "$1" == *"npm-cli.js" ]] && { shift; echo "npm $*" >> "$COMMAND_LOG"; exit 0; }; echo "node=$0 cwd=$PWD script=$1 database=$([[ -n "${DATABASE_URL:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing)" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 ]]',
-  );
-  const psqlBin = join(bin, 'psql');
-  writeExecutable(
-    psqlBin,
-    'echo "psql cwd=$PWD pgdatabase=$([[ -n "${PGDATABASE:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing) $*" >> "$COMMAND_LOG"; [[ "${FAIL_BOOTSTRAP:-0}" != 1 ]]',
-  );
-  writeExecutable(join(bin, 'ln'), 'echo "ln $*" >> "$COMMAND_LOG"; command /bin/ln "$@"');
-  writeExecutable(join(bin, 'systemctl'), 'echo "systemctl $*" >> "$COMMAND_LOG"');
-  writeExecutable(
-    join(bin, 'curl'),
-    'echo "curl $*" >> "$COMMAND_LOG"; attempt_file="${CURL_ATTEMPT_FILE:-$COMMAND_LOG.curl-attempts}"; attempt=0; [[ -f "$attempt_file" ]] && attempt="$(cat "$attempt_file")"; attempt=$((attempt + 1)); echo "$attempt" > "$attempt_file"; [[ "${FAIL_READINESS:-0}" != 1 && "$attempt" -ge "${READINESS_SUCCEEDS_ON_ATTEMPT:-1}" ]]',
-  );
-  return {
-    environment: {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH ?? ''}`,
-      COMMAND_LOG: log,
-      PUBLISH_RELAY_RELEASE_ROOT: releaseRoot,
-      PUBLISH_RELAY_CURRENT_LINK: currentLink,
-      PUBLISH_RELAY_SERVICE_USER: 'test-user',
-      PUBLISH_RELAY_NODE_BIN: nodeBin,
-      PUBLISH_RELAY_NPM_CLI: npmCli,
-      PUBLISH_RELAY_PSQL_BIN: psqlBin,
-      PUBLISH_RELAY_HEALTH_URL: 'http://127.0.0.1:3999/health/ready',
-      PUBLISH_RELAY_HEALTH_ATTEMPTS: '3',
-      PUBLISH_RELAY_HEALTH_INTERVAL_SECONDS: '0',
-      MIGRATION_DATABASE_URL: 'postgresql://migrator@127.0.0.1/publish_relay',
-      PGPASSWORD: 'fixture-password',
-    },
-    source,
-    currentLink,
-    log,
-    nodeBin,
-    releaseRoot,
-  };
-}
 
 describe('deployment scripts', () => {
   it('provisions distinct forced-RLS web and cross-workspace worker authorities', () => {
@@ -191,14 +107,14 @@ describe('deployment scripts', () => {
     expect(commands.indexOf('script=dist/database/migrate.js')).toBeLessThan(
       commands.indexOf('psql cwd='),
     );
-    expect(commands.indexOf('psql cwd=')).toBeLessThan(commands.indexOf('ln -sfn'));
-    expect(commands.indexOf('ln -sfn')).toBeLessThan(commands.indexOf('systemctl restart'));
+    expect(commands.indexOf('psql cwd=')).toBeLessThan(commands.indexOf('ln -s '));
+    expect(commands.indexOf('ln -s ')).toBeLessThan(commands.indexOf('systemctl restart'));
     expect(commands.indexOf('systemctl restart')).toBeLessThan(
       commands.indexOf('systemctl is-active'),
     );
     expect(commands.indexOf('systemctl is-active')).toBeLessThan(commands.indexOf('curl --fail'));
     expect(commands).toContain(
-      'curl --fail --silent --show-error http://127.0.0.1:3999/health/ready',
+      'curl --fail --silent --show-error --connect-timeout 5 --max-time 10 http://127.0.0.1:3999/health/ready',
     );
     expect(readlinkSync(fixture.currentLink)).toContain('release-1');
     expect(readFileSync(join(projectRoot, 'deploy/publish-release.sh'), 'utf8')).not.toContain(

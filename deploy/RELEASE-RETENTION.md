@@ -1,120 +1,114 @@
-# Release retention: read-only planning
+# Single-release deployment and recovery
 
-The default source policy is **current plus three explicitly verified, database-compatible
-rollback releases**, plus **every explicit migration/recovery pin**, without a pin count limit.
-A migration-file match, a successful build, age, Git order, or an application-only review
-does not establish rollback compatibility. Pins do not count as verified rollback slots
-unless they independently have the required compatibility evidence.
+The normal state is **one deployed release**. A deployment temporarily creates a second
+candidate, switches `current`, restarts both units and performs bounded readiness smoke.
+Success removes the old code; failure switches back, restarts and verifies the old code,
+then removes the failed candidate. Later application rollback means rebuilding the approved
+Git commit into a fresh artifact and deploying it through the same transaction—not retaining
+three code copies on the VPS. Database backup age coverage is separate; see
+[BACKUP-RETENTION.md](BACKUP-RETENTION.md). Database, media, backup, environment and toolchain
+state must live outside the release tree and is never targeted by this lifecycle.
 
-**This delivery has no apply/delete command, scheduler, deploy hook, or filesystem writer.**
-All outputs have an empty `approvedDeletePaths` and zero approved deletion bytes.
-Even a `proposal-only` output is not deletion approval. No existing deployment, rollback,
-backup, database, provider, or service behavior changes.
+## Source-only delivery / activation gate
 
-## Advanced owner/audit interface
+These are repository-owned scripts, **not a deployment or cleanup authorization**. Nothing
+activates on build or service startup. This change has not run on a live host. Before using
+it there, the owner must approve rollout, reconcile the historical multi-release inventory
+and pins, verify source/script provenance, provision the deployment-owned release root,
+prove service observation and `lsof` permissions, and exercise the real host smoke/recovery
+path. The old fifteen-release assessment remains keep-all with **zero approved deletions**.
+The scripts intentionally refuse a nonempty root without current, or any extra legacy/orphan
+release: they do not opportunistically delete historical directories to make room.
 
-Build with the normal `npm run build`; the compiled entrypoint uses the existing Node 24
-runtime and Zod dependency. Commands print JSON to stdout:
+## Canonical entrypoints
+
+Run the reviewed scripts from a trusted checkout **outside** the releases directory:
+
+```sh
+bash deploy/publish-release.sh <unique-release-id> <absolute-built-artifact-directory>
+bash deploy/rollback-release.sh <unique-release-id> <absolute-rebuilt-artifact-directory>
+```
+
+Prepare/rebuild source from the approved Git commit on the normal build host. This tool does
+not fetch code, install GitHub credentials, restore databases, or reverse migrations.
+A one-argument rollback to a retained directory is no longer supported. Both entrypoints use
+`release-lifecycle.sh` and the dependency-free Node 24 `release-filesystem.mjs` guard; neither
+has a separate retention policy. The latter is an internal implementation helper, not a
+standalone prune command. It must only be invoked by the serialized lifecycle.
+
+Provision an empty, real, canonical application `releases` directory for first install.
+Its parent contains the sole `current` symlink and `.deployment-lock`. The release root
+must belong to the deployment identity and must not be group/world writable. Root and
+ancestor symlinks, traversal, protected roots, chained/escaping current, unknown release
+entries, special files, hardlinks, mount crossings, private `.env` files and protected
+release-root data directories are refused. Contained npm binary symlinks are allowed;
+escaping/broken links are not. The legacy inventory CLI remains stricter and refuses all
+in-release links, so it is not the live lifecycle validator.
+
+Required host tools include Bash, Node 24, PostgreSQL client, `sudo`, systemd, GNU `mv -T`,
+`readlink -f`, curl and `lsof`. `lsof` must have complete process visibility; missing tools,
+permissions errors or other diagnostics block deletion. Readiness defaults to twelve attempts
+two seconds apart; each curl has a five-second connect and ten-second total timeout. These
+existing deployment environment controls are not product configuration.
+
+## Safety and failure semantics
+
+- Exclusive `mkdir` acquisition of the sibling `.deployment-lock` spans preflight, copy,
+  dependency installation, migration/bootstrap, switch, smoke, recovery and deletion.
+  Concurrent publish and rollback refuse the same lock. It is never expired or stolen.
+- Existing deployments must contain exactly one selected release. Both actual systemd
+  MainPIDs must resolve through `/proc/PID/cwd` to that release. Selection is rechecked before
+  switching and deleting. Successful smoke checks both service activity and actual process
+  release paths; a health response alone is insufficient.
+- This bounded automatic-recovery path only accepts an unchanged migration tree (including
+  migration metadata). A changed schema requires a separately reviewed expand/contract and
+  recovery procedure. Equality does **not** certify live database compatibility, reverse a
+  partial migration, or replace host/database acceptance. No database restore/delete is run.
+- A `.release-pin` marker blocks automatic removal and requires owner reconciliation. Never
+  remove a pin just to make a deployment pass. Existing out-of-band historical pins must be
+  reconciled before activation; a JSON plan cannot silently release them.
+- Before removal the exact old/candidate tree is validated; current and both live service
+  references must agree with the survivor. `lsof +D` must report no users of the removed tree,
+  with no diagnostics. Only that exact direct release directory is removed, never siblings.
+- Failure before switch leaves current unchanged and attempts safe candidate cleanup.
+  Failure after switch restores and smokes the previous release before candidate cleanup.
+  Failed first installation stops both units and removes only its exact current pointer
+  before safe candidate cleanup. No running release is deliberately deleted.
+- Failed recovery, incomplete copy, uncertain process visibility, or blocked cleanup leaves
+  evidence/artifacts and the lock intact, reports nonzero, and requires owner recovery.
+  Successful candidate smoke followed by failed old cleanup **keeps the healthy candidate**;
+  it does not roll back merely because cleanup failed. Normal one-release state is not
+  falsely claimed in these exceptional paths.
+- Kill/power loss may leave two artifacts and a lock. The next invocation refuses; the owner
+  must inspect current, actual processes, database state and exact directories before resuming.
+  No automatic stale-lock deletion or automatic multi-release garbage collection exists.
+
+The concurrency boundary is a trusted deployment identity and all writers honoring the lock.
+This is not a defense against a hostile root user or an unrelated deployment script. Disable
+legacy writers before activation. Run outside release directories so the caller itself does
+not hold the old tree open. Production service paths, privileges, root ownership and process
+visibility still require host verification; fixture tests are not that verification.
+
+## Historical audit interface
+
+The compiled `release-retention` CLI remains read-only. `assessment`, `inspect`, and `plan`
+retain their existing input validation, deterministic exact paths, allocated bytes, stale
+state and unknown-pin checks. **The current-plus-three proposal policy is retired**: `plan`
+always keeps all artifacts and names the serialized deployment requirement, even when old
+compatibility receipts are supplied. `assessment` never reads or deletes its named paths.
+Outputs always have empty `approvedDeletePaths`, no candidates and zero approved bytes.
+Malformed inputs exit 1, blocked manifests exit 2. `apply` remains unsupported.
 
 ```sh
 node dist/entrypoints/release-retention.js assessment /path/to/historical-assessment.json
-node dist/entrypoints/release-retention.js inspect /application/releases
-node dist/entrypoints/release-retention.js plan /path/to/inventory.json /path/to/evidence.json /path/to/fresh-inventory.json
 ```
 
-Use the historical assessment command for an existing inventory, not fabricated live evidence.
-It accepts `releases[{path, allocatedBytes, authorizedAction:"keep"}]` and
-`approvedDeletePaths:[]`. Other historical proposal/reason fields cannot grant deletion
-or rollback authority. It emits every exact path and allocated-byte count as keep, with
-explicit missing-evidence blockers. It never reads the paths named in that historical file.
+## Verification
 
-Exit codes: **0** inspection or policy proposal emitted; **2** blocked keep-all manifest
-emitted; **1** malformed/unsafe input, failed observation, or unsupported command.
-Capture stdout even on exit 2. Unknown flags, extra arguments, and `apply` are refused.
-
-### Filesystem inspection boundaries
-
-`inspect` is Linux/systemd-only. It reads the actual MainPID, kernel process start time,
-and `/proc/PID/cwd` for the existing web and worker units, rather than treating a unit's
-configured WorkingDirectory as a running-release reference. Missing processes fail closed.
-Two complete observations must agree on current, processes, and release inventory.
-Process/current disagreement is preserved in the inventory and blocks policy proposals.
-
-The root must be an absolute canonical application directory ending in `/releases`.
-The root and its ancestors cannot be symlinks. Protected data subtrees (`/var/lib`,
-`/etc`, media, backups, databases, and toolchains) are refused.
-Only direct, real release directories named `<7–40 lowercase hex commit>-r<positive number>`
-are supported. The one permitted link is the application's direct `current` selection
-of a release in that root; traversal, chained/escaping current links, all links within
-releases (including contained links), hard-linked files, device crossings, special files,
-and trees deeper than 64 levels are refused. Therefore a release with npm `node_modules/.bin`
-symlinks intentionally fails inspection in this strict version. Do not remove links to
-make it pass; an owner-reviewed link policy would be separate work.
-
-Allocated bytes use filesystem `st_blocks * 512`, including directory blocks, not logical
-file lengths. Only the release tree is enumerated; sibling database/media/backup/toolchain
-data is never included. Fingerprints cover relative names and inode/device/mode/link-count/
-size/block-count/mtime/ctime metadata, not content hashes. They detect ordinary mutation;
-they are **not cryptographic integrity or compromise attestations**. Reads may update
-filesystem access times; release contents, metadata used by the digest, links, and directory
-membership are not intentionally changed.
-
-The existing deploy and rollback scripts have **no common serialization protocol**.
-Inspection deliberately emits `deploymentState:"unknown"`,
-`serializationReceipt:null`, and `databaseStateFingerprint:null`. Equal scans do not
-prove deploy idleness, successful readiness, or database compatibility. Thus unmodified
-inspection output always yields a blocked keep-all plan. This is an explicit safe limit,
-not a lock implementation or a claim that a live pruning tool is ready.
-
-### Evidence and policy proposals
-
-The authoritative schemas are in `src/modules/operations/release-retention.contract.ts`.
-They reject unknown fields in policy inventories/evidence, malformed/duplicate release IDs,
-unsafe paths, unknown pin/rollback IDs, and unsafe allocated totals.
-
-An inventory includes version, canonical root, ISO observation time, current release,
-web/worker PID + kernel start time + actual release ID, deployment state, serialization
-receipt, database-state fingerprint, and per-release ID, allocated bytes, and fingerprint.
-`inventoryDigest` in the plan is SHA-256 over the canonical state excluding observation
-time; release ordering is normalized.
-
-Evidence version 1 contains:
-
-- `inventoryDigest`: exact binding to the inventoried filesystem/runtime/database state.
-- `pinInventoryReceipt`: owner receipt attesting the complete migration/recovery pin list.
-- `pins`: each has `id`, `purpose: "migration" | "recovery"`, and a durable `receipt`.
-- `compatibleRollbacks`: each has `id`, `againstCurrent`,
-  `againstDatabaseStateFingerprint`, `databaseCompatibility:"verified"`,
-  `successfulDeployment:true`, ISO `verifiedAt`, and a durable test/owner `receipt`.
-
-The pure planner supports attested inventories for **offline policy evaluation**. Receipt
-strings are references, not authenticated signatures; JSON cannot establish their truth.
-Do not manually relabel inspection's unknown fields to claim a production-safe plan.
-The database-state digest must cover the owner-verified live schema/migration/configuration
-boundary relevant to rollback; this tool does not query a database or obtain that proof.
-A future serialized collector/apply flow and its approved evidence authority are not shipped.
-
-Both input and fresh inventory must match the evidence digest, be no more than five minutes
-old, not future-dated, and be in forward observation order. Any inventory/current/process
-change, non-idle/failed/unknown deployment, absent serialization/database/pin proof, or fewer
-than three applicable compatibility records produces **keep all and zero candidates**.
-Compatibility must match both current and database state; future verification is ignored.
-The three most recently verified compatible targets are selected (ID breaks timestamp ties).
-Every pin and running release is protected beyond that set. Output paths and blocker
-ordering are deterministic. A changed state requires a fresh owner review, not replay of
-an old plan.
-
-## Verification and remaining release gate
-
-`npm test -- tests/release-retention.test.ts tests/deployment-scripts.test.ts`
-exercises temporary real directories, active-oldest selection, extra pins, failed deployment,
-stale plan/current/process state, missing compatibility, escaping/contained links, hard links,
-protected paths, concurrent observation changes, byte accounting, repeatability, content
-immutability, and the CLI's refusal to apply. Synthetic fixture receipts are not production
-rollback evidence.
-
-Before any future live deletion, separately approve and implement serialization shared by
-deploy/rollback/prune, authoritative database/rollback and complete pin evidence collection,
-fresh exact inventory/plan approval, and just-in-time revalidation. Preserve all migration/
-recovery artifacts and independent backups. A failed deployment must never trigger pruning.
-This source-only planner does not implement or authorize any of those live transitions.
+`npm test -- tests/deployment-lifecycle.test.ts tests/deployment-scripts.test.ts tests/release-retention.test.ts`
+executes real temporary filesystem transitions with mocked host service/SQL commands. It
+covers one-to-two-to-one success, pre/post-switch failures, failed recovery, busy/stale locks,
+active/unknown old processes, stale selection, migration changes, protected sibling bytes,
+legacy roots, escaping and contained links, hardlinks, immutable/repeated artifacts and
+rollback delegation. No tests contact a live service or provider. Database/media bytes are
+asserted unchanged; real database rollback compatibility is not claimed.

@@ -183,16 +183,16 @@ Provider runtime registration is isolated: missing provider-specific credentials
 
 The due-job claim boundary enforces one hard missed-post rule before leasing: a still-scheduled job more than 30 minutes late transitions to `needs_review`, retains its original `scheduled_at`, creates no publication attempt, and is never automatically rescheduled. A job exactly 30 minutes late remains eligible. Both batch and exact-job claim paths use the same rule.
 
-Production releases probe readiness only after both systemd units restart. The canonical release script uses a bounded configurable retry window (12 attempts, two seconds apart by default), retains curl's fail-closed behavior, and exits nonzero after exhaustion so deployment orchestration can invoke the existing rollback path rather than treating a late or failed startup as success.
+Production releases probe readiness only after both systemd units restart. The canonical release script uses a bounded configurable retry window (12 attempts, two seconds apart by default), retains curl's fail-closed behavior, and exits nonzero after exhaustion; the shared lifecycle restores and verifies the prior application before deleting the failed candidate, or preserves both artifacts when recovery cannot be proven.
 
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.
 - Browser Composer uploads remain unattached until post creation succeeds. Its authenticated CSRF-protected media delete endpoint atomically tombstones only tenant-owned ready media with no revision reference, then removes the local object; attached media is never deleted through this abandonment path.
 
-## Release-artifact retention
+## Release-artifact lifecycle
 
-- `src/modules/operations/release-retention.ts` is the single read-only policy owner for current plus three explicitly verified database-compatible rollback releases and unlimited migration/recovery pins. It is separate from tenant media retention and never deletes artifacts.
-- `release-retention.contract.ts` validates inventory/evidence and binds receipts to exact filesystem/runtime/database state; stale, mismatched, failed-deploy, unverified, or insufficient-rollback evidence keeps everything. `release-inventory.ts` performs strict read-only filesystem and actual systemd process observation; existing deploy/rollback lack shared serialization, so it cannot attest a prune-safe state.
-- `release-assessment.ts` converts historical assessments only into keep-all manifests. The compiled `release-retention` entrypoint has inspection, assessment, and offline proposal modes, no apply path, and no runtime integration. Exact boundaries, evidence authority limitations, and future live-approval gates are in `deploy/RELEASE-RETENTION.md`.
+- `deploy/publish-release.sh` and rebuilt-source `rollback-release.sh` converge on `release-lifecycle.sh`: one release normally, temporary candidate second, smoke then remove old; failure restores and smokes old before candidate cleanup. A sibling exclusive mkdir lock spans the transaction; failed recovery/cleanup retains it for owner reconciliation.
+- `deploy/release-filesystem.mjs` is the dependency-free Node 24 boundary for canonical roots, protected paths, safe contained links, migration-tree comparison, exact current/MainPID cwd verification and lsof no-use checks before bounded removal. No live database, media or backup is deleted. Migration changes, pins, extra legacy releases and stale/unknown observations refuse rather than guessing. Full boundaries and activation requirements live in `deploy/RELEASE-RETENTION.md`.
+- `src/modules/operations/release-retention.ts` is now a retired-policy audit reader: even old complete current-plus-three evidence yields keep-all with a superseded-policy blocker. `release-assessment.ts` preserves historical exact path/allocated-byte reporting with zero approved deletes. Neither CLI activates or authorizes the source lifecycle.
 
 ## Database-backup retention
 

@@ -187,3 +187,9 @@ Production releases probe readiness only after both systemd units restart. The c
 
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.
 - Browser Composer uploads remain unattached until post creation succeeds. Its authenticated CSRF-protected media delete endpoint atomically tombstones only tenant-owned ready media with no revision reference, then removes the local object; attached media is never deleted through this abandonment path.
+
+## Release-artifact retention
+
+- `src/modules/operations/release-retention.ts` is the single read-only policy owner for current plus three explicitly verified database-compatible rollback releases and unlimited migration/recovery pins. It is separate from tenant media retention and never deletes artifacts.
+- `release-retention.contract.ts` validates inventory/evidence and binds receipts to exact filesystem/runtime/database state; stale, mismatched, failed-deploy, unverified, or insufficient-rollback evidence keeps everything. `release-inventory.ts` performs strict read-only filesystem and actual systemd process observation; existing deploy/rollback lack shared serialization, so it cannot attest a prune-safe state.
+- `release-assessment.ts` converts historical assessments only into keep-all manifests. The compiled `release-retention` entrypoint has inspection, assessment, and offline proposal modes, no apply path, and no runtime integration. Exact boundaries, evidence authority limitations, and future live-approval gates are in `deploy/RELEASE-RETENTION.md`.

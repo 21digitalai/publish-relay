@@ -91,6 +91,44 @@ fi
   };
 }
 describe('atomic backup capture (injected command failure fixtures)', () => {
+  it('local mode needs no recipient or age invocation and binds a plain receipt to exact bytes', async () => {
+    const value = fixture();
+    executable(join(value.bin, 'age'), 'exit 99');
+    executable(join(value.bin, 'age-keygen'), 'exit 99');
+    const result = spawnSync('bash', [script, '--local'], {
+      env: { ...value.env, BACKUP_AGE_RECIPIENT: '' },
+      encoding: 'utf8',
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const path = result.stdout.trim();
+    expect(path.endsWith('.dump')).toBe(true);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(value.backups).mode & 0o777).toBe(0o700);
+    expect(
+      (await inspectBackups(value.backups)).entries.filter((entry) => entry.verified),
+    ).toHaveLength(1);
+    expect(readFileSync(join(value.root, 'commands.log'), 'utf8')).toBe('restore\n');
+    const receiptPath = path + '.verified.json';
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.validation = 'pg-restore-full-and-age-roundtrip';
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    expect((await inspectBackups(value.backups)).entries.every((entry) => !entry.verified)).toBe(
+      true,
+    );
+    expect(readFileSync(join(value.backups, 'legacy.dump'), 'utf8')).toBe('must survive');
+  });
+  it.each(['dump', 'empty', 'corrupt', 'truncated'])(
+    'local %s failure preserves legacy files and publishes nothing',
+    (failure) => {
+      const value = fixture();
+      const result = spawnSync('bash', [script, '--local'], {
+        env: { ...value.env, FAILURE: failure, BACKUP_AGE_RECIPIENT: '' },
+        encoding: 'utf8',
+      });
+      expect(result.status).not.toBe(0);
+      expect(readdirSync(value.backups)).toEqual(['legacy.dump']);
+    },
+  );
   it('publishes mode-0600 verified files, removes only its staging, and never prunes old backups', async () => {
     const value = fixture();
     const result = spawnSync('bash', [script], { env: value.env, encoding: 'utf8' });

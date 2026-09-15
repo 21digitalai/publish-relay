@@ -1,0 +1,20 @@
+[Unit]
+Description=Publish Relay local database backup
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/publish-relay/publish-relay-backup.env
+Environment=PATH=/opt/publish-relay/node24/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/opt/publish-relay/current
+ExecStart=/bin/bash /opt/publish-relay/current/deploy/backup-database.sh --local
+TimeoutStartSec=30min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/publish-relay

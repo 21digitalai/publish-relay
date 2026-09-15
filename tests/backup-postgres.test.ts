@@ -23,9 +23,9 @@ function command(binary: string, args: string[], env: NodeJS.ProcessEnv) {
 
 // Real PostgreSQL on a private Unix socket; no live DB, network listener, or credentials.
 // age is deliberately a reversible fixture because age is not required on development hosts.
-it.skipIf(!pgAvailable)(
-  'captures/restores real PostgreSQL and rejects a truncated data archive despite valid TOC',
-  () => {
+it.skipIf(!pgAvailable).each(['encrypted', 'local'])(
+  'captures/restores real PostgreSQL (%s) and rejects truncated archives',
+  (mode) => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'relay-pg-backup-')));
     const data = join(root, 'data');
     const bin = join(root, 'bin');
@@ -61,7 +61,7 @@ it.skipIf(!pgAvailable)(
           '-v',
           'ON_ERROR_STOP=1',
           '-c',
-          'CREATE TABLE fixture AS SELECT n, repeat(md5(n::text), 100) AS body FROM generate_series(1, 100) n;',
+          'CREATE TABLE __drizzle_migrations(id integer); INSERT INTO __drizzle_migrations VALUES (1); CREATE TABLE fixture AS SELECT n, repeat(md5(n::text), 100) AS body FROM generate_series(1, 100) n;',
         ],
         env,
       );
@@ -83,19 +83,36 @@ it.skipIf(!pgAvailable)(
         PATH: bin + ':' + (process.env.PATH ?? ''),
         BACKUP_DIRECTORY: backups,
         MIGRATION_DATABASE_URL: 'postgresql:///postgres',
-        BACKUP_AGE_RECIPIENT: 'fixture',
+        BACKUP_AGE_RECIPIENT: mode === 'local' ? '' : 'fixture',
       };
       const path = command(
         'bash',
-        [join(import.meta.dirname, '../deploy/backup-database.sh')],
+        [
+          join(import.meta.dirname, '../deploy/backup-database.sh'),
+          ...(mode === 'local' ? ['--local'] : []),
+        ],
         captureEnv,
       );
       command('createdb', ['fixture_restore'], env);
-      command(
-        'pg_restore',
-        ['--exit-on-error', '--no-owner', '--no-acl', '--dbname=fixture_restore', path],
-        env,
-      );
+      if (mode === 'local') {
+        for (const target of ['postgresql:///postgres', 'postgresql:///unsafe']) {
+          expect(
+            spawnSync('bash', [join(import.meta.dirname, '../deploy/restore-drill.sh'), path], {
+              env: { ...captureEnv, RESTORE_DATABASE_URL: target },
+            }).status,
+          ).toBe(65);
+        }
+        command('bash', [join(import.meta.dirname, '../deploy/restore-drill.sh'), path], {
+          ...captureEnv,
+          RESTORE_DATABASE_URL: 'postgresql:///fixture_restore',
+        });
+      } else {
+        command(
+          'pg_restore',
+          ['--exit-on-error', '--no-owner', '--no-acl', '--dbname=fixture_restore', path],
+          env,
+        );
+      }
       expect(
         command('psql', ['-d', 'fixture_restore', '-Atc', 'SELECT count(*) FROM fixture'], env),
       ).toBe('100');

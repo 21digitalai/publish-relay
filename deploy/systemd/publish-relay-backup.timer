@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Publish Relay local database backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+Unit=publish-relay-backup.service
+
+[Install]
+WantedBy=timers.target

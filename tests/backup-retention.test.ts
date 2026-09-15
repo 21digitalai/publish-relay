@@ -45,8 +45,9 @@ function diskFixture() {
   roots.push(root);
   return root;
 }
-function writeBackup(root: string, age: number) {
+function writeBackup(root: string, age: number, local = false) {
   const value = entry(age);
+  if (local) value.name = value.name.replace(/\.age$/, '');
   const content = Buffer.from('fixture encrypted bytes');
   writeFileSync(join(root, value.name), content);
   writeFileSync(
@@ -56,7 +57,7 @@ function writeBackup(root: string, age: number) {
       file: value.name,
       bytes: content.length,
       sha256: createHash('sha256').update(content).digest('hex'),
-      validation: 'pg-restore-full-and-age-roundtrip',
+      validation: local ? 'pg-restore-full' : 'pg-restore-full-and-age-roundtrip',
       validatedAt: now.toISOString(),
     }),
   );
@@ -160,6 +161,25 @@ describe('UTC backup recovery coverage proposals', () => {
 });
 
 describe('read-only backup inventory', () => {
+  it('shares age coverage and pins across plain/encrypted files without accepting legacy plain dumps', async () => {
+    const root = diskFixture();
+    const names = [0, 1, 2, 6, 7, 29, 30, 45].map((age, index) =>
+      writeBackup(root, age, index % 2 === 0),
+    );
+    const legacy = entry(40).name.replace(/\.age$/, '');
+    writeFileSync(join(root, legacy), 'legacy archive without receipt');
+    const inventory = await inspectBackups(root);
+    expect(inventory.entries.filter((value) => value.verified)).toHaveLength(8);
+    const result = backupManifest({
+      ...inventory,
+      pins: [{ file: names[0], reason: 'recovery' }],
+      now,
+    });
+    expect(result.status).toBe('proposal-only');
+    expect(result.candidatePaths).toEqual([join(root, names[7] ?? '')]);
+    expect(result.approvedDeletePaths).toEqual([]);
+    expect(readFileSync(join(root, legacy), 'utf8')).toBe('legacy archive without receipt');
+  });
   it('binds validation to exact bytes and keeps empty/corrupt/unreceipted/legacy artifacts', async () => {
     const root = diskFixture();
     const good = writeBackup(root, 0);

@@ -1,32 +1,36 @@
 # Database backups: capture and read-only age coverage
 
 This source implements the approved three-daily plus week/month recovery policy.
-It does **not** authorize or implement deletion, deployment, scheduling, migration,
+It does **not** authorize or implement deletion, deployment, migration,
 off-host transfer, or production restore. Release retention and tenant media
 retention have different owners and are unchanged.
 
 ## Capture owner and validation
 
-`deploy/backup-database.sh` remains the only capture entrypoint. It requires
-`MIGRATION_DATABASE_URL` and `BACKUP_AGE_RECIPIENT` for encrypted backup capture. The recovery private key is not required on
-the capture host: an ephemeral second recipient enables round-trip validation. `BACKUP_DIRECTORY` retains its existing default.
-Prerequisites: Bash, PostgreSQL client tools compatible with the database, age plus age-keygen,
-Node 24, and standard filesystem tools. No provider credentials are used.
+`deploy/backup-database.sh --local` captures a plain custom-format database file
+in the same VPS backup directory. It needs `MIGRATION_DATABASE_URL`, Bash,
+compatible PostgreSQL clients, Node 24 and standard filesystem tools; no age,
+recipient, off-site destination or provider credentials are needed.
+`BACKUP_DIRECTORY` retains its existing default, `/var/backups/publish-relay`.
+
+For compatibility, invoking without arguments retains the optional encrypted
+capture mode requiring `BACKUP_AGE_RECIPIENT`, age and age-keygen. The recovery
+private key is not needed on the capture host.
 
 The script creates a private mode-0700 staging directory on the backup filesystem,
 dumps PostgreSQL custom format, refuses empty output, and traverses **the entire**
 archive with `pg_restore --file=/dev/null`; a table-of-contents-only check cannot
-detect every truncated data block. It generates a disposable age key in private staging, encrypts to both the
+detect every truncated data block. In optional encrypted mode it generates a disposable age key in private staging, encrypts to both the
 configured recovery recipient and that disposable recipient, decrypts into private staging,
 and compares exact plaintext bytes. The ephemeral key is deleted with staging;
 no new persistent recovery credential is introduced. Only successful traversal, encryption and
-round-trip comparison permit publication. Plaintext is not a published backup.
+round-trip comparison permit encrypted publication. Local mode publishes the fully
+traversed plain custom-format archive directly as a `.dump` file.
 
 A same-directory exclusive capture lock prevents overlapping captures. Complete
-encrypted bytes and their SHA-256/size validation receipt are published with
+archive bytes and their SHA-256/size validation receipt are published with
 no-clobber hard links; a timestamp collision fails without replacing anything.
-Both published files are mode 0600. The receipt records the full-archive and
-encrypted-round-trip check, not a claim that an isolated database restore passed.
+Both published files are mode 0600. The receipt records the full-archive check (plus encrypted round-trip in encrypted mode), not a claim that an isolated database restore passed.
 
 Success and ordinary failure remove **only this invocation's** named staging files
 and lock. Failure never runs a planner or pruner. A crash between the two final
@@ -36,11 +40,57 @@ owner must inspect that abandoned capture and remove only its confirmed staging
 and lock before retrying. There is no broad automatic orphan cleanup.
 Filesystem atomic publication is not a guarantee against storage hardware loss.
 
-This source must not be deployed until the owner verifies the configured recovery recipient using an isolated
-restore drill with the real off-host recovery identity. Keep protected/off-host recovery
-copies and keys independently from a potentially compromised application host.
-Local validation/retention cannot prove off-host protection or detect an already
-compromised database snapshot.
+Local copies provide database rollback coverage, not VPS-loss protection.
+Off-site transfer, recovery-custody setup and external alert infrastructure are
+not prerequisites for this local mode. Optional encryption does not change that
+scope. Neither traversal nor a receipt proves the database was uncompromised.
+
+## Owner installation and daily activation
+
+Source review is separate from activation. After deploying the reviewed source,
+the host owner supplies a root-owned mode-0600
+`/etc/publish-relay/publish-relay-backup.env` through the existing secret authority,
+with the deployment-only `MIGRATION_DATABASE_URL` (not the web/worker URL).
+Do not put this secret into command arguments, a release or either runtime env.
+The unit runs as root to read that private deployment credential and owns only
+the backup directory; it does not grant migration credentials to the app.
+
+Run from the reviewed deployed release, as the authorized host owner:
+
+```bash
+install -d -o root -g root -m 0700 /var/backups/publish-relay
+install -m 0644 deploy/systemd/publish-relay-backup.service /etc/systemd/system/
+install -m 0644 deploy/systemd/publish-relay-backup.timer /etc/systemd/system/
+systemd-analyze verify /etc/systemd/system/publish-relay-backup.service /etc/systemd/system/publish-relay-backup.timer
+systemctl daemon-reload
+systemctl start publish-relay-backup.service
+systemctl show publish-relay-backup.service -p Result -p ExecMainStatus
+journalctl -u publish-relay-backup.service -n 20 --no-pager
+systemctl enable --now publish-relay-backup.timer
+systemctl list-timers publish-relay-backup.timer --all
+```
+
+The timer captures daily at 02:00 UTC; `Persistent=true` runs one catch-up after
+downtime, not fictional backups for missed days. A 30-minute timeout bounds
+capture; failed runs preserve existing files. The unit uses the existing
+`/opt/publish-relay/current` source and Node 24 installation. No service restart
+loop, automatic prune, external alert or new application process is introduced.
+If the deployment uses different paths, use systemd overrides and keep the
+private writable backup path aligned with `BACKUP_DIRECTORY`.
+
+The owner verifies the printed archive via the existing guarded
+`deploy/restore-drill.sh /absolute/backup.dump`: inject
+`MIGRATION_DATABASE_URL` for production-target protection and
+`RESTORE_DATABASE_URL` for a separately created disposable database named
+`*_restore` or `*_restore_drill`. Local restore requires no age identity.
+The script traverses the archive before modifying that isolated target, restores
+with exit-on-error and reads the migration ledger. Verify representative row
+counts, then remove only that disposable database through the owner workflow.
+Record the capture path, permissions, counts, elapsed time and cleanup, never
+credentials. A manual success does not prove a natural daily run: record the
+next timer-triggered success separately. Disable future capture with
+`systemctl disable --now publish-relay-backup.timer`; preserve all archives.
+No commands in this section authorize deleting legacy or invalid dumps.
 
 ## Exact dry-run manifest
 
@@ -54,13 +104,13 @@ The command is read-only. There is **no apply command**, delete flag, scheduled
 prune, or integration into capture/deploy. `approvedDeletePaths` is always empty;
 `candidatePaths` is only an advisory proposal, never a deletion instruction.
 The output includes every immediate entry, exact absolute path, byte count,
-SHA-256 for recognized regular encrypted backups, verification state and reasons.
-Receipt files, legacy `.dump` files, staging directories, locks, symlinks,
+SHA-256 for recognized regular backups, verification state and reasons.
+Receipt files, legacy/unreceipted `.dump` files, staging directories, locks, symlinks,
 unrecognized names, hard-linked files and missing/malformed/mismatching receipts
 remain protected. The collector never follows backup/receipt symlinks. A changing
 recognized file or unsafe root aborts inspection rather than emitting a partial plan.
 
-Receipts are local integrity attestations tied to exact encrypted bytes, not
+Receipts are local integrity attestations tied to exact archive bytes, not
 independently authenticated restore certificates. Existing backups without this
 new receipt are never grandfathered into successful coverage. Their validation
 requires a separately approved restore/inventory process; do not manufacture
@@ -121,7 +171,8 @@ traversal. It opens no network listener and uses no live database. The capture f
 inject tools deliberately; they are not evidence of a live provider or backup.
 
 Before any live use, independent review and owner approval must reconcile
-the exact source, scheduled entrypoint, compatible PostgreSQL/age tooling,
-off-host recovery identity access, protected off-host copies and a full isolated restore drill.
+the exact source, scheduled entrypoint, compatible PostgreSQL tooling and a full
+isolated restore drill. Real age/recovery-identity verification applies only if
+the optional encrypted mode is selected; it is not a local-backup acceptance gate.
 Existing data deletion requires a separate exact approved manifest, fresh
 revalidation and race-safe serialized apply implementation. None is supplied here.

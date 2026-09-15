@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const DAY_MS = 86_400_000;
 const DAILY_COUNT = 3;
 const AGED_TARGETS = [7, 30] as const;
-export const backupName = /^publish-relay-(\d{8}T\d{6}Z)\.dump\.age$/;
+export const backupName = /^publish-relay-(\d{8}T\d{6}Z)\.dump(?:\.age)?$/;
 
 export interface BackupEntry {
   name: string;

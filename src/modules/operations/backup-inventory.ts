@@ -14,7 +14,7 @@ const receiptSchema = z
     file: z.string(),
     bytes: z.number().int().positive(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    validation: z.literal('pg-restore-full-and-age-roundtrip'),
+    validation: z.enum(['pg-restore-full', 'pg-restore-full-and-age-roundtrip']),
     validatedAt: z.iso.datetime(),
   })
   .strict();
@@ -79,13 +79,15 @@ async function inspectEntry(root: string, name: string): Promise<BackupEntry> {
     const receipt = await readReceipt(path + '.verified.json');
     if (
       receipt.file !== name ||
+      receipt.validation !==
+        (name.endsWith('.age') ? 'pg-restore-full-and-age-roundtrip' : 'pg-restore-full') ||
       receipt.bytes !== digest.bytes ||
       receipt.sha256 !== digest.sha256 ||
       Date.parse(receipt.validatedAt) < Date.parse(entry.capturedAt)
     )
       return entry;
     entry.verified = true;
-    entry.reason = 'validated capture receipt matches exact encrypted bytes';
+    entry.reason = 'validated capture receipt matches exact archive bytes';
   } catch {
     /* Missing/legacy/bad receipts preserve their backup; never infer validation. */
   }

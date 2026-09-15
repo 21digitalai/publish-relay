@@ -17,7 +17,10 @@ const deleteUnattachedMedia = vi.fn();
 const getExternalDraftForWorkspace = vi.fn();
 const transitionExternalDraft = vi.fn();
 const createPostInTransaction = vi.fn();
-const withTenantTransaction = vi.fn(async (database, _options, operation) => operation(database));
+const withTenantTransaction = vi.fn(
+  (database: unknown, _options: unknown, operation: (database: unknown) => Promise<unknown>) =>
+    operation(database),
+);
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest,

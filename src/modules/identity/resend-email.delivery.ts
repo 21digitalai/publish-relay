@@ -33,7 +33,8 @@ export class ResendEmailDelivery implements EmailDelivery {
         text: `Use this one-time link to sign in to Publish Relay. It expires in 15 minutes:\n\n${input.url}\n\nIf you did not request this link, you can ignore this email.`,
       }),
     });
-    if (!response.ok) throw new Error(`Resend delivery failed with status ${response.status}`);
+    if (!response.ok)
+      throw new Error(`Resend delivery failed with status ${String(response.status)}`);
     const result = (await response.json()) as ResendResponse;
     if (!result.id) throw new Error('Resend delivery returned no message identifier');
     return { messageId: result.id };

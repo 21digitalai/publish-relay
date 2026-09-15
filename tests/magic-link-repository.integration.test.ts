@@ -18,7 +18,10 @@ beforeEach(async () => {
     await readFile(new URL('../migrations/0001_solid_spiral.sql', import.meta.url), 'utf8'),
   );
   await database.exec(
-    await readFile(new URL('../migrations/0013_illegal_texas_twister.sql', import.meta.url), 'utf8'),
+    await readFile(
+      new URL('../migrations/0013_illegal_texas_twister.sql', import.meta.url),
+      'utf8',
+    ),
   );
   await database.exec(
     await readFile(new URL('../migrations/0023_clear_shocker.sql', import.meta.url), 'utf8'),

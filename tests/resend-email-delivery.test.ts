@@ -4,7 +4,7 @@ import { ResendEmailDelivery } from '../src/modules/identity/resend-email.delive
 
 describe('ResendEmailDelivery', () => {
   it('sends a bounded idempotent sign-in email and returns only the provider identifier', async () => {
-    const request = vi.fn().mockResolvedValue(
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ id: 'email-1' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -28,7 +28,9 @@ describe('ResendEmailDelivery', () => {
       'idempotency-key': 'request-1',
     });
     expect(init?.signal).toBeInstanceOf(AbortSignal);
-    expect(JSON.parse(String(init?.body))).toEqual(
+    const body = init?.body;
+    if (typeof body !== 'string') throw new Error('Expected a JSON email request body');
+    expect(JSON.parse(body)).toEqual(
       expect.objectContaining({
         from: 'login@relay.example',
         to: ['owner@example.test'],
@@ -39,7 +41,7 @@ describe('ResendEmailDelivery', () => {
 
   it('fails closed without exposing provider response bodies', async () => {
     const request = vi
-      .fn()
+      .fn<typeof fetch>()
       .mockResolvedValue(new Response('sensitive provider detail', { status: 429 }));
     const delivery = new ResendEmailDelivery(
       { apiKey: 'secret-key', from: 'login@relay.example' },
@@ -58,14 +60,19 @@ describe('ResendEmailDelivery', () => {
     const request = vi.fn(
       (_url: string | URL | Request, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
-            once: true,
-          });
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              const reason: unknown = init.signal?.reason;
+              reject(reason instanceof Error ? reason : new Error('Request aborted'));
+            },
+            { once: true },
+          );
         }),
     );
     const delivery = new ResendEmailDelivery(
       { apiKey: 'secret-key', from: 'login@relay.example', timeoutMs: 1 },
-      request as typeof fetch,
+      request,
     );
     await expect(
       delivery.sendMagicLink({

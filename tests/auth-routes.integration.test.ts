@@ -186,7 +186,9 @@ describe('authentication HTTP boundary', () => {
         redirectPath: '/connect/authorize?x=1',
       },
     });
-    expect(safe.json().data.redirectPath).toBe('/connect/authorize?x=1');
+    expect(safe.json<{ data: { redirectPath: string } }>().data.redirectPath).toBe(
+      '/connect/authorize?x=1',
+    );
     const unsafe = await application.inject({
       method: 'POST',
       url: '/api/auth/login',

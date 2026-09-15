@@ -63,10 +63,10 @@ describe('MagicLinkService', () => {
     expect(result?.csrfToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(store.consumeLoginChallenge).toHaveBeenCalledWith(
       expect.objectContaining({
-        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        userAgentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        sessionTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        csrfSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
+        userAgentHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
+        sessionTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
+        csrfSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
       }),
     );
   });
@@ -83,7 +83,7 @@ describe('MagicLinkService', () => {
         purpose: 'login',
         redirectPath: '/app',
         expiresAt: new Date(15 * 60 * 1_000),
-        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
       }),
     );
     const challenge = vi.mocked(store.createChallenge).mock.calls[0]?.[0];
@@ -186,7 +186,9 @@ describe('MagicLinkService', () => {
     expect(requested.developmentUrl).toContain('/api/auth/magic-link/verify-signup?token=');
     expect(delivery.queueMagicLinkChallenge).toHaveBeenCalledWith(
       expect.objectContaining({ purpose: 'signup', userId: null }),
-      expect.objectContaining({ signup: expect.objectContaining({ displayName: 'Relay Owner' }) }),
+      expect.objectContaining({
+        signup: expect.objectContaining({ displayName: 'Relay Owner' }) as unknown,
+      }),
     );
     await expect(
       service.verifySignup({ token: 'signup-token', userAgent: 'browser', now: new Date(0) }),

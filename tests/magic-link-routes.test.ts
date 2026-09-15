@@ -6,16 +6,16 @@ import { registerMagicLinkRoutes } from '../src/modules/identity/magic-link.rout
 import type { MagicLinkService } from '../src/modules/identity/magic-link.service.js';
 
 const service = {
-  requestLogin: vi.fn(),
-  verifyLogin: vi.fn(),
-  requestSignup: vi.fn(),
-  verifySignup: vi.fn(),
-} as unknown as MagicLinkService;
+  requestLogin: vi.fn<MagicLinkService['requestLogin']>(),
+  verifyLogin: vi.fn<MagicLinkService['verifyLogin']>(),
+  requestSignup: vi.fn<MagicLinkService['requestSignup']>(),
+  verifySignup: vi.fn<MagicLinkService['verifySignup']>(),
+};
 
 function createApp() {
   const app = Fastify();
   app.register(cookie);
-  registerMagicLinkRoutes(app, service, { secureCookies: false });
+  registerMagicLinkRoutes(app, service as unknown as MagicLinkService, { secureCookies: false });
   return app;
 }
 
@@ -101,7 +101,7 @@ describe('magic-link routes', () => {
       },
     });
     expect(requested.statusCode).toBe(202);
-    expect(requested.json().data).toEqual({
+    expect(requested.json<{ data: unknown }>().data).toEqual({
       accepted: true,
       message: 'Check your email to finish creating your account.',
       developmentUrl: 'https://relay.example/verify-signup?token=secret',

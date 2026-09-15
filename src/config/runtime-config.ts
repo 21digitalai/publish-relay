@@ -43,7 +43,7 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_HUMAN_AUTH_MODE: z.enum(['password', 'magic_link']).optional(),
     PUBLISH_RELAY_MAGIC_LINK_PEPPER: z.string().min(32).optional(),
     PUBLISH_RELAY_RESEND_API_KEY: z.string().min(1).optional(),
-    PUBLISH_RELAY_AUTH_EMAIL_FROM: z.string().email().optional(),
+    PUBLISH_RELAY_AUTH_EMAIL_FROM: z.email().optional(),
   })
   .superRefine((config, context) => {
     if (config.NODE_ENV !== 'production') return;

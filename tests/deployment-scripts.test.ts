@@ -37,9 +37,9 @@ describe('deployment scripts', () => {
     );
     expect(content).toMatch(/GRANT SELECT ON public\.workspaces TO publish_relay_token_exchange/);
     expect(content).not.toMatch(/PASSWORD|CREATE ROLE [^;]+\sLOGIN(?:\s|;)/);
-    expect(readFileSync(join(projectRoot, 'src/entrypoints/web.ts'), 'utf8')).toContain(
-      '-c role=publish_relay_web',
-    );
+    expect(
+      readFileSync(join(projectRoot, 'src/application/create-runtime-options.ts'), 'utf8'),
+    ).toContain('-c role=publish_relay_web');
     expect(readFileSync(join(projectRoot, 'src/entrypoints/worker.ts'), 'utf8')).toContain(
       '-c role=publish_relay_worker',
     );

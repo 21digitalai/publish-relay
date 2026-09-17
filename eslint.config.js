@@ -39,7 +39,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['deploy/release-filesystem.mjs'],
+    files: ['deploy/release-filesystem.mjs', 'scripts/package-smoke.mjs'],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { parserOptions: { projectService: false } },
   },

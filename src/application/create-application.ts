@@ -209,7 +209,12 @@ export function registerCoreApplication(
     `<body data-human-auth-mode="${resolveHumanAuthMode(config)}">`,
   );
 
-  application.register(fastifyStatic, { root: uiRoot, wildcard: false, prefix: uiPrefix });
+  application.register(fastifyStatic, {
+    root: uiRoot,
+    wildcard: false,
+    prefix: uiPrefix,
+    decorateReply: false,
+  });
 
   registerOperationalRoutes(application, database, options.magicLinks);
   registerApiDocumentationRoute(application);

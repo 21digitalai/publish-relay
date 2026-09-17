@@ -404,6 +404,8 @@ export async function resolveReconciliation(
 ): Promise<boolean> {
   if (input.outcome === 'retry_wait' && !input.retryAt)
     throw new Error('retryAt is required for a reconciliation retry');
+  if (input.externalPostId && input.outcome !== 'published')
+    throw new Error('An external post ID requires a published reconciliation outcome');
   return withTenantTransaction(
     database,
     { workspaceId: input.workspaceId },
@@ -432,12 +434,23 @@ export async function resolveReconciliation(
       if (input.externalPostId) {
         const attempts = await transaction.execute(sql`
           UPDATE publication_attempts
-          SET external_post_id = ${input.externalPostId}
+          SET external_post_id = ${input.externalPostId},
+              finished_at = COALESCE(finished_at, ${input.now}),
+              outcome = CASE
+                WHEN finished_at IS NULL THEN 'published'::publication_attempt_outcome
+                ELSE outcome
+              END
           WHERE id = (
-            SELECT id FROM publication_attempts
-            WHERE workspace_id = ${input.workspaceId} AND job_id = ${input.jobId}
-              AND reconciliation_key IS NOT NULL
-            ORDER BY attempt_number DESC
+            SELECT attempt.id
+            FROM publication_attempts AS attempt
+            INNER JOIN publication_jobs AS owned_job
+              ON owned_job.workspace_id = attempt.workspace_id
+             AND owned_job.id = attempt.job_id
+            WHERE attempt.workspace_id = ${input.workspaceId}
+              AND attempt.job_id = ${input.jobId}
+              AND attempt.attempt_number = owned_job.attempt_number
+              AND (attempt.reconciliation_key IS NOT NULL OR attempt.finished_at IS NULL)
+            ORDER BY attempt.attempt_number DESC
             LIMIT 1
           )
           RETURNING id

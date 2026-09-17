@@ -106,10 +106,7 @@ describe('Facebook dispatch and reconciliation', () => {
   it('resolves only durable provider results and leaves request-started work held', async () => {
     const publishedJob = job('published');
     const ambiguousJob = job('ambiguous');
-    vi.mocked(claimReconciliationJobs).mockResolvedValue([
-      publishedJob.id,
-      ambiguousJob.id,
-    ]);
+    vi.mocked(claimReconciliationJobs).mockResolvedValue([publishedJob.id, ambiguousJob.id]);
     databaseQuery.limit
       .mockResolvedValueOnce([publishedJob])
       .mockResolvedValueOnce([context()])
@@ -145,9 +142,7 @@ describe('Facebook dispatch and reconciliation', () => {
     vi.mocked(startDispatchAttempt)
       .mockResolvedValueOnce({ attemptId: 'attempt-denied' } as never)
       .mockResolvedValueOnce({ attemptId: 'attempt-sibling' } as never);
-    databaseQuery.limit
-      .mockResolvedValueOnce([context()])
-      .mockResolvedValueOnce([context()]);
+    databaseQuery.limit.mockResolvedValueOnce([context()]).mockResolvedValueOnce([context()]);
     publish
       .mockResolvedValueOnce({
         status: 'failed',

@@ -130,6 +130,33 @@ describe('InstagramPublishingAdapter', () => {
     ).toHaveLength(1);
   });
 
+  it('holds an ambiguous child-container creation without recreating it', async () => {
+    const fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      if (init?.method === 'POST' && path.endsWith('/media')) throw new TypeError('timeout');
+      return response({ status_code: 'FINISHED' });
+    });
+    const adapter = new InstagramPublishingAdapter({
+      client: new InstagramHttpClient({
+        graphVersion: 'v23.0',
+        fetch: fetch as typeof globalThis.fetch,
+      }),
+      artifacts: new MemoryArtifacts(),
+      accessToken: async () => 'token',
+      mediaUrl: async () => 'https://relay.example/media',
+    });
+    const staged = await adapter.stage('ig-1', content(1), 'job');
+    await expect(adapter.publish(staged)).resolves.toEqual({
+      status: 'unknown',
+      reconciliationKey: 'instagram:job:child:0',
+    });
+    await expect(adapter.publish(staged)).resolves.toEqual({
+      status: 'unknown',
+      reconciliationKey: 'instagram:job:child:0',
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('maps bounded Graph evidence without exposing provider bodies', async () => {
     const fetch = vi.fn(async () =>
       response(

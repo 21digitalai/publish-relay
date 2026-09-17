@@ -127,7 +127,7 @@ export class InstagramPublishingAdapter implements PublishingAdapter {
       return { status: 'published', externalPostId: mediaId, externalUrl: permalink };
     } catch (error) {
       if (error instanceof InstagramRequestError && error.outcomeUnknown) {
-        const key = artifactKey(staged.stageId, 'publish');
+        const key = error.reconciliationKey ?? artifactKey(staged.stageId, 'publish');
         await this.runtime.artifacts.update(key, {
           phase: 'reconciliation_required',
           evidence: error.evidence,
@@ -165,20 +165,33 @@ export class InstagramPublishingAdapter implements PublishingAdapter {
   ): Promise<string> {
     const key = artifactKey(staged.stageId, 'child', String(index));
     let artifact = await this.runtime.artifacts.ensure({ key, kind: 'child', mediaId: media.id });
+    if (artifact.phase === 'reconciliation_required')
+      throw new InstagramRequestError(
+        artifact.evidence ?? { kind: 'transient', status: 0 },
+        true,
+        key,
+      );
     if (artifact.phase === 'request_started' && !artifact.externalObjectId)
       throw new InstagramRequestError({ kind: 'transient', status: 0 }, true);
     if (!artifact.externalObjectId) {
       artifact = await this.runtime.artifacts.update(key, { phase: 'request_started' });
       const imageUrl = assertHttps(await this.runtime.mediaUrl(media.id));
-      const externalObjectId = await this.runtime.client.createImageContainer({
-        accountId: staged.accountId,
-        imageUrl,
-        ...(instagramContent(staged.content).media.length === 1
-          ? { caption: instagramContent(staged.content).text }
-          : {}),
-        isCarouselItem: instagramContent(staged.content).media.length > 1,
-        accessToken: token,
-      });
+      let externalObjectId: string;
+      try {
+        externalObjectId = await this.runtime.client.createImageContainer({
+          accountId: staged.accountId,
+          imageUrl,
+          ...(instagramContent(staged.content).media.length === 1
+            ? { caption: instagramContent(staged.content).text }
+            : {}),
+          isCarouselItem: instagramContent(staged.content).media.length > 1,
+          accessToken: token,
+        });
+      } catch (error) {
+        if (error instanceof InstagramRequestError && error.outcomeUnknown)
+          throw new InstagramRequestError(error.evidence, true, key);
+        throw error;
+      }
       artifact = await this.runtime.artifacts.update(key, { phase: 'created', externalObjectId });
     }
     if (artifact.phase !== 'finished') {
@@ -211,16 +224,29 @@ export class InstagramPublishingAdapter implements PublishingAdapter {
   ): Promise<string> {
     const key = artifactKey(staged.stageId, 'parent');
     let artifact = await this.runtime.artifacts.ensure({ key, kind: 'parent' });
+    if (artifact.phase === 'reconciliation_required')
+      throw new InstagramRequestError(
+        artifact.evidence ?? { kind: 'transient', status: 0 },
+        true,
+        key,
+      );
     if (artifact.phase === 'request_started' && !artifact.externalObjectId)
       throw new InstagramRequestError({ kind: 'transient', status: 0 }, true);
     if (!artifact.externalObjectId) {
       await this.runtime.artifacts.update(key, { phase: 'request_started' });
-      const externalObjectId = await this.runtime.client.createCarouselContainer({
-        accountId: staged.accountId,
-        childIds,
-        caption,
-        accessToken: token,
-      });
+      let externalObjectId: string;
+      try {
+        externalObjectId = await this.runtime.client.createCarouselContainer({
+          accountId: staged.accountId,
+          childIds,
+          caption,
+          accessToken: token,
+        });
+      } catch (error) {
+        if (error instanceof InstagramRequestError && error.outcomeUnknown)
+          throw new InstagramRequestError(error.evidence, true, key);
+        throw error;
+      }
       artifact = await this.runtime.artifacts.update(key, { phase: 'created', externalObjectId });
     }
     if (artifact.phase !== 'finished') {

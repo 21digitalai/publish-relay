@@ -28,7 +28,9 @@ import { enforceWorkspaceAction } from '../src/modules/policy/action-policy.js';
 import {
   beginMetaOauthConnection,
   completeMetaOauthConnection,
+  revokeRemoteMetaGrant,
 } from '../src/modules/providers/meta-oauth.service.js';
+import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 
 describe('Meta OAuth service', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -67,5 +69,27 @@ describe('Meta OAuth service', () => {
       provider: 'meta',
     });
     expect(client.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it.each(['auth', 'permission'] as const)(
+    'treats an already-invalid remote grant (%s) as revoked so local cleanup can continue',
+    async (kind) => {
+      const client = { revoke: vi.fn().mockRejectedValue(new MetaRequestError(401, kind)) };
+
+      await expect(
+        revokeRemoteMetaGrant(client as never, 'expired-token'),
+      ).resolves.toBeUndefined();
+      expect(client.revoke).toHaveBeenCalledWith('expired-token');
+    },
+  );
+
+  it('fails closed when remote revoke has a transient unknown outcome', async () => {
+    const client = {
+      revoke: vi.fn().mockRejectedValue(new MetaRequestError(503, 'transient')),
+    };
+
+    await expect(revokeRemoteMetaGrant(client as never, 'token')).rejects.toMatchObject({
+      kind: 'transient',
+    });
   });
 });

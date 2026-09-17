@@ -28,6 +28,7 @@ describe('MetaHttpClient', () => {
         state: 's',
       }),
     );
+    expect(url.origin).toBe('https://www.facebook.com');
     expect(url.pathname).toBe('/v23.0/dialog/oauth');
     expect(url.searchParams.get('redirect_uri')).toBe('https://relay.test/api/oauth/meta/callback');
     expect(url.searchParams.get('state')).toBe('s');
@@ -145,6 +146,30 @@ describe('MetaHttpClient', () => {
           ? secondTarget
           : '';
     expect(secondUrl).toContain('after=next');
+  });
+
+  it('accepts an explicit zero-Page discovery response', async () => {
+    const client = new MetaHttpClient({
+      appId: 'app',
+      appSecret: 'secret',
+      graphVersion: 'v23.0',
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(response({ data: [] })),
+    });
+
+    await expect(client.discoverPages('authority')).resolves.toEqual([]);
+  });
+
+  it.each([401, 403])('classifies an already-invalid revoke response (%s)', async (status) => {
+    const client = new MetaHttpClient({
+      appId: 'app',
+      appSecret: 'secret',
+      graphVersion: 'v23.0',
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(response({ error: 'invalid' }, status)),
+    });
+
+    await expect(client.revoke('expired-token')).rejects.toMatchObject({
+      kind: status === 401 ? 'auth' : 'permission',
+    });
   });
 
   it('classifies rate limits with bounded retry evidence and redacts provider errors', async () => {

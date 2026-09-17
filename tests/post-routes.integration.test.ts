@@ -22,6 +22,7 @@ import { ApiKeyAuthorizationError } from '../src/modules/identity/api-key.servic
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
 import type { DelegatedAuthorizationService } from '../src/modules/delegated-authorization/delegated-authorization.service.js';
+import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -77,7 +78,7 @@ let authenticate: ReturnType<typeof vi.fn>;
 let browserAuthenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
 let authenticateDelegated: ReturnType<typeof vi.fn>;
-let evaluateAction: ReturnType<typeof vi.fn>;
+let evaluateAction: ActionPolicy['evaluate'];
 let browserNow: Date | undefined;
 let mediaPutError: Error | undefined;
 const temporaryDirectories: string[] = [];
@@ -218,7 +219,7 @@ beforeEach(async () => {
   });
   requireCapability = vi.fn().mockResolvedValue(undefined);
   authenticateDelegated = vi.fn().mockResolvedValue(null);
-  evaluateAction = vi.fn().mockResolvedValue({ allowed: true });
+  evaluateAction = vi.fn<ActionPolicy['evaluate']>().mockResolvedValue({ allowed: true });
   browserAuthenticate = vi.fn().mockResolvedValue({ workspaceId, userId, role: 'owner' });
   apiKeys = { authenticate, requireCapability } as unknown as ApiKeyService;
   const delegatedAuthorization = {
@@ -1598,18 +1599,7 @@ describe('CLI and direct HTTP parity', () => {
   });
 
   it.each(['revoked-key', 'expired-key'])('matches rejected %s authentication', async (key) => {
-    authenticate.mockImplementation((_workspace, secret) =>
-      Promise.resolve(
-        secret === key
-          ? null
-          : ({
-              id: apiKeyId,
-              workspaceId,
-              createdByUserId: userId,
-              capabilities: ['schedules:write', 'schedules:read'],
-            } as never),
-      ),
-    );
+    authenticate.mockResolvedValue(null);
     const requestHeaders = { ...headers, authorization: `Bearer ${key}` };
     const direct = await application.inject({
       method: 'GET',

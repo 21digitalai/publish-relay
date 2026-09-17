@@ -1102,12 +1102,12 @@ describe('X media staging', () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
 
     await expect(
-      stageXMedia(
-        db,
-        { load: () => Promise.reject(new Error('unexpected media load')) },
-        client,
-        { workspaceId, jobId, mediaId, idempotencyKey: 'static-image' },
-      ),
+      stageXMedia(db, { load: () => Promise.reject(new Error('unexpected media load')) }, client, {
+        workspaceId,
+        jobId,
+        mediaId,
+        idempotencyKey: 'static-image',
+      }),
     ).resolves.toEqual({ mediaId: 'x-static-image', state: 'succeeded' });
   });
 

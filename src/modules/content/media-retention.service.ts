@@ -30,6 +30,7 @@ async function hasRequiredJobReference(
   database: NodePgDatabase,
   workspaceId: string,
   mediaId: string,
+  now: Date,
 ): Promise<boolean> {
   const result = await database.execute<{ required: boolean }>(sql`
     select exists (
@@ -38,6 +39,10 @@ async function hasRequiredJobReference(
       where rm.workspace_id = ${workspaceId} and rm.media_id = ${mediaId}
         and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending')
           or pj.reconciliation_required = true)
+      union all
+      select 1 from provider_staging_artifacts artifact
+      where artifact.workspace_id = ${workspaceId} and artifact.media_id = ${mediaId}
+        and artifact.deleted_at is null and artifact.expires_at > ${now}
     ) as required
   `);
   return result.rows[0]?.required === true;
@@ -63,7 +68,8 @@ export async function evaluateMediaRetention(
         retainedAt: new Date(media.retained_at),
       });
       if (!deadline || deadline > input.now) continue;
-      if (await hasRequiredJobReference(transaction, input.workspaceId, media.id)) continue;
+      if (await hasRequiredJobReference(transaction, input.workspaceId, media.id, input.now))
+        continue;
       const updated = await transaction.execute(sql`
         update media_objects set state = 'cleanup_eligible', cleanup_eligible_at = ${deadline}, updated_at = ${input.now}
         where workspace_id = ${input.workspaceId} and id = ${media.id} and state = 'ready'
@@ -106,6 +112,11 @@ export async function cleanupRetainedMedia(
             where rm.workspace_id = media.workspace_id and rm.media_id = media.id
               and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending')
                 or pj.reconciliation_required = true)
+          )
+          and not exists (
+            select 1 from provider_staging_artifacts artifact
+            where artifact.workspace_id = media.workspace_id and artifact.media_id = media.id
+              and artifact.deleted_at is null and artifact.expires_at > ${input.now}
           )
         order by media.cleanup_eligible_at, media.id
         limit ${input.limit ?? 100}

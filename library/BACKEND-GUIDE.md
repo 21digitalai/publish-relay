@@ -127,12 +127,16 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
   accepts one JPEG/PNG image or a 2–10 image carousel with a non-empty caption. It records child,
   parent, publish, and permalink edges in `provider_staging_artifacts`; a started external write with
   no recorded provider ID is reconciliation-required and is never repeated automatically.
-- Instagram provider fetches use `/provider-media/instagram/:token`. The opaque HMAC token binds one
+- Instagram provider fetches use `/provider-media/instagram?token=<opaque>`. The opaque HMAC token binds one
   workspace/media pair and an expiry, exposes no storage key, and the route serves only exact ready,
-  non-deleted media. Tokens and signed URLs are never stored in attempt evidence.
+  non-deleted media. Media retention treats an unexpired staging artifact as a required reference,
+  including after cancellation or supersession, so provider fetches remain valid through the
+  artifact's 24-hour terminal grace. Tokens and signed URLs are never stored in attempt evidence.
 - Graph failures retain only bounded code/subcode, transient classification, retry/usage headers, and
   trace ID. Full provider bodies and credentials are discarded. Container polling must reach
   `FINISHED`; error/expiry is terminal, while an in-progress container remains safely resumable.
+  Transient polling retries default to five seconds and provider `Retry-After` is bounded to five
+  minutes before entering the scheduler's durable retry state.
 
 - Meta OAuth is a server-owned connection-family boundary. The web process derives the one exact
   callback `/api/oauth/meta/callback` from `PUBLISH_RELAY_PUBLIC_ORIGIN`; initiation is

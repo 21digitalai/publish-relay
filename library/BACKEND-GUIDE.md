@@ -137,6 +137,11 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
   `FINISHED`; error/expiry is terminal, while an in-progress container remains safely resumable.
   Transient polling retries default to five seconds and provider `Retry-After` is bounded to five
   minutes before entering the scheduler's durable retry state.
+- Instagram reconciliation claims only Instagram jobs and re-enters the adapter from the stable job
+  fingerprint. Durable child, parent, publish, and permalink artifacts decide the next safe edge:
+  completed writes are never recreated, idempotent status/permalink reads may resume, and any started
+  provider write without a recorded provider ID remains held for reconciliation. The scheduler state
+  changes only after the worker still owns the reconciliation lease.
 
 - Meta OAuth is a server-owned connection-family boundary. The web process derives the one exact
   callback `/api/oauth/meta/callback` from `PUBLISH_RELAY_PUBLIC_ORIGIN`; initiation is

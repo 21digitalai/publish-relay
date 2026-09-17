@@ -14,9 +14,11 @@ import { decryptCredential, type MasterKeyProvider } from '../credentials/envelo
 import { getActiveCredential } from '../credentials/credential.repository.js';
 import {
   claimDueJobs,
+  claimReconciliationJobs,
   deriveJobIdempotencyKey,
   finishDispatchAttempt,
   recoverExpiredDispatches,
+  resolveReconciliation,
   startDispatchAttempt,
 } from '../scheduler/job.repository.js';
 import { InstagramPublishingAdapter } from './instagram-adapter.js';
@@ -220,5 +222,78 @@ export async function reconcileInstagramJobs(
   now = new Date(),
 ): Promise<number> {
   await recoverExpiredDispatches(runtime.database, now);
-  return 0;
+  const jobIds = await claimReconciliationJobs(runtime.database, {
+    workerId: runtime.workerId,
+    now,
+    leaseMs: runtime.leaseMs,
+    limit: 10,
+    destinationProvider: 'instagram',
+  });
+  let resolved = 0;
+  for (const jobId of jobIds) {
+    try {
+      const rows = await runtime.database
+        .select({
+          id: publicationJobs.id,
+          workspaceId: publicationJobs.workspaceId,
+          revisionId: publicationJobs.revisionId,
+          providerAccountId: publicationJobs.providerAccountId,
+        })
+        .from(publicationJobs)
+        .where(eq(publicationJobs.id, jobId))
+        .limit(1);
+      const job = rows[0];
+      if (!job) continue;
+      const context = await loadContext(runtime.database, job.workspaceId, job.id);
+      const accessToken = await readToken(runtime, job.workspaceId, context.credentialId);
+      const adapter = new InstagramPublishingAdapter({
+        client: runtime.client,
+        artifacts: new PostgresInstagramArtifactStore(runtime.database, {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+        }),
+        accessToken: () => Promise.resolve(accessToken),
+        mediaUrl: (mediaId) => {
+          const token = runtime.tokenCodec.issue({
+            workspaceId: job.workspaceId,
+            mediaId,
+            expiresAt: now.getTime() + 24 * 60 * 60 * 1000,
+          });
+          const url = new URL('/provider-media/instagram', runtime.publicOrigin);
+          url.searchParams.set('token', token);
+          return Promise.resolve(url.toString());
+        },
+      });
+      const fingerprint = deriveJobIdempotencyKey({
+        jobId: job.id,
+        revisionId: job.revisionId,
+        providerAccountId: job.providerAccountId,
+      });
+      const staged = await adapter.stage(
+        context.accountRemoteId,
+        { kind: 'text', text: context.text, media: context.media },
+        fingerprint,
+      );
+      const outcome = await adapter.publish(staged);
+      if (outcome.status === 'unknown' || outcome.status === 'accepted_pending') continue;
+      const retryAt = getInstagramRetryAt(outcome, now);
+      const state =
+        outcome.status === 'published' ? 'published' : retryAt ? 'retry_wait' : 'failed';
+      if (
+        await resolveReconciliation(runtime.database, {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          workerId: runtime.workerId,
+          outcome: state,
+          now,
+          ...(retryAt ? { retryAt } : {}),
+          ...(outcome.status === 'published' ? { externalPostId: outcome.externalPostId } : {}),
+        })
+      )
+        resolved += 1;
+    } catch {
+      // Preserve reconciliation ownership for a later lease and continue the bounded batch.
+    }
+  }
+  return resolved;
 }

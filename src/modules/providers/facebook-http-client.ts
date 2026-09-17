@@ -111,7 +111,15 @@ export class FacebookHttpClient {
     } catch {
       throw new FacebookRequestError({ kind: 'transient', status: 0 }, true);
     }
-    return idSchema.parse(await this.responseJson(response)).id;
+    try {
+      return idSchema.parse(await this.responseJson(response)).id;
+    } catch (error) {
+      if (error instanceof FacebookRequestError) throw error;
+      throw new FacebookRequestError(
+        { kind: 'transient', status: response.status },
+        true,
+      );
+    }
   }
 
   private async get(

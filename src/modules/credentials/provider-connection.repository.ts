@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -65,7 +65,11 @@ export async function replaceProviderConnection(
     accounts: readonly DiscoveredProviderAccount[];
     requestId: string;
   },
-): Promise<{ connectionId: string; replacedCredentialId: string | null }> {
+): Promise<{
+  connectionId: string;
+  replacedCredentialId: string | null;
+  replacedAccountCredentialIds: string[];
+}> {
   const existing = await database
     .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
     .from(providerConnections)
@@ -104,6 +108,8 @@ export async function replaceProviderConnection(
   const existingAccounts = await database
     .select({
       id: providerAccounts.id,
+      credentialId: providerAccounts.credentialId,
+      availability: providerAccounts.availability,
       destinationProvider: providerAccounts.destinationProvider,
       remoteAccountId: providerAccounts.remoteAccountId,
     })
@@ -120,12 +126,20 @@ export async function replaceProviderConnection(
       account.id,
     ]),
   );
+  const replacedAccountCredentialIds = existingAccounts.flatMap((account) =>
+    account.credentialId ? [account.credentialId] : [],
+  );
   const discoveredKeys = new Set(
     destinations.map((account) =>
       destinationKey(account.destinationProvider, account.remoteAccountId),
     ),
   );
   const now = new Date();
+  const lifecycleEvents: {
+    action: string;
+    targetId: string;
+    metadata: Record<string, unknown>;
+  }[] = [];
   for (const account of existingAccounts) {
     if (
       !discoveredKeys.has(
@@ -141,12 +155,23 @@ export async function replaceProviderConnection(
             eq(providerAccounts.id, account.id),
           ),
         );
+    if (
+      !discoveredKeys.has(
+        destinationKey(account.destinationProvider as DestinationProvider, account.remoteAccountId),
+      )
+    )
+      lifecycleEvents.push({
+        action: 'provider.destination.lost',
+        targetId: account.id,
+        metadata: { destinationProvider: account.destinationProvider },
+      });
   }
   for (const account of destinations) {
     const existingId = existingByDestination.get(
       destinationKey(account.destinationProvider, account.remoteAccountId),
     );
     if (!existingId) continue;
+    const previous = existingAccounts.find((account) => account.id === existingId);
     await database
       .update(providerAccounts)
       .set({
@@ -156,8 +181,8 @@ export async function replaceProviderConnection(
         credentialId: account.credentialId ?? null,
         capabilitySnapshot: account.capabilitySnapshot ?? {},
         capabilitiesCheckedAt: account.capabilitiesCheckedAt ?? null,
-        availability: 'active',
-        disconnectedAt: null,
+        availability: account.availability ?? 'active',
+        disconnectedAt: account.availability && account.availability !== 'active' ? now : null,
         updatedAt: now,
       })
       .where(
@@ -166,6 +191,18 @@ export async function replaceProviderConnection(
           eq(providerAccounts.id, existingId),
         ),
       );
+    if (previous?.availability !== 'active' && (account.availability ?? 'active') === 'active')
+      lifecycleEvents.push({
+        action: 'provider.destination.reactivated',
+        targetId: existingId,
+        metadata: { destinationProvider: account.destinationProvider },
+      });
+    if (previous?.credentialId && previous.credentialId !== (account.credentialId ?? null))
+      lifecycleEvents.push({
+        action: 'provider.destination.credential_rotated',
+        targetId: existingId,
+        metadata: { destinationProvider: account.destinationProvider },
+      });
   }
   const newAccounts = destinations.filter(
     (account) =>
@@ -185,8 +222,38 @@ export async function replaceProviderConnection(
         credentialId: account.credentialId ?? null,
         capabilitySnapshot: account.capabilitySnapshot ?? {},
         capabilitiesCheckedAt: account.capabilitiesCheckedAt ?? null,
-        availability: 'active',
+        availability: account.availability ?? 'active',
+        disconnectedAt: account.availability && account.availability !== 'active' ? now : null,
         displayName: account.displayName,
+      })),
+    );
+  const insertedAccounts = await database
+    .select({ id: providerAccounts.id, destinationProvider: providerAccounts.destinationProvider })
+    .from(providerAccounts)
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, input.workspaceId),
+        eq(providerAccounts.connectionId, connection.id),
+      ),
+    );
+  for (const account of insertedAccounts)
+    if (!existingAccounts.some((existingAccount) => existingAccount.id === account.id))
+      lifecycleEvents.push({
+        action: 'provider.destination.discovered',
+        targetId: account.id,
+        metadata: { destinationProvider: account.destinationProvider },
+      });
+  if (input.provider === 'meta' && lifecycleEvents.length > 0)
+    await database.insert(auditEvents).values(
+      lifecycleEvents.map((event) => ({
+        workspaceId: input.workspaceId,
+        actorType: 'user' as const,
+        actorId: input.userId,
+        action: event.action,
+        targetType: 'provider_account',
+        targetId: event.targetId,
+        requestId: input.requestId,
+        metadata: event.metadata,
       })),
     );
   await database.insert(auditEvents).values({
@@ -199,5 +266,55 @@ export async function replaceProviderConnection(
     requestId: input.requestId,
     metadata: { provider: input.provider, accountCount: input.accounts.length },
   });
-  return { connectionId: connection.id, replacedCredentialId: current?.credentialId ?? null };
+  return {
+    connectionId: connection.id,
+    replacedCredentialId: current?.credentialId ?? null,
+    replacedAccountCredentialIds,
+  };
+}
+
+export async function markProviderDestinationsUnavailable(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    userId: string;
+    provider: string;
+    availability: 'reauth_required' | 'permission_lost';
+    requestId: string;
+  },
+): Promise<number> {
+  const connections = await database
+    .select({ id: providerConnections.id })
+    .from(providerConnections)
+    .where(
+      and(
+        eq(providerConnections.workspaceId, input.workspaceId),
+        eq(providerConnections.provider, input.provider),
+      ),
+    );
+  const connectionIds = connections.map((connection) => connection.id);
+  const connectionId = connectionIds[0];
+  if (!connectionId) return 0;
+  const now = new Date();
+  const rows = await database
+    .update(providerAccounts)
+    .set({ availability: input.availability, disconnectedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, input.workspaceId),
+        inArray(providerAccounts.connectionId, connectionIds),
+      ),
+    )
+    .returning({ id: providerAccounts.id });
+  await database.insert(auditEvents).values({
+    workspaceId: input.workspaceId,
+    actorType: 'user',
+    actorId: input.userId,
+    action: `provider.destination.${input.availability}`,
+    targetType: 'provider_connection',
+    targetId: connectionId,
+    requestId: input.requestId,
+    metadata: { provider: input.provider, destinationCount: rows.length },
+  });
+  return rows.length;
 }

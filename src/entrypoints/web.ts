@@ -11,6 +11,7 @@ import { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
 import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
 import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
+import { MetaHttpClient, parseMetaPermissions } from '../modules/providers/meta-http-client.js';
 import { DelegatedAuthorizationService } from '../modules/delegated-authorization/delegated-authorization.service.js';
 import { createPostgresDelegatedAuthorizationStore } from '../modules/delegated-authorization/delegated-authorization.repository.js';
 
@@ -27,7 +28,10 @@ const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
 if (!activeKeyVersion || !config.MEDIA_STORAGE_ROOT)
   throw new Error('Master key and media storage configuration are required for the web process');
-if ((xCredentials || config.PUBLISH_RELAY_GOOGLE_CLIENT_ID) && !publicOrigin)
+if (
+  (xCredentials || config.PUBLISH_RELAY_GOOGLE_CLIENT_ID || config.PUBLISH_RELAY_META_APP_ID) &&
+  !publicOrigin
+)
   throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required when OAuth providers are enabled');
 const mediaStorage = new LocalMediaStorage(config.MEDIA_STORAGE_ROOT);
 await mediaStorage.cleanupStaleStaging({
@@ -59,6 +63,21 @@ const application = createApplication(
       }
     : undefined,
   new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(database)),
+  config.PUBLISH_RELAY_META_APP_ID &&
+    config.PUBLISH_RELAY_META_APP_SECRET &&
+    config.PUBLISH_RELAY_META_GRAPH_VERSION &&
+    publicOrigin
+    ? {
+        keys: new RuntimeMasterKeyProvider(activeKeyVersion),
+        client: new MetaHttpClient({
+          appId: config.PUBLISH_RELAY_META_APP_ID,
+          appSecret: config.PUBLISH_RELAY_META_APP_SECRET,
+          graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+          permissions: parseMetaPermissions(config.PUBLISH_RELAY_META_PERMISSIONS),
+        }),
+        callbackUrl: new URL('/api/oauth/meta/callback', publicOrigin).toString(),
+      }
+    : undefined,
 );
 application.addHook('onClose', async () => pool.end());
 

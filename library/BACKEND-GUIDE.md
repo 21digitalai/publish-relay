@@ -123,6 +123,26 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Destination-scoped provider defaults
 
+- Meta OAuth is a server-owned connection-family boundary. The web process derives the one exact
+  callback `/api/oauth/meta/callback` from `PUBLISH_RELAY_PUBLIC_ORIGIN`; initiation is
+  authenticated and CSRF-protected, and the callback consumes hashed one-time state bound to the
+  initiating workspace/user before any exchange. `MetaHttpClient` pins an explicit Graph version,
+  requests the configured Page-linked permission allowlist, exchanges and introspects tokens,
+  paginates allowlisted Page/linked-Instagram discovery fields, and emits only finite redacted
+  failures plus bounded retry timing. Provider error bodies, codes, tokens, and signed URLs never
+  enter API responses, logs, audit metadata, or plaintext persistence.
+- A Meta connection retains encrypted long-lived rediscovery authority only at connection level.
+  Each managed Page receives a newly encrypted Page credential referenced by both its
+  `facebook_page` destination and any linked `instagram` destination. Reconnect creates the new
+  credential graph, updates stable destination rows, marks missing or task-invalid destinations
+  unavailable, records redacted lifecycle audits, and revokes replaced credentials in the same
+  tenant transaction. Revoke invalidates the remote grant first, then marks destinations
+  `reauth_required` and revokes every local credential. Jobs/history continue to reference the
+  stable internal destination ID. No Meta publishing adapter or endpoint is reachable in this
+  discovery slice.
+- Existing Vault Meta app/token records are evidence only. Core never reads or imports them
+  automatically; runtime Meta app ID/secret/version/permissions must be explicitly injected after
+  the approved Meta dashboard configuration exists.
 - `provider_connections.provider` identifies the connection family. `provider_accounts.destination_provider` identifies the publishing adapter and may differ from the family (one `meta` connection can own `instagram` and `facebook_page` destinations).
 - Destination identity is stable and unique by connection, destination provider, and remote account ID. Sync updates rows in place, reactivates rediscovered rows, and marks missing rows `remote_missing`; it never deletes destination history or queued job references. Parent remote identity, per-destination credential reference, capability snapshot/freshness, and availability remain workspace-scoped through composite foreign keys and RLS.
 - `provider_accounts.adapter_defaults` is the destination-scoped source for optional provider policy defaults; it never stores credentials.

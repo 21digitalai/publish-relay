@@ -61,6 +61,8 @@ export async function connectProvider(
           connection.replacedCredentialId,
           new Date(),
         );
+      for (const credentialId of connection.replacedAccountCredentialIds)
+        await revokeCredential(transaction, input.workspaceId, credentialId, new Date());
       return {
         connectionId: connection.connectionId,
         accounts: accounts.map((account) => ({ ...account })),

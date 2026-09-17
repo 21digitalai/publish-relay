@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PublishingAdapterRegistry } from '../src/modules/providers/adapter-registry.js';
+import { runDestinationDispatchCycle } from '../src/modules/providers/destination-dispatch-runtime.js';
 import type { PublishingAdapter } from '../src/modules/providers/contract.js';
 
 function adapter(destinationProvider: 'x' | 'youtube'): PublishingAdapter {
@@ -24,5 +25,35 @@ describe('publishing adapter registry', () => {
     expect(() => registry.get('instagram')).toThrow(
       'Publishing adapter is not registered: instagram',
     );
+  });
+
+  it('routes the production worker cycle through destination-keyed adapters', async () => {
+    const calls: string[] = [];
+    await runDestinationDispatchCycle([
+      {
+        destinationProvider: 'x',
+        reconcile: () => {
+          calls.push('x:reconcile');
+          return Promise.resolve(0);
+        },
+        dispatch: () => {
+          calls.push('x:dispatch');
+          return Promise.resolve(1);
+        },
+      },
+      {
+        destinationProvider: 'youtube',
+        reconcile: () => {
+          calls.push('youtube:reconcile');
+          return Promise.resolve(0);
+        },
+        dispatch: () => {
+          calls.push('youtube:dispatch');
+          return Promise.resolve(1);
+        },
+      },
+    ]);
+
+    expect(calls).toEqual(['x:reconcile', 'x:dispatch', 'youtube:reconcile', 'youtube:dispatch']);
   });
 });

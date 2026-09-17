@@ -368,6 +368,66 @@ describe('credential and OAuth persistence', () => {
     expect(auditRows.rows[1]?.metadata).toEqual({ provider: 'fake', accountCount: 2 });
   });
 
+  it('enforces connection-family and destination-provider compatibility', async () => {
+    const key = randomBytes(32);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const invalid = new FakeProviderConnectionAdapter([
+      {
+        providerAccountId: 'instagram-one',
+        displayName: 'Instagram One',
+        destinationProvider: 'instagram',
+      },
+    ]);
+
+    await expect(
+      connectProvider(db, keys, invalid, {
+        workspaceId,
+        userId,
+        provider: 'x',
+        accessToken: 'invalid-secret',
+        requestId: 'invalid-destination',
+      }),
+    ).rejects.toThrow('Destination provider instagram is incompatible with connection family x');
+
+    const meta = new FakeProviderConnectionAdapter([
+      {
+        providerAccountId: 'instagram-one',
+        displayName: 'Instagram One',
+        destinationProvider: 'instagram',
+      },
+      {
+        providerAccountId: 'page-one',
+        displayName: 'Page One',
+        destinationProvider: 'facebook_page',
+      },
+    ]);
+    await expect(
+      connectProvider(db, keys, meta, {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        accessToken: 'meta-secret',
+        requestId: 'valid-meta-destinations',
+      }),
+    ).resolves.toMatchObject({
+      accounts: [
+        { providerAccountId: 'instagram-one', destinationProvider: 'instagram' },
+        { providerAccountId: 'page-one', destinationProvider: 'facebook_page' },
+      ],
+    });
+    const rows = await database.query<{ destination_provider: string }>(
+      'select destination_provider from provider_accounts order by destination_provider',
+    );
+    expect(rows.rows.map((row) => row.destination_provider)).toEqual([
+      'facebook_page',
+      'instagram',
+    ]);
+  });
+
   it('denies X connection before provider, OAuth, credential, or idempotency artifacts', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     let providerCalls = 0;

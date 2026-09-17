@@ -163,7 +163,7 @@ async function loadXJobContext(database: NodePgDatabase, workspaceId: string, jo
         and(
           eq(publicationJobs.workspaceId, workspaceId),
           eq(publicationJobs.id, jobId),
-          eq(providerConnections.provider, 'x'),
+          eq(providerAccounts.destinationProvider, 'x'),
         ),
       )
       .orderBy(asc(revisionMedia.position));
@@ -204,7 +204,7 @@ export async function dispatchDueXJobs(
         now,
         leaseMs: runtime.leaseMs,
         limit: 10,
-        provider: 'x',
+        destinationProvider: 'x',
         requireMedia: false,
       });
   let dispatched = 0;
@@ -330,7 +330,7 @@ async function loadXReconciliationContext(
         eq(publicationAttempts.jobId, publicationJobs.id),
       ),
     )
-    .where(and(eq(publicationJobs.id, jobId), eq(providerConnections.provider, 'x')))
+    .where(and(eq(publicationJobs.id, jobId), eq(providerAccounts.destinationProvider, 'x')))
     .orderBy(asc(publicationAttempts.startedAt));
   const row = rows.at(-1);
   return row?.reconciliationKey ? { ...row, reconciliationKey: row.reconciliationKey } : null;
@@ -343,7 +343,7 @@ export async function reconcileXJobs(runtime: XDispatchRuntime, now = new Date()
     now,
     leaseMs: runtime.leaseMs,
     limit: 10,
-    provider: 'x',
+    destinationProvider: 'x',
   });
   let resolved = 0;
   for (const jobId of jobIds) {

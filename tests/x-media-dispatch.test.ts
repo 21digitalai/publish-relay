@@ -153,7 +153,7 @@ describe('X media dispatch composition', () => {
 
     expect(claimDueJobs).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ workerId: 'worker-1' }),
+      expect.objectContaining({ workerId: 'worker-1', destinationProvider: 'x' }),
     );
     expect(createClient).toHaveBeenCalledWith(
       '{"accessToken":"sanitized","accessTokenSecret":"sanitized"}',
@@ -444,7 +444,7 @@ describe('X media dispatch composition', () => {
     expect(recoverExpiredDispatches).toHaveBeenCalled();
     expect(claimReconciliationJobs).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ provider: 'x' }),
+      expect.objectContaining({ destinationProvider: 'x' }),
     );
     expect(getPost).not.toHaveBeenCalled();
     expect(resolveReconciliation).not.toHaveBeenCalled();

@@ -11,6 +11,10 @@ import {
 import { runMediaRetentionCycle } from '../modules/content/media-retention.worker.js';
 import { createMediaStagingReconciler } from '../modules/content/media-staging.worker.js';
 import {
+  runDestinationDispatchCycle,
+  type DestinationDispatchAdapter,
+} from '../modules/providers/destination-dispatch-runtime.js';
+import {
   createLocalXMediaSource,
   createXMediaClientFactory,
   dispatchDueXJobs,
@@ -82,6 +86,20 @@ if (!youtubeRuntime)
     `${JSON.stringify({ event: 'provider_disabled', provider: 'youtube', reason: 'missing_configuration' })}\n`,
   );
 
+const destinationDispatchAdapters: DestinationDispatchAdapter[] = [];
+if (xRuntime)
+  destinationDispatchAdapters.push({
+    destinationProvider: 'x',
+    dispatch: () => dispatchDueXJobs(xRuntime),
+    reconcile: () => reconcileXJobs(xRuntime),
+  });
+if (youtubeRuntime)
+  destinationDispatchAdapters.push({
+    destinationProvider: 'youtube',
+    dispatch: () => dispatchDueYouTubeJobs(youtubeRuntime),
+    reconcile: () => reconcileYouTubeJobs(youtubeRuntime),
+  });
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
     shutdownController.abort();
@@ -89,14 +107,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 while (!shutdownController.signal.aborted) {
-  if (xRuntime) {
-    await reconcileXJobs(xRuntime);
-    await dispatchDueXJobs(xRuntime);
-  }
-  if (youtubeRuntime) {
-    await reconcileYouTubeJobs(youtubeRuntime);
-    await dispatchDueYouTubeJobs(youtubeRuntime);
-  }
+  await runDestinationDispatchCycle(destinationDispatchAdapters);
   const now = new Date();
   const deletedStagingObjects = await reconcileMediaStaging(now);
   if (deletedStagingObjects !== undefined) {

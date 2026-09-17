@@ -1,6 +1,10 @@
 import type { DestinationProvider, PublishingAdapter } from './contract.js';
 
-export class PublishingAdapterRegistry<TAdapter extends PublishingAdapter = PublishingAdapter> {
+export interface DestinationAdapter {
+  readonly destinationProvider: DestinationProvider;
+}
+
+export class PublishingAdapterRegistry<TAdapter extends DestinationAdapter = PublishingAdapter> {
   private readonly adapters: ReadonlyMap<DestinationProvider, TAdapter>;
 
   public constructor(adapters: readonly TAdapter[]) {
@@ -20,5 +24,9 @@ export class PublishingAdapterRegistry<TAdapter extends PublishingAdapter = Publ
       throw new Error(`Publishing adapter is not registered: ${destinationProvider}`);
     }
     return adapter;
+  }
+
+  public destinations(): readonly DestinationProvider[] {
+    return [...this.adapters.keys()];
   }
 }

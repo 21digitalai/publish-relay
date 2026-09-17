@@ -9,6 +9,7 @@ export interface DiscoveredProviderAccount {
   credentialId?: string | null;
   capabilitySnapshot?: Readonly<Record<string, unknown>>;
   capabilitiesCheckedAt?: Date | null;
+  availability?: 'active' | 'reauth_required' | 'permission_lost' | 'remote_missing';
 }
 
 export interface ProviderConnectionDriver {

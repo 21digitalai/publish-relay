@@ -44,6 +44,7 @@ import {
   LinkedInMemberMismatchError,
 } from '../src/modules/providers/linkedin-oauth.service.js';
 import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
+import { completeMetaOauthConnection } from '../src/modules/providers/meta-oauth.service.js';
 import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import {
@@ -637,6 +638,96 @@ describe('credential and OAuth persistence', () => {
       'facebook_page',
       'instagram',
     ]);
+  });
+
+  it('atomically reconnects Meta destinations, preserves IDs, and revokes rotated credentials', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const metaMasterKey = randomBytes(32);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(metaMasterKey),
+    };
+    const connect = async (
+      state: string,
+      pages: {
+        id: string;
+        name: string;
+        accessToken: string;
+        tasks: string[];
+        instagram?: { id: string; name: string };
+      }[],
+    ) => {
+      const issued = await issueOauthTransaction(db, keys, {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        redirectUri: 'https://relay.test/api/oauth/meta/callback',
+      });
+      const client = {
+        exchangeCode: () =>
+          Promise.resolve({ accessToken: `authority-${state}`, scopes: [] as never[] }),
+        discoverPages: () => Promise.resolve(pages),
+      };
+      return completeMetaOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        state: issued.state,
+        code: 'fixture-code',
+        requestId: state,
+      });
+    };
+    await connect('first', [
+      {
+        id: 'page-1',
+        name: 'Page One',
+        accessToken: 'page-token-1',
+        tasks: ['CREATE_CONTENT'],
+        instagram: { id: 'ig-1', name: 'Instagram One' },
+      },
+      { id: 'page-lost', name: 'Lost Page', accessToken: 'page-token-lost', tasks: [] },
+    ]);
+    const before = await database.query<{ id: string; remote_account_id: string }>(
+      'select id, remote_account_id from provider_accounts order by remote_account_id',
+    );
+    await connect('second', [
+      {
+        id: 'page-1',
+        name: 'Page One Renamed',
+        accessToken: 'page-token-2',
+        tasks: ['CREATE_CONTENT'],
+        instagram: { id: 'ig-1', name: 'Instagram One' },
+      },
+    ]);
+    const after = await database.query<{
+      id: string;
+      remote_account_id: string;
+      availability: string;
+    }>(
+      'select id, remote_account_id, availability from provider_accounts order by remote_account_id',
+    );
+    expect(after.rows.map((row) => ({ id: row.id, remote: row.remote_account_id }))).toEqual(
+      before.rows.map((row) => ({ id: row.id, remote: row.remote_account_id })),
+    );
+    expect(after.rows.find((row) => row.remote_account_id === 'page-lost')?.availability).toBe(
+      'remote_missing',
+    );
+    const credentials = await database.query<{ active: number; revoked: number }>(
+      `select
+         count(*) filter (where revoked_at is null)::int as active,
+         count(*) filter (where revoked_at is not null)::int as revoked
+       from credentials`,
+    );
+    expect(credentials.rows[0]).toMatchObject({ active: 2, revoked: 3 });
+    const actions = await database.query<{ action: string }>(
+      "select action from audit_events where action like 'provider.destination.%' order by action",
+    );
+    expect(actions.rows.map((row) => row.action)).toEqual(
+      expect.arrayContaining([
+        'provider.destination.credential_rotated',
+        'provider.destination.discovered',
+        'provider.destination.lost',
+      ]),
+    );
   });
 
   it('denies X connection before provider, OAuth, credential, or idempotency artifacts', async () => {

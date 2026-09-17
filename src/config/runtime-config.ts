@@ -38,6 +38,13 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_LINKEDIN_CLIENT_ID: z.string().min(1).optional(),
     PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET: z.string().min(1).optional(),
+    PUBLISH_RELAY_META_APP_ID: z.string().min(1).optional(),
+    PUBLISH_RELAY_META_APP_SECRET: z.string().min(1).optional(),
+    PUBLISH_RELAY_META_GRAPH_VERSION: z
+      .string()
+      .regex(/^v\d+\.\d+$/)
+      .optional(),
+    PUBLISH_RELAY_META_PERMISSIONS: z.string().min(1).optional(),
     X_API_KEY: z.string().min(1).optional(),
     X_API_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID: z.string().min(1).optional(),
@@ -48,6 +55,18 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_AUTH_EMAIL_FROM: z.email().optional(),
   })
   .superRefine((config, context) => {
+    if (Boolean(config.PUBLISH_RELAY_META_APP_ID) !== Boolean(config.PUBLISH_RELAY_META_APP_SECRET))
+      context.addIssue({
+        code: 'custom',
+        path: ['PUBLISH_RELAY_META_APP_ID'],
+        message: 'Meta provider credentials must configure both app ID and app secret',
+      });
+    if (config.PUBLISH_RELAY_META_APP_ID && !config.PUBLISH_RELAY_META_GRAPH_VERSION)
+      context.addIssue({
+        code: 'custom',
+        path: ['PUBLISH_RELAY_META_GRAPH_VERSION'],
+        message: 'A pinned Meta Graph API version is required when Meta is enabled',
+      });
     if (config.NODE_ENV !== 'production') return;
     for (const name of [
       'PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION',

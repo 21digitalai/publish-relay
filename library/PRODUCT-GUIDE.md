@@ -19,6 +19,10 @@ Users can register, connect multiple social accounts, schedule content through t
 
 - Instagram publishing.
 - Facebook Pages publishing.
+- One Meta connection discovers managed Facebook Pages and their linked Instagram Professional
+  accounts as separate destinations. Connection/discovery does not enable publishing by itself;
+  Instagram and Facebook publishing remain independent adapter slices with independent jobs and
+  outcomes.
 
 ## Explicit non-goals for the first release
 

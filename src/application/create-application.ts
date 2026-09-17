@@ -38,6 +38,8 @@ import type { LinkedInHttpClient } from '../modules/providers/linkedin-http-clie
 import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth.routes.js';
 import type { MetaHttpClient } from '../modules/providers/meta-http-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
+import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
+import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
@@ -189,6 +191,12 @@ function registerBrowserRoutes(
     metaOauth,
     delegatedAuthorization,
   } = options;
+  if (database && mediaStorage && config.CURSOR_SIGNING_SECRET)
+    registerInstagramMediaRoutes(application, {
+      database,
+      mediaStorage,
+      tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
+    });
   if (auth && database) {
     registerProviderAccountRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {

@@ -141,6 +141,17 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Destination-scoped provider defaults
 
+- The `instagram` publishing adapter is separate from the shared Meta connection driver. Phase one
+  accepts one JPEG/PNG image or a 2–10 image carousel with a non-empty caption. It records child,
+  parent, publish, and permalink edges in `provider_staging_artifacts`; a started external write with
+  no recorded provider ID is reconciliation-required and is never repeated automatically.
+- Instagram provider fetches use `/provider-media/instagram/:token`. The opaque HMAC token binds one
+  workspace/media pair and an expiry, exposes no storage key, and the route serves only exact ready,
+  non-deleted media. Tokens and signed URLs are never stored in attempt evidence.
+- Graph failures retain only bounded code/subcode, transient classification, retry/usage headers, and
+  trace ID. Full provider bodies and credentials are discarded. Container polling must reach
+  `FINISHED`; error/expiry is terminal, while an in-progress container remains safely resumable.
+
 - Meta OAuth is a server-owned connection-family boundary. The web process derives the one exact
   callback `/api/oauth/meta/callback` from `PUBLISH_RELAY_PUBLIC_ORIGIN`; initiation is
   authenticated and CSRF-protected, and the callback consumes hashed one-time state bound to the

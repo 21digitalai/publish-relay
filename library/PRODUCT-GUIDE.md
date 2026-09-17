@@ -17,7 +17,9 @@ Users can register, connect multiple social accounts, schedule content through t
 
 ## Follow-on scope
 
-- Instagram publishing.
+- Instagram Professional phase-one publishing: a required caption with one JPEG/PNG image or a
+  2–10 image carousel. Text-only posts, video/Reels, Stories, and advanced Instagram features remain
+  later work.
 - Facebook Pages publishing.
 - One Meta connection discovers managed Facebook Pages and their linked Instagram Professional
   accounts as separate destinations. Connection/discovery does not enable publishing by itself;
@@ -26,8 +28,8 @@ Users can register, connect multiple social accounts, schedule content through t
 - Meta phase-one composition is destination-first. Instagram accepts one image or a 2–10 image
   carousel with a caption; Facebook Pages accept one image or an HTTPS link with a message. A
   combined Instagram + Facebook composition is intentionally limited to one image plus shared
-  caption/message, and creates one immutable target payload and job per destination. This prepares
-  scheduling only; no Meta publishing endpoint exists in this phase.
+  caption/message, and creates one immutable target payload and job per destination. Instagram now
+  has its own publishing adapter; Facebook publishing remains a separate later slice.
 
 ## Explicit non-goals for the first release
 

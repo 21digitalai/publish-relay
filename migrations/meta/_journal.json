@@ -351,6 +351,13 @@
       "when": 1790862000000,
       "tag": "0049_meta_effective_payload",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1790862000001,
+      "tag": "0050_instagram_staging_artifacts",
+      "breakpoints": true
     }
   ]
 }

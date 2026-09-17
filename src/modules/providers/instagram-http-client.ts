@@ -27,6 +27,7 @@ export class InstagramRequestError extends Error {
   public constructor(
     public readonly evidence: InstagramErrorEvidence,
     public readonly outcomeUnknown = false,
+    public readonly reconciliationKey?: string,
   ) {
     super(`Instagram request failed (${evidence.kind}, HTTP ${String(evidence.status)})`);
   }
@@ -79,7 +80,7 @@ export class InstagramHttpClient {
     const fields: Record<string, string> = { image_url: input.imageUrl };
     if (input.caption !== undefined) fields.caption = input.caption;
     if (input.isCarouselItem) fields.is_carousel_item = 'true';
-    return (await this.post(`/${input.accountId}/media`, fields, input.accessToken, false)).id;
+    return (await this.post(`/${input.accountId}/media`, fields, input.accessToken, true)).id;
   }
 
   public async createCarouselContainer(input: {
@@ -93,7 +94,7 @@ export class InstagramHttpClient {
         `/${input.accountId}/media`,
         { media_type: 'CAROUSEL', children: input.childIds.join(','), caption: input.caption },
         input.accessToken,
-        false,
+        true,
       )
     ).id;
   }

@@ -5,3 +5,4 @@ export {
   type RuntimeConfig,
 } from '../config/runtime-config.js';
 export { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
+export { createCoreRuntime, type CoreRuntime } from '../application/create-runtime-options.js';

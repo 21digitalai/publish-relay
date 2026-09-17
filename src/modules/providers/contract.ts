@@ -1,5 +1,8 @@
 export const PROVIDER_ADAPTER_VERSION = '1.1' as const;
 
+export type ConnectionFamily = 'x' | 'youtube' | 'meta';
+export type DestinationProvider = 'x' | 'youtube' | 'instagram' | 'facebook_page';
+
 export interface YouTubeVideoOptions {
   schemaVersion: 1;
   title: string;
@@ -57,14 +60,21 @@ export interface StagedPublish {
   idempotencyKey: string;
 }
 
-export interface ProviderAdapter {
-  readonly version: typeof PROVIDER_ADAPTER_VERSION;
-  readonly capabilities: ProviderTechnicalCapabilities;
+export interface ProviderConnectionDriver {
   connect(authorizationCode: string): Promise<{ credential: string }>;
   discover(credential: string): Promise<ProviderAccount[]>;
+  revoke(credential: string): Promise<void>;
+}
+
+export interface PublishingAdapter {
+  readonly destinationProvider: DestinationProvider;
+  readonly version: typeof PROVIDER_ADAPTER_VERSION;
+  readonly capabilities: ProviderTechnicalCapabilities;
   validate(accountId: string, content: PublishContent): Promise<void>;
   stage(accountId: string, content: PublishContent, idempotencyKey: string): Promise<StagedPublish>;
   publish(staged: StagedPublish): Promise<PublishOutcome>;
   lookup(reconciliationKey: string): Promise<PublishOutcome>;
-  revoke(credential: string): Promise<void>;
 }
+
+/** Compatibility shape for the existing X and YouTube combined implementations. */
+export interface ProviderAdapter extends ProviderConnectionDriver, PublishingAdapter {}

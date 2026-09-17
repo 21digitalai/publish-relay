@@ -464,6 +464,7 @@ export const providerConnections = pgTable(
   },
   (table) => [
     index('provider_connections_workspace_idx').on(table.workspaceId),
+    uniqueIndex('provider_connections_workspace_id_unique').on(table.workspaceId, table.id),
     uniqueIndex('provider_connections_workspace_provider_unique').on(
       table.workspaceId,
       table.provider,
@@ -482,6 +483,13 @@ export const providerAccounts = pgTable(
       .notNull()
       .references(() => providerConnections.id, { onDelete: 'cascade' }),
     providerAccountId: text('provider_account_id').notNull(),
+    destinationProvider: text('destination_provider').notNull(),
+    remoteAccountId: text('remote_account_id').notNull(),
+    remoteParentAccountId: text('remote_parent_account_id'),
+    credentialId: uuid('credential_id'),
+    capabilitySnapshot: jsonb('capability_snapshot').notNull().default({}),
+    capabilitiesCheckedAt: timestamp('capabilities_checked_at', { withTimezone: true }),
+    availability: text('availability').notNull().default('active'),
     displayName: text('display_name').notNull(),
     adapterDefaults: jsonb('adapter_defaults').notNull().default({}),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
@@ -489,11 +497,22 @@ export const providerAccounts = pgTable(
   },
   (table) => [
     uniqueIndex('provider_accounts_workspace_id_unique').on(table.workspaceId, table.id),
-    uniqueIndex('provider_accounts_connection_external_unique').on(
+    uniqueIndex('provider_accounts_connection_destination_remote_unique').on(
       table.connectionId,
-      table.providerAccountId,
+      table.destinationProvider,
+      table.remoteAccountId,
     ),
     index('provider_accounts_workspace_idx').on(table.workspaceId),
+    foreignKey({
+      columns: [table.workspaceId, table.connectionId],
+      foreignColumns: [providerConnections.workspaceId, providerConnections.id],
+      name: 'provider_accounts_workspace_connection_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.credentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'provider_accounts_workspace_credential_fk',
+    }).onDelete('restrict'),
   ],
 );
 

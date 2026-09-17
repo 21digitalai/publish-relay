@@ -8,6 +8,29 @@ import {
   providerConnections,
 } from '../../database/schema.js';
 import type { DiscoveredProviderAccount } from './provider-adapter.js';
+import type { DestinationProvider } from '../providers/contract.js';
+
+interface NormalizedDestination extends DiscoveredProviderAccount {
+  destinationProvider: DestinationProvider;
+  remoteAccountId: string;
+}
+
+function normalizeDestination(
+  connectionFamily: string,
+  account: DiscoveredProviderAccount,
+): NormalizedDestination {
+  const destinationProvider = (account.destinationProvider ??
+    connectionFamily) as DestinationProvider;
+  return {
+    ...account,
+    destinationProvider,
+    remoteAccountId: account.remoteAccountId ?? account.providerAccountId,
+  };
+}
+
+function destinationKey(destinationProvider: DestinationProvider, remoteAccountId: string): string {
+  return `${destinationProvider}:${remoteAccountId}`;
+}
 
 export async function assertActiveMembership(
   database: NodePgDatabase,
@@ -65,10 +88,14 @@ export async function replaceProviderConnection(
         .returning({ id: providerConnections.id });
   const connection = connectionRows[0];
   if (!connection) throw new Error('Provider connection write returned no record');
+  const destinations = input.accounts.map((account) =>
+    normalizeDestination(input.provider, account),
+  );
   const existingAccounts = await database
     .select({
       id: providerAccounts.id,
-      providerAccountId: providerAccounts.providerAccountId,
+      destinationProvider: providerAccounts.destinationProvider,
+      remoteAccountId: providerAccounts.remoteAccountId,
     })
     .from(providerAccounts)
     .where(
@@ -77,16 +104,27 @@ export async function replaceProviderConnection(
         eq(providerAccounts.connectionId, connection.id),
       ),
     );
-  const existingByProviderId = new Map(
-    existingAccounts.map((account) => [account.providerAccountId, account.id]),
+  const existingByDestination = new Map(
+    existingAccounts.map((account) => [
+      destinationKey(account.destinationProvider as DestinationProvider, account.remoteAccountId),
+      account.id,
+    ]),
   );
-  const discoveredIds = new Set(input.accounts.map((account) => account.providerAccountId));
+  const discoveredKeys = new Set(
+    destinations.map((account) =>
+      destinationKey(account.destinationProvider, account.remoteAccountId),
+    ),
+  );
   const now = new Date();
   for (const account of existingAccounts) {
-    if (!discoveredIds.has(account.providerAccountId))
+    if (
+      !discoveredKeys.has(
+        destinationKey(account.destinationProvider as DestinationProvider, account.remoteAccountId),
+      )
+    )
       await database
         .update(providerAccounts)
-        .set({ disconnectedAt: now, updatedAt: now })
+        .set({ availability: 'remote_missing', disconnectedAt: now, updatedAt: now })
         .where(
           and(
             eq(providerAccounts.workspaceId, input.workspaceId),
@@ -94,12 +132,24 @@ export async function replaceProviderConnection(
           ),
         );
   }
-  for (const account of input.accounts) {
-    const existingId = existingByProviderId.get(account.providerAccountId);
+  for (const account of destinations) {
+    const existingId = existingByDestination.get(
+      destinationKey(account.destinationProvider, account.remoteAccountId),
+    );
     if (!existingId) continue;
     await database
       .update(providerAccounts)
-      .set({ displayName: account.displayName, disconnectedAt: null, updatedAt: now })
+      .set({
+        providerAccountId: account.providerAccountId,
+        displayName: account.displayName,
+        remoteParentAccountId: account.remoteParentAccountId ?? null,
+        credentialId: account.credentialId ?? null,
+        capabilitySnapshot: account.capabilitySnapshot ?? {},
+        capabilitiesCheckedAt: account.capabilitiesCheckedAt ?? null,
+        availability: 'active',
+        disconnectedAt: null,
+        updatedAt: now,
+      })
       .where(
         and(
           eq(providerAccounts.workspaceId, input.workspaceId),
@@ -107,8 +157,11 @@ export async function replaceProviderConnection(
         ),
       );
   }
-  const newAccounts = input.accounts.filter(
-    (account) => !existingByProviderId.has(account.providerAccountId),
+  const newAccounts = destinations.filter(
+    (account) =>
+      !existingByDestination.has(
+        destinationKey(account.destinationProvider, account.remoteAccountId),
+      ),
   );
   if (newAccounts.length > 0)
     await database.insert(providerAccounts).values(
@@ -116,6 +169,13 @@ export async function replaceProviderConnection(
         workspaceId: input.workspaceId,
         connectionId: connection.id,
         providerAccountId: account.providerAccountId,
+        destinationProvider: account.destinationProvider,
+        remoteAccountId: account.remoteAccountId,
+        remoteParentAccountId: account.remoteParentAccountId ?? null,
+        credentialId: account.credentialId ?? null,
+        capabilitySnapshot: account.capabilitySnapshot ?? {},
+        capabilitiesCheckedAt: account.capabilitiesCheckedAt ?? null,
+        availability: 'active',
         displayName: account.displayName,
       })),
     );

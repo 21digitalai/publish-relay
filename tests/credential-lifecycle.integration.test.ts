@@ -59,6 +59,7 @@ const migrations = [
   '0016_common_barracuda.sql',
   '0025_lucky_legion.sql',
   '0019_media_retention_lifecycle.sql',
+  '0045_meta_destination_foundation.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -316,7 +317,14 @@ describe('credential and OAuth persistence', () => {
       accessToken: 'first-secret',
       requestId: 'req-connect',
     });
-    const second = await connectProvider(db, keys, adapter, {
+    const firstAccounts = await database.query<{ id: string; remote_account_id: string }>(
+      'select id, remote_account_id from provider_accounts order by remote_account_id',
+    );
+    const secondAdapter = new FakeProviderConnectionAdapter([
+      { providerAccountId: 'one', displayName: 'One renamed' },
+      { providerAccountId: 'three', displayName: 'Three' },
+    ]);
+    const second = await connectProvider(db, keys, secondAdapter, {
       workspaceId,
       userId,
       provider: 'fake',
@@ -337,7 +345,21 @@ describe('credential and OAuth persistence', () => {
       'select action, metadata from audit_events order by created_at',
     );
     expect(connectionCount.rows[0]?.count).toBe(1);
-    expect(accountCount.rows[0]?.count).toBe(2);
+    expect(accountCount.rows[0]?.count).toBe(3);
+    const syncedAccounts = await database.query<{
+      id: string;
+      remote_account_id: string;
+      availability: string;
+    }>(
+      'select id, remote_account_id, availability from provider_accounts order by remote_account_id',
+    );
+    const insertedAccountId = syncedAccounts.rows[1]?.id;
+    expect(typeof insertedAccountId).toBe('string');
+    expect(syncedAccounts.rows).toEqual([
+      { id: firstAccounts.rows[0]?.id, remote_account_id: 'one', availability: 'active' },
+      { id: insertedAccountId, remote_account_id: 'three', availability: 'active' },
+      { id: firstAccounts.rows[1]?.id, remote_account_id: 'two', availability: 'remote_missing' },
+    ]);
     expect(revokedCount.rows[0]?.count).toBe(1);
     expect(auditRows.rows.map((row) => row.action)).toEqual([
       'provider.connected',
@@ -523,10 +545,12 @@ describe('credential and OAuth persistence', () => {
         '00000000-0000-4000-8000-000000000192'
       );
       INSERT INTO provider_accounts (
-        id, workspace_id, connection_id, provider_account_id, display_name
+        id, workspace_id, connection_id, provider_account_id, destination_provider,
+        remote_account_id, display_name
       ) VALUES (
         '${foreignAccountId}', '${foreignWorkspaceId}',
-        '00000000-0000-4000-8000-000000000193', 'foreign-account', 'Foreign Secret'
+        '00000000-0000-4000-8000-000000000193', 'foreign-account', 'x',
+        'foreign-account', 'Foreign Secret'
       );
       SELECT set_config('app.workspace_id', '${workspaceId}', false);
     `);
@@ -718,9 +742,10 @@ describe('credential and OAuth persistence', () => {
       INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
       VALUES ('00000000-0000-4000-8000-000000000703', '${workspaceId}', 'youtube',
         '00000000-0000-4000-8000-000000000702');
-      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id,
+        destination_provider, remote_account_id, display_name)
       VALUES ('${accountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000703',
-        'channel-1', 'Channel One');
+        'channel-1', 'youtube', 'channel-1', 'Channel One');
     `);
     await expect(
       updateYouTubeAccountDefaults(db, {

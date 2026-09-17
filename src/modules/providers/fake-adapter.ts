@@ -8,6 +8,7 @@ import {
 } from './contract.js';
 
 export class DeterministicFakeProviderAdapter implements ProviderAdapter {
+  public readonly destinationProvider = 'x' as const;
   public readonly version = PROVIDER_ADAPTER_VERSION;
   public readonly capabilities = {
     providerFamily: 'fake',

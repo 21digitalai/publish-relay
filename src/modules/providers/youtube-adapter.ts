@@ -36,6 +36,7 @@ function validateVideoContent(
 }
 
 export class YouTubeProviderAdapter implements ProviderAdapter {
+  public readonly destinationProvider = 'youtube' as const;
   public readonly version = PROVIDER_ADAPTER_VERSION;
   public readonly capabilities = {
     providerFamily: 'youtube',

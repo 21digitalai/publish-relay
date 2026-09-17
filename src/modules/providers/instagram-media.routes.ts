@@ -15,12 +15,12 @@ export function registerInstagramMediaRoutes(
     tokenCodec: InstagramMediaTokenCodec;
   },
 ): void {
-  application.get<{ Params: { token: string } }>(
-    '/provider-media/instagram/:token',
+  application.get<{ Querystring: { token?: string } }>(
+    '/provider-media/instagram',
     async (request, reply) => {
       let token;
       try {
-        token = dependencies.tokenCodec.verify(request.params.token);
+        token = dependencies.tokenCodec.verify(request.query.token ?? '');
       } catch {
         return reply.code(404).send();
       }

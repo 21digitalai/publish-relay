@@ -34,6 +34,22 @@ export interface InstagramDispatchRuntime {
   leaseMs: number;
 }
 
+const DEFAULT_INSTAGRAM_RETRY_SECONDS = 5;
+const MAX_INSTAGRAM_RETRY_SECONDS = 5 * 60;
+
+export function getInstagramRetryAt(
+  outcome: { status: string; code?: string; retryAfterSeconds?: number },
+  now: Date,
+): Date | undefined {
+  if (outcome.status !== 'failed' || !['rate_limit', 'transient'].includes(outcome.code ?? ''))
+    return undefined;
+  const seconds = Math.min(
+    MAX_INSTAGRAM_RETRY_SECONDS,
+    Math.max(1, outcome.retryAfterSeconds ?? DEFAULT_INSTAGRAM_RETRY_SECONDS),
+  );
+  return new Date(now.getTime() + seconds * 1000);
+}
+
 async function loadContext(database: NodePgDatabase, workspaceId: string, jobId: string) {
   return withTenantTransaction(database, { workspaceId }, async (transaction) => {
     const rows = await transaction
@@ -147,9 +163,9 @@ async function dispatchJob(
         mediaId,
         expiresAt: now.getTime() + 24 * 60 * 60 * 1000,
       });
-      return Promise.resolve(
-        new URL(`/provider-media/instagram/${token}`, runtime.publicOrigin).toString(),
-      );
+      const url = new URL('/provider-media/instagram', runtime.publicOrigin);
+      url.searchParams.set('token', token);
+      return Promise.resolve(url.toString());
     },
   });
   const staged = await adapter.stage(
@@ -158,6 +174,7 @@ async function dispatchJob(
     fingerprint,
   );
   const outcome = await adapter.publish(staged);
+  const retryAt = getInstagramRetryAt(outcome, now);
   await finishDispatchAttempt(runtime.database, {
     workspaceId: job.workspaceId,
     jobId: job.id,
@@ -169,6 +186,7 @@ async function dispatchJob(
           ? 'unknown'
           : outcome.code,
     now,
+    ...(retryAt ? { retryAt } : {}),
     ...(outcome.status === 'published' ? { externalPostId: outcome.externalPostId } : {}),
     ...(outcome.status === 'unknown'
       ? { reconciliationKey: outcome.reconciliationKey }

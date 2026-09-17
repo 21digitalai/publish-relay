@@ -172,7 +172,7 @@ export class InstagramPublishingAdapter implements PublishingAdapter {
         key,
       );
     if (artifact.phase === 'request_started' && !artifact.externalObjectId)
-      throw new InstagramRequestError({ kind: 'transient', status: 0 }, true);
+      throw new InstagramRequestError({ kind: 'transient', status: 0 }, true, key);
     if (!artifact.externalObjectId) {
       artifact = await this.runtime.artifacts.update(key, { phase: 'request_started' });
       const imageUrl = assertHttps(await this.runtime.mediaUrl(media.id));
@@ -231,7 +231,7 @@ export class InstagramPublishingAdapter implements PublishingAdapter {
         key,
       );
     if (artifact.phase === 'request_started' && !artifact.externalObjectId)
-      throw new InstagramRequestError({ kind: 'transient', status: 0 }, true);
+      throw new InstagramRequestError({ kind: 'transient', status: 0 }, true, key);
     if (!artifact.externalObjectId) {
       await this.runtime.artifacts.update(key, { phase: 'request_started' });
       let externalObjectId: string;

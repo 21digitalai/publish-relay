@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import Fastify from 'fastify';
+import fastifyStatic from '@fastify/static';
+import { fileURLToPath } from 'node:url';
 
 import {
   createStandaloneApplication,
@@ -56,6 +58,22 @@ describe('application', () => {
 
     expect((await application.inject({ method: 'GET', url: '/health/live' })).statusCode).toBe(200);
     expect((await application.inject({ method: 'GET', url: '/login' })).statusCode).toBe(404);
+  });
+
+  it('coexists with caller-owned static assets in the same Fastify process', async () => {
+    const application = Fastify();
+    const uiRoot = fileURLToPath(new URL('../src/ui/', import.meta.url));
+    application.register(fastifyStatic, { root: uiRoot, prefix: '/site-assets/' });
+    registerCoreApplication(application, { config: testConfig, uiPrefix: '/core-assets/' });
+    applications.push(application);
+
+    await application.ready();
+    expect(
+      (await application.inject({ method: 'GET', url: '/site-assets/index.html' })).statusCode,
+    ).toBe(200);
+    expect(
+      (await application.inject({ method: 'GET', url: '/core-assets/index.html' })).statusCode,
+    ).toBe(200);
   });
 
   it('fails closed when Core routes are registered twice', () => {

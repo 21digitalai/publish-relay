@@ -201,7 +201,12 @@ export function registerCoreApplication(
     `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`,
   );
 
-  application.register(fastifyStatic, { root: uiRoot, wildcard: false, prefix: uiPrefix });
+  application.register(fastifyStatic, {
+    root: uiRoot,
+    wildcard: false,
+    prefix: uiPrefix,
+    decorateReply: false,
+  });
 
   registerOperationalRoutes(application, database);
   registerApiDocumentationRoute(application);

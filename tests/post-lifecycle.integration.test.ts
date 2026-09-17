@@ -1075,6 +1075,42 @@ describe('X media staging', () => {
     expect(finalize).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a durably finalized static image when X omits processing status', async () => {
+    const postId = '00000000-0000-4000-8000-0000000002a0';
+    const revisionId = '00000000-0000-4000-8000-0000000002a1';
+    const mediaId = '00000000-0000-4000-8000-0000000002a2';
+    const jobId = '00000000-0000-4000-8000-0000000002a3';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"type":"text","text":"Media"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'media/static', 'hash', 'image/png', 1, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+        VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now());
+      INSERT INTO provider_staging_artifacts
+        (workspace_id, job_id, media_id, provider_reference, expires_at, upload_phase, next_segment)
+        VALUES ('${workspaceId}', '${jobId}', '${mediaId}', 'x-static-image', now() + interval '1 hour', 'finalized', 1);
+    `);
+    const client: XMediaUploadClient = {
+      init: () => Promise.reject(new Error('unexpected INIT')),
+      append: () => Promise.reject(new Error('unexpected APPEND')),
+      finalize: () => Promise.reject(new Error('unexpected FINALIZE')),
+      status: () => Promise.resolve({ state: 'not_finalized' as const }),
+      discard: () => Promise.resolve(),
+    };
+    const db = drizzle(database) as unknown as NodePgDatabase;
+
+    await expect(
+      stageXMedia(
+        db,
+        { load: () => Promise.reject(new Error('unexpected media load')) },
+        client,
+        { workspaceId, jobId, mediaId, idempotencyKey: 'static-image' },
+      ),
+    ).resolves.toEqual({ mediaId: 'x-static-image', state: 'succeeded' });
+  });
+
   it('serializes concurrent staging against one canonical artifact', async () => {
     const postId = '00000000-0000-4000-8000-000000000294';
     const revisionId = '00000000-0000-4000-8000-000000000295';

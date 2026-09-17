@@ -98,10 +98,16 @@ async function resumeStaging(
 ): Promise<{ mediaId: string; state: 'succeeded' | 'pending' }> {
   if (artifact.uploadPhase === 'finalized') {
     const status = await client.status(artifact.providerReference);
-    if (status.state === 'failed' || status.state === 'not_finalized') {
+    if (status.state === 'failed') {
       throw new Error('X media processing failed');
     }
-    return { mediaId: artifact.providerReference, state: status.state };
+    // Static images can return no processing_info (or 404) from STATUS even
+    // after FINALIZE succeeded. The durable finalized phase is authoritative;
+    // only an explicit provider failure should invalidate it.
+    return {
+      mediaId: artifact.providerReference,
+      state: status.state === 'not_finalized' ? 'succeeded' : status.state,
+    };
   }
   const media = await source.load(input);
   validateXMedia(media);
@@ -150,10 +156,13 @@ async function appendAndFinalize(
     }
     if (progress.uploadPhase === 'finalized') {
       const status = await client.status(artifact.providerReference);
-      if (status.state === 'failed' || status.state === 'not_finalized') {
+      if (status.state === 'failed') {
         throw new Error('X media processing failed');
       }
-      return { mediaId: artifact.providerReference, state: status.state };
+      return {
+        mediaId: artifact.providerReference,
+        state: status.state === 'not_finalized' ? 'succeeded' : status.state,
+      };
     }
     const status = await client.status(artifact.providerReference);
     const finalized =

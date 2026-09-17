@@ -61,6 +61,8 @@ const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
 const BROWSER_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+const BROWSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const BROWSER_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 const BROWSER_VIDEO_LIMITS = { maxDurationMs: 60 * 60 * 1000, maxWidth: 8192, maxHeight: 8192 };
 
 function authorizeMutation(request: FastifyRequest): boolean {
@@ -125,6 +127,7 @@ function serializeJob(job: Awaited<ReturnType<typeof getBrowserJobDetail>>) {
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     content: job.content,
+    effectivePayload: job.effectivePayload,
     media: job.media,
     attempts: job.attempts,
     activity: job.activity,
@@ -202,30 +205,33 @@ export function registerBrowserWorkflowRoutes(
             .code(400)
             .send({ data: null, error: 'A valid Idempotency-Key is required' });
         const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
-        if (
-          contentType !== 'video/mp4' ||
-          !mediaStorage.stageStream ||
-          !mediaStorage.promote ||
-          !mediaProbe.probeMp4File
-        )
+        const probeMp4File = mediaProbe.probeMp4File?.bind(mediaProbe);
+        const isVideo = contentType === 'video/mp4';
+        const isImage = BROWSER_IMAGE_TYPES.includes(
+          contentType as (typeof BROWSER_IMAGE_TYPES)[number],
+        );
+        if (!isVideo && !isImage)
           return await reply
             .code(400)
-            .send({ data: null, error: 'A valid MP4 upload is required' });
+            .send({ data: null, error: 'A valid image or MP4 upload is required' });
+        if (!mediaStorage.stageStream || !mediaStorage.promote || (isVideo && !probeMp4File))
+          return await reply.code(400).send({ data: null, error: 'Media upload is unavailable' });
         z.string().min(1).max(255).parse(request.headers['x-file-name']);
         const staged = await mediaStorage.stageStream({
           stream: request.body as Readable,
-          maxBytes: videoConfig.maxBytes,
-          fingerprintPrefix: Buffer.from('video/mp4\0'),
+          maxBytes: isVideo ? videoConfig.maxBytes : BROWSER_IMAGE_MAX_BYTES,
+          fingerprintPrefix: Buffer.from(`${String(contentType)}\0`),
         });
         temporaryKey = staged.temporaryKey;
-        if (detectMimeType(staged.prefix) !== 'video/mp4')
+        if (detectMimeType(staged.prefix) !== contentType)
           throw new Error('Media Content-Type mismatch');
-        const metadata = await mediaProbe.probeMp4File(staged.filePath);
-        if (metadata.durationMs > videoConfig.limits.maxDurationMs)
+        const metadata = isVideo && probeMp4File ? await probeMp4File(staged.filePath) : undefined;
+        if (metadata && metadata.durationMs > videoConfig.limits.maxDurationMs)
           throw new Error('Media duration exceeds the configured limit');
         if (
-          metadata.width > videoConfig.limits.maxWidth ||
-          metadata.height > videoConfig.limits.maxHeight
+          metadata &&
+          (metadata.width > videoConfig.limits.maxWidth ||
+            metadata.height > videoConfig.limits.maxHeight)
         )
           throw new Error('Media dimensions exceed the configured limit');
         const result = await executeBrowserMutation(
@@ -248,8 +254,9 @@ export function registerBrowserWorkflowRoutes(
                 requestId: request.id,
                 idempotencyKey: key,
                 staged,
-                mimeType: 'video/mp4',
-                metadata,
+                mimeType: contentType as
+                  'video/mp4' | 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+                ...(metadata ? { metadata } : {}),
               },
               actionPolicy,
             );
@@ -431,8 +438,12 @@ export function registerBrowserWorkflowRoutes(
       (responseBody.data.jobIds ?? []).map(async (jobId) => {
         const job = await getBrowserJobDetail(dependencies.database, identity.workspaceId, jobId);
         return job
-          ? { id: job.id, effectiveProviderSettings: job.effectiveProviderSettings }
-          : { id: jobId, effectiveProviderSettings: null };
+          ? {
+              id: job.id,
+              effectivePayload: job.effectivePayload,
+              effectiveProviderSettings: job.effectiveProviderSettings,
+            }
+          : { id: jobId, effectivePayload: null, effectiveProviderSettings: null };
       }),
     );
     return reply.code(result.response.statusCode).send({

@@ -61,6 +61,7 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0019_media_retention_lifecycle.sql',
   '0037_meta_destination_foundation.sql',
+  '0038_meta_effective_payload.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -715,10 +716,16 @@ describe('credential and OAuth persistence', () => {
     expect(Object.keys(accounts[0] ?? {})).toEqual([
       'id',
       'provider',
+      'destinationProvider',
       'displayName',
       'status',
+      'availability',
+      'remoteParentAccountId',
+      'capabilitiesCheckedAt',
       'adapterDefaults',
       'updatedAt',
+      'capabilitySnapshot',
+      'capabilityFreshness',
     ]);
     const principal = {
       id: '00000000-0000-4000-8000-000000000501',
@@ -786,8 +793,18 @@ describe('credential and OAuth persistence', () => {
       {
         id: accounts[0]?.id,
         provider: 'x',
+        destinationProvider: 'x',
         displayName: 'Example Editorial (@exampleeditorial)',
         status: 'active',
+        availability: 'active',
+        remoteParentAccountId: null,
+        capabilitySnapshot: {
+          schemaVersion: 1,
+          contentKinds: ['text'],
+          media: { maxImages: 4 },
+        },
+        capabilitiesCheckedAt: null,
+        capabilityFreshness: 'unknown',
         updatedAt: accounts[0]?.updatedAt.toISOString(),
       },
     ]);

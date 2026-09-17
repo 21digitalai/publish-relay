@@ -109,7 +109,7 @@ Group by provider and show each connected account independently. Rows include pr
 - Search name/handle; filter provider, health, and workspace access.
 - Reconnect is primary for expired credentials.
 - Disconnect names the account, explains scheduled-job impact, and requires explicit confirmation.
-- Account rows load from the tenant-scoped account API. Connect and reconnect use provider-specific secure OAuth redirects for X and YouTube; successful callbacks return to the protected workspace. YouTube rows expose an inline destination-defaults form for visibility, Made for Kids, and subscriber notification so routine schedules need only sparse overrides. Saving is explicit, disables during submission, and keeps errors inline. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
+- Account rows load from the tenant-scoped account API. Connect and reconnect use provider-specific secure OAuth redirects for X, YouTube, and Meta; successful callbacks return to the protected workspace. One Meta group renders separate `Instagram · identity` and `Facebook · Page` destinations. `reauth_required`, `permission_lost`, and `remote_missing` destinations remain visible with reconnect guidance and cannot be selected for new schedules. YouTube rows expose an inline destination-defaults form for visibility, Made for Kids, and subscriber notification so routine schedules need only sparse overrides. Saving is explicit, disables during submission, and keeps errors inline. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
 
 ## Composer
 
@@ -128,6 +128,12 @@ Order:
 7. Publish now or Schedule N posts.
 
 Multi-account submission creates related independent jobs. Never silently drop incompatible targets. Offer 15-minute time suggestions while accepting minute precision. Block past times inline. Success becomes a compact receipt with job count, time, and Queue/Calendar links.
+
+Meta uses the canonical Composer destination picker and content-shape picker. The destination is
+chosen before content: Instagram offers single image and carousel, Facebook offers link and single
+image, and selecting both shows only single image. The picker displays capability freshness and
+keeps unavailable destinations visible but disabled. Image upload reuses the canonical hidden file
+control/dropzone lifecycle; validation remains inline on desktop and mobile.
 
 ## Queue
 

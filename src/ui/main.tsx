@@ -15,9 +15,13 @@ import {
 interface Account {
   id: string;
   provider: string;
+  destinationProvider: string;
   name: string;
   handle: string;
-  health: 'Connected' | 'Reconnect required';
+  health: 'Connected' | 'Reconnect required' | 'Permission lost' | 'Remote account missing';
+  availability: string;
+  capabilityFreshness: 'fresh' | 'stale' | 'unknown';
+  capabilitySnapshot: { contentKinds: string[] };
   adapterDefaults: {
     privacyStatus?: 'public' | 'unlisted' | 'private';
     madeForKids?: boolean;
@@ -78,6 +82,40 @@ async function beginYouTubeConnection(): Promise<void> {
   if (!response.ok || !result.data)
     throw new Error(result.error ?? 'Could not start YouTube connection');
   window.location.href = result.data.authorizationUrl;
+}
+
+async function beginMetaConnection(): Promise<void> {
+  const response = await fetch('/api/oauth/meta', {
+    method: 'POST',
+    headers: { 'x-csrf-token': getCsrfToken() },
+  });
+  const result = (await response.json()) as {
+    data: { authorizationUrl: string } | null;
+    error: string | null;
+  };
+  if (!response.ok || !result.data)
+    throw new Error(result.error ?? 'Could not start Meta connection');
+  window.location.href = result.data.authorizationUrl;
+}
+
+function destinationLabel(provider: string): string {
+  if (provider === 'instagram') return 'Instagram';
+  if (provider === 'facebook_page') return 'Facebook';
+  return provider.toLowerCase() === 'youtube' ? 'YouTube' : provider.toUpperCase();
+}
+
+function destinationHealth(availability: string, status: string): Account['health'] {
+  if (availability === 'permission_lost') return 'Permission lost';
+  if (availability === 'remote_missing') return 'Remote account missing';
+  if (availability === 'reauth_required' || status !== 'active') return 'Reconnect required';
+  return 'Connected';
+}
+
+function inferredContentKinds(provider: string): string[] {
+  if (provider === 'instagram') return ['single_image', 'carousel'];
+  if (provider === 'facebook_page') return ['link', 'single_image'];
+  if (provider === 'youtube') return ['video'];
+  return ['text'];
 }
 
 function formText(fields: FormData, name: string): string {
@@ -819,7 +857,7 @@ function AccountRow({
   onReconnect: () => void;
   onDefaultsSaved: (account: Account) => void;
 }) {
-  const needsReconnect = account.health === 'Reconnect required';
+  const needsReconnect = account.health !== 'Connected';
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [defaultsAnnouncement, setDefaultsAnnouncement] = useState<string | null>(null);
@@ -845,7 +883,7 @@ function AccountRow({
       </div>
       <div className="account-provider">
         <Mark provider={account.provider} />
-        <span>{account.provider}</span>
+        <span>{destinationLabel(account.destinationProvider)}</span>
       </div>
       <div>
         <span className={`status-badge ${needsReconnect ? 'warning' : 'success'}`}>
@@ -853,7 +891,15 @@ function AccountRow({
         </span>
       </div>
       <div className="account-capabilities">
-        <span>Connection status is current</span>
+        <span>
+          {account.health === 'Connected'
+            ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · capabilities ${account.capabilityFreshness}`
+            : account.health === 'Permission lost'
+              ? 'Reconnect Meta and restore publishing permissions.'
+              : account.health === 'Remote account missing'
+                ? 'Reconnect Meta to refresh destinations; history remains available.'
+                : 'Reconnect this provider account to schedule new work.'}
+        </span>
       </div>
       <div className="account-actions">
         {needsReconnect && (
@@ -1008,8 +1054,12 @@ function AccountsPage() {
             accounts: {
               id: string;
               provider: string;
+              destinationProvider?: string;
               displayName: string;
               status: string;
+              availability?: string;
+              capabilityFreshness?: 'fresh' | 'stale' | 'unknown';
+              capabilitySnapshot?: { contentKinds: string[] };
               updatedAt: string;
               adapterDefaults: Account['adapterDefaults'];
             }[];
@@ -1027,10 +1077,18 @@ function AccountsPage() {
                   ? 'X'
                   : account.provider.toLowerCase() === 'youtube'
                     ? 'YouTube'
-                    : account.provider,
+                    : account.provider.toLowerCase() === 'meta'
+                      ? 'Meta'
+                      : account.provider,
+              destinationProvider: account.destinationProvider ?? account.provider,
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
               handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
-              health: account.status === 'active' ? 'Connected' : 'Reconnect required',
+              health: destinationHealth(account.availability ?? 'active', account.status),
+              availability: account.availability ?? 'active',
+              capabilityFreshness: account.capabilityFreshness ?? 'unknown',
+              capabilitySnapshot: account.capabilitySnapshot ?? {
+                contentKinds: inferredContentKinds(account.destinationProvider ?? account.provider),
+              },
               adapterDefaults: account.adapterDefaults,
             };
           }),
@@ -1068,6 +1126,12 @@ function AccountsPage() {
     setActionError(null);
     void beginYouTubeConnection().catch((error: unknown) => {
       setActionError(error instanceof Error ? error.message : 'Could not start YouTube connection');
+    });
+  };
+  const connectMeta = () => {
+    setActionError(null);
+    void beginMetaConnection().catch((error: unknown) => {
+      setActionError(error instanceof Error ? error.message : 'Could not start Meta connection');
     });
   };
   const visible = useMemo(
@@ -1122,6 +1186,9 @@ function AccountsPage() {
             </button>
             <button className="primary-button connect-account" onClick={connectYouTube}>
               ＋ Connect YouTube
+            </button>
+            <button className="secondary-button connect-account" onClick={connectMeta}>
+              ＋ Connect Meta
             </button>
           </div>
         </div>
@@ -1182,6 +1249,8 @@ function AccountsPage() {
                 <option>All health</option>
                 <option>Connected</option>
                 <option>Reconnect required</option>
+                <option>Permission lost</option>
+                <option>Remote account missing</option>
               </select>
             </label>
           </div>
@@ -1229,7 +1298,13 @@ function AccountsPage() {
                     </div>
                     <button
                       className="text-button"
-                      onClick={provider === 'YouTube' ? connectYouTube : connectX}
+                      onClick={
+                        provider === 'YouTube'
+                          ? connectYouTube
+                          : provider === 'Meta'
+                            ? connectMeta
+                            : connectX
+                      }
                     >
                       ＋ Connect another
                     </button>
@@ -1242,6 +1317,7 @@ function AccountsPage() {
                         onDisconnect={setDisconnecting}
                         onReconnect={() => {
                           if (account.provider === 'YouTube') connectYouTube();
+                          else if (account.provider === 'Meta') connectMeta();
                           else connectX();
                         }}
                         onDefaultsSaved={(updated) => {

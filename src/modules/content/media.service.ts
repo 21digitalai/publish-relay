@@ -52,8 +52,8 @@ export async function storeStagedMediaInTransaction(
     requestId: string;
     idempotencyKey: string;
     staged: StagedMedia;
-    mimeType: 'video/mp4';
-    metadata: VideoMetadata;
+    mimeType: 'video/mp4' | 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+    metadata?: VideoMetadata;
   },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<StoredMedia> {
@@ -77,7 +77,7 @@ export async function storeStagedMediaInTransaction(
     sha256: input.staged.sha256,
     mimeType: input.mimeType,
     byteSize: input.staged.byteSize,
-    metadata: input.metadata,
+    ...(input.metadata ? { metadata: input.metadata } : {}),
   });
   try {
     const stored = await storage.promote({
@@ -93,7 +93,7 @@ export async function storeStagedMediaInTransaction(
       mimeType: input.mimeType,
       sha256: input.staged.sha256,
       byteSize: input.staged.byteSize,
-      metadata: input.metadata,
+      ...(input.metadata ? { metadata: input.metadata } : {}),
     };
   } catch (error) {
     await storage.delete(storageKey);

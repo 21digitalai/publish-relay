@@ -4,6 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   postRevisions,
   posts,
+  mediaObjects,
   providerAccounts,
   providerConnections,
   publicationJobs,
@@ -11,6 +12,49 @@ import {
 } from '../../database/schema.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { resolveYouTubeSettings } from '../providers/youtube-settings.js';
+
+export function buildMetaEffectivePayload(
+  destinationProvider: string,
+  availability: string,
+  content: Record<string, unknown>,
+  mediaIds: readonly string[],
+  mediaMimeTypes: readonly string[],
+): Record<string, unknown> {
+  if (availability !== 'active')
+    throw new PostValidationError(`Destination is unavailable: ${availability}`);
+  const kind = content.kind;
+  const text = typeof content.text === 'string' ? content.text.trim() : '';
+  if (!mediaMimeTypes.every((mimeType) => mimeType.startsWith('image/')))
+    throw new PostValidationError('Meta phase one accepts image media only');
+  if (destinationProvider === 'instagram') {
+    if (kind === 'single_image' && mediaIds.length !== 1)
+      throw new PostValidationError('Instagram single image requires exactly one image');
+    if (kind === 'carousel' && (mediaIds.length < 2 || mediaIds.length > 10))
+      throw new PostValidationError('Instagram carousel requires 2 to 10 images');
+    if (kind !== 'single_image' && kind !== 'carousel')
+      throw new PostValidationError('Instagram supports single image or carousel content');
+    return { schemaVersion: 1, destinationProvider, kind, caption: text, mediaIds: [...mediaIds] };
+  }
+  if (destinationProvider === 'facebook_page') {
+    if (kind === 'single_image' && mediaIds.length !== 1)
+      throw new PostValidationError('Facebook single image requires exactly one image');
+    if (kind === 'link') {
+      if (mediaIds.length !== 0)
+        throw new PostValidationError('Facebook link posts cannot include uploaded images');
+      const linkUrl = typeof content.linkUrl === 'string' ? content.linkUrl : '';
+      try {
+        if (new URL(linkUrl).protocol !== 'https:') throw new Error('invalid protocol');
+      } catch {
+        throw new PostValidationError('Facebook link posts require a valid HTTPS link');
+      }
+      return { schemaVersion: 1, destinationProvider, kind, message: text, linkUrl };
+    }
+    if (kind !== 'single_image')
+      throw new PostValidationError('Facebook supports link or single image content');
+    return { schemaVersion: 1, destinationProvider, kind, message: text, mediaIds: [...mediaIds] };
+  }
+  throw new PostValidationError('Unsupported Meta destination');
+}
 
 export interface PostRevisionInput {
   content: Record<string, unknown>;
@@ -101,6 +145,60 @@ async function createRevisionTargets(
       ),
     );
   const accountsById = new Map(accountRows.map((account) => [account.id, account]));
+  const metaAccountIds = accountRows
+    .filter((account) => account.provider === 'meta')
+    .map((account) => account.id);
+  const metaRows =
+    metaAccountIds.length === 0
+      ? []
+      : await database
+          .select({
+            id: providerAccounts.id,
+            destinationProvider: providerAccounts.destinationProvider,
+            availability: providerAccounts.availability,
+          })
+          .from(providerAccounts)
+          .where(
+            and(
+              eq(providerAccounts.workspaceId, input.workspaceId),
+              inArray(providerAccounts.id, metaAccountIds),
+            ),
+          );
+  const metaAccountsById = new Map(metaRows.map((account) => [account.id, account]));
+  const mediaRows =
+    input.mediaIds.length === 0
+      ? []
+      : await database
+          .select({ id: mediaObjects.id, mimeType: mediaObjects.mimeType })
+          .from(mediaObjects)
+          .where(
+            and(
+              eq(mediaObjects.workspaceId, input.workspaceId),
+              inArray(mediaObjects.id, input.mediaIds),
+            ),
+          );
+  const mediaMimeTypes = input.mediaIds.map(
+    (mediaId) => mediaRows.find((media) => media.id === mediaId)?.mimeType ?? '',
+  );
+  const effectivePayloads = new Map(
+    input.providerAccountIds.map((accountId) => {
+      const account = accountsById.get(accountId);
+      if (!account) throw new PostValidationError('Provider account is unavailable');
+      if (account.provider !== 'meta') return [accountId, null] as const;
+      const metaAccount = metaAccountsById.get(accountId);
+      if (!metaAccount) throw new PostValidationError('Meta destination is unavailable');
+      return [
+        accountId,
+        buildMetaEffectivePayload(
+          metaAccount.destinationProvider,
+          metaAccount.availability,
+          input.content,
+          input.mediaIds,
+          mediaMimeTypes,
+        ),
+      ] as const;
+    }),
+  );
   const effectiveSettings = new Map(
     input.providerAccountIds.map((accountId) => {
       const account = accountsById.get(accountId);
@@ -154,6 +252,7 @@ async function createRevisionTargets(
         postId: input.postId,
         revisionId: revision.id,
         providerAccountId,
+        effectivePayload: effectivePayloads.get(providerAccountId),
         effectiveProviderSettings: effectiveSettings.get(providerAccountId),
         scheduledAt: input.scheduledAt,
       })),

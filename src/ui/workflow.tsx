@@ -300,17 +300,66 @@ function Status({ state }: { state: JobState }) {
   );
 }
 
+type ComposerContentKind = 'text' | 'video' | 'single_image' | 'carousel' | 'link';
+
+interface ComposerDestination {
+  id: string;
+  provider: string;
+  destinationProvider: string;
+  displayName: string;
+  status: string;
+  availability: string;
+  capabilityFreshness: 'fresh' | 'stale' | 'unknown';
+  capabilitySnapshot: { contentKinds: ComposerContentKind[] };
+  adapterDefaults: { madeForKids?: boolean };
+}
+
+function sharedContentKinds(destinations: readonly ComposerDestination[]): ComposerContentKind[] {
+  const first = destinations[0];
+  if (!first) return [];
+  return first.capabilitySnapshot.contentKinds.filter((kind) =>
+    destinations
+      .slice(1)
+      .every((destination) => destination.capabilitySnapshot.contentKinds.includes(kind)),
+  );
+}
+
+function destinationName(destination: ComposerDestination): string {
+  if (destination.destinationProvider === 'instagram')
+    return `Instagram · ${destination.displayName}`;
+  if (destination.destinationProvider === 'facebook_page')
+    return `Facebook · ${destination.displayName}`;
+  return destination.displayName;
+}
+
+function normalizeComposerDestination(
+  input: Partial<ComposerDestination> & { id: string; provider: string; displayName: string },
+): ComposerDestination {
+  const destinationProvider = input.destinationProvider ?? input.provider;
+  const inferredKinds: ComposerContentKind[] =
+    destinationProvider === 'youtube'
+      ? ['video']
+      : destinationProvider === 'instagram'
+        ? ['single_image', 'carousel']
+        : destinationProvider === 'facebook_page'
+          ? ['link', 'single_image']
+          : ['text'];
+  return {
+    id: input.id,
+    provider: input.provider,
+    destinationProvider,
+    displayName: input.displayName,
+    status: input.status ?? 'active',
+    availability: input.availability ?? 'active',
+    capabilityFreshness: input.capabilityFreshness ?? 'unknown',
+    capabilitySnapshot: input.capabilitySnapshot ?? { contentKinds: inferredKinds },
+    adapterDefaults: input.adapterDefaults ?? {},
+  };
+}
+
 function Composer({ onClose }: { onClose: () => void }) {
   const draftId = /\/drafts\/([^/]+)$/.exec(window.location.pathname)?.[1] ?? null;
-  const [accounts, setAccounts] = useState<
-    {
-      id: string;
-      provider: string;
-      displayName: string;
-      status: string;
-      adapterDefaults: { madeForKids?: boolean };
-    }[]
-  >([]);
+  const [accounts, setAccounts] = useState<ComposerDestination[]>([]);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<QueueJobDto[]>([]);
   const [collisionGuidance, setCollisionGuidance] = useState<'loading' | 'ready' | 'unavailable'>(
@@ -318,6 +367,9 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [collisionWindowEnd, setCollisionWindowEnd] = useState<Date | null>(null);
   const [body, setBody] = useState('');
+  const [contentKind, setContentKind] = useState<ComposerContentKind>('text');
+  const [linkUrl, setLinkUrl] = useState('');
+  const [images, setImages] = useState<File[]>([]);
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
   const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
   const [draftState, setDraftState] = useState<'loading' | 'ready' | 'error'>(
@@ -340,24 +392,26 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
-  const uploadedMediaId = useRef<string | null>(null);
+  const uploadedMediaIds = useRef<string[]>([]);
   const discardUpload = async (): Promise<boolean> => {
-    const mediaId = uploadedMediaId.current;
-    if (!mediaId) return true;
-    try {
-      const response = await fetch(`/api/workflow/media/${mediaId}`, {
-        method: 'DELETE',
-        headers: { 'x-csrf-token': cookieValue('publish_relay_csrf') },
-      });
-      const envelope = (await response.json()) as { data?: { deleted?: boolean } };
-      if (response.ok && envelope.data?.deleted === true) {
-        uploadedMediaId.current = null;
-        return true;
-      }
-    } catch {
-      // Keep the media identity so a retry can resume server-owned cleanup.
-    }
-    return false;
+    const mediaIds = [...uploadedMediaIds.current];
+    if (mediaIds.length === 0) return true;
+    const deleted = await Promise.all(
+      mediaIds.map(async (mediaId) => {
+        try {
+          const response = await fetch(`/api/workflow/media/${mediaId}`, {
+            method: 'DELETE',
+            headers: { 'x-csrf-token': cookieValue('publish_relay_csrf') },
+          });
+          const envelope = (await response.json()) as { data?: { deleted?: boolean } };
+          return response.ok && envelope.data?.deleted === true;
+        } catch {
+          return false;
+        }
+      }),
+    );
+    if (deleted.every(Boolean)) uploadedMediaIds.current = [];
+    return deleted.every(Boolean);
   };
   const closeComposer = async () => {
     if (await discardUpload()) onClose();
@@ -370,6 +424,9 @@ function Composer({ onClose }: { onClose: () => void }) {
   const scheduledAt = scheduleOptions[scheduleOption];
   const scheduledAtMillis = scheduledAt ? scheduledAt.getTime() : null;
   const selected = accounts.filter((account) => selectedAccounts.includes(account.id));
+  const allowedKinds = sharedContentKinds(selected);
+  const includesMeta = selected.some((account) => account.provider === 'meta');
+  const allowedKindKey = allowedKinds.join(',');
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const youtubeHasMadeForKids = selected[0]?.adapterDefaults.madeForKids !== undefined;
@@ -394,10 +451,22 @@ function Composer({ onClose }: { onClose: () => void }) {
       ? !video || !videoTitle.trim() || (!youtubeHasMadeForKids && madeForKids === 'default')
       : !body.trim()) ||
     (includesYouTube && !isYouTube) ||
+    (includesMeta && !allowedKinds.includes(contentKind)) ||
+    (includesMeta &&
+      contentKind === 'single_image' &&
+      images.length + draftMediaIds.length !== 1) ||
+    (includesMeta &&
+      contentKind === 'carousel' &&
+      (images.length + draftMediaIds.length < 2 || images.length + draftMediaIds.length > 10)) ||
+    (includesMeta && contentKind === 'link' && !linkUrl.startsWith('https://')) ||
     selectedAccounts.length === 0 ||
     state !== 'ready' ||
     draftState !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
+  useEffect(() => {
+    if (allowedKinds.length > 0 && !allowedKinds.includes(contentKind))
+      setContentKind(allowedKinds[0] ?? 'text');
+  }, [allowedKindKey, allowedKinds, contentKind]);
   useEffect(() => {
     if (!draftId) return;
     void fetch(`/api/workflow/drafts/${draftId}`)
@@ -426,20 +495,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         if (!response.ok) throw new Error('Connected accounts could not be loaded.');
         return response.json() as Promise<{
           data: {
-            accounts: {
-              id: string;
-              provider: string;
-              displayName: string;
-              status: string;
-              adapterDefaults: { madeForKids?: boolean };
-            }[];
+            accounts: ComposerDestination[];
           };
         }>;
       })
       .then(({ data }) => {
-        const active = data.accounts.filter((account) => account.status === 'active');
-        setAccounts(active);
-        setSelectedAccounts(active.map((account) => account.id));
+        setAccounts(data.accounts.map(normalizeComposerDestination));
+        setSelectedAccounts([]);
         setState('ready');
       })
       .catch((reason: unknown) => {
@@ -477,6 +539,9 @@ function Composer({ onClose }: { onClose: () => void }) {
     intentKey.current = crypto.randomUUID();
   }, [
     body,
+    contentKind,
+    images,
+    linkUrl,
     localSchedule,
     madeForKids,
     notifySubscribers,
@@ -497,7 +562,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     try {
       let mediaIds: string[] = draftMediaIds;
       if (isYouTube && video) {
-        if (uploadedMediaId.current) mediaIds = [uploadedMediaId.current];
+        if (uploadedMediaIds.current[0]) mediaIds = [uploadedMediaIds.current[0]];
         else {
           const uploadResponse = await fetch('/api/workflow/media', {
             method: 'POST',
@@ -516,8 +581,33 @@ function Composer({ onClose }: { onClose: () => void }) {
           if (!uploadResponse.ok || !upload.data)
             throw new Error(upload.error ?? 'The video could not be uploaded.');
           mediaIds = [upload.data.id];
-          uploadedMediaId.current = upload.data.id;
+          uploadedMediaIds.current = [upload.data.id];
         }
+      }
+      if (includesMeta && images.length > 0) {
+        const uploaded = await Promise.all(
+          images.map(async (image, index) => {
+            const uploadResponse = await fetch('/api/workflow/media', {
+              method: 'POST',
+              headers: {
+                'content-type': image.type,
+                'x-file-name': image.name,
+                'x-csrf-token': cookieValue('publish_relay_csrf'),
+                'idempotency-key': `${intentKey.current}-image-${String(index)}`,
+              },
+              body: image,
+            });
+            const upload = (await uploadResponse.json()) as {
+              data?: { id: string };
+              error?: string | null;
+            };
+            if (!uploadResponse.ok || !upload.data)
+              throw new Error(upload.error ?? 'An image could not be uploaded.');
+            uploadedMediaIds.current.push(upload.data.id);
+            return upload.data.id;
+          }),
+        );
+        mediaIds = [...draftMediaIds, ...uploaded];
       }
       const youtubeOverrides = {
         schemaVersion: 1,
@@ -539,7 +629,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({
           content: isYouTube
             ? { kind: 'video', text: '', providerOptions: { youtube: youtubeOverrides } }
-            : { type: 'text', text: body.trim() },
+            : includesMeta
+              ? {
+                  kind: contentKind,
+                  text: body.trim(),
+                  ...(contentKind === 'link' ? { linkUrl: linkUrl.trim() } : {}),
+                }
+              : { type: 'text', text: body.trim() },
           mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
@@ -551,7 +647,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         error?: string | null;
       };
       if (!response.ok) throw new Error(envelope.error ?? 'The post could not be scheduled.');
-      uploadedMediaId.current = null;
+      uploadedMediaIds.current = [];
       setReceipt({
         count: selectedAccounts.length,
         scheduledAt: targetTime.toISOString(),
@@ -637,7 +733,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               </div>
             )}
             <fieldset className="account-picker">
-              <legend>Publish to</legend>
+              <legend>1. Choose destination</legend>
               {state === 'loading' && <p>Loading connected accounts…</p>}
               {state !== 'loading' && accounts.length === 0 && (
                 <p>Connect an account before scheduling.</p>
@@ -647,6 +743,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                   <input
                     className="account-picker-checkbox"
                     type="checkbox"
+                    disabled={account.availability !== 'active'}
                     checked={selectedAccounts.includes(account.id)}
                     onChange={() => {
                       setSelectedAccounts((current) =>
@@ -660,12 +757,38 @@ function Composer({ onClose }: { onClose: () => void }) {
                     {account.displayName.slice(0, 2).toUpperCase()}
                   </span>
                   <span>
-                    <strong>{account.displayName}</strong>
-                    <small>{account.provider.toUpperCase()}</small>
+                    <strong>{destinationName(account)}</strong>
+                    <small>
+                      {account.availability === 'active'
+                        ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · ${account.capabilityFreshness}`
+                        : `${account.availability.replaceAll('_', ' ')} · reconnect to schedule`}
+                    </small>
                   </span>
                 </label>
               ))}
             </fieldset>
+            {selected.length > 0 && !isYouTube && (
+              <fieldset className="content-kind-picker">
+                <legend>2. Choose supported content</legend>
+                {allowedKinds.map((kind) => (
+                  <button
+                    className={contentKind === kind ? 'selected' : ''}
+                    key={kind}
+                    type="button"
+                    onClick={() => {
+                      setContentKind(kind);
+                    }}
+                  >
+                    {kind.replaceAll('_', ' ')}
+                  </button>
+                ))}
+                {allowedKinds.length === 0 && (
+                  <p className="inline-validation" role="alert">
+                    These destinations do not share a supported content shape.
+                  </p>
+                )}
+              </fieldset>
+            )}
             <label className="field-label">
               {isYouTube ? 'Video title' : 'Post body'}
               {isYouTube ? (
@@ -690,9 +813,24 @@ function Composer({ onClose }: { onClose: () => void }) {
               <small>
                 {isYouTube
                   ? `${String(videoTitle.length)}/100`
-                  : `${String(body.length)}/280 per X post`}
+                  : includesMeta
+                    ? `${String(body.length)} characters`
+                    : `${String(body.length)}/280 per X post`}
               </small>
             </label>
+            {includesMeta && contentKind === 'link' && (
+              <label className="field-label">
+                HTTPS link
+                <input
+                  className="composer-link text-input"
+                  type="url"
+                  value={linkUrl}
+                  onChange={(event) => {
+                    setLinkUrl(event.target.value);
+                  }}
+                />
+              </label>
+            )}
             {isYouTube && (
               <div className="youtube-composer-options">
                 <label className="field-label">
@@ -755,7 +893,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                   ? video
                     ? video.name
                     : 'Choose exactly one MP4 video'
-                  : 'Media upload is available for YouTube destinations'}
+                  : includesMeta && contentKind !== 'link'
+                    ? `${String(images.length + draftMediaIds.length)} image${images.length + draftMediaIds.length === 1 ? '' : 's'} selected`
+                    : 'Choose a destination to see its media options'}
               </span>
               <label className="secondary-button" htmlFor="composer-media-upload">
                 Choose files
@@ -764,10 +904,12 @@ function Composer({ onClose }: { onClose: () => void }) {
                 id="composer-media-upload"
                 className="sr-only"
                 type="file"
-                accept="video/mp4"
-                disabled={!isYouTube}
+                accept={isYouTube ? 'video/mp4' : 'image/png,image/jpeg,image/gif,image/webp'}
+                multiple={includesMeta && contentKind === 'carousel'}
+                disabled={!isYouTube && (!includesMeta || contentKind === 'link')}
                 onChange={(event) => {
-                  setVideo(event.target.files?.[0] ?? null);
+                  if (isYouTube) setVideo(event.target.files?.[0] ?? null);
+                  else setImages(Array.from(event.target.files ?? []));
                 }}
               />
             </div>

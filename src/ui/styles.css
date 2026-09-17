@@ -1779,6 +1779,43 @@ select:focus-visible {
 .account-picker small {
   color: var(--text-faint);
 }
+
+.content-kind-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.content-kind-picker legend {
+  padding: 0 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.content-kind-picker button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.content-kind-picker button.selected {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 22%, transparent);
+}
+
+.account-picker label:has(input:disabled) {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
 .composer-body {
   min-height: 140px;
   resize: vertical;

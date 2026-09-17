@@ -11,6 +11,7 @@ import {
   type FacebookErrorEvidence,
   type FacebookHttpClient,
 } from './facebook-http-client.js';
+import { normalizeFacebookPhaseOneContent } from './facebook-content.js';
 
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png'] as const;
 
@@ -56,17 +57,23 @@ type FacebookContent =
 
 function contentForFacebook(content: PublishContent): FacebookContent {
   if (content.kind === 'link') {
-    const parsed = new URL(content.url);
-    if (parsed.protocol !== 'https:')
-      throw new Error('Facebook link posts require one canonical HTTPS URL and no media');
-    return { ...content, url: parsed.toString() };
+    const normalized = normalizeFacebookPhaseOneContent({
+      kind: 'link',
+      message: content.text,
+      linkUrl: content.url,
+      mediaMimeTypes: (content.media as readonly MediaReference[]).map((media) => media.mimeType),
+    });
+    if (normalized.kind !== 'link') throw new Error('Invalid Facebook link content');
+    return { ...content, text: normalized.message, url: normalized.linkUrl };
   }
-  if (content.kind !== 'text' || content.media.length !== 1)
-    throw new Error('Facebook phase one supports one link or one JPEG/PNG image');
-  const media = content.media[0];
-  if (!media || !SUPPORTED_IMAGE_TYPES.includes(media.mimeType as never))
-    throw new Error('Facebook phase one supports one JPEG/PNG image');
-  return content;
+  const normalized = normalizeFacebookPhaseOneContent({
+    kind: content.kind === 'text' ? 'single_image' : content.kind,
+    message: 'text' in content ? content.text : '',
+    mediaMimeTypes: content.media.map((media) => media.mimeType),
+  });
+  if (content.kind !== 'text' || normalized.kind !== 'single_image')
+    throw new Error('Invalid Facebook single image content');
+  return { ...content, text: normalized.message };
 }
 
 function artifactKey(stageId: string): string {

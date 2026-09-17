@@ -106,6 +106,26 @@ describe('FacebookPublishingAdapter', () => {
         { id: 'two', mimeType: 'image/png' },
       ],
     },
+    {
+      kind: 'text' as const,
+      text: 'gif',
+      media: [{ id: 'one', mimeType: 'image/gif' }],
+    },
+    {
+      kind: 'text' as const,
+      text: 'webp',
+      media: [{ id: 'one', mimeType: 'image/webp' }],
+    },
+    {
+      kind: 'text' as const,
+      text: '',
+      media: [{ id: 'one', mimeType: 'image/jpeg' }],
+    },
+    {
+      kind: 'text' as const,
+      text: '   ',
+      media: [{ id: 'one', mimeType: 'image/png' }],
+    },
     { kind: 'link' as const, text: '', url: 'http://unsafe.example', media: [] as [] },
     { kind: 'link' as const, text: '', url: 'not a url', media: [] as [] },
     {

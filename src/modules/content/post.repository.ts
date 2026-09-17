@@ -11,6 +11,7 @@ import {
   revisionMedia,
 } from '../../database/schema.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
+import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
 import { resolveYouTubeSettings } from '../providers/youtube-settings.js';
 import { validateLinkedInTextContent } from '../providers/linkedin-content.js';
 
@@ -37,22 +38,24 @@ export function buildMetaEffectivePayload(
     return { schemaVersion: 1, destinationProvider, kind, caption: text, mediaIds: [...mediaIds] };
   }
   if (destinationProvider === 'facebook_page') {
-    if (kind === 'single_image' && mediaIds.length !== 1)
-      throw new PostValidationError('Facebook single image requires exactly one image');
-    if (kind === 'link') {
-      if (mediaIds.length !== 0)
-        throw new PostValidationError('Facebook link posts cannot include uploaded images');
-      const linkUrl = typeof content.linkUrl === 'string' ? content.linkUrl : '';
-      try {
-        if (new URL(linkUrl).protocol !== 'https:') throw new Error('invalid protocol');
-      } catch {
-        throw new PostValidationError('Facebook link posts require a valid HTTPS link');
-      }
-      return { schemaVersion: 1, destinationProvider, kind, message: text, linkUrl };
+    try {
+      const normalized = normalizeFacebookPhaseOneContent({
+        kind,
+        message: content.text,
+        linkUrl: content.linkUrl,
+        mediaMimeTypes,
+      });
+      return {
+        schemaVersion: 1,
+        destinationProvider,
+        ...normalized,
+        ...(normalized.kind === 'single_image' ? { mediaIds: [...mediaIds] } : {}),
+      };
+    } catch (error) {
+      throw new PostValidationError(
+        error instanceof Error ? error.message : 'Invalid Facebook content',
+      );
     }
-    if (kind !== 'single_image')
-      throw new PostValidationError('Facebook supports link or single image content');
-    return { schemaVersion: 1, destinationProvider, kind, message: text, mediaIds: [...mediaIds] };
   }
   throw new PostValidationError('Unsupported Meta destination');
 }

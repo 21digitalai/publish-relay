@@ -1,0 +1,11 @@
+{
+  "endpoint": "GET /2/users/me",
+  "authMode": "OAuth 1.0a User Context",
+  "status": 200,
+  "rateLimit": { "limit": 75, "remaining": 74 },
+  "data": {
+    "id": "1234567890123456789",
+    "name": "Example Editorial",
+    "username": "example_editorial"
+  }
+}

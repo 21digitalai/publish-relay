@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "provider_connections_workspace_provider_unique" ON "provider_connections" USING btree ("workspace_id","provider");

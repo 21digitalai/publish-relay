@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "delegated_grants_active_identity_unique" ON "delegated_grants" USING btree ("workspace_id","user_id","client_id") WHERE "delegated_grants"."revoked_at" is null;

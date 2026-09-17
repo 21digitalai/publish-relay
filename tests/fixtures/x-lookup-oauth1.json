@@ -1,0 +1,23 @@
+{
+  "authMode": "OAuth 1.0a User Context",
+  "known": {
+    "status": 200,
+    "rateLimit": { "limit": 900, "remaining": 897 },
+    "data": {
+      "id": "987654321098765432",
+      "authorId": "1234567890123456789",
+      "username": "example_editorial"
+    }
+  },
+  "missing": {
+    "status": 200,
+    "rateLimit": { "limit": 900, "remaining": 896 },
+    "errors": [
+      {
+        "title": "Not Found Error",
+        "type": "https://api.x.com/2/problems/resource-not-found",
+        "resourceType": "tweet"
+      }
+    ]
+  }
+}

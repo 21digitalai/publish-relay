@@ -1,0 +1,13 @@
+ALTER TYPE "media_state" ADD VALUE IF NOT EXISTS 'cleanup_eligible';
+ALTER TYPE "media_state" ADD VALUE IF NOT EXISTS 'deleting';
+ALTER TYPE "media_state" ADD VALUE IF NOT EXISTS 'cleanup_failed';
+ALTER TABLE "media_objects" ADD COLUMN "retained_at" timestamp with time zone;
+ALTER TABLE "media_objects" ADD COLUMN "cleanup_eligible_at" timestamp with time zone;
+ALTER TABLE "media_objects" ADD COLUMN "cleanup_started_at" timestamp with time zone;
+ALTER TABLE "media_objects" ADD COLUMN "cleanup_failed_at" timestamp with time zone;
+ALTER TABLE "media_objects" ADD COLUMN "cleanup_retry_at" timestamp with time zone;
+ALTER TABLE "media_objects" ADD COLUMN "deleted_at" timestamp with time zone;
+ALTER TABLE "media_objects" ADD COLUMN "deletion_attempts" integer DEFAULT 0 NOT NULL;
+UPDATE "media_objects" SET "retained_at" = "updated_at" WHERE "state" = 'ready';
+UPDATE "media_objects" SET "deleted_at" = "updated_at" WHERE "state" = 'deleted';
+CREATE INDEX "media_objects_workspace_cleanup_idx" ON "media_objects" ("workspace_id", "state", "cleanup_eligible_at", "cleanup_retry_at");

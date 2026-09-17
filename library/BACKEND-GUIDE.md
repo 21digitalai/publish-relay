@@ -1,5 +1,18 @@
 # Publish Relay Backend Guide
 
+## Consumable Core package
+
+- Core is packaged as `@21digital/publish-relay-core`. Its root export exposes only
+  the Fastify composition seam; `./auth`, `./runtime`, and `./policy` are the
+  explicit in-process composition boundaries. Internal repositories, routes, and
+  provider implementations are not package entrypoints.
+- The package includes compiled server modules, the built browser UI, and Core's
+  migrations. `npm run package:smoke` builds a tarball, installs it into an empty
+  project, verifies UI and migration assets, and imports every public entrypoint.
+- Private Hosted code must pin one immutable Core package artifact and call
+  `registerCoreApplication` in the same Fastify process. It must not copy Core
+  source, mount a second server, proxy to Core, or create a second identity model.
+
 ## Accepted foundation
 
 - Generic external clients create tenant-scoped imported drafts through `POST /api/v1/drafts` and inspect them through the principal-scoped detail route. Creation uses the canonical idempotency ledger and a separate actor/externalId replay identity. Draft media must already be ready and owned by the workspace. The authenticated cockpit reads the same draft under tenant RLS and atomically links it to exactly one canonical post during composer submission; no parallel scheduling or media lifecycle exists.

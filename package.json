@@ -1,8 +1,33 @@
 {
-  "name": "publish-relay",
+  "name": "@21digital/publish-relay-core",
   "version": "0.1.0",
-  "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
+  "files": [
+    "dist",
+    "migrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/package-entrypoints/application.d.ts",
+      "import": "./dist/package-entrypoints/application.js"
+    },
+    "./runtime": {
+      "types": "./dist/package-entrypoints/runtime.d.ts",
+      "import": "./dist/package-entrypoints/runtime.js"
+    },
+    "./auth": {
+      "types": "./dist/package-entrypoints/auth.d.ts",
+      "import": "./dist/package-entrypoints/auth.js"
+    },
+    "./policy": {
+      "types": "./dist/modules/policy/action-policy.d.ts",
+      "import": "./dist/modules/policy/action-policy.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "publish-relay": "dist/entrypoints/cli.js"
   },
@@ -17,12 +42,10 @@
     "dev:worker": "tsx watch src/entrypoints/worker.ts",
     "dev:ui": "vite",
     "build": "tsc -p tsconfig.build.json && prettier --ignore-path /dev/null --write dist/entrypoints/cli.js && cmp src/modules/api/assets/publish-relay-cli.js dist/entrypoints/cli.js && mkdir -p dist/modules/api/assets && cp src/modules/api/assets/publish-relay-cli.js dist/modules/api/assets/publish-relay-cli.js && vite build",
+    "package:smoke": "npm run build && node scripts/package-smoke.mjs",
     "start:web": "node dist/entrypoints/web.js",
     "start:worker": "node dist/entrypoints/worker.js",
     "cli": "tsx src/entrypoints/cli.ts",
-    "parity:social-god": "tsx src/entrypoints/social-god-parity.ts",
-    "schedule:social-god": "tsx src/entrypoints/social-god-schedule.ts",
-    "remediate:x": "tsx src/entrypoints/x-remediation.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -33,7 +56,7 @@
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
-    "@fastify/static": "^8.3.0",
+    "@fastify/static": "^10.1.4",
     "@node-rs/argon2": "^2.2.0",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.6.0",
@@ -61,6 +84,11 @@
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.41.0",
     "vite": "^7.1.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "^0.25.4"
+    }
   }
 }

@@ -88,6 +88,27 @@ describe('production runtime secret configuration', () => {
     ).toThrow(/exactly 32 base64 bytes/);
   });
 
+  it('requires a complete Meta app pair and pinned Graph version', () => {
+    expect(() => loadRuntimeConfig({ NODE_ENV: 'test', PUBLISH_RELAY_META_APP_ID: 'app' })).toThrow(
+      /both app ID and app secret/,
+    );
+    expect(() =>
+      loadRuntimeConfig({
+        NODE_ENV: 'test',
+        PUBLISH_RELAY_META_APP_ID: 'app',
+        PUBLISH_RELAY_META_APP_SECRET: 'secret',
+      }),
+    ).toThrow(/pinned Meta Graph API version/);
+    expect(
+      loadRuntimeConfig({
+        NODE_ENV: 'test',
+        PUBLISH_RELAY_META_APP_ID: 'app',
+        PUBLISH_RELAY_META_APP_SECRET: 'secret',
+        PUBLISH_RELAY_META_GRAPH_VERSION: 'v23.0',
+      }),
+    ).toMatchObject({ PUBLISH_RELAY_META_GRAPH_VERSION: 'v23.0' });
+  });
+
   it('requires a distinct worker database URL in production', () => {
     const production = loadRuntimeConfig({
       NODE_ENV: 'production',

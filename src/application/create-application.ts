@@ -36,6 +36,8 @@ import type { YouTubeHttpClient } from '../modules/providers/youtube-http-client
 import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.routes.js';
 import type { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
 import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth.routes.js';
+import type { MetaHttpClient } from '../modules/providers/meta-http-client.js';
+import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
@@ -58,6 +60,11 @@ interface LinkedInOauthOptions {
   client: LinkedInHttpClient;
   callbackUrl: string;
 }
+interface MetaOauthOptions {
+  keys: MasterKeyProvider;
+  client: MetaHttpClient;
+  callbackUrl: string;
+}
 
 export interface CoreApplicationOptions {
   config: RuntimeConfig;
@@ -71,6 +78,7 @@ export interface CoreApplicationOptions {
   actionPolicy?: ActionPolicy;
   youtubeOauth?: YouTubeOauthOptions;
   linkedinOauth?: LinkedInOauthOptions;
+  metaOauth?: MetaOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
   magicLinks?: MagicLinkService;
   publicAuthShells?: boolean;
@@ -178,6 +186,7 @@ function registerBrowserRoutes(
     xOauth,
     youtubeOauth,
     linkedinOauth,
+    metaOauth,
     delegatedAuthorization,
   } = options;
   if (auth && database) {
@@ -203,6 +212,8 @@ function registerBrowserRoutes(
     registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
   if (auth && database && linkedinOauth)
     registerLinkedInOauthRoutes(application, { auth, database, actionPolicy, ...linkedinOauth });
+  if (auth && database && metaOauth)
+    registerMetaOauthRoutes(application, { auth, database, actionPolicy, ...metaOauth });
   if (auth && delegatedAuthorization)
     registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
 }

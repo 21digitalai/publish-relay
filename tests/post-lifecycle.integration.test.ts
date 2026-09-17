@@ -53,6 +53,7 @@ const migrations = [
   '0047_linkedin_member_connections.sql',
   '0048_reconcile_linkedin_connections.sql',
   '0049_meta_effective_payload.sql',
+  '0050_instagram_staging_artifacts.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

@@ -48,14 +48,15 @@ describe('Meta effective payloads', () => {
         ['image/jpeg', 'image/jpeg'],
       ),
     ).toThrow('Facebook supports link or single image content');
-    expect(() =>
-      buildMetaEffectivePayload(
-        'instagram',
-        'permission_lost',
-        { kind: 'single_image', text: 'No' },
-        [image],
-        ['image/jpeg'],
-      ),
-    ).toThrow('Destination is unavailable: permission_lost');
+    for (const availability of ['reauth_required', 'permission_lost', 'remote_missing'])
+      expect(() =>
+        buildMetaEffectivePayload(
+          'instagram',
+          availability,
+          { kind: 'single_image', text: 'No' },
+          [image],
+          ['image/jpeg'],
+        ),
+      ).toThrow(`Destination is unavailable: ${availability}`);
   });
 });

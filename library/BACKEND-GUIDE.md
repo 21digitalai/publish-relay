@@ -14,6 +14,10 @@
   source, mount a second server, proxy to Core, or create a second identity model.
   Hosted supplies a collision-free `uiPrefix` so Core assets do not claim `/`;
   Core rewrites only its generated `/assets/*` references to that prefix.
+- `createCoreRuntime` is the single owner of PostgreSQL, identity/API-key stores,
+  media storage, delegated authorization, and provider OAuth wiring. Standalone
+  Core and Hosted both consume it so existing identities and provider connections
+  cannot diverge between entrypoints.
 
 ## Accepted foundation
 

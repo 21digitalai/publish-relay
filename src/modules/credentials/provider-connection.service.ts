@@ -12,12 +12,12 @@ import {
   assertActiveMembership,
   replaceProviderConnection,
 } from './provider-connection.repository.js';
-import type { ProviderConnectionAdapter } from './provider-adapter.js';
+import type { ProviderConnectionDriver } from './provider-adapter.js';
 
 export async function connectProvider(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
-  adapter: ProviderConnectionAdapter,
+  adapter: ProviderConnectionDriver,
   input: {
     workspaceId: string;
     userId: string;

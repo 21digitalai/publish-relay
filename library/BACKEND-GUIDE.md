@@ -82,7 +82,8 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Provider adapter contract
 
-- Provider adapters implement the versioned `ProviderAdapter` contract for connect, discover, validate, stage, publish, lookup, and revoke.
+- Provider connection lifecycle and publication lifecycle are separate extension points. `ProviderConnectionDriver` owns connect/discover/revoke for an OAuth connection family; `PublishingAdapter` owns validate/stage/publish/lookup for one `destinationProvider`. Existing X and YouTube combined implementations retain the compatibility `ProviderAdapter` shape while new shared-family providers must keep the boundaries separate.
+- `PublishingAdapterRegistry` selects behavior only by destination provider. Generic content and scheduler modules must never infer an adapter from OAuth connection family, media type, or provider-specific imports.
 - Adapter contract v1.1 adds the provider-neutral `video` content kind with exactly one media reference and versioned effective YouTube options. YouTube requires a title plus resolved `privacyStatus`, `madeForKids`, and `notifySubscribers`; connection defaults and request overrides must be resolved before the adapter sees the immutable job snapshot. Description, tags, and category remain absent when omitted. The adapter advertises video-only technical capabilities and fails closed until OAuth, resumable-upload, lookup, and revocation transports are configured.
 - Core content is an explicit text, quote, or article union with typed media references. Adapters reject unsupported input; they never silently truncate or transform it.
 - Publishing returns one typed outcome: published, accepted pending, unknown/reconciliation-required, or failed with auth, rate-limit, validation, transient, or permanent classification.
@@ -121,6 +122,8 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Destination-scoped provider defaults
 
+- `provider_connections.provider` identifies the connection family. `provider_accounts.destination_provider` identifies the publishing adapter and may differ from the family (one `meta` connection can own `instagram` and `facebook_page` destinations).
+- Destination identity is stable and unique by connection, destination provider, and remote account ID. Sync updates rows in place, reactivates rediscovered rows, and marks missing rows `remote_missing`; it never deletes destination history or queued job references. Parent remote identity, per-destination credential reference, capability snapshot/freshness, and availability remain workspace-scoped through composite foreign keys and RLS.
 - `provider_accounts.adapter_defaults` is the destination-scoped source for optional provider policy defaults; it never stores credentials.
 - The browser account-management summary includes `adapterDefaults` only for its authenticated owner-facing settings form; the public/API-key destination collection remains a smaller contract and does not expose defaults.
 - Scheduling resolves sparse request overrides against those defaults before inserting target jobs. Each `publication_jobs.effective_provider_settings` value is the immutable, complete provider snapshot used for dispatch and returned by job-facing contracts.

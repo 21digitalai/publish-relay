@@ -45,9 +45,10 @@ beforeEach(async () => {
     INSERT INTO provider_connections (id, workspace_id, provider, credential_id, status) VALUES
       ('00000000-0000-4000-8000-000000000931', '${workspaceA}', 'x', '00000000-0000-4000-8000-000000000921', 'active'),
       ('00000000-0000-4000-8000-000000000932', '${workspaceA}', 'facebook', '00000000-0000-4000-8000-000000000922', 'disconnected');
-    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name) VALUES
-      ('00000000-0000-4000-8000-000000000941', '${workspaceA}', '00000000-0000-4000-8000-000000000931', 'x-a', 'X A'),
-      ('00000000-0000-4000-8000-000000000942', '${workspaceA}', '00000000-0000-4000-8000-000000000932', 'fb-a', 'Facebook A');
+    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id,
+      destination_provider, remote_account_id, display_name) VALUES
+      ('00000000-0000-4000-8000-000000000941', '${workspaceA}', '00000000-0000-4000-8000-000000000931', 'x-a', 'x', 'x-a', 'X A'),
+      ('00000000-0000-4000-8000-000000000942', '${workspaceA}', '00000000-0000-4000-8000-000000000932', 'fb-a', 'facebook_page', 'fb-a', 'Facebook A');
     INSERT INTO media_objects (workspace_id, storage_key, sha256, mime_type, byte_size, state) VALUES
       ('${workspaceA}', 'a-ready', 'sha-a', 'image/png', 100, 'ready'),
       ('${workspaceA}', 'a-deleted', 'sha-b', 'image/png', 900, 'deleted');

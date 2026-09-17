@@ -52,6 +52,7 @@ function failedOutcome(error: unknown): PublishOutcome {
 }
 
 export class XProviderAdapter implements ProviderAdapter {
+  public readonly destinationProvider = 'x' as const;
   public readonly version = PROVIDER_ADAPTER_VERSION;
   public readonly capabilities = {
     providerFamily: 'x',

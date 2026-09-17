@@ -32,6 +32,11 @@ import {
   dispatchDueInstagramJobs,
   reconcileInstagramJobs,
 } from '../modules/providers/instagram-dispatch.service.js';
+import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
+import {
+  dispatchDueFacebookJobs,
+  reconcileFacebookJobs,
+} from '../modules/providers/facebook-dispatch.service.js';
 
 const config = loadRuntimeConfig();
 const shutdownController = new AbortController();
@@ -99,6 +104,13 @@ const instagramRuntime =
         leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
       }
     : null;
+const facebookRuntime =
+  instagramRuntime && config.PUBLISH_RELAY_META_GRAPH_VERSION
+    ? {
+        ...instagramRuntime,
+        client: new FacebookHttpClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
+      }
+    : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
@@ -110,6 +122,10 @@ if (!youtubeRuntime)
 if (!instagramRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'instagram', reason: 'missing_configuration' })}\n`,
+  );
+if (!facebookRuntime)
+  process.stdout.write(
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'facebook_page', reason: 'missing_configuration' })}\n`,
   );
 
 const destinationDispatchAdapters: DestinationDispatchAdapter[] = [];
@@ -130,6 +146,12 @@ if (instagramRuntime)
     destinationProvider: 'instagram',
     dispatch: () => dispatchDueInstagramJobs(instagramRuntime),
     reconcile: () => reconcileInstagramJobs(instagramRuntime),
+  });
+if (facebookRuntime)
+  destinationDispatchAdapters.push({
+    destinationProvider: 'facebook_page',
+    dispatch: () => dispatchDueFacebookJobs(facebookRuntime),
+    reconcile: () => reconcileFacebookJobs(facebookRuntime),
   });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

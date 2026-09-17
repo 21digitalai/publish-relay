@@ -31,6 +31,7 @@ export interface MediaReference {
 
 export type PublishContent =
   | { kind: 'text'; text: string; media: MediaReference[] }
+  | { kind: 'link'; text: string; url: string; media: [] }
   | { kind: 'quote'; text: string; quotedPostId: string; media: MediaReference[] }
   | { kind: 'article'; title: string; body: string; media: MediaReference[] }
   | {

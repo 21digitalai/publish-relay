@@ -4,14 +4,19 @@ import { PublishingAdapterRegistry } from '../src/modules/providers/adapter-regi
 import { runDestinationDispatchCycle } from '../src/modules/providers/destination-dispatch-runtime.js';
 import type { PublishingAdapter } from '../src/modules/providers/contract.js';
 
-function adapter(destinationProvider: 'x' | 'youtube'): PublishingAdapter {
+function adapter(destinationProvider: 'x' | 'youtube' | 'facebook_page'): PublishingAdapter {
   return { destinationProvider } as PublishingAdapter;
 }
 
 describe('publishing adapter registry', () => {
   it('selects publishing behavior by destination provider', () => {
-    const registry = new PublishingAdapterRegistry([adapter('x'), adapter('youtube')]);
+    const registry = new PublishingAdapterRegistry([
+      adapter('x'),
+      adapter('youtube'),
+      adapter('facebook_page'),
+    ]);
     expect(registry.get('youtube').destinationProvider).toBe('youtube');
+    expect(registry.get('facebook_page').destinationProvider).toBe('facebook_page');
   });
 
   it('rejects duplicate destination registrations', () => {

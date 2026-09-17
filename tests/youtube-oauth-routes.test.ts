@@ -6,7 +6,7 @@ vi.mock('../src/modules/providers/youtube-oauth.service.js', () => ({
   completeYouTubeOauthConnection: vi.fn(),
 }));
 
-import { createApplication } from '../src/application/create-application.js';
+import { createStandaloneApplication } from '../src/application/create-application.js';
 import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
 import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
 import {
@@ -18,7 +18,7 @@ import {
   completeYouTubeOauthConnection,
 } from '../src/modules/providers/youtube-oauth.service.js';
 
-const applications = [] as ReturnType<typeof createApplication>[];
+const applications = [] as ReturnType<typeof createStandaloneApplication>[];
 afterEach(async () => {
   vi.clearAllMocks();
   await Promise.all(applications.splice(0).map((application) => application.close()));
@@ -57,17 +57,17 @@ function createYouTubeApplication(authenticated = false) {
     currentVersion: () => 'v1',
     getKey: () => Promise.resolve(Buffer.alloc(32)),
   };
-  const application = createApplication(
-    { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
-    new AuthService(createStore(authenticated)),
-    undefined,
-    undefined,
-    {} as NodePgDatabase,
-    undefined,
-    undefined,
-    allowAllActionPolicy,
-    { keys, client: {} as never, callbackUrl: 'https://relay.example/api/oauth/youtube/callback' },
-  );
+  const application = createStandaloneApplication({
+    config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
+    auth: new AuthService(createStore(authenticated)),
+    database: {} as NodePgDatabase,
+    actionPolicy: allowAllActionPolicy,
+    youtubeOauth: {
+      keys,
+      client: {} as never,
+      callbackUrl: 'https://relay.example/api/oauth/youtube/callback',
+    },
+  });
   applications.push(application);
   return application;
 }

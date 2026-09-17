@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { createApplication } from '../../src/application/create-application.js';
+import { createStandaloneApplication } from '../../src/application/create-application.js';
 import {
   providerConnections,
   providerAccounts,
@@ -46,18 +46,15 @@ await database.exec(`
 `);
 const typedDatabase = drizzle(database) as unknown as NodePgDatabase;
 const auth = new AuthService(createPostgresAuthStore(typedDatabase));
-const application = createApplication(
-  { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 43199, WORKER_POLL_INTERVAL_MS: 1000 },
+const application = createStandaloneApplication({
+  config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 43199, WORKER_POLL_INTERVAL_MS: 1000 },
   auth,
-  undefined,
-  resolve(process.cwd(), 'dist/ui'),
-  typedDatabase,
-  undefined,
-  undefined,
-  undefined,
-  undefined,
-  new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(typedDatabase)),
-);
+  uiRoot: resolve(process.cwd(), 'dist/ui'),
+  database: typedDatabase,
+  delegatedAuthorization: new DelegatedAuthorizationService(
+    createPostgresDelegatedAuthorizationStore(typedDatabase),
+  ),
+});
 const fixtureKey = Buffer.alloc(32, 7);
 application.post('/api/oauth/x', async (request, reply) => {
   const identity = await authenticateRequest(request, auth);

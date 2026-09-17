@@ -229,12 +229,6 @@ export function registerAuthRoutes(
     };
   });
 
-  const publicShell = (_request: FastifyRequest, reply: FastifyReply) =>
-    reply.type('text/html').send(options.shellHtml);
-  application.get('/login', publicShell);
-  application.get('/register', publicShell);
-  application.get('/forgot-password', publicShell);
-
   const protectedShell = async (request: FastifyRequest, reply: FastifyReply) => {
     const identity = await authorizeRequest(request, auth, 'content:read');
     if (!identity) return reply.redirect('/login');
@@ -243,4 +237,15 @@ export function registerAuthRoutes(
   application.get('/app', protectedShell);
   application.get('/onboarding/*', protectedShell);
   application.get('/w/*', protectedShell);
+}
+
+export function registerPublicAuthShellRoutes(
+  application: FastifyInstance,
+  shellHtml: string,
+): void {
+  const publicShell = (_request: FastifyRequest, reply: FastifyReply) =>
+    reply.type('text/html').send(shellHtml);
+  application.get('/login', publicShell);
+  application.get('/register', publicShell);
+  application.get('/forgot-password', publicShell);
 }

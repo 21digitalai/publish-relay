@@ -12,7 +12,10 @@ import { registerAgentDiscoveryRoutes } from '../modules/api/agent-discovery.js'
 import { ApiRateLimiter } from '../modules/api/rate-limit.js';
 import { CursorCodec } from '../modules/api/contract.js';
 import type { AuthService } from '../modules/identity/auth.service.js';
-import { registerAuthRoutes } from '../modules/identity/auth.routes.js';
+import {
+  registerAuthRoutes,
+  registerPublicAuthShellRoutes,
+} from '../modules/identity/auth.routes.js';
 import type { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
 import { registerPostRoutes } from '../modules/content/post.routes.js';
@@ -35,24 +38,37 @@ import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/actio
 import type { DelegatedAuthorizationService } from '../modules/delegated-authorization/delegated-authorization.service.js';
 import { registerDelegatedAuthorizationRoutes } from '../modules/delegated-authorization/delegated-authorization.routes.js';
 
-export function createApplication(
-  config: RuntimeConfig,
-  auth?: AuthService,
-  apiKeys?: ApiKeyService,
-  uiRootOverride?: string,
-  database?: NodePgDatabase,
-  xOauth?: { keys: MasterKeyProvider; client: XHttpClient; callbackUrl: string },
-  mediaStorage?: MediaStorage,
-  actionPolicy: ActionPolicy = allowAllActionPolicy,
-  youtubeOauth?: { keys: MasterKeyProvider; client: YouTubeHttpClient; callbackUrl: string },
-  delegatedAuthorization?: DelegatedAuthorizationService,
-): FastifyInstance {
-  const application = Fastify({ logger: config.NODE_ENV !== 'test' });
-  const uiRoot = uiRootOverride ?? fileURLToPath(new URL('../ui/', import.meta.url));
-  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8');
+interface XOauthOptions {
+  keys: MasterKeyProvider;
+  client: XHttpClient;
+  callbackUrl: string;
+}
+interface YouTubeOauthOptions {
+  keys: MasterKeyProvider;
+  client: YouTubeHttpClient;
+  callbackUrl: string;
+}
 
-  application.register(fastifyStatic, { root: uiRoot, wildcard: false });
+export interface CoreApplicationOptions {
+  config: RuntimeConfig;
+  auth?: AuthService;
+  apiKeys?: ApiKeyService;
+  uiRoot?: string;
+  database?: NodePgDatabase;
+  xOauth?: XOauthOptions;
+  mediaStorage?: MediaStorage;
+  actionPolicy?: ActionPolicy;
+  youtubeOauth?: YouTubeOauthOptions;
+  delegatedAuthorization?: DelegatedAuthorizationService;
+  publicAuthShells?: boolean;
+}
 
+export type StandaloneApplicationOptions = Omit<CoreApplicationOptions, 'publicAuthShells'>;
+
+function registerOperationalRoutes(
+  application: FastifyInstance,
+  database: NodePgDatabase | undefined,
+): void {
   application.get('/health/live', () => ({ data: { status: 'ok' }, error: null }));
   application.get('/health/ready', async (_request, reply) => {
     if (!database) return reply.code(503).send({ data: null, error: 'Database is not configured' });
@@ -77,69 +93,70 @@ export function createApplication(
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(body);
   });
   application.get('/api', () => ({ data: { name: 'Publish Relay' }, error: null }));
-  registerApiDocumentationRoute(application);
-  registerAgentDiscoveryRoutes(application);
-  if (auth)
-    registerAuthRoutes(application, auth, {
-      secureCookies: config.NODE_ENV === 'production',
-      shellHtml,
-    });
-  if (apiKeys) {
-    const rateLimiter = new ApiRateLimiter({
-      workspace: 600,
-      key: 300,
-      mutationWorkspace: 120,
-      mutationKey: 60,
-      windowMs: 60_000,
-    });
-    registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
-    if (database) {
-      registerDestinationRoutes(
-        application,
-        database,
-        apiKeys,
-        rateLimiter,
-        delegatedAuthorization,
-      );
-      if (!config.CURSOR_SIGNING_SECRET)
-        throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
-      registerPostRoutes(
-        application,
-        database,
-        apiKeys,
-        rateLimiter,
-        new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
-        actionPolicy,
-        delegatedAuthorization,
-      );
-      registerExternalDraftRoutes(
-        application,
-        database,
-        apiKeys,
-        rateLimiter,
-        delegatedAuthorization,
-      );
-      if (mediaStorage)
-        registerMediaRoutes(
-          application,
-          database,
-          mediaStorage,
-          apiKeys,
-          rateLimiter,
-          actionPolicy,
-          undefined,
-          {
-            maxBytes: config.MEDIA_VIDEO_MAX_BYTES ?? AGENT_MEDIA_MAX_BYTES,
-            limits: {
-              maxDurationMs: config.MEDIA_VIDEO_MAX_DURATION_MS ?? AGENT_VIDEO_LIMITS.maxDurationMs,
-              maxWidth: config.MEDIA_VIDEO_MAX_WIDTH ?? AGENT_VIDEO_LIMITS.maxWidth,
-              maxHeight: config.MEDIA_VIDEO_MAX_HEIGHT ?? AGENT_VIDEO_LIMITS.maxHeight,
-            },
-          },
-          delegatedAuthorization,
-        );
-    }
-  }
+}
+
+function createApiRateLimiter(): ApiRateLimiter {
+  return new ApiRateLimiter({
+    workspace: 600,
+    key: 300,
+    mutationWorkspace: 120,
+    mutationKey: 60,
+    windowMs: 60_000,
+  });
+}
+
+function registerMachineApiRoutes(
+  application: FastifyInstance,
+  options: CoreApplicationOptions,
+  actionPolicy: ActionPolicy,
+): void {
+  const { config, apiKeys, auth, database, delegatedAuthorization, mediaStorage } = options;
+  if (!apiKeys) return;
+  const rateLimiter = createApiRateLimiter();
+  registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
+  if (!database) return;
+  registerDestinationRoutes(application, database, apiKeys, rateLimiter, delegatedAuthorization);
+  if (!config.CURSOR_SIGNING_SECRET)
+    throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
+  registerPostRoutes(
+    application,
+    database,
+    apiKeys,
+    rateLimiter,
+    new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
+    actionPolicy,
+    delegatedAuthorization,
+  );
+  registerExternalDraftRoutes(application, database, apiKeys, rateLimiter, delegatedAuthorization);
+  if (!mediaStorage) return;
+  registerMediaRoutes(
+    application,
+    database,
+    mediaStorage,
+    apiKeys,
+    rateLimiter,
+    actionPolicy,
+    undefined,
+    {
+      maxBytes: config.MEDIA_VIDEO_MAX_BYTES ?? AGENT_MEDIA_MAX_BYTES,
+      limits: {
+        maxDurationMs: config.MEDIA_VIDEO_MAX_DURATION_MS ?? AGENT_VIDEO_LIMITS.maxDurationMs,
+        maxWidth: config.MEDIA_VIDEO_MAX_WIDTH ?? AGENT_VIDEO_LIMITS.maxWidth,
+        maxHeight: config.MEDIA_VIDEO_MAX_HEIGHT ?? AGENT_VIDEO_LIMITS.maxHeight,
+      },
+    },
+    delegatedAuthorization,
+  );
+}
+
+function registerBrowserRoutes(
+  application: FastifyInstance,
+  options: CoreApplicationOptions,
+  actionPolicy: ActionPolicy,
+  shellHtml: string,
+): void {
+  const { config, auth, database, mediaStorage, xOauth, youtubeOauth, delegatedAuthorization } =
+    options;
   if (auth && database) {
     registerProviderAccountRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {
@@ -163,6 +180,42 @@ export function createApplication(
     registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
   if (auth && delegatedAuthorization)
     registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
+}
+
+export function registerCoreApplication(
+  application: FastifyInstance,
+  options: CoreApplicationOptions,
+): FastifyInstance {
+  const {
+    config,
+    auth,
+    database,
+    actionPolicy = allowAllActionPolicy,
+    publicAuthShells = false,
+  } = options;
+  const uiRoot = options.uiRoot ?? fileURLToPath(new URL('../ui/', import.meta.url));
+  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8');
+
+  application.register(fastifyStatic, { root: uiRoot, wildcard: false });
+
+  registerOperationalRoutes(application, database);
+  registerApiDocumentationRoute(application);
+  registerAgentDiscoveryRoutes(application);
+  if (auth)
+    registerAuthRoutes(application, auth, {
+      secureCookies: config.NODE_ENV === 'production',
+      shellHtml,
+    });
+  if (auth && publicAuthShells) registerPublicAuthShellRoutes(application, shellHtml);
+  registerMachineApiRoutes(application, options, actionPolicy);
+  registerBrowserRoutes(application, options, actionPolicy, shellHtml);
 
   return application;
+}
+
+export function createStandaloneApplication(
+  options: StandaloneApplicationOptions,
+): FastifyInstance {
+  const application = Fastify({ logger: options.config.NODE_ENV !== 'test' });
+  return registerCoreApplication(application, { ...options, publicAuthShells: true });
 }

@@ -23,6 +23,7 @@ Concrete architecture, security, persistence, job, and deployment decisions are 
 
 ## Core policy and commercial boundary
 
+- `src/application/create-application.ts` is the public in-process composition seam. `registerCoreApplication` installs Core into a caller-owned Fastify instance from one typed options object; it does not create a second server or trust a remote identity header. `createStandaloneApplication` creates the normal Core-owned Fastify process and includes the public login, registration, and password-recovery shells. A composition may omit only those public shells; Core's auth/session API, protected application shell, authorization, provider routes, health, assets, and allow-all policy defaults remain Core-owned and unchanged. Registering Core twice on one Fastify instance is an error.
 - Core contains no commercial product concepts or schema. Never add Stripe, plans, prices, tier names, quota thresholds, marketing/storefront code, or Cloud-owned migrations.
 - Commercially restrictable mutations call one injected neutral action-policy port from the command/application layer before mutation. The standalone implementation allows every commercial dimension; existing authentication, authorization, technical validation and provider safety constraints remain mandatory.
 - Do not add an HTTP policy adapter without a later proven deployment requirement. The intended future private composition injects an in-process implementation that may participate in the same database transaction without Core importing private code.

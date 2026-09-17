@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
-import { createApplication } from '../application/create-application.js';
+import { createStandaloneApplication } from '../application/create-application.js';
 import { loadRuntimeConfig, resolveXProviderCredentials } from '../config/runtime-config.js';
 import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import { createPostgresAuthStore } from '../modules/identity/auth.repository.js';
@@ -33,33 +33,39 @@ const mediaStorage = new LocalMediaStorage(config.MEDIA_STORAGE_ROOT);
 await mediaStorage.cleanupStaleStaging({
   staleBefore: new Date(Date.now() - (config.MEDIA_STAGING_STALE_MS ?? DEFAULT_STAGING_STALE_MS)),
 });
-const application = createApplication(
+const application = createStandaloneApplication({
   config,
-  new AuthService(createPostgresAuthStore(database)),
-  new ApiKeyService(createPostgresApiKeyStore(database)),
-  undefined,
+  auth: new AuthService(createPostgresAuthStore(database)),
+  apiKeys: new ApiKeyService(createPostgresApiKeyStore(database)),
   database,
-  xCredentials && publicOrigin
+  ...(xCredentials && publicOrigin
     ? {
-        keys: new RuntimeMasterKeyProvider(activeKeyVersion),
-        client: new XHttpClient(xCredentials),
-        callbackUrl: new URL('/api/oauth/x/callback', publicOrigin).toString(),
+        xOauth: {
+          keys: new RuntimeMasterKeyProvider(activeKeyVersion),
+          client: new XHttpClient(xCredentials),
+          callbackUrl: new URL('/api/oauth/x/callback', publicOrigin).toString(),
+        },
       }
-    : undefined,
+    : {}),
   mediaStorage,
-  undefined,
-  config.PUBLISH_RELAY_GOOGLE_CLIENT_ID && config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET && publicOrigin
+  ...(config.PUBLISH_RELAY_GOOGLE_CLIENT_ID &&
+  config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET &&
+  publicOrigin
     ? {
-        keys: new RuntimeMasterKeyProvider(activeKeyVersion),
-        client: new YouTubeHttpClient({
-          clientId: config.PUBLISH_RELAY_GOOGLE_CLIENT_ID,
-          clientSecret: config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET,
-        }),
-        callbackUrl: new URL('/api/oauth/youtube/callback', publicOrigin).toString(),
+        youtubeOauth: {
+          keys: new RuntimeMasterKeyProvider(activeKeyVersion),
+          client: new YouTubeHttpClient({
+            clientId: config.PUBLISH_RELAY_GOOGLE_CLIENT_ID,
+            clientSecret: config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET,
+          }),
+          callbackUrl: new URL('/api/oauth/youtube/callback', publicOrigin).toString(),
+        },
       }
-    : undefined,
-  new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(database)),
-);
+    : {}),
+  delegatedAuthorization: new DelegatedAuthorizationService(
+    createPostgresDelegatedAuthorizationStore(database),
+  ),
+});
 application.addHook('onClose', async () => pool.end());
 
 await application.listen({ host: config.HOST, port: config.PORT });

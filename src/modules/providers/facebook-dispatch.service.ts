@@ -13,9 +13,11 @@ import { getActiveCredential } from '../credentials/credential.repository.js';
 import { decryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
 import {
   claimDueJobs,
+  claimReconciliationJobs,
   deriveJobIdempotencyKey,
   finishDispatchAttempt,
   recoverExpiredDispatches,
+  resolveReconciliation,
   startDispatchAttempt,
 } from '../scheduler/job.repository.js';
 import { FacebookPublishingAdapter } from './facebook-adapter.js';
@@ -43,6 +45,13 @@ export interface FacebookDispatchRuntime {
   publicOrigin: string;
   workerId: string;
   leaseMs: number;
+}
+
+interface FacebookJob {
+  id: string;
+  workspaceId: string;
+  revisionId: string;
+  providerAccountId: string;
 }
 
 export function getFacebookRetryAt(
@@ -146,27 +155,14 @@ async function markUnavailable(
   );
 }
 
-async function dispatchJob(
+async function createAdapter(
   runtime: FacebookDispatchRuntime,
-  job: { id: string; workspaceId: string; revisionId: string; providerAccountId: string },
+  job: FacebookJob,
+  credentialId: string,
   now: Date,
 ) {
-  const context = await loadContext(runtime.database, job.workspaceId, job.id);
-  const fingerprint = deriveJobIdempotencyKey({
-    jobId: job.id,
-    revisionId: job.revisionId,
-    providerAccountId: job.providerAccountId,
-  });
-  const attempt = await startDispatchAttempt(runtime.database, {
-    workspaceId: job.workspaceId,
-    jobId: job.id,
-    workerId: runtime.workerId,
-    fingerprint,
-    now,
-  });
-  if (!attempt) return false;
-  const accessToken = await readToken(runtime, job.workspaceId, context.credentialId);
-  const adapter = new FacebookPublishingAdapter({
+  const accessToken = await readToken(runtime, job.workspaceId, credentialId);
+  return new FacebookPublishingAdapter({
     client: runtime.client,
     artifacts: new PostgresFacebookArtifactStore(runtime.database, {
       workspaceId: job.workspaceId,
@@ -184,17 +180,82 @@ async function dispatchJob(
       return Promise.resolve(url.toString());
     },
   });
-  const content: PublishContent =
-    context.payload.kind === 'link'
-      ? {
-          kind: 'link',
-          text: context.payload.message,
-          url: context.payload.linkUrl,
-          media: [],
-        }
-      : { kind: 'text', text: context.payload.message, media: context.media };
+}
+
+function publishContent(context: Awaited<ReturnType<typeof loadContext>>): PublishContent {
+  return context.payload.kind === 'link'
+    ? {
+        kind: 'link',
+        text: context.payload.message,
+        url: context.payload.linkUrl,
+        media: [],
+      }
+    : { kind: 'text', text: context.payload.message, media: context.media };
+}
+
+async function failPreflight(
+  runtime: FacebookDispatchRuntime,
+  job: FacebookJob,
+  attemptId: string,
+  now: Date,
+  redactedError: string,
+) {
+  await finishDispatchAttempt(runtime.database, {
+    workspaceId: job.workspaceId,
+    jobId: job.id,
+    attemptId,
+    outcome: 'permanent',
+    now,
+    redactedError,
+  });
+}
+
+async function dispatchJob(
+  runtime: FacebookDispatchRuntime,
+  job: FacebookJob,
+  now: Date,
+) {
+  const fingerprint = deriveJobIdempotencyKey({
+    jobId: job.id,
+    revisionId: job.revisionId,
+    providerAccountId: job.providerAccountId,
+  });
+  const attempt = await startDispatchAttempt(runtime.database, {
+    workspaceId: job.workspaceId,
+    jobId: job.id,
+    workerId: runtime.workerId,
+    fingerprint,
+    now,
+  });
+  if (!attempt) return false;
+  let context: Awaited<ReturnType<typeof loadContext>>;
+  try {
+    context = await loadContext(runtime.database, job.workspaceId, job.id);
+  } catch {
+    await failPreflight(
+      runtime,
+      job,
+      attempt.attemptId,
+      now,
+      'Facebook Page destination is unavailable',
+    );
+    return false;
+  }
+  let adapter: FacebookPublishingAdapter;
+  try {
+    adapter = await createAdapter(runtime, job, context.credentialId, now);
+  } catch {
+    await failPreflight(
+      runtime,
+      job,
+      attempt.attemptId,
+      now,
+      'Facebook credential is unavailable',
+    );
+    return false;
+  }
   const outcome = await adapter.publish(
-    await adapter.stage(context.accountRemoteId, content, fingerprint),
+    await adapter.stage(context.accountRemoteId, publishContent(context), fingerprint),
   );
   const retryAt = getFacebookRetryAt(outcome, now);
   if (outcome.status === 'failed' && outcome.code === 'auth')
@@ -235,7 +296,13 @@ export async function dispatchDueFacebookJobs(
     destinationProvider: 'facebook_page',
   });
   let published = 0;
-  for (const job of jobs) if (await dispatchJob(runtime, job, now)) published += 1;
+  for (const job of jobs) {
+    try {
+      if (await dispatchJob(runtime, job, now)) published += 1;
+    } catch {
+      // Leave an uncertain active attempt for lease-expiry reconciliation and continue siblings.
+    }
+  }
   return published;
 }
 
@@ -244,5 +311,52 @@ export async function reconcileFacebookJobs(
   now = new Date(),
 ): Promise<number> {
   await recoverExpiredDispatches(runtime.database, now);
-  return 0;
+  const jobIds = await claimReconciliationJobs(runtime.database, {
+    workerId: runtime.workerId,
+    now,
+    leaseMs: runtime.leaseMs,
+    limit: 10,
+    destinationProvider: 'facebook_page',
+  });
+  let resolved = 0;
+  for (const jobId of jobIds) {
+    try {
+      const [job] = await runtime.database
+        .select({
+          id: publicationJobs.id,
+          workspaceId: publicationJobs.workspaceId,
+          revisionId: publicationJobs.revisionId,
+          providerAccountId: publicationJobs.providerAccountId,
+        })
+        .from(publicationJobs)
+        .where(eq(publicationJobs.id, jobId))
+        .limit(1);
+      if (!job) continue;
+      const context = await loadContext(runtime.database, job.workspaceId, job.id);
+      const adapter = await createAdapter(runtime, job, context.credentialId, now);
+      const fingerprint = deriveJobIdempotencyKey({
+        jobId: job.id,
+        revisionId: job.revisionId,
+        providerAccountId: job.providerAccountId,
+      });
+      const outcome = await adapter.publish(
+        await adapter.stage(context.accountRemoteId, publishContent(context), fingerprint),
+      );
+      if (outcome.status !== 'published') continue;
+      if (
+        await resolveReconciliation(runtime.database, {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          workerId: runtime.workerId,
+          outcome: 'published',
+          now,
+          externalPostId: outcome.externalPostId,
+        })
+      )
+        resolved += 1;
+    } catch {
+      // Keep ambiguous request-started jobs held for operator resolution or a later safe lookup.
+    }
+  }
+  return resolved;
 }

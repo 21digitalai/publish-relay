@@ -152,6 +152,26 @@ describe('FacebookPublishingAdapter', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([{ body: {} }, { body: { id: 42 } }, { body: null }])(
+    'holds a malformed successful create response and never writes twice: $body',
+    async ({ body }) => {
+      const fetch = vi.fn(async () => response(body));
+      const { instance } = adapter(fetch);
+      const staged = await instance.stage(
+        'page',
+        { kind: 'link', text: '', url: 'https://example.com', media: [] },
+        'job',
+      );
+
+      await expect(instance.publish(staged)).resolves.toEqual({
+        status: 'unknown',
+        reconciliationKey: 'facebook_page:job:create',
+      });
+      await expect(instance.publish(staged)).resolves.toMatchObject({ status: 'unknown' });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('uses a labeled derived link when authoritative permalink lookup fails', async () => {
     const fetch = vi.fn(async (_url: string | URL, init?: RequestInit) =>
       init?.method === 'POST' ? response({ id: 'page_2' }) : response({}, 404),

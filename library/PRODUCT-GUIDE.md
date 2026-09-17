@@ -20,7 +20,7 @@ Users can register, connect multiple social accounts, schedule content through t
 - Instagram Professional phase-one publishing: a required caption with one JPEG/PNG image or a
   2–10 image carousel. Text-only posts, video/Reels, Stories, and advanced Instagram features remain
   later work.
-- Facebook Pages publishing.
+- Facebook Page phase-one publishing: a canonical HTTPS link with optional message, or one JPEG/PNG image with a message. Text-only, multiple images, video, and advanced Page options remain later work.
 - One Meta connection discovers managed Facebook Pages and their linked Instagram Professional
   accounts as separate destinations. Connection/discovery does not enable publishing by itself;
   Instagram and Facebook publishing remain independent adapter slices with independent jobs and
@@ -29,7 +29,8 @@ Users can register, connect multiple social accounts, schedule content through t
   carousel with a caption; Facebook Pages accept one image or an HTTPS link with a message. A
   combined Instagram + Facebook composition is intentionally limited to one image plus shared
   caption/message, and creates one immutable target payload and job per destination. Instagram now
-  has its own publishing adapter; Facebook publishing remains a separate later slice.
+  and Facebook now have separate publishing adapters and independent publication state.
+- A lost or ambiguous Facebook create response is held for operator reconciliation and never blindly posted again. External links prefer Meta's authoritative permalink; a clearly recorded derived link is fallback-only.
 
 ## Explicit non-goals for the first release
 

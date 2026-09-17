@@ -142,6 +142,9 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Destination-scoped provider defaults
 
+- `FacebookPublishingAdapter` is the separate `facebook_page` destination owner for phase-one Page link and single JPEG/PNG image publication. It uses pinned-version `/feed` and `/photos` contracts, per-destination Page credentials, the shared signed-media route, and one durable `fb_publish` artifact around the create edge. A persisted `request_started` without a provider ID is reconciliation-required and is never replayed automatically; only a provider-returned ID is authoritative. Permalinks are fetched from Graph when available, while the explicitly recorded `derived` source is fallback-only.
+- Facebook Graph evidence is allowlisted to code/subcode, transient state, bounded retry/usage headers, and trace ID. Tokens, signed media URLs, payload bodies, and provider response bodies are never persisted. Auth and permission failures fail the job closed and mark only the affected destination unavailable, preserving history and sibling Instagram jobs.
+
 - The `instagram` publishing adapter is separate from the shared Meta connection driver. Phase one
   accepts one JPEG/PNG image or a 2–10 image carousel with a non-empty caption. It records child,
   parent, publish, and permalink edges in `provider_staging_artifacts`; a started external write with

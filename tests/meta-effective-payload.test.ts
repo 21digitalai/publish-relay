@@ -59,4 +59,49 @@ describe('Meta effective payloads', () => {
         ),
       ).toThrow(`Destination is unavailable: ${availability}`);
   });
+
+  it.each(['image/gif', 'image/webp'])(
+    'rejects unsupported Facebook image MIME type %s',
+    (mimeType) => {
+      expect(() =>
+        buildMetaEffectivePayload(
+          'facebook_page',
+          'active',
+          { kind: 'single_image', text: 'Photo' },
+          [image],
+          [mimeType],
+        ),
+      ).toThrow('Facebook phase one supports one JPEG/PNG image');
+    },
+  );
+
+  it.each(['', '   '])('rejects a Facebook image with message %j', (text) => {
+    expect(() =>
+      buildMetaEffectivePayload(
+        'facebook_page',
+        'active',
+        { kind: 'single_image', text },
+        [image],
+        ['image/png'],
+      ),
+    ).toThrow('Facebook single image requires a non-empty message');
+  });
+
+  it('persists the canonical Facebook link URL', () => {
+    expect(
+      buildMetaEffectivePayload(
+        'facebook_page',
+        'active',
+        { kind: 'link', text: 'Read', linkUrl: 'https://EXAMPLE.com/a/../b' },
+        [],
+        [],
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      destinationProvider: 'facebook_page',
+      kind: 'link',
+      message: 'Read',
+      linkUrl: 'https://example.com/b',
+    });
+  });
 });

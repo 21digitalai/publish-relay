@@ -1,11 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
   readFileSync,
   readlinkSync,
+  statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -131,13 +133,22 @@ describe('deployment scripts', () => {
 
   it('restores the reviewed compiled artifact after production dependency install', () => {
     const fixture = createDeployFixture();
+    const sourceDist = join(fixture.source, 'dist');
+    const sourceMigration = join(sourceDist, 'database', 'migrate.js');
+    chmodSync(sourceDist, 0o700);
+    chmodSync(join(sourceDist, 'database'), 0o700);
+    chmodSync(sourceMigration, 0o600);
     execFileSync(
       'bash',
       [join(projectRoot, 'deploy/publish-release.sh'), 'release-artifact-restore', fixture.source],
       { env: { ...fixture.environment, NPM_REMOVES_DIST: '1' } },
     );
     const releaseDirectory = join(realpathSync(fixture.releaseRoot), 'release-artifact-restore');
-    expect(existsSync(join(releaseDirectory, 'dist', 'database', 'migrate.js'))).toBe(true);
+    const releaseDist = join(releaseDirectory, 'dist');
+    const releaseMigration = join(releaseDist, 'database', 'migrate.js');
+    expect(existsSync(releaseMigration)).toBe(true);
+    expect(statSync(releaseDist).mode & 0o050).toBe(0o050);
+    expect(statSync(releaseMigration).mode & 0o040).toBe(0o040);
     expect(readFileSync(fixture.log, 'utf8')).toContain('script=dist/database/migrate.js');
     expect(readlinkSync(fixture.currentLink)).toContain('release-artifact-restore');
   });

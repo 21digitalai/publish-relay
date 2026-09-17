@@ -47,10 +47,14 @@ if [[ -e "${release_directory}/dist" || -L "${release_directory}/dist" ]]; then
   rm -rf -- "${release_directory}/dist"
 fi
 cp -a "${source_directory}/dist" "${release_directory}/dist"
-lifecycle_guard artifact "$release_root" "$current_link" "$release_id"
 # Runtime may read release code, but must not mutate an old tree during cleanup checks.
 chown -hR "$(id -un):${service_user}" "$release_directory"
-chmod -R go-w "$release_directory"
+chmod -R u=rwX,g=rX,o= "$release_directory"
+sudo -u "$service_user" test -r "${release_directory}/dist/database/migrate.js" || {
+  echo "compiled migration entrypoint is not readable by service user" >&2
+  exit 66
+}
+lifecycle_guard artifact "$release_root" "$current_link" "$release_id"
 (
   cd "$release_directory"
   DATABASE_URL="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \

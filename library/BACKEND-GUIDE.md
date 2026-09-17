@@ -195,4 +195,12 @@ Production releases install production dependencies without building on the host
 - `deploy/release-filesystem.mjs` owns canonical-root validation, protected-path checks, safe contained symlinks, migration-tree comparison, exact `current` and MainPID working-directory verification, and open-file checks before bounded removal. No live database, media, or backup is deleted. Migration changes, extra legacy releases, stale observations, and unknown process state refuse rather than guessing. Full activation and recovery boundaries live in `deploy/RELEASE-RETENTION.md`.
 
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.
+
+## Private Hosted release composition
+
+- A same-process private composition pins one immutable Core package artifact and records its version, source commit, and SHA-256 beside the Hosted version/source commit in a release manifest.
+- Core and Hosted retain separate ordered migration directories and separate migration ledgers. One composition runner takes a shared PostgreSQL advisory lock, applies packaged Core migrations first, then Hosted migrations. Core never creates Hosted-owned schema.
+- The Hosted web unit and packaged Core worker unit run from the same immutable release directory. Readiness must prove the shared database; composed health and request logs include correlation ID plus Core, Hosted, and release versions.
+- Backup/restore drills cover both migration ledgers. Restore verification runs only against an isolated target database and proves both ledgers plus Hosted release metadata before a release can be called recoverable.
+- Hosted policy integration tests may create test-only Hosted tables to prove an injected policy reads Hosted state through Core's transaction and that denial or forced failure leaves no Core/Hosted effects. Those fixtures never become production migrations; production remains allow-all until separately approved.
 - Browser Composer uploads remain unattached until post creation succeeds. Its authenticated CSRF-protected media delete endpoint atomically tombstones only tenant-owned ready media with no revision reference, then removes the local object; attached media is never deleted through this abandonment path.

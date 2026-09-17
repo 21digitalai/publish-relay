@@ -42,6 +42,7 @@ const migrations = [
   '0022_truthful_post_actors.sql',
   '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
+  '0037_meta_destination_foundation.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';
@@ -61,9 +62,9 @@ beforeEach(async () => {
     INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
       VALUES ('00000000-0000-4000-8000-000000000303', '${workspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
     INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
-      VALUES ('00000000-0000-4000-8000-000000000304', '${workspaceId}', 'fake', '00000000-0000-4000-8000-000000000303');
-    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
-      VALUES ('00000000-0000-4000-8000-000000000305', '${workspaceId}', '00000000-0000-4000-8000-000000000304', 'scheduler', 'Scheduler');
+      VALUES ('00000000-0000-4000-8000-000000000304', '${workspaceId}', 'x', '00000000-0000-4000-8000-000000000303');
+    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name, destination_provider, remote_account_id)
+      VALUES ('00000000-0000-4000-8000-000000000305', '${workspaceId}', '00000000-0000-4000-8000-000000000304', 'scheduler', 'Scheduler', 'x', 'scheduler');
     INSERT INTO posts (id, workspace_id, created_by_user_id)
       VALUES ('00000000-0000-4000-8000-000000000306', '${workspaceId}', '00000000-0000-4000-8000-000000000302');
     INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
@@ -380,8 +381,8 @@ describe('scheduler repository', () => {
       UPDATE provider_connections SET provider = 'x' WHERE id = '00000000-0000-4000-8000-000000000304';
       INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
         VALUES ('00000000-0000-4000-8000-000000000314', '${workspaceId}', 'youtube', '00000000-0000-4000-8000-000000000303');
-      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
-        VALUES ('00000000-0000-4000-8000-000000000315', '${workspaceId}', '00000000-0000-4000-8000-000000000314', 'youtube-channel', 'YouTube');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name, destination_provider, remote_account_id)
+        VALUES ('00000000-0000-4000-8000-000000000315', '${workspaceId}', '00000000-0000-4000-8000-000000000314', 'youtube-channel', 'YouTube', 'youtube', 'youtube-channel');
       INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state, reconciliation_required)
         VALUES ('${youtubeJobId}', '${workspaceId}', '00000000-0000-4000-8000-000000000306', '00000000-0000-4000-8000-000000000308', '00000000-0000-4000-8000-000000000315', '2026-08-31T15:00:00Z', 'accepted_pending', true);
       UPDATE publication_jobs SET state = 'accepted_pending', reconciliation_required = true WHERE id = '${jobId}';
@@ -393,7 +394,7 @@ describe('scheduler repository', () => {
         now,
         leaseMs: 30_000,
         limit: 10,
-        provider: 'x',
+        destinationProvider: 'x',
       }),
     ).toEqual([jobId]);
     await database.exec(`UPDATE publication_jobs SET lease_owner = NULL, lease_expires_at = NULL`);
@@ -403,7 +404,7 @@ describe('scheduler repository', () => {
         now,
         leaseMs: 30_000,
         limit: 10,
-        provider: 'youtube',
+        destinationProvider: 'youtube',
       }),
     ).toEqual([youtubeJobId]);
     await database.exec(`UPDATE publication_jobs SET lease_owner = NULL, lease_expires_at = NULL`);

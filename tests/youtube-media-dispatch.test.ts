@@ -97,7 +97,7 @@ describe('YouTube media dispatch', () => {
 
     expect(claimDueJobs).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ provider: 'youtube', requireMedia: true }),
+      expect.objectContaining({ destinationProvider: 'youtube', requireMedia: true }),
     );
     expect(stageYouTubeMedia).toHaveBeenCalledWith(
       expect.anything(),
@@ -144,7 +144,7 @@ describe('YouTube media dispatch', () => {
     await expect(reconcileYouTubeJobs(runtime, new Date('2026-09-01T00:02:00Z'))).resolves.toBe(1);
     expect(claimReconciliationJobs).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ provider: 'youtube' }),
+      expect.objectContaining({ destinationProvider: 'youtube' }),
     );
     expect(resolveReconciliation).toHaveBeenCalledWith(
       expect.anything(),

@@ -57,7 +57,7 @@ export async function claimDueJobs(
     now: Date;
     leaseMs: number;
     limit: number;
-    provider?: string;
+    destinationProvider?: string;
     requireMedia?: boolean;
   },
 ): Promise<ClaimedJob[]> {
@@ -72,12 +72,11 @@ export async function claimDueJobs(
         (state = 'retry_wait' AND next_attempt_at <= ${input.now}) OR
         (state = 'leased' AND lease_expires_at <= ${input.now})
       )
-      AND (${input.provider ?? null}::text IS NULL OR EXISTS (
+      AND (${input.destinationProvider ?? null}::text IS NULL OR EXISTS (
         SELECT 1 FROM provider_accounts account
-        JOIN provider_connections connection ON connection.id = account.connection_id
         WHERE account.id = publication_jobs.provider_account_id
           AND account.workspace_id = publication_jobs.workspace_id
-          AND connection.provider = ${input.provider ?? null}
+          AND account.destination_provider = ${input.destinationProvider ?? null}
       ))
       AND (${input.requireMedia ?? false} = false OR EXISTS (
         SELECT 1 FROM revision_media media
@@ -152,7 +151,13 @@ export async function recoverExpiredDispatches(
 
 export async function claimReconciliationJobs(
   database: NodePgDatabase,
-  input: { workerId: string; now: Date; leaseMs: number; limit: number; provider?: string },
+  input: {
+    workerId: string;
+    now: Date;
+    leaseMs: number;
+    limit: number;
+    destinationProvider?: string;
+  },
 ): Promise<string[]> {
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
   const result = await database.execute<{ id: string }>(sql`
@@ -161,12 +166,11 @@ export async function claimReconciliationJobs(
       WHERE reconciliation_required = true
         AND state IN ('dispatching', 'accepted_pending')
         AND (lease_expires_at IS NULL OR lease_expires_at <= ${input.now})
-        AND (${input.provider ?? null}::text IS NULL OR EXISTS (
+        AND (${input.destinationProvider ?? null}::text IS NULL OR EXISTS (
           SELECT 1 FROM provider_accounts account
-          JOIN provider_connections connection ON connection.id = account.connection_id
           WHERE account.id = publication_jobs.provider_account_id
             AND account.workspace_id = publication_jobs.workspace_id
-            AND connection.provider = ${input.provider ?? null}
+            AND account.destination_provider = ${input.destinationProvider ?? null}
         ))
       ORDER BY updated_at, id
       FOR UPDATE SKIP LOCKED

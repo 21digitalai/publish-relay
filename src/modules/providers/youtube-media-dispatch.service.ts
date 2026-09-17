@@ -94,7 +94,7 @@ async function loadJobContext(database: NodePgDatabase, workspaceId: string, job
         and(
           eq(publicationJobs.workspaceId, workspaceId),
           eq(publicationJobs.id, jobId),
-          eq(providerConnections.provider, 'youtube'),
+          eq(providerAccounts.destinationProvider, 'youtube'),
         ),
       )
       .limit(2);
@@ -205,7 +205,7 @@ export async function dispatchDueYouTubeJobs(
     now,
     leaseMs: runtime.leaseMs,
     limit: 10,
-    provider: 'youtube',
+    destinationProvider: 'youtube',
     requireMedia: true,
   });
   let published = 0;
@@ -224,7 +224,7 @@ export async function reconcileYouTubeJobs(
     now,
     leaseMs: runtime.leaseMs,
     limit: 10,
-    provider: 'youtube',
+    destinationProvider: 'youtube',
   });
   let resolved = 0;
   for (const jobId of jobIds) {

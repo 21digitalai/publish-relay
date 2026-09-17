@@ -21,6 +21,16 @@ function normalizeDestination(
 ): NormalizedDestination {
   const destinationProvider = (account.destinationProvider ??
     connectionFamily) as DestinationProvider;
+  const allowedDestinations: Readonly<Record<string, readonly string[]>> = {
+    x: ['x'],
+    youtube: ['youtube'],
+    meta: ['instagram', 'facebook_page'],
+  };
+  const allowed = allowedDestinations[connectionFamily];
+  if (allowed && !allowed.includes(destinationProvider))
+    throw new Error(
+      `Destination provider ${destinationProvider} is incompatible with connection family ${connectionFamily}`,
+    );
   return {
     ...account,
     destinationProvider,

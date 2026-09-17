@@ -1,19 +1,21 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createApplication } from '../src/application/create-application.js';
+import { createStandaloneApplication } from '../src/application/create-application.js';
 
-const applications = [] as ReturnType<typeof createApplication>[];
+const applications = [] as ReturnType<typeof createStandaloneApplication>[];
 afterEach(async () =>
   Promise.all(applications.splice(0).map((application) => application.close())),
 );
 
 function createTestApplication() {
-  const application = createApplication({
-    NODE_ENV: 'test',
-    HOST: '127.0.0.1',
-    PORT: 3100,
-    WORKER_POLL_INTERVAL_MS: 1000,
+  const application = createStandaloneApplication({
+    config: {
+      NODE_ENV: 'test',
+      HOST: '127.0.0.1',
+      PORT: 3100,
+      WORKER_POLL_INTERVAL_MS: 1000,
+    },
   });
   applications.push(application);
   return application;

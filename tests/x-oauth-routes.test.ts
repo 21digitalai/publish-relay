@@ -1,12 +1,12 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createApplication } from '../src/application/create-application.js';
+import { createStandaloneApplication } from '../src/application/create-application.js';
 import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
 import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
 import { XHttpClient } from '../src/modules/providers/x-http-client.js';
 
-const applications = [] as ReturnType<typeof createApplication>[];
+const applications = [] as ReturnType<typeof createStandaloneApplication>[];
 afterEach(async () =>
   Promise.all(applications.splice(0).map((application) => application.close())),
 );
@@ -33,18 +33,16 @@ function createXApplication(store: AuthStore) {
     currentVersion: () => 'v1',
     getKey: () => Promise.resolve(Buffer.alloc(32)),
   };
-  const application = createApplication(
-    { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
-    new AuthService(store),
-    undefined,
-    undefined,
-    {} as NodePgDatabase,
-    {
+  const application = createStandaloneApplication({
+    config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
+    auth: new AuthService(store),
+    database: {} as NodePgDatabase,
+    xOauth: {
       keys,
       client: new XHttpClient({ consumerKey: 'key', consumerSecret: 'secret' }),
       callbackUrl: 'https://relay.example.test/api/oauth/x/callback',
     },
-  );
+  });
   applications.push(application);
   return application;
 }

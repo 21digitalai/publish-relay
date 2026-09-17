@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import Fastify from 'fastify';
 
-import { createApplication } from '../src/application/create-application.js';
+import {
+  createStandaloneApplication,
+  registerCoreApplication,
+} from '../src/application/create-application.js';
 import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
 import { hashPassword } from '../src/modules/identity/password.js';
 
-const applications = [] as ReturnType<typeof createApplication>[];
+const applications = [] as ReturnType<typeof createStandaloneApplication>[];
 afterEach(async () =>
   Promise.all(applications.splice(0).map((application) => application.close())),
 );
@@ -27,19 +31,24 @@ function createStore(): AuthStore {
 }
 
 function createTestApplication(store: AuthStore) {
-  const application = createApplication(
-    { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
-    new AuthService(store),
-  );
+  const application = createStandaloneApplication({
+    config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
+    auth: new AuthService(store),
+  });
   applications.push(application);
   return application;
 }
 
 function createProductionApplication(store: AuthStore) {
-  const application = createApplication(
-    { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
-    new AuthService(store),
-  );
+  const application = createStandaloneApplication({
+    config: {
+      NODE_ENV: 'production',
+      HOST: '127.0.0.1',
+      PORT: 3100,
+      WORKER_POLL_INTERVAL_MS: 1000,
+    },
+    auth: new AuthService(store),
+  });
   applications.push(application);
   return application;
 }
@@ -357,6 +366,23 @@ describe('authentication HTTP boundary', () => {
       expect(response.body).toContain('<div id="root"></div>');
       expect(response.body).toContain('/main.tsx');
     }
+  });
+
+  it('keeps auth/session and protected app routes when public auth shells are omitted', async () => {
+    const application = Fastify();
+    applications.push(application);
+    registerCoreApplication(application, {
+      config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
+      auth: new AuthService(createStore()),
+    });
+
+    expect((await application.inject({ method: 'GET', url: '/login' })).statusCode).toBe(404);
+    expect((await application.inject({ method: 'GET', url: '/api/auth/session' })).statusCode).toBe(
+      401,
+    );
+    const protectedShell = await application.inject({ method: 'GET', url: '/app' });
+    expect(protectedShell.statusCode).toBe(302);
+    expect(protectedShell.headers.location).toBe('/login');
   });
 
   it('serves the same application shell after a protected deep link is authorized', async () => {

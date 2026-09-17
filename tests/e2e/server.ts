@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { createApplication } from '../../src/application/create-application.js';
+import { createStandaloneApplication } from '../../src/application/create-application.js';
 import {
   providerConnections,
   providerAccounts,
@@ -30,14 +30,24 @@ const migrationNames = (await readdir(new URL('../../migrations/', import.meta.u
 for (const name of migrationNames)
   await database.exec(await readFile(new URL(`../../migrations/${name}`, import.meta.url), 'utf8'));
 await database.exec(`
+  INSERT INTO registered_clients (id, display_name, client_type, redirect_uris, allowed_scopes)
+  VALUES (
+    'example-client-dev',
+    'Example Client',
+    'public',
+    ARRAY['http://127.0.0.1:43123/callback'],
+    ARRAY['destinations:read', 'schedules:read', 'schedules:write', 'content:write', 'publishes:retry']
+  );
+`);
+await database.exec(`
   CREATE ROLE publish_relay_app NOLOGIN;
   GRANT USAGE ON SCHEMA public TO publish_relay_app;
   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
 `);
 const typedDatabase = drizzle(database) as unknown as NodePgDatabase;
 const auth = new AuthService(createPostgresAuthStore(typedDatabase));
-const application = createApplication(
-  {
+const application = createStandaloneApplication({
+  config: {
     NODE_ENV: 'test',
     HOST: '127.0.0.1',
     PORT: 43199,
@@ -45,15 +55,12 @@ const application = createApplication(
     PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link',
   },
   auth,
-  undefined,
-  resolve(process.cwd(), 'dist/ui'),
-  typedDatabase,
-  undefined,
-  undefined,
-  undefined,
-  undefined,
-  new DelegatedAuthorizationService(createPostgresDelegatedAuthorizationStore(typedDatabase)),
-);
+  uiRoot: resolve(process.cwd(), 'dist/ui'),
+  database: typedDatabase,
+  delegatedAuthorization: new DelegatedAuthorizationService(
+    createPostgresDelegatedAuthorizationStore(typedDatabase),
+  ),
+});
 const fixtureKey = Buffer.alloc(32, 7);
 application.post('/api/oauth/x', async (request, reply) => {
   const identity = await authenticateRequest(request, auth);
@@ -69,7 +76,10 @@ application.post('/api/oauth/x', async (request, reply) => {
     typedDatabase,
     { currentVersion: () => 'e2e-v1', getKey: () => Promise.resolve(fixtureKey) },
     new FakeProviderConnectionAdapter([
-      { providerAccountId: 'daily-viber', displayName: 'Daily Viber (@dailyviber)' },
+      {
+        providerAccountId: 'example-editorial',
+        displayName: 'Example Editorial (@exampleeditorial)',
+      },
       { providerAccountId: 'studio-notes', displayName: 'Studio Notes (@studionotes)' },
     ]),
     {
@@ -107,7 +117,7 @@ application.post('/__test__/block-account-disconnect', async (request, reply) =>
       .where(
         and(
           eq(providerAccounts.workspaceId, identity.workspaceId),
-          eq(providerAccounts.displayName, 'Daily Viber (@dailyviber)'),
+          eq(providerAccounts.displayName, 'Example Editorial (@exampleeditorial)'),
         ),
       )
       .limit(1);

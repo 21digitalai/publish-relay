@@ -4,11 +4,12 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import Fastify from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PostgresInstagramArtifactStore } from '../src/modules/providers/instagram-artifact-store.js';
 import { registerInstagramMediaRoutes } from '../src/modules/providers/instagram-media.routes.js';
 import { InstagramMediaTokenCodec } from '../src/modules/providers/instagram-media-token.js';
+import { cleanupExpiredStaging } from '../src/modules/content/provider-staging.service.js';
 import {
   createFixedMediaRetentionPolicy,
   evaluateMediaRetention,
@@ -180,6 +181,38 @@ describe('Instagram staging persistence and signed media delivery', () => {
       }),
     ).resolves.toBe(1);
   });
+
+  it.each(['cancelled', 'superseded'] as const)(
+    'expires %s job artifacts after grace while retaining their audit rows',
+    async (terminalState) => {
+      const now = new Date('2026-09-17T16:00:00Z');
+      const store = new PostgresInstagramArtifactStore(db, {
+        workspaceId: workspaceA,
+        jobId,
+        now: () => now,
+      });
+      await store.ensure({ key: 'instagram:job:child:0', kind: 'child', mediaId });
+      await database.exec(
+        `UPDATE publication_jobs SET state = '${terminalState}' WHERE id = '${jobId}'`,
+      );
+      const storage = { delete: vi.fn(() => Promise.resolve()) };
+
+      await expect(
+        cleanupExpiredStaging(db, storage, {
+          workspaceId: workspaceA,
+          expiredBefore: new Date(now.getTime() + 25 * 60 * 60 * 1000),
+          now: new Date(now.getTime() + 25 * 60 * 60 * 1000),
+        }),
+      ).resolves.toBe(1);
+      expect(storage.delete).toHaveBeenCalledWith('instagram:job:child:0');
+      const rows = await database.query<{ count: number; deleted_at: Date | null }>(
+        `SELECT count(*)::int AS count, max(deleted_at) AS deleted_at
+         FROM provider_staging_artifacts WHERE artifact_key = 'instagram:job:child:0'`,
+      );
+      expect(rows.rows[0]?.count).toBe(1);
+      expect(rows.rows[0]?.deleted_at).not.toBeNull();
+    },
+  );
 
   it('serves valid signed bytes while rejecting expiry, tampering, and cross-tenant media', async () => {
     const codec = new InstagramMediaTokenCodec(Buffer.alloc(32, 7));

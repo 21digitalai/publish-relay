@@ -12,6 +12,8 @@
 - Private Hosted code must pin one immutable Core package artifact and call
   `registerCoreApplication` in the same Fastify process. It must not copy Core
   source, mount a second server, proxy to Core, or create a second identity model.
+  Hosted supplies a collision-free `uiPrefix` so Core assets do not claim `/`;
+  Core rewrites only its generated `/assets/*` references to that prefix.
 
 ## Accepted foundation
 

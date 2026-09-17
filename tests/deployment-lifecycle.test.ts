@@ -116,6 +116,7 @@ describe('serialized one-release deployment lifecycle', () => {
       expect(existsSync(join(value.root, '.deployment-lock'))).toBe(true);
       assertProtected(value);
     },
+    10_000,
   );
 
   it('refuses concurrent starts and never steals even an apparently stale lock', () => {

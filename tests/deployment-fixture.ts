@@ -37,14 +37,14 @@ export function createDeployFixture(): {
   );
   writeExecutable(
     join(bin, 'sudo'),
-    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*|-D) echo "sudo: hardened policy rejects chdir" >&2; exit 1 ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGPASSWORD" ]]; then exec "${base[@]}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
+    'preserve=""; while [[ "$1" == --* ]]; do case "$1" in --chdir=*|-D) echo "sudo: hardened policy rejects chdir" >&2; exit 1 ;; --preserve-env=*) preserve="${1#*=}" ;; esac; shift; done; [[ "$1" == "-u" ]] && shift 2; base=(env -i PATH="$PATH" COMMAND_LOG="$COMMAND_LOG" FAIL_MIGRATION="${FAIL_MIGRATION:-0}" FAIL_BOOTSTRAP="${FAIL_BOOTSTRAP:-0}" NPM_REMOVES_DIST="${NPM_REMOVES_DIST:-0}"); if [[ "$preserve" == "DATABASE_URL,PGPASSWORD" ]]; then exec "${base[@]}" DATABASE_URL="${DATABASE_URL:-}" PGPASSWORD="${PGPASSWORD:-}" "$@"; elif [[ "$preserve" == "PGPASSWORD" ]]; then exec "${base[@]}" PGPASSWORD="${PGPASSWORD:-}" "$@"; else exec "${base[@]}" "$@"; fi',
   );
   const nodeBin = join(bin, 'node24');
   const npmCli = join(bin, 'npm-cli.js');
   writeFileSync(npmCli, 'fixture npm CLI');
   writeExecutable(
     nodeBin,
-    'if [[ "$1" == *release-filesystem.mjs ]]; then exec "$REAL_NODE" "$@"; fi; if [[ "$1" == "--version" ]]; then echo v24.8.0; exit 0; fi; [[ "$1" == *"npm-cli.js" ]] && { shift; echo "npm $*" >> "$COMMAND_LOG"; exit 0; }; echo "node=$0 cwd=$PWD script=$1 database=$([[ -n "${DATABASE_URL:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing)" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 ]]',
+    'if [[ "$1" == *release-filesystem.mjs ]]; then exec "$REAL_NODE" "$@"; fi; if [[ "$1" == "--version" ]]; then echo v24.8.0; exit 0; fi; [[ "$1" == *"npm-cli.js" ]] && { shift; echo "npm $*" >> "$COMMAND_LOG"; [[ "${NPM_REMOVES_DIST:-0}" == 1 ]] && rm -rf "${@: -1}/dist"; exit 0; }; echo "node=$0 cwd=$PWD script=$1 database=$([[ -n "${DATABASE_URL:-}" ]] && echo set || echo missing) password=$([[ -n "${PGPASSWORD:-}" ]] && echo set || echo missing)" >> "$COMMAND_LOG"; [[ "${FAIL_MIGRATION:-0}" != 1 ]]',
   );
   const psqlBin = join(bin, 'psql');
   writeExecutable(

@@ -1,5 +1,12 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, realpathSync, readFileSync, readlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  readFileSync,
+  readlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -120,6 +127,19 @@ describe('deployment scripts', () => {
     expect(readFileSync(join(projectRoot, 'deploy/publish-release.sh'), 'utf8')).not.toContain(
       '--chdir',
     );
+  });
+
+  it('restores the reviewed compiled artifact after production dependency install', () => {
+    const fixture = createDeployFixture();
+    execFileSync(
+      'bash',
+      [join(projectRoot, 'deploy/publish-release.sh'), 'release-artifact-restore', fixture.source],
+      { env: { ...fixture.environment, NPM_REMOVES_DIST: '1' } },
+    );
+    const releaseDirectory = join(realpathSync(fixture.releaseRoot), 'release-artifact-restore');
+    expect(existsSync(join(releaseDirectory, 'dist', 'database', 'migrate.js'))).toBe(true);
+    expect(readFileSync(fixture.log, 'utf8')).toContain('script=dist/database/migrate.js');
+    expect(readlinkSync(fixture.currentLink)).toContain('release-artifact-restore');
   });
 
   it('fails closed before install when the selected Node 24 toolchain is missing', () => {

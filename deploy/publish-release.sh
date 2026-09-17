@@ -41,6 +41,12 @@ cp -a "${source_directory}/." "$release_directory/"
 chown -R "${service_user}:${service_user}" "$release_directory"
 
 sudo -u "$service_user" "$node_bin" "$npm_cli" ci --omit=dev --ignore-scripts --prefix "$release_directory"
+# npm owns the dependency install and may remove build output from the candidate tree.
+# Restore the already-reviewed artifact from the release source; production never builds it.
+if [[ -e "${release_directory}/dist" || -L "${release_directory}/dist" ]]; then
+  rm -rf -- "${release_directory}/dist"
+fi
+cp -a "${source_directory}/dist" "${release_directory}/dist"
 lifecycle_guard artifact "$release_root" "$current_link" "$release_id"
 # Runtime may read release code, but must not mutate an old tree during cleanup checks.
 chown -hR "$(id -un):${service_user}" "$release_directory"

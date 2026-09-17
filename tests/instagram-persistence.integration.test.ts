@@ -4,12 +4,13 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import Fastify from 'fastify';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { PostgresInstagramArtifactStore } from '../src/modules/providers/instagram-artifact-store.js';
 import { registerInstagramMediaRoutes } from '../src/modules/providers/instagram-media.routes.js';
 import { InstagramMediaTokenCodec } from '../src/modules/providers/instagram-media-token.js';
 import { cleanupExpiredStaging } from '../src/modules/content/provider-staging.service.js';
+import { runProviderStagingCleanupCycle } from '../src/modules/content/provider-staging.worker.js';
 import {
   createFixedMediaRetentionPolicy,
   evaluateMediaRetention,
@@ -193,18 +194,30 @@ describe('Instagram staging persistence and signed media delivery', () => {
       });
       await store.ensure({ key: 'instagram:job:child:0', kind: 'child', mediaId });
       await database.exec(
-        `UPDATE publication_jobs SET state = '${terminalState}' WHERE id = '${jobId}'`,
+        `UPDATE publication_jobs SET state = '${terminalState}', updated_at = '${now.toISOString()}' WHERE id = '${jobId}'`,
       );
-      const storage = { delete: vi.fn(() => Promise.resolve()) };
-
+      const genericDeletes: string[] = [];
       await expect(
-        cleanupExpiredStaging(db, storage, {
-          workspaceId: workspaceA,
-          expiredBefore: new Date(now.getTime() + 25 * 60 * 60 * 1000),
-          now: new Date(now.getTime() + 25 * 60 * 60 * 1000),
-        }),
-      ).resolves.toBe(1);
-      expect(storage.delete).toHaveBeenCalledWith('instagram:job:child:0');
+        cleanupExpiredStaging(
+          db,
+          {
+            delete: (providerReference) =>
+              Promise.resolve(void genericDeletes.push(providerReference)),
+          },
+          {
+            workspaceId: workspaceA,
+            expiredBefore: new Date(now.getTime() + 25 * 60 * 60 * 1000),
+          },
+        ),
+      ).resolves.toBe(0);
+      expect(genericDeletes).toEqual([]);
+      await expect(
+        runProviderStagingCleanupCycle(
+          db,
+          { batchSize: 100, terminalGraceMs: 24 * 60 * 60 * 1000 },
+          new Date(now.getTime() + 25 * 60 * 60 * 1000),
+        ),
+      ).resolves.toMatchObject({ instagramDeleted: 1 });
       const rows = await database.query<{ count: number; deleted_at: Date | null }>(
         `SELECT count(*)::int AS count, max(deleted_at) AS deleted_at
          FROM provider_staging_artifacts WHERE artifact_key = 'instagram:job:child:0'`,
@@ -213,6 +226,66 @@ describe('Instagram staging persistence and signed media delivery', () => {
       expect(rows.rows[0]?.deleted_at).not.toBeNull();
     },
   );
+
+  it.each([
+    { label: 'scheduled', state: 'scheduled', reconciliationRequired: false },
+    { label: 'reconciliation-required', state: 'accepted_pending', reconciliationRequired: true },
+  ] as const)(
+    'preserves expired Instagram artifacts while the job is $label',
+    async ({ state, reconciliationRequired }) => {
+      const now = new Date('2026-09-17T16:00:00Z');
+      const store = new PostgresInstagramArtifactStore(db, {
+        workspaceId: workspaceA,
+        jobId,
+        now: () => now,
+      });
+      await store.ensure({ key: 'instagram:job:child:0', kind: 'child', mediaId });
+      await database.exec(
+        `UPDATE publication_jobs SET state = '${state}', reconciliation_required = ${String(reconciliationRequired)}, updated_at = '${now.toISOString()}' WHERE id = '${jobId}'`,
+      );
+
+      await expect(
+        runProviderStagingCleanupCycle(
+          db,
+          { batchSize: 100, terminalGraceMs: 24 * 60 * 60 * 1000 },
+          new Date(now.getTime() + 48 * 60 * 60 * 1000),
+        ),
+      ).resolves.toMatchObject({ instagramDeleted: 0 });
+      const rows = await database.query<{ deleted_at: Date | null }>(
+        `SELECT deleted_at FROM provider_staging_artifacts WHERE artifact_key = 'instagram:job:child:0'`,
+      );
+      expect(rows.rows[0]?.deleted_at).toBeNull();
+    },
+  );
+
+  it('waits a full terminal grace before tombstoning expired Instagram artifacts', async () => {
+    const createdAt = new Date('2026-09-17T16:00:00Z');
+    const terminalAt = new Date(createdAt.getTime() + 25 * 60 * 60 * 1000);
+    const store = new PostgresInstagramArtifactStore(db, {
+      workspaceId: workspaceA,
+      jobId,
+      now: () => createdAt,
+    });
+    await store.ensure({ key: 'instagram:job:child:0', kind: 'child', mediaId });
+    await database.exec(
+      `UPDATE publication_jobs SET state = 'cancelled', updated_at = '${terminalAt.toISOString()}' WHERE id = '${jobId}'`,
+    );
+
+    await expect(
+      runProviderStagingCleanupCycle(
+        db,
+        { batchSize: 100, terminalGraceMs: 24 * 60 * 60 * 1000 },
+        new Date(terminalAt.getTime() + 23 * 60 * 60 * 1000),
+      ),
+    ).resolves.toMatchObject({ instagramDeleted: 0 });
+    await expect(
+      runProviderStagingCleanupCycle(
+        db,
+        { batchSize: 100, terminalGraceMs: 24 * 60 * 60 * 1000 },
+        new Date(terminalAt.getTime() + 25 * 60 * 60 * 1000),
+      ),
+    ).resolves.toMatchObject({ instagramDeleted: 1 });
+  });
 
   it('serves valid signed bytes while rejecting expiry, tampering, and cross-tenant media', async () => {
     const codec = new InstagramMediaTokenCodec(Buffer.alloc(32, 7));

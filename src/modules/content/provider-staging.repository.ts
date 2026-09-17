@@ -1,7 +1,11 @@
-import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { providerStagingArtifacts, publicationJobs } from '../../database/schema.js';
+import {
+  providerAccounts,
+  providerStagingArtifacts,
+  publicationJobs,
+} from '../../database/schema.js';
 
 export async function retireExpiredUnattemptedStagingArtifact(
   database: NodePgDatabase,
@@ -201,12 +205,20 @@ export async function listJobStagingArtifacts(
         eq(publicationJobs.id, providerStagingArtifacts.jobId),
       ),
     )
+    .innerJoin(
+      providerAccounts,
+      and(
+        eq(providerAccounts.workspaceId, publicationJobs.workspaceId),
+        eq(providerAccounts.id, publicationJobs.providerAccountId),
+      ),
+    )
     .where(
       and(
         eq(providerStagingArtifacts.workspaceId, workspaceId),
         eq(providerStagingArtifacts.jobId, jobId),
         isNull(providerStagingArtifacts.deletedAt),
         inArray(publicationJobs.state, TERMINAL_JOB_STATES),
+        ne(providerAccounts.destinationProvider, 'instagram'),
       ),
     );
 }
@@ -222,13 +234,71 @@ export async function listExpiredStagingArtifacts(
       providerReference: providerStagingArtifacts.providerReference,
     })
     .from(providerStagingArtifacts)
+    .innerJoin(
+      publicationJobs,
+      and(
+        eq(publicationJobs.workspaceId, providerStagingArtifacts.workspaceId),
+        eq(publicationJobs.id, providerStagingArtifacts.jobId),
+      ),
+    )
+    .innerJoin(
+      providerAccounts,
+      and(
+        eq(providerAccounts.workspaceId, publicationJobs.workspaceId),
+        eq(providerAccounts.id, publicationJobs.providerAccountId),
+      ),
+    )
     .where(
       and(
         eq(providerStagingArtifacts.workspaceId, workspaceId),
         isNull(providerStagingArtifacts.deletedAt),
         lt(providerStagingArtifacts.expiresAt, expiredBefore),
+        inArray(publicationJobs.state, TERMINAL_JOB_STATES),
+        ne(providerAccounts.destinationProvider, 'instagram'),
       ),
     );
+}
+
+export async function markExpiredInstagramStagingArtifacts(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    expiredBefore: Date;
+    terminalBefore: Date;
+    deletedAt: Date;
+    limit: number;
+  },
+): Promise<number> {
+  const result = await database.execute<{ id: string }>(sql`
+    with candidates as (
+      select artifact.id
+      from provider_staging_artifacts artifact
+      inner join publication_jobs job
+        on job.workspace_id = artifact.workspace_id
+       and job.id = artifact.job_id
+      inner join provider_accounts account
+        on account.workspace_id = job.workspace_id
+       and account.id = job.provider_account_id
+      where artifact.workspace_id = ${input.workspaceId}
+        and artifact.deleted_at is null
+        and artifact.expires_at < ${input.expiredBefore}
+        and job.state in ('published', 'failed', 'cancelled', 'superseded')
+        and job.updated_at < ${input.terminalBefore}
+        and account.destination_provider = 'instagram'
+      order by artifact.expires_at, artifact.id
+      limit ${input.limit}
+      for update of artifact skip locked
+    )
+    update provider_staging_artifacts artifact
+       set deleted_at = ${input.deletedAt},
+           updated_at = ${input.deletedAt}
+      from candidates
+     where artifact.id = candidates.id
+       and artifact.workspace_id = ${input.workspaceId}
+       and artifact.deleted_at is null
+    returning artifact.id
+  `);
+  return result.rows.length;
 }
 
 export async function markStagingArtifactDeleted(

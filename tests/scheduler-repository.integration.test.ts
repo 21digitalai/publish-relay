@@ -43,6 +43,7 @@ const migrations = [
   '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
   '0045_meta_destination_foundation.sql',
+  '0048_meta_effective_payload.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';

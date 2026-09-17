@@ -51,6 +51,7 @@ const migrations = [
   '0027_overjoyed_dark_beast.sql',
   '0046_linkedin_connection_expiry.sql',
   '0047_linkedin_member_connections.sql',
+  '0048_meta_effective_payload.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

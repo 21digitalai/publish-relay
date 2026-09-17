@@ -82,6 +82,72 @@ async function mockConnectedAccounts(page: Page) {
   );
 }
 
+async function mockMetaDestinations(page: Page) {
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000211',
+              provider: 'meta',
+              destinationProvider: 'instagram',
+              displayName: '@mira',
+              status: 'active',
+              availability: 'active',
+              capabilityFreshness: 'fresh',
+              capabilitySnapshot: { contentKinds: ['single_image', 'carousel'] },
+              adapterDefaults: {},
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000212',
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: 'Mira Studio',
+              status: 'active',
+              availability: 'active',
+              capabilityFreshness: 'fresh',
+              capabilitySnapshot: { contentKinds: ['link', 'single_image'] },
+              adapterDefaults: {},
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000213',
+              provider: 'meta',
+              destinationProvider: 'instagram',
+              displayName: '@missing',
+              status: 'active',
+              availability: 'remote_missing',
+              capabilityFreshness: 'stale',
+              capabilitySnapshot: { contentKinds: ['single_image', 'carousel'] },
+              adapterDefaults: {},
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+}
+
+test('computes Meta destination capability intersection on desktop and mobile', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await mockMetaDestinations(page);
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post', exact: true }).click();
+  await page.getByText('Instagram · @mira').click();
+  await expect(page.getByRole('button', { name: 'carousel' })).toBeVisible();
+  await page.getByText('Facebook · Mira Studio').click();
+  await expect(page.getByRole('button', { name: 'single image' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
+  await expect(page.getByText(/remote missing · reconnect to schedule/)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.composer-sheet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'single image' })).toBeVisible();
+});
+
 test('renders the login surface and reports an inline authentication error', async ({
   page,
 }, testInfo) => {

@@ -11,12 +11,23 @@ import {
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { z } from 'zod';
 import type { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
+import {
+  capabilityFreshness,
+  destinationCapabilities,
+  type DestinationCapabilitySnapshot,
+} from '../providers/destination-capabilities.js';
 
 export interface ProviderAccountSummary {
   id: string;
   provider: string;
+  destinationProvider: string;
   displayName: string;
   status: string;
+  availability: string;
+  remoteParentAccountId: string | null;
+  capabilitySnapshot: DestinationCapabilitySnapshot;
+  capabilitiesCheckedAt: Date | null;
+  capabilityFreshness: 'fresh' | 'stale' | 'unknown';
   adapterDefaults: unknown;
   updatedAt: Date;
   expiresAt?: Date | null;
@@ -26,13 +37,17 @@ export function listProviderAccounts(
   database: NodePgDatabase,
   workspaceId: string,
 ): Promise<ProviderAccountSummary[]> {
-  return withTenantTransaction(database, { workspaceId }, (transaction) =>
-    transaction
+  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
+    const rows = await transaction
       .select({
         id: providerAccounts.id,
         provider: providerConnections.provider,
+        destinationProvider: providerAccounts.destinationProvider,
         displayName: providerAccounts.displayName,
         status: providerConnections.status,
+        availability: providerAccounts.availability,
+        remoteParentAccountId: providerAccounts.remoteParentAccountId,
+        capabilitiesCheckedAt: providerAccounts.capabilitiesCheckedAt,
         adapterDefaults: providerAccounts.adapterDefaults,
         updatedAt: providerAccounts.updatedAt,
         expiresAt: providerConnections.expiresAt,
@@ -48,8 +63,13 @@ export function listProviderAccounts(
       .where(
         and(eq(providerAccounts.workspaceId, workspaceId), isNull(providerAccounts.disconnectedAt)),
       )
-      .orderBy(providerConnections.provider, providerAccounts.displayName),
-  );
+      .orderBy(providerConnections.provider, providerAccounts.displayName);
+    return rows.map((row) => ({
+      ...row,
+      capabilitySnapshot: destinationCapabilities(row.destinationProvider),
+      capabilityFreshness: capabilityFreshness(row.capabilitiesCheckedAt),
+    }));
+  });
 }
 
 export async function updateYouTubeAccountDefaults(

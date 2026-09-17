@@ -23,6 +23,11 @@ Users can register, connect multiple social accounts, schedule content through t
   accounts as separate destinations. Connection/discovery does not enable publishing by itself;
   Instagram and Facebook publishing remain independent adapter slices with independent jobs and
   outcomes.
+- Meta phase-one composition is destination-first. Instagram accepts one image or a 2–10 image
+  carousel with a caption; Facebook Pages accept one image or an HTTPS link with a message. A
+  combined Instagram + Facebook composition is intentionally limited to one image plus shared
+  caption/message, and creates one immutable target payload and job per destination. This prepares
+  scheduling only; no Meta publishing endpoint exists in this phase.
 
 ## Explicit non-goals for the first release
 

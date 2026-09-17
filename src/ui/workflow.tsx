@@ -411,18 +411,67 @@ function CalendarPublishedMark() {
   );
 }
 
+type ComposerContentKind = 'text' | 'video' | 'single_image' | 'carousel' | 'link';
+
+interface ComposerDestination {
+  id: string;
+  provider: string;
+  destinationProvider: string;
+  displayName: string;
+  status: string;
+  expiresAt?: string | null;
+  availability: string;
+  capabilityFreshness: 'fresh' | 'stale' | 'unknown';
+  capabilitySnapshot: { contentKinds: ComposerContentKind[] };
+  adapterDefaults: { madeForKids?: boolean };
+}
+
+function sharedContentKinds(destinations: readonly ComposerDestination[]): ComposerContentKind[] {
+  const first = destinations[0];
+  if (!first) return [];
+  return first.capabilitySnapshot.contentKinds.filter((kind) =>
+    destinations
+      .slice(1)
+      .every((destination) => destination.capabilitySnapshot.contentKinds.includes(kind)),
+  );
+}
+
+function destinationName(destination: ComposerDestination): string {
+  if (destination.destinationProvider === 'instagram')
+    return `Instagram · ${destination.displayName}`;
+  if (destination.destinationProvider === 'facebook_page')
+    return `Facebook · ${destination.displayName}`;
+  return destination.displayName;
+}
+
+function normalizeComposerDestination(
+  input: Partial<ComposerDestination> & { id: string; provider: string; displayName: string },
+): ComposerDestination {
+  const destinationProvider = input.destinationProvider ?? input.provider;
+  const inferredKinds: ComposerContentKind[] =
+    destinationProvider === 'youtube'
+      ? ['video']
+      : destinationProvider === 'instagram'
+        ? ['single_image', 'carousel']
+        : destinationProvider === 'facebook_page'
+          ? ['link', 'single_image']
+          : ['text'];
+  return {
+    id: input.id,
+    provider: input.provider,
+    destinationProvider,
+    displayName: input.displayName,
+    status: input.status ?? 'active',
+    availability: input.availability ?? 'active',
+    capabilityFreshness: input.capabilityFreshness ?? 'unknown',
+    capabilitySnapshot: input.capabilitySnapshot ?? { contentKinds: inferredKinds },
+    adapterDefaults: input.adapterDefaults ?? {},
+  };
+}
+
 function Composer({ onClose }: { onClose: () => void }) {
   const draftId = /\/drafts\/([^/]+)$/.exec(window.location.pathname)?.[1] ?? null;
-  const [accounts, setAccounts] = useState<
-    {
-      id: string;
-      provider: string;
-      displayName: string;
-      status: string;
-      expiresAt?: string | null;
-      adapterDefaults: { madeForKids?: boolean };
-    }[]
-  >([]);
+  const [accounts, setAccounts] = useState<ComposerDestination[]>([]);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<QueueJobDto[]>([]);
   const [collisionGuidance, setCollisionGuidance] = useState<'loading' | 'ready' | 'unavailable'>(
@@ -430,6 +479,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [collisionWindowEnd, setCollisionWindowEnd] = useState<Date | null>(null);
   const [body, setBody] = useState('');
+  const [contentKind, setContentKind] = useState<ComposerContentKind>('text');
+  const [linkUrl, setLinkUrl] = useState('');
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
   const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
   const [draftState, setDraftState] = useState<'loading' | 'ready' | 'error'>(
@@ -516,6 +567,9 @@ function Composer({ onClose }: { onClose: () => void }) {
   const scheduledAt = scheduleOptions[scheduleOption];
   const scheduledAtMillis = scheduledAt ? scheduledAt.getTime() : null;
   const selected = accounts.filter((account) => selectedAccounts.includes(account.id));
+  const allowedKinds = sharedContentKinds(selected);
+  const includesMeta = selected.some((account) => account.provider === 'meta');
+  const allowedKindKey = allowedKinds.join(',');
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const isX = selected.length > 0 && selected.every((account) => account.provider === 'x');
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
@@ -554,7 +608,16 @@ function Composer({ onClose }: { onClose: () => void }) {
         (!youtubeHasMadeForKids && madeForKids === 'default')
       : !body.trim() || body.length > textLimit) ||
     (includesYouTube && !isYouTube) ||
-    (mediaFiles.length > 0 && !isYouTube && !isX) ||
+    (mediaFiles.length > 0 && !isYouTube && !isX && !includesMeta) ||
+    (includesMeta && !allowedKinds.includes(contentKind)) ||
+    (includesMeta &&
+      contentKind === 'single_image' &&
+      mediaFiles.length + draftMediaIds.length !== 1) ||
+    (includesMeta &&
+      contentKind === 'carousel' &&
+      (mediaFiles.length + draftMediaIds.length < 2 ||
+        mediaFiles.length + draftMediaIds.length > 10)) ||
+    (includesMeta && contentKind === 'link' && !linkUrl.startsWith('https://')) ||
     selectedAccounts.length === 0 ||
     linkedinExpiresBeforeDispatch ||
     state !== 'ready' ||
@@ -562,6 +625,8 @@ function Composer({ onClose }: { onClose: () => void }) {
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
   const formSnapshot = JSON.stringify({
     body,
+    contentKind,
+    linkUrl,
     localSchedule,
     madeForKids,
     notifySubscribers,
@@ -572,6 +637,10 @@ function Composer({ onClose }: { onClose: () => void }) {
     videoDescription,
     videoTitle,
   });
+  useEffect(() => {
+    if (allowedKinds.length > 0 && !allowedKinds.includes(contentKind))
+      setContentKind(allowedKinds[0] ?? 'text');
+  }, [allowedKindKey, allowedKinds, contentKind]);
   useEffect(() => {
     if (!draftId) return;
     void fetch(`/api/workflow/drafts/${draftId}`)
@@ -601,26 +670,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         if (!response.ok) throw new Error('Connected accounts could not be loaded.');
         return response.json() as Promise<{
           data: {
-            accounts: {
-              id: string;
-              provider: string;
-              displayName: string;
-              status: string;
-              expiresAt?: string | null;
-              adapterDefaults: { madeForKids?: boolean };
-            }[];
+            accounts: ComposerDestination[];
           };
         }>;
       })
       .then(({ data }) => {
-        const active = data.accounts.filter(
-          (account) =>
-            account.status === 'active' &&
-            (!account.expiresAt || new Date(account.expiresAt).getTime() > Date.now()),
-        );
-        setAccounts(active);
-        setSelectedAccounts(active.map((account) => account.id));
-        setAccountLoadState('ready');
+        setAccounts(data.accounts.map(normalizeComposerDestination));
+        setSelectedAccounts([]);
         setState('ready');
       })
       .catch((reason: unknown) => {
@@ -658,6 +714,8 @@ function Composer({ onClose }: { onClose: () => void }) {
     intentKey.current = crypto.randomUUID();
   }, [
     body,
+    contentKind,
+    linkUrl,
     localSchedule,
     madeForKids,
     notifySubscribers,
@@ -744,7 +802,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({
           content: isYouTube
             ? { kind: 'video', text: '', providerOptions: { youtube: youtubeOverrides } }
-            : { type: 'text', text: body.trim() },
+            : includesMeta
+              ? {
+                  kind: contentKind,
+                  text: body.trim(),
+                  ...(contentKind === 'link' ? { linkUrl: linkUrl.trim() } : {}),
+                }
+              : { type: 'text', text: body.trim() },
           mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
@@ -929,6 +993,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                   <input
                     className="account-picker-checkbox"
                     type="checkbox"
+                    disabled={account.availability !== 'active'}
                     checked={selectedAccounts.includes(account.id)}
                     onChange={() => {
                       setMediaFiles([]);
@@ -943,8 +1008,12 @@ function Composer({ onClose }: { onClose: () => void }) {
                     {account.displayName.slice(0, 2).toUpperCase()}
                   </span>
                   <span>
-                    <strong>{account.displayName}</strong>
-                    <small>{account.provider.toUpperCase()}</small>
+                    <strong>{destinationName(account)}</strong>
+                    <small>
+                      {account.availability === 'active'
+                        ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · ${account.capabilityFreshness}`
+                        : `${account.availability.replaceAll('_', ' ')} · reconnect to schedule`}
+                    </small>
                   </span>
                 </label>
               ))}
@@ -978,7 +1047,27 @@ function Composer({ onClose }: { onClose: () => void }) {
                   placeholder="What should your audience know?"
                 />
               )}
+              <small>
+                {isYouTube
+                  ? `${String(videoTitle.length)}/100`
+                  : includesMeta
+                    ? `${String(body.length)} characters`
+                    : `${String(body.length)}/280 per X post`}
+              </small>
             </label>
+            {includesMeta && contentKind === 'link' && (
+              <label className="field-label">
+                HTTPS link
+                <input
+                  className="composer-link text-input"
+                  type="url"
+                  value={linkUrl}
+                  onChange={(event) => {
+                    setLinkUrl(event.target.value);
+                  }}
+                />
+              </label>
+            )}
             {isYouTube && (
               <div className="youtube-composer-options" inert={hasUncertainPost}>
                 <label className="field-label">
@@ -1041,11 +1130,13 @@ function Composer({ onClose }: { onClose: () => void }) {
                   ? mediaFiles[0]
                     ? mediaFiles[0].name
                     : 'Choose exactly one MP4 video'
-                  : isX
-                    ? 'Up to four images, or one GIF or MP4 video'
-                    : 'Select only X accounts or one YouTube channel to add media'}
+                  : includesMeta && contentKind !== 'link'
+                    ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
+                    : isX
+                      ? 'Up to four images, or one GIF or MP4 video'
+                      : 'Select only X accounts or one YouTube channel to add media'}
               </span>
-              {(isYouTube || isX) && (
+              {(isYouTube || isX || (includesMeta && contentKind !== 'link')) && (
                 <>
                   <label className="secondary-button" htmlFor="composer-media-upload">
                     Choose files
@@ -1057,9 +1148,11 @@ function Composer({ onClose }: { onClose: () => void }) {
                     accept={
                       isYouTube
                         ? 'video/mp4'
-                        : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
+                        : includesMeta
+                          ? 'image/jpeg,image/png,image/webp,image/gif'
+                          : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
                     }
-                    multiple={isX}
+                    multiple={isX || (includesMeta && contentKind === 'carousel')}
                     onChange={(event) => {
                       if (uncertainPost.current) {
                         event.target.value = '';
@@ -1070,13 +1163,19 @@ function Composer({ onClose }: { onClose: () => void }) {
                       event.target.value = '';
                       const allowed = isYouTube
                         ? ['video/mp4']
-                        : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
+                        : includesMeta
+                          ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+                          : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
                       if (files.some((file) => !allowed.includes(file.type))) {
                         setError('Choose a supported image, GIF, or MP4 file.');
                         return;
                       }
                       if (isYouTube && files.length !== 1) {
                         setError('Choose exactly one MP4 video.');
+                        return;
+                      }
+                      if (includesMeta && files.length > (contentKind === 'carousel' ? 10 : 1)) {
+                        setError('Choose only the number of images supported by this destination.');
                         return;
                       }
                       if (

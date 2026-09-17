@@ -246,6 +246,20 @@
       "when": 1789654327307,
       "tag": "0037_meta_destination_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1789660000000,
+      "tag": "0038_meta_effective_payload",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789661000000,
+      "tag": "0039_instagram_staging_artifacts",
+      "breakpoints": true
     }
   ]
 }

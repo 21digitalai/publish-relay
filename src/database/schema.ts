@@ -782,7 +782,13 @@ export const providerStagingArtifacts = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     jobId: uuid('job_id').notNull(),
-    mediaId: uuid('media_id').notNull(),
+    mediaId: uuid('media_id'),
+    artifactKey: text('artifact_key')
+      .notNull()
+      .default(sql`'legacy:' || gen_random_uuid()::text`),
+    artifactKind: text('artifact_kind').notNull().default('legacy'),
+    artifactStatus: text('artifact_status').notNull().default('initialized'),
+    redactedEvidence: jsonb('redacted_evidence').notNull().default({}),
     providerReference: text('provider_reference').notNull(),
     providerReferenceCredentialId: uuid('provider_reference_credential_id'),
     uploadPhase: text('upload_phase').notNull().default('initialized'),
@@ -797,6 +803,11 @@ export const providerStagingArtifacts = pgTable(
     uniqueIndex('provider_staging_job_media_unique')
       .on(table.workspaceId, table.jobId, table.mediaId)
       .where(sql`${table.deletedAt} is null`),
+    uniqueIndex('provider_staging_job_artifact_key_unique').on(
+      table.workspaceId,
+      table.jobId,
+      table.artifactKey,
+    ),
     index('provider_staging_expiry_idx').on(table.workspaceId, table.expiresAt),
     foreignKey({
       columns: [table.workspaceId, table.jobId],

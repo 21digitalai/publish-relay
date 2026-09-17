@@ -25,6 +25,12 @@ import {
   dispatchDueYouTubeJobs,
   reconcileYouTubeJobs,
 } from '../modules/providers/youtube-media-dispatch.service.js';
+import { InstagramHttpClient } from '../modules/providers/instagram-http-client.js';
+import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
+import {
+  dispatchDueInstagramJobs,
+  reconcileInstagramJobs,
+} from '../modules/providers/instagram-dispatch.service.js';
 
 const config = loadRuntimeConfig();
 const shutdownController = new AbortController();
@@ -77,6 +83,20 @@ const youtubeRuntime =
         leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
       }
     : null;
+const instagramRuntime =
+  config.PUBLISH_RELAY_META_GRAPH_VERSION &&
+  config.PUBLISH_RELAY_PUBLIC_ORIGIN &&
+  config.CURSOR_SIGNING_SECRET
+    ? {
+        database,
+        keys,
+        client: new InstagramHttpClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
+        tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
+        publicOrigin: config.PUBLISH_RELAY_PUBLIC_ORIGIN,
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      }
+    : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
@@ -84,6 +104,10 @@ if (!xRuntime)
 if (!youtubeRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'youtube', reason: 'missing_configuration' })}\n`,
+  );
+if (!instagramRuntime)
+  process.stdout.write(
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'instagram', reason: 'missing_configuration' })}\n`,
   );
 
 const destinationDispatchAdapters: DestinationDispatchAdapter[] = [];
@@ -98,6 +122,12 @@ if (youtubeRuntime)
     destinationProvider: 'youtube',
     dispatch: () => dispatchDueYouTubeJobs(youtubeRuntime),
     reconcile: () => reconcileYouTubeJobs(youtubeRuntime),
+  });
+if (instagramRuntime)
+  destinationDispatchAdapters.push({
+    destinationProvider: 'instagram',
+    dispatch: () => dispatchDueInstagramJobs(instagramRuntime),
+    reconcile: () => reconcileInstagramJobs(instagramRuntime),
   });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

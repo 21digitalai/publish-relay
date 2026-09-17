@@ -13,6 +13,21 @@ describe('InstagramMediaTokenCodec', () => {
     expect(() => codec.verify(token, 2_000)).toThrow('expired');
   });
 
+  it('keeps workspace and media identifiers opaque to token inspection', () => {
+    const codec = new InstagramMediaTokenCodec(randomBytes(32));
+    const payload = { workspaceId: randomUUID(), mediaId: randomUUID(), expiresAt: 2_000 };
+    const token = codec.issue(payload);
+    const inspected = token
+      .split('.')
+      .map((segment) => Buffer.from(segment, 'base64url').toString('utf8'))
+      .join(' ');
+
+    expect(token).not.toContain(payload.workspaceId);
+    expect(token).not.toContain(payload.mediaId);
+    expect(inspected).not.toContain(payload.workspaceId);
+    expect(inspected).not.toContain(payload.mediaId);
+  });
+
   it('rejects tampering and weak signing secrets', () => {
     expect(() => new InstagramMediaTokenCodec(Buffer.alloc(31))).toThrow('at least 32 bytes');
     const codec = new InstagramMediaTokenCodec(randomBytes(32));

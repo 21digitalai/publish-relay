@@ -164,7 +164,9 @@ describe('Instagram staging persistence and signed media delivery', () => {
     ).rejects.toThrow();
 
     await database.exec(`
-      UPDATE publication_jobs SET state = 'cancelled' WHERE id = '${jobId}';
+      UPDATE publication_jobs
+         SET state = 'cancelled', updated_at = '${now.toISOString()}'
+       WHERE id = '${jobId}';
       UPDATE media_objects SET retained_at = '${now.toISOString()}' WHERE id = '${mediaId}';
     `);
     await expect(
@@ -224,6 +226,54 @@ describe('Instagram staging persistence and signed media delivery', () => {
       );
       expect(rows.rows[0]?.count).toBe(1);
       expect(rows.rows[0]?.deleted_at).not.toBeNull();
+    },
+  );
+
+  it.each(['cancelled', 'superseded'] as const)(
+    'retains media bytes until a late %s transition has completed its full grace',
+    async (terminalState) => {
+      const createdAt = new Date('2026-09-17T16:00:00Z');
+      const terminalAt = new Date(createdAt.getTime() + 23 * 60 * 60 * 1000);
+      const store = new PostgresInstagramArtifactStore(db, {
+        workspaceId: workspaceA,
+        jobId,
+        now: () => createdAt,
+      });
+      await store.ensure({ key: 'instagram:job:child:0', kind: 'child', mediaId });
+      await database.exec(`
+        UPDATE publication_jobs
+           SET state = '${terminalState}', updated_at = '${terminalAt.toISOString()}'
+         WHERE id = '${jobId}';
+        UPDATE media_objects
+           SET retained_at = '${createdAt.toISOString()}'
+         WHERE id = '${mediaId}';
+      `);
+
+      await expect(
+        evaluateMediaRetention(db, {
+          workspaceId: workspaceA,
+          now: new Date(createdAt.getTime() + 25 * 60 * 60 * 1000),
+          policy: createFixedMediaRetentionPolicy(0),
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        database.query<{ state: string }>(
+          `SELECT state FROM media_objects WHERE id = '${mediaId}'`,
+        ),
+      ).resolves.toMatchObject({ rows: [{ state: 'ready' }] });
+
+      await expect(
+        evaluateMediaRetention(db, {
+          workspaceId: workspaceA,
+          now: new Date(terminalAt.getTime() + 25 * 60 * 60 * 1000),
+          policy: createFixedMediaRetentionPolicy(0),
+        }),
+      ).resolves.toBe(1);
+      await expect(
+        database.query<{ state: string }>(
+          `SELECT state FROM media_objects WHERE id = '${mediaId}'`,
+        ),
+      ).resolves.toMatchObject({ rows: [{ state: 'cleanup_eligible' }] });
     },
   );
 

@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -26,6 +26,37 @@ interface Candidate extends Record<string, unknown> {
   retained_at: Date;
 }
 
+const INSTAGRAM_TERMINAL_GRACE_MS = 24 * 60 * 60 * 1000;
+
+function requiredStagingArtifactPredicate(
+  workspaceId: string | SQL,
+  mediaId: string | SQL,
+  now: Date,
+) {
+  const terminalBefore = new Date(now.getTime() - INSTAGRAM_TERMINAL_GRACE_MS);
+  return sql`
+    select 1 from provider_staging_artifacts artifact
+    join publication_jobs job
+      on job.workspace_id = artifact.workspace_id and job.id = artifact.job_id
+    join provider_accounts account
+      on account.workspace_id = job.workspace_id and account.id = job.provider_account_id
+    where artifact.workspace_id = ${workspaceId} and artifact.media_id = ${mediaId}
+      and artifact.deleted_at is null
+      and (
+        (account.destination_provider <> 'instagram' and artifact.expires_at > ${now})
+        or (
+          account.destination_provider = 'instagram'
+          and (
+            artifact.expires_at > ${now}
+            or job.state not in ('published', 'failed', 'cancelled', 'superseded')
+            or job.reconciliation_required = true
+            or job.updated_at >= ${terminalBefore}
+          )
+        )
+      )
+  `;
+}
+
 async function hasRequiredJobReference(
   database: NodePgDatabase,
   workspaceId: string,
@@ -40,9 +71,7 @@ async function hasRequiredJobReference(
         and (pj.state in ('scheduled', 'leased', 'dispatching', 'retry_wait', 'accepted_pending')
           or pj.reconciliation_required = true)
       union all
-      select 1 from provider_staging_artifacts artifact
-      where artifact.workspace_id = ${workspaceId} and artifact.media_id = ${mediaId}
-        and artifact.deleted_at is null and artifact.expires_at > ${now}
+      ${requiredStagingArtifactPredicate(workspaceId, mediaId, now)}
     ) as required
   `);
   return result.rows[0]?.required === true;
@@ -114,9 +143,7 @@ export async function cleanupRetainedMedia(
                 or pj.reconciliation_required = true)
           )
           and not exists (
-            select 1 from provider_staging_artifacts artifact
-            where artifact.workspace_id = media.workspace_id and artifact.media_id = media.id
-              and artifact.deleted_at is null and artifact.expires_at > ${input.now}
+            ${requiredStagingArtifactPredicate(input.workspaceId, sql.raw('media.id'), input.now)}
           )
         order by media.cleanup_eligible_at, media.id
         limit ${input.limit ?? 100}

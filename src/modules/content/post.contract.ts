@@ -37,6 +37,7 @@ export const jobDetailResponseSchema = z.object({
   scheduledAt: timestampSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
+  effectivePayload: z.record(z.string(), z.unknown()).nullable(),
   effectiveProviderSettings: z.record(z.string(), z.unknown()).nullable(),
   links: z.object({ self: z.string(), post: z.string() }),
 });

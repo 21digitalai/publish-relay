@@ -169,6 +169,18 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - YouTube resolution is owned by `src/modules/providers/youtube-settings.ts`: public and `notifySubscribers=false` are product defaults, `madeForKids` must resolve from either the destination or request, and omitted tags/category remain absent.
 - `src/modules/providers/youtube-http-client.ts` owns Google token exchange/refresh/revocation and exact owned-channel discovery behind an injected HTTP boundary; persistence services encrypt its credential value and serialize refresh writes.
 - Revisions keep caller content; target-specific effective settings belong to the independent job so multiple destinations may resolve differently without mutating shared revision history.
+- `src/modules/providers/destination-capabilities.ts` owns the bounded phase-one destination
+  capability vocabulary and 24-hour freshness label. The authenticated and machine destination
+  collections allowlist destination provider, display identity, remote parent identity,
+  availability, capability snapshot/freshness, and timestamps; connection IDs, credentials,
+  provider metadata, defaults, and ownership fields remain absent from the machine collection.
+- Meta scheduling validates the selected destination set against that capability contract before
+  mutation. Instagram accepts `single_image` or `carousel` (2–10 images); Facebook Pages accept
+  `single_image` or `link` (HTTPS only). Selecting both therefore admits only `single_image`.
+  Unavailable destinations fail closed. Every inserted job stores its own immutable
+  `effective_payload`; shared revision content never becomes shared target success state. The
+  browser image-ingest boundary accepts signature-verified PNG, JPEG, GIF, or WebP up to 20 MB and
+  retains the existing unattached-media cleanup lifecycle. No Meta dispatch adapter is registered.
 
 - `getWorkspaceUsageFacts` is the sole transactional owner of workspace usage facts for policy and application consumers. It derives retained media bytes and lifecycle counts, active connected accounts/provider families, publication-job target rows, active queued targets, scheduling horizon, and membership count from canonical Core tables under tenant RLS.
 - A publication target fact is one `publication_jobs` row, including historical rows; multiple jobs aimed at one connected account remain multiple targets. Connected-account facts require both a non-disconnected account and an active parent connection. Deleted media remains visible in lifecycle counts but contributes no retained bytes.
@@ -198,7 +210,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `createPostgresDelegatedAuthorizationStore` is the only application adapter for delegated grant/code/token persistence. Tenant-known mutations use the canonical tenant transaction; opaque credential resolution calls only the audited hash-based functions above.
 - Grant approval and revocation write `delegated_grant.approved` and `delegated_grant.revoked` audit events in the same tenant transaction as the lifecycle mutation. The authenticated user is the actor, the grant is the target, request correlation is retained, and approval metadata contains only client ID and approved scopes.
 
-`GET /api/v1/destinations` is the canonical account-scoped discovery surface for API customers. It requires `destinations:read` and returns only the provider-account ID, provider, display name, connection status, and update timestamp. Credential IDs, connection IDs, provider metadata, defaults, ownership fields, and secret material are never exposed by this collection contract.
+`GET /api/v1/destinations` is the canonical account-scoped discovery surface for API customers. It requires `destinations:read` and returns only the provider-account ID, connection family, destination provider, display name, connection status, availability, remote parent identity where useful, the bounded capability snapshot/freshness, and timestamps. Credential IDs, connection IDs, provider metadata, defaults, ownership fields, and secret material are never exposed by this collection contract.
 
 `POST /api/v1/jobs/:jobId/retry` is the canonical agent retry surface. It requires `publishes:retry`, an idempotency key, and a tenant-owned failed job whose outcome does not require reconciliation. The API-key identity is retained as the policy and event actor; unknown outcomes must be reconciled rather than blindly retried.
 

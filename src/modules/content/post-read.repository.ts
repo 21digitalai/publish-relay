@@ -45,6 +45,7 @@ const browserJobProjection = {
   scheduledAt: publicationJobs.scheduledAt,
   createdAt: publicationJobs.createdAt,
   updatedAt: publicationJobs.updatedAt,
+  effectivePayload: publicationJobs.effectivePayload,
   effectiveProviderSettings: publicationJobs.effectiveProviderSettings,
   content: postRevisions.content,
   revisionId: postRevisions.id,

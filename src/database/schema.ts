@@ -726,6 +726,7 @@ export const publicationJobs = pgTable(
     postId: uuid('post_id').notNull(),
     revisionId: uuid('revision_id').notNull(),
     providerAccountId: uuid('provider_account_id').notNull(),
+    effectivePayload: jsonb('effective_payload'),
     effectiveProviderSettings: jsonb('effective_provider_settings'),
     state: publicationJobState('state').notNull().default('scheduled'),
     scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),

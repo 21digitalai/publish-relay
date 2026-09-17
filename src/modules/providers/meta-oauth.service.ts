@@ -265,6 +265,21 @@ export async function failMetaOauthConnection(
   return transaction !== null;
 }
 
+export async function revokeRemoteMetaGrant(
+  client: MetaHttpClient,
+  accessToken: string,
+): Promise<void> {
+  try {
+    await client.revoke(accessToken);
+  } catch (error) {
+    if (
+      !(error instanceof MetaRequestError) ||
+      (error.kind !== 'auth' && error.kind !== 'permission')
+    )
+      throw error;
+  }
+}
+
 export async function revokeMetaConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
@@ -300,7 +315,7 @@ export async function revokeMetaConnection(
     try {
       const value = JSON.parse(decrypted.toString('utf8')) as { accessToken?: unknown };
       if (typeof value.accessToken !== 'string') throw new Error('Meta credential is invalid');
-      await client.revoke(value.accessToken);
+      await revokeRemoteMetaGrant(client, value.accessToken);
     } finally {
       decrypted.fill(0);
     }

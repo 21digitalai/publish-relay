@@ -98,13 +98,13 @@ describe('Meta OAuth routes', () => {
   it('starts, completes, and revokes through bounded response contracts', async () => {
     const app = application(true);
     vi.mocked(beginMetaOauthConnection).mockResolvedValue({
-      authorizationUrl: 'https://graph.facebook.test/dialog/oauth',
+      authorizationUrl: 'https://www.facebook.com/v23.0/dialog/oauth',
       expiresAt: new Date('2026-09-17T16:00:00Z'),
     });
     expect(
       (await app.inject({ method: 'POST', url: '/api/oauth/meta', headers: csrf })).json(),
     ).toMatchObject({
-      data: { authorizationUrl: 'https://graph.facebook.test/dialog/oauth' },
+      data: { authorizationUrl: 'https://www.facebook.com/v23.0/dialog/oauth' },
       error: null,
     });
     vi.mocked(completeMetaOauthConnection).mockResolvedValue({ accounts: [] } as never);

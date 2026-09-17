@@ -114,6 +114,7 @@ export class MetaHttpClient {
   private readonly now: () => number;
   private readonly permissions: readonly MetaPermission[];
   private readonly graphOrigin = 'https://graph.facebook.com';
+  private readonly authorizationOrigin = 'https://www.facebook.com';
 
   public constructor(private readonly options: MetaHttpClientOptions) {
     if (!options.appId || !options.appSecret) throw new Error('Meta app credentials are required');
@@ -125,7 +126,7 @@ export class MetaHttpClient {
   }
 
   public authorizationUrl(input: { redirectUri: string; state: string }): string {
-    const url = new URL(`${this.graphOrigin}/${this.options.graphVersion}/dialog/oauth`);
+    const url = new URL(`${this.authorizationOrigin}/${this.options.graphVersion}/dialog/oauth`);
     url.search = new URLSearchParams({
       client_id: this.options.appId,
       redirect_uri: input.redirectUri,

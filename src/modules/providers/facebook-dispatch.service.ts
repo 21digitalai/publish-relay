@@ -210,11 +210,7 @@ async function failPreflight(
   });
 }
 
-async function dispatchJob(
-  runtime: FacebookDispatchRuntime,
-  job: FacebookJob,
-  now: Date,
-) {
+async function dispatchJob(runtime: FacebookDispatchRuntime, job: FacebookJob, now: Date) {
   const fingerprint = deriveJobIdempotencyKey({
     jobId: job.id,
     revisionId: job.revisionId,
@@ -245,13 +241,7 @@ async function dispatchJob(
   try {
     adapter = await createAdapter(runtime, job, context.credentialId, now);
   } catch {
-    await failPreflight(
-      runtime,
-      job,
-      attempt.attemptId,
-      now,
-      'Facebook credential is unavailable',
-    );
+    await failPreflight(runtime, job, attempt.attemptId, now, 'Facebook credential is unavailable');
     return false;
   }
   const outcome = await adapter.publish(

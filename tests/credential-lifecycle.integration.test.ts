@@ -20,6 +20,7 @@ import type {
 import { decryptCredential } from '../src/modules/credentials/envelope.js';
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
 import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
+import { markProviderDestinationsUnavailable } from '../src/modules/credentials/provider-connection.repository.js';
 import {
   disconnectProviderAccount,
   listProviderAccounts,
@@ -501,6 +502,41 @@ describe('credential and OAuth persistence', () => {
     expect(after.rows.find((row) => row.remote_account_id === 'page-lost')?.availability).toBe(
       'remote_missing',
     );
+    expect(
+      (await listProviderAccounts(db, workspaceId)).find(
+        (account) => account.displayName === 'Lost Page',
+      ),
+    ).toMatchObject({ availability: 'remote_missing' });
+    await expect(
+      markProviderDestinationsUnavailable(db, {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        availability: 'reauth_required',
+        requestId: 'meta-reauth-required',
+      }),
+    ).resolves.toBe(3);
+    expect(await listProviderAccounts(db, workspaceId)).toHaveLength(3);
+    expect(
+      (await listProviderAccounts(db, workspaceId)).every(
+        (account) => account.availability === 'reauth_required',
+      ),
+    ).toBe(true);
+    await expect(
+      markProviderDestinationsUnavailable(db, {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        availability: 'permission_lost',
+        requestId: 'meta-permission-lost',
+      }),
+    ).resolves.toBe(3);
+    expect(await listProviderAccounts(db, workspaceId)).toHaveLength(3);
+    expect(
+      (await listProviderAccounts(db, workspaceId)).every(
+        (account) => account.availability === 'permission_lost',
+      ),
+    ).toBe(true);
     const credentials = await database.query<{ active: number; revoked: number }>(
       `select
          count(*) filter (where revoked_at is null)::int as active,

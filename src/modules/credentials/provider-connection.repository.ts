@@ -148,7 +148,7 @@ export async function replaceProviderConnection(
     )
       await database
         .update(providerAccounts)
-        .set({ availability: 'remote_missing', disconnectedAt: now, updatedAt: now })
+        .set({ availability: 'remote_missing', updatedAt: now })
         .where(
           and(
             eq(providerAccounts.workspaceId, input.workspaceId),
@@ -182,7 +182,7 @@ export async function replaceProviderConnection(
         capabilitySnapshot: account.capabilitySnapshot ?? {},
         capabilitiesCheckedAt: account.capabilitiesCheckedAt ?? null,
         availability: account.availability ?? 'active',
-        disconnectedAt: account.availability && account.availability !== 'active' ? now : null,
+        disconnectedAt: null,
         updatedAt: now,
       })
       .where(
@@ -223,7 +223,6 @@ export async function replaceProviderConnection(
         capabilitySnapshot: account.capabilitySnapshot ?? {},
         capabilitiesCheckedAt: account.capabilitiesCheckedAt ?? null,
         availability: account.availability ?? 'active',
-        disconnectedAt: account.availability && account.availability !== 'active' ? now : null,
         displayName: account.displayName,
       })),
     );
@@ -298,7 +297,7 @@ export async function markProviderDestinationsUnavailable(
   const now = new Date();
   const rows = await database
     .update(providerAccounts)
-    .set({ availability: input.availability, disconnectedAt: now, updatedAt: now })
+    .set({ availability: input.availability, updatedAt: now })
     .where(
       and(
         eq(providerAccounts.workspaceId, input.workspaceId),

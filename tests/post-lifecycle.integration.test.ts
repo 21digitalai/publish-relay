@@ -49,6 +49,7 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
+  '0037_meta_destination_foundation.sql',
   '0038_meta_effective_payload.sql',
   '0039_instagram_staging_artifacts.sql',
 ];
@@ -116,9 +117,9 @@ beforeEach(async () => {
       VALUES ('00000000-0000-4000-8000-000000000205', '${workspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
     INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
       VALUES ('00000000-0000-4000-8000-000000000206', '${workspaceId}', 'fake', '00000000-0000-4000-8000-000000000205');
-    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name) VALUES
-      ('${accountOne}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'one', 'One'),
-      ('${accountTwo}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'two', 'Two');
+    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name) VALUES
+      ('${accountOne}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'one', 'fake', 'one', 'One'),
+      ('${accountTwo}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'two', 'fake', 'two', 'Two');
   `);
 });
 
@@ -448,8 +449,8 @@ describe('post revision lifecycle', () => {
         VALUES ('00000000-0000-4000-8000-000000000216', '${otherWorkspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
       INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
         VALUES ('00000000-0000-4000-8000-000000000217', '${otherWorkspaceId}', 'fake', '00000000-0000-4000-8000-000000000216');
-      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
-        VALUES ('${otherAccountId}', '${otherWorkspaceId}', '00000000-0000-4000-8000-000000000217', 'other', 'Other');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name)
+        VALUES ('${otherAccountId}', '${otherWorkspaceId}', '00000000-0000-4000-8000-000000000217', 'other', 'fake', 'other', 'Other');
       INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${otherPostId}', '${otherWorkspaceId}', '${userId}');
       INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
         VALUES ('${otherRevisionId}', '${otherWorkspaceId}', '${otherPostId}', 1, '{"type":"text","text":"Other"}');
@@ -606,8 +607,8 @@ describe('post revision lifecycle', () => {
         VALUES ('00000000-0000-4000-8000-000000000223', '${otherWorkspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
       INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
         VALUES ('00000000-0000-4000-8000-000000000224', '${otherWorkspaceId}', 'fake', '00000000-0000-4000-8000-000000000223');
-      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
-        VALUES ('${otherAccountId}', '${otherWorkspaceId}', '00000000-0000-4000-8000-000000000224', 'foreign', 'Foreign');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name)
+        VALUES ('${otherAccountId}', '${otherWorkspaceId}', '00000000-0000-4000-8000-000000000224', 'foreign', 'fake', 'foreign', 'Foreign');
       INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
         VALUES ('${otherMediaId}', '${otherWorkspaceId}', 'foreign/media', 'hash', 'image/png', 4, 'ready');
       SELECT set_config('app.workspace_id', '${workspaceId}', false);

@@ -10,6 +10,7 @@ import {
 } from '../modules/content/media-retention.service.js';
 import { runMediaRetentionCycle } from '../modules/content/media-retention.worker.js';
 import { createMediaStagingReconciler } from '../modules/content/media-staging.worker.js';
+import { runProviderStagingCleanupCycle } from '../modules/content/provider-staging.worker.js';
 import {
   runDestinationDispatchCycle,
   type DestinationDispatchAdapter,
@@ -38,6 +39,7 @@ const workerDatabaseUrl = resolveWorkerDatabaseUrl(config);
 const { keys, xCredentials } = resolveWorkerSecurityRuntime(config);
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
 const STAGING_RECONCILIATION_INTERVAL_MS = 60_000;
+const PROVIDER_STAGING_TERMINAL_GRACE_MS = 24 * 60 * 60 * 1000;
 if (!config.MEDIA_STORAGE_ROOT || !config.PUBLISH_RELAY_MASTER_KEY_ACTIVE_VERSION)
   throw new Error('Media storage and master key configuration are required for the worker');
 const pool = new pg.Pool({
@@ -146,6 +148,17 @@ while (!shutdownController.signal.aborted) {
     );
   }
   if (now.getTime() >= nextMediaRetentionAt) {
+    const providerStaging = await runProviderStagingCleanupCycle(
+      database,
+      {
+        batchSize: config.MEDIA_RETENTION_BATCH_SIZE ?? 100,
+        terminalGraceMs: PROVIDER_STAGING_TERMINAL_GRACE_MS,
+      },
+      now,
+    );
+    process.stdout.write(
+      `${JSON.stringify({ event: 'provider_staging_cleanup_cycle', ...providerStaging })}\n`,
+    );
     const retention = await runMediaRetentionCycle(database, mediaStorage, mediaRetentionPolicy, {
       batchSize: config.MEDIA_RETENTION_BATCH_SIZE ?? 100,
       retryDelayMs: config.MEDIA_RETENTION_RETRY_DELAY_MS ?? 300_000,

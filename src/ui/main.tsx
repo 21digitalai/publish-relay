@@ -734,7 +734,16 @@ export function Rail({
           </div>
         </div>
       )}
-      <button className="create-post-button" onClick={onCreate}>
+      <button
+        className="create-post-button"
+        onClick={() => {
+          if (onCreate) onCreate();
+          else {
+            window.sessionStorage.setItem('publish-relay-open-composer', 'true');
+            window.location.href = workspaceHref('queue');
+          }
+        }}
+      >
         <span aria-hidden="true">＋</span> Create post
       </button>
       <nav className="rail-nav">
@@ -1026,6 +1035,7 @@ function AccountsPage() {
   useEffect(() => {
     if (!adapterPickerOpen) return;
     const dialog = adapterDialogRef.current;
+    const trigger = adapterTriggerRef.current;
     const focusable = () => [
       ...(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), [href]') ?? []),
     ];
@@ -1050,10 +1060,9 @@ function AccountsPage() {
       }
     };
     document.addEventListener('keydown', handleKeyDown);
-    const adapterTrigger = adapterTriggerRef.current;
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      adapterTrigger?.focus();
+      trigger?.focus();
     };
   }, [adapterPickerOpen]);
   useEffect(() => {

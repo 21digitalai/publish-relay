@@ -650,6 +650,21 @@ test('persists credential-free fake-provider connect and disconnect through relo
   });
 });
 
+test('opens the composer from Accounts with no connected destinations', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.goto(await workspacePath(page, 'accounts'));
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  }
+  await page.getByRole('button', { name: 'Create post' }).click();
+  await expect(page).toHaveURL(/\/queue$/);
+  await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  await expect(page.getByText('Connect an account before scheduling.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 0 posts' })).toBeDisabled();
+});
+
 test('uses the mobile navigation drawer', async ({ page }) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);

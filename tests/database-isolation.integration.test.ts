@@ -133,7 +133,13 @@ describe('PostgreSQL tenant isolation', () => {
 
     await expect(store.findShellProfile(workspaceA, userA)).resolves.toEqual({
       user: { displayName: 'Local Operator', email: 'local@example.test' },
-      workspace: { id: workspaceA, name: 'Local Test', slug: 'local-test', role: 'owner' },
+      workspace: {
+        id: workspaceA,
+        name: 'Local Test',
+        slug: 'local-test',
+        role: 'owner',
+        position: 0,
+      },
     });
     await expect(store.findShellProfile(workspaceA, userB)).resolves.toBeNull();
   });

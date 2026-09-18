@@ -37,6 +37,8 @@ const workspaceProfileSchema = z.object({
     .optional(),
 });
 const workspaceSwitchSchema = z.object({ workspaceId: z.uuid() });
+const workspaceCreateSchema = z.object({ name: z.string().trim().min(1).max(100) });
+const workspaceOrderSchema = z.object({ workspaceIds: z.array(z.uuid()).min(1).max(100) });
 
 function parseSessionCookie(
   value: string | undefined,
@@ -216,6 +218,37 @@ export function registerAuthRoutes(
     const identity = await authorizeRequest(request, auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     return { data: { workspaces: await auth.listWorkspaces(identity) }, error: null };
+  });
+
+  application.post('/api/workspaces', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!verifyCsrfToken(request.cookies[CSRF_COOKIE], request.headers['x-csrf-token'] as string))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const input = workspaceCreateSchema.safeParse(request.body);
+    if (!input.success)
+      return reply.code(400).send({ data: null, error: 'Enter a workspace name' });
+    return reply
+      .code(201)
+      .send({ data: await auth.createWorkspace(identity, input.data.name), error: null });
+  });
+
+  application.patch('/api/workspaces/order', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!verifyCsrfToken(request.cookies[CSRF_COOKIE], request.headers['x-csrf-token'] as string))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const input = workspaceOrderSchema.safeParse(request.body);
+    if (!input.success)
+      return reply.code(400).send({ data: null, error: 'Invalid workspace order' });
+    try {
+      await auth.reorderWorkspaces(identity, input.data.workspaceIds);
+      return { data: { workspaceIds: input.data.workspaceIds }, error: null };
+    } catch {
+      return reply
+        .code(400)
+        .send({ data: null, error: 'Workspace order must include every workspace exactly once' });
+    }
   });
 
   application.post('/api/workspaces/:workspaceId/switch', async (request, reply) => {

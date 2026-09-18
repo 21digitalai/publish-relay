@@ -37,6 +37,8 @@ export interface AuthStore {
     input: { name: string; slug: string; timezone?: string },
   ) => Promise<{ id: string; name: string; slug: string; timezone: string }>;
   listWorkspaces: (userId: string) => Promise<WorkspaceSummary[]>;
+  createWorkspace: (userId: string, name: string, position: number) => Promise<WorkspaceSummary>;
+  reorderWorkspaces: (userId: string, workspaceIds: string[]) => Promise<void>;
   rotateWorkspaceSession: (input: {
     currentWorkspaceId: string;
     currentTokenHash: string;
@@ -142,6 +144,21 @@ export class AuthService {
 
   async listWorkspaces(identity: AuthIdentity): Promise<WorkspaceSummary[]> {
     return this.store.listWorkspaces(identity.userId);
+  }
+
+  async createWorkspace(identity: AuthIdentity, name: string): Promise<WorkspaceSummary> {
+    const existing = await this.store.listWorkspaces(identity.userId);
+    return this.store.createWorkspace(identity.userId, name.trim(), existing.length);
+  }
+
+  async reorderWorkspaces(identity: AuthIdentity, workspaceIds: string[]): Promise<void> {
+    const existing = await this.store.listWorkspaces(identity.userId);
+    const expected = new Set(existing.map((workspace) => workspace.id));
+    if (workspaceIds.length !== expected.size || new Set(workspaceIds).size !== expected.size)
+      throw new Error('Workspace order must include every workspace exactly once');
+    if (workspaceIds.some((workspaceId) => !expected.has(workspaceId)))
+      throw new Error('Workspace order contains an unknown workspace');
+    await this.store.reorderWorkspaces(identity.userId, workspaceIds);
   }
 
   async switchWorkspace(

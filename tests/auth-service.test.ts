@@ -16,6 +16,8 @@ function createStore(): AuthStore {
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
     listWorkspaces: vi.fn(),
+    createWorkspace: vi.fn(),
+    reorderWorkspaces: vi.fn(),
     rotateWorkspaceSession: vi.fn(),
   };
 }
@@ -111,5 +113,30 @@ describe('AuthService', () => {
       }),
     );
     expect(result).toMatchObject({ workspaceId: 'w2', slug: 'second-workspace', role: 'editor' });
+  });
+
+  it('creates at the end and accepts only an exact workspace reorder', async () => {
+    const store = createStore();
+    const identity = { userId: 'u1', workspaceId: 'w1', role: 'owner' as const };
+    const existing = [
+      { id: 'w1', slug: 'one', name: 'One', role: 'owner' as const, position: 0 },
+      { id: 'w2', slug: 'two', name: 'Two', role: 'editor' as const, position: 1 },
+    ];
+    vi.mocked(store.listWorkspaces).mockResolvedValue(existing);
+    vi.mocked(store.createWorkspace).mockResolvedValue({
+      id: 'w3',
+      slug: 'three',
+      name: 'Three',
+      role: 'owner',
+      position: 2,
+    });
+    const service = new AuthService(store);
+
+    await expect(service.createWorkspace(identity, ' Three ')).resolves.toMatchObject({ id: 'w3' });
+    expect(store.createWorkspace).toHaveBeenCalledWith('u1', 'Three', 2);
+    await expect(service.reorderWorkspaces(identity, ['w2', 'w1'])).resolves.toBeUndefined();
+    expect(store.reorderWorkspaces).toHaveBeenCalledWith('u1', ['w2', 'w1']);
+    await expect(service.reorderWorkspaces(identity, ['w1', 'w1'])).rejects.toThrow(/exactly once/);
+    await expect(service.reorderWorkspaces(identity, ['w1', 'w3'])).rejects.toThrow(/unknown/);
   });
 });

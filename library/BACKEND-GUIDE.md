@@ -57,7 +57,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Persistence and tenant context
 
-- Workspace picker ordering is membership-owned, not global workspace state: `memberships.position` stores each user's independent order. Authenticated workspace summaries sort by position, membership creation time, then workspace ID for deterministic legacy backfill behavior.
+- Workspace picker ordering is membership-owned, not global workspace state: `memberships.position` stores each user's independent order. Authenticated workspace summaries sort by position, membership creation time, then workspace ID for deterministic legacy backfill behavior. Cross-workspace membership listing uses the fixed-search-path `list_user_workspaces` security-definer function, which requires `app.user_id` to match its argument and returns only the allowlisted summary contract.
 - `POST /api/workspaces` creates a lightweight name-only workspace with the authenticated user as owner at the end of their list. `PATCH /api/workspaces/order` accepts one exact, duplicate-free permutation of every workspace visible to that user; repository writes re-establish tenant context for each membership. Switching workspaces also updates the user's default workspace while rotating only the current browser session.
 
 - Drizzle schema declarations live in `src/database/schema.ts`; immutable forward migrations live in `migrations/`.

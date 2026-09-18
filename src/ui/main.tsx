@@ -1441,6 +1441,10 @@ function SettingsPage() {
   const [expiryDays, setExpiryDays] = useState<number | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [isReorderingWorkspaces, setIsReorderingWorkspaces] = useState(false);
+  const creatingWorkspaceRef = useRef(false);
+  const reorderingWorkspacesRef = useRef(false);
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
   const [grantRevokeId, setGrantRevokeId] = useState<string | null>(null);
@@ -1512,22 +1516,33 @@ function SettingsPage() {
     }
   };
   const createWorkspace = async () => {
-    const response = await fetch('/api/workspaces', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-      body: JSON.stringify({ name: newWorkspaceName }),
-    });
-    const result = (await response.json()) as {
-      data: (typeof workspaces)[number] | null;
-      error: string | null;
-    };
-    if (!response.ok || !result.data)
-      throw new Error(result.error ?? 'Workspace could not be created');
-    setWorkspaces([...workspaces, result.data]);
-    setNewWorkspaceName('');
-    setMessage('Workspace created');
+    if (creatingWorkspaceRef.current) return;
+    creatingWorkspaceRef.current = true;
+    setIsCreatingWorkspace(true);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/workspaces', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({ name: newWorkspaceName }),
+      });
+      const result = (await response.json()) as {
+        data: (typeof workspaces)[number] | null;
+        error: string | null;
+      };
+      if (!response.ok || !result.data)
+        throw new Error(result.error ?? 'Workspace could not be created');
+      const createdWorkspace = result.data;
+      setWorkspaces((current) => [...current, createdWorkspace]);
+      setNewWorkspaceName('');
+      setMessage('Workspace created');
+    } finally {
+      creatingWorkspaceRef.current = false;
+      setIsCreatingWorkspace(false);
+    }
   };
   const moveWorkspace = async (index: number, direction: -1 | 1) => {
+    if (reorderingWorkspacesRef.current) return;
     const target = index + direction;
     if (!workspaces[index] || !workspaces[target]) return;
     const ordered = [...workspaces];
@@ -1536,14 +1551,22 @@ function SettingsPage() {
     if (!current || !destination) return;
     ordered[index] = destination;
     ordered[target] = current;
-    const response = await fetch('/api/workspaces/order', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-      body: JSON.stringify({ workspaceIds: ordered.map((item) => item.id) }),
-    });
-    if (!response.ok) throw new Error('Workspace order could not be saved');
-    setWorkspaces(ordered.map((item, position) => ({ ...item, position })));
-    setMessage('Workspace order saved');
+    reorderingWorkspacesRef.current = true;
+    setIsReorderingWorkspaces(true);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/workspaces/order', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({ workspaceIds: ordered.map((item) => item.id) }),
+      });
+      if (!response.ok) throw new Error('Workspace order could not be saved');
+      setWorkspaces(ordered.map((item, position) => ({ ...item, position })));
+      setMessage('Workspace order saved');
+    } finally {
+      reorderingWorkspacesRef.current = false;
+      setIsReorderingWorkspaces(false);
+    }
   };
   const createKey = async () => {
     if (isCreatingKey) return;
@@ -1679,12 +1702,12 @@ function SettingsPage() {
             </label>
             <button
               className="secondary-button"
-              disabled={!newWorkspaceName.trim()}
+              disabled={!newWorkspaceName.trim() || isCreatingWorkspace}
               onClick={() => {
                 run(createWorkspace);
               }}
             >
-              Create workspace
+              {isCreatingWorkspace ? 'Creating workspace…' : 'Create workspace'}
             </button>
             <div className="workspace-management-list">
               {workspaces.map((item, index) => (
@@ -1696,7 +1719,7 @@ function SettingsPage() {
                   <span>
                     <button
                       className="secondary-button"
-                      disabled={index === 0}
+                      disabled={index === 0 || isReorderingWorkspaces}
                       aria-label={`Move ${item.name} up`}
                       onClick={() => {
                         run(() => moveWorkspace(index, -1));
@@ -1706,7 +1729,7 @@ function SettingsPage() {
                     </button>
                     <button
                       className="secondary-button"
-                      disabled={index === workspaces.length - 1}
+                      disabled={index === workspaces.length - 1 || isReorderingWorkspaces}
                       aria-label={`Move ${item.name} down`}
                       onClick={() => {
                         run(() => moveWorkspace(index, 1));

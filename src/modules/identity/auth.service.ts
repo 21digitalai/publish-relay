@@ -2,6 +2,8 @@ import { createOpaqueToken, hashOpaqueToken } from './session.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { requireWorkspaceAction, type MembershipRole } from './authorization.js';
 
+export const MAX_WORKSPACES_PER_USER = 100;
+
 export interface AuthIdentity {
   userId: string;
   workspaceId: string;
@@ -147,10 +149,16 @@ export class AuthService {
 
   async createWorkspace(identity: AuthIdentity, name: string): Promise<WorkspaceSummary> {
     const existing = await this.store.listWorkspaces(identity.userId);
+    if (existing.length >= MAX_WORKSPACES_PER_USER)
+      throw new Error(`A user can belong to at most ${String(MAX_WORKSPACES_PER_USER)} workspaces`);
     return this.store.createWorkspace(identity.userId, name.trim(), existing.length);
   }
 
   async reorderWorkspaces(identity: AuthIdentity, workspaceIds: string[]): Promise<void> {
+    if (workspaceIds.length > MAX_WORKSPACES_PER_USER)
+      throw new Error(
+        `Workspace order cannot exceed ${String(MAX_WORKSPACES_PER_USER)} workspaces`,
+      );
     const existing = await this.store.listWorkspaces(identity.userId);
     const expected = new Set(existing.map((workspace) => workspace.id));
     if (workspaceIds.length !== expected.size || new Set(workspaceIds).size !== expected.size)

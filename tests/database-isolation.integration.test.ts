@@ -21,6 +21,8 @@ const migrationUrls = [
   new URL('../migrations/0003_many_marvel_boy.sql', import.meta.url),
   new URL('../migrations/0004_easy_doctor_spectrum.sql', import.meta.url),
   new URL('../migrations/0023_clear_shocker.sql', import.meta.url),
+  new URL('../migrations/0042_long_pepper_potts.sql', import.meta.url),
+  new URL('../migrations/0043_workspace_membership_listing.sql', import.meta.url),
 ];
 let database: PGlite;
 
@@ -33,12 +35,80 @@ beforeEach(async () => {
     CREATE ROLE publish_relay_worker NOLOGIN BYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app, publish_relay_worker;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app, publish_relay_worker;
+    GRANT EXECUTE ON FUNCTION public.list_user_workspaces(uuid) TO publish_relay_app;
   `);
 });
 
 afterEach(async () => database.close());
 
 describe('PostgreSQL tenant isolation', () => {
+  it('persists create, default switch, scoped account ownership, and reordered workspace state', async () => {
+    const firstWorkspaceId = '00000000-0000-4000-8000-000000000071';
+    const userId = '00000000-0000-4000-8000-000000000072';
+    const currentTokenHash = 'a'.repeat(64);
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug)
+        VALUES ('${firstWorkspaceId}', 'First Workspace', 'first-workspace');
+      INSERT INTO users (id, email, password_hash, default_workspace_id)
+        VALUES ('${userId}', 'multi@example.test', 'redacted-hash', '${firstWorkspaceId}');
+      SELECT set_config('app.workspace_id', '${firstWorkspaceId}', false);
+      INSERT INTO memberships (workspace_id, user_id, role, position)
+        VALUES ('${firstWorkspaceId}', '${userId}', 'owner', 0);
+      INSERT INTO sessions (workspace_id, user_id, token_hash, csrf_secret_hash, expires_at)
+        VALUES ('${firstWorkspaceId}', '${userId}', '${currentTokenHash}', '${'b'.repeat(64)}', now() + interval '1 day');
+      RESET app.workspace_id;
+      SET ROLE publish_relay_app;
+    `);
+    const store = createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase);
+    const created = await store.createWorkspace(userId, 'Second Workspace', 1);
+    await database.exec(`
+      SELECT set_config('app.workspace_id', '${created.id}', false);
+      INSERT INTO credentials (
+        workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag,
+        ciphertext, nonce, tag
+      ) VALUES ('${created.id}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+      INSERT INTO provider_connections (workspace_id, provider, credential_id)
+        SELECT '${created.id}', 'x', id FROM credentials WHERE workspace_id = '${created.id}';
+      INSERT INTO provider_accounts (
+        workspace_id, connection_id, provider_account_id, display_name
+      ) SELECT '${created.id}', id, 'second-account', 'Second Account'
+        FROM provider_connections WHERE workspace_id = '${created.id}';
+    `);
+    await expect(
+      store.rotateWorkspaceSession({
+        currentWorkspaceId: firstWorkspaceId,
+        currentTokenHash,
+        targetWorkspaceId: created.id,
+        userId,
+        tokenHash: 'c'.repeat(64),
+        csrfSecretHash: 'd'.repeat(64),
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    ).resolves.toMatchObject({ workspaceId: created.id });
+    await store.reorderWorkspaces(userId, [created.id, firstWorkspaceId]);
+
+    const reloadedStore = createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase);
+    await database.exec('RESET app.workspace_id;');
+    await expect(reloadedStore.listWorkspaces(userId)).resolves.toMatchObject([
+      { id: created.id, position: 0 },
+      { id: firstWorkspaceId, position: 1 },
+    ]);
+    await database.exec(`SELECT set_config('app.workspace_id', '${created.id}', false);`);
+    const defaultWorkspace = await database.query<{ default_workspace_id: string }>(
+      `SELECT default_workspace_id FROM users WHERE id = '${userId}'`,
+    );
+    expect(defaultWorkspace.rows[0]?.default_workspace_id).toBe(created.id);
+    const secondAccounts = await database.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM provider_accounts',
+    );
+    expect(secondAccounts.rows[0]?.count).toBe(1);
+    await database.exec(`SELECT set_config('app.workspace_id', '${firstWorkspaceId}', false);`);
+    const firstAccounts = await database.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM provider_accounts',
+    );
+    expect(firstAccounts.rows[0]?.count).toBe(0);
+  });
+
   it('returns only the authenticated tenant shell profile', async () => {
     const workspaceA = '00000000-0000-4000-8000-000000000061';
     const workspaceB = '00000000-0000-4000-8000-000000000062';

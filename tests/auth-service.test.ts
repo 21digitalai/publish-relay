@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { hashPassword } from '../src/modules/identity/password.js';
-import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
+import {
+  AuthService,
+  MAX_WORKSPACES_PER_USER,
+  type AuthStore,
+} from '../src/modules/identity/auth.service.js';
 
 function createStore(): AuthStore {
   return {
@@ -138,5 +142,17 @@ describe('AuthService', () => {
     expect(store.reorderWorkspaces).toHaveBeenCalledWith('u1', ['w2', 'w1']);
     await expect(service.reorderWorkspaces(identity, ['w1', 'w1'])).rejects.toThrow(/exactly once/);
     await expect(service.reorderWorkspaces(identity, ['w1', 'w3'])).rejects.toThrow(/unknown/);
+
+    vi.mocked(store.listWorkspaces).mockResolvedValue(
+      Array.from({ length: MAX_WORKSPACES_PER_USER }, (_, position) => ({
+        id: `w${String(position)}`,
+        slug: `workspace-${String(position)}`,
+        name: `Workspace ${String(position)}`,
+        role: 'owner' as const,
+        position,
+      })),
+    );
+    await expect(service.createWorkspace(identity, 'Overflow')).rejects.toThrow(/at most 100/);
+    expect(store.createWorkspace).toHaveBeenCalledTimes(1);
   });
 });

@@ -150,6 +150,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             name: workspaces.name,
             slug: workspaces.slug,
             role: memberships.role,
+            position: memberships.position,
           })
           .from(memberships)
           .innerJoin(users, eq(users.id, memberships.userId))
@@ -164,6 +165,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
                 name: profile.name,
                 slug: profile.slug,
                 role: profile.role,
+                position: profile.position,
               },
             }
           : null;
@@ -214,11 +216,12 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             slug: workspaces.slug,
             name: workspaces.name,
             role: memberships.role,
+            position: memberships.position,
           })
           .from(memberships)
           .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
           .where(eq(memberships.userId, userId))
-          .orderBy(workspaces.name, workspaces.id);
+          .orderBy(memberships.position, memberships.createdAt, workspaces.id);
       });
     },
     async rotateWorkspaceSession(input) {

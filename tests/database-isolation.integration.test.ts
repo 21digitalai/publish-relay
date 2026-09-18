@@ -21,6 +21,7 @@ const migrationUrls = [
   new URL('../migrations/0003_many_marvel_boy.sql', import.meta.url),
   new URL('../migrations/0004_easy_doctor_spectrum.sql', import.meta.url),
   new URL('../migrations/0023_clear_shocker.sql', import.meta.url),
+  new URL('../migrations/0042_long_pepper_potts.sql', import.meta.url),
 ];
 let database: PGlite;
 
@@ -63,7 +64,13 @@ describe('PostgreSQL tenant isolation', () => {
 
     await expect(store.findShellProfile(workspaceA, userA)).resolves.toEqual({
       user: { displayName: 'Local Operator', email: 'local@example.test' },
-      workspace: { id: workspaceA, name: 'Local Test', slug: 'local-test', role: 'owner' },
+      workspace: {
+        id: workspaceA,
+        name: 'Local Test',
+        slug: 'local-test',
+        role: 'owner',
+        position: 0,
+      },
     });
     await expect(store.findShellProfile(workspaceA, userB)).resolves.toBeNull();
   });

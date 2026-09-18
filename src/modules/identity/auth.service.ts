@@ -62,6 +62,7 @@ export interface WorkspaceSummary {
   slug: string;
   name: string;
   role: MembershipRole;
+  position: number;
 }
 
 export interface SessionResult extends AuthIdentity {

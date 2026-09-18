@@ -101,7 +101,7 @@ describe('authentication HTTP boundary', () => {
     vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
     vi.mocked(store.findShellProfile).mockResolvedValue({
       user: { displayName: 'Relay Owner', email: 'owner@example.test' },
-      workspace: { id: 'w1', name: 'Relay', slug: 'relay', role: 'owner' },
+      workspace: { id: 'w1', name: 'Relay', slug: 'relay', role: 'owner', position: 0 },
     });
     const application = createTestApplication(store);
     const login = await application.inject({
@@ -127,7 +127,7 @@ describe('authentication HTTP boundary', () => {
     ).toEqual({
       data: {
         user: { displayName: 'Relay Owner', email: 'owner@example.test' },
-        workspace: { id: 'w1', name: 'Relay', slug: 'relay', role: 'owner' },
+        workspace: { id: 'w1', name: 'Relay', slug: 'relay', role: 'owner', position: 0 },
       },
       error: null,
     });
@@ -397,8 +397,8 @@ describe('authentication HTTP boundary', () => {
     });
     vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
     const workspaces = [
-      { id: currentId, slug: 'atlas', name: 'Atlas', role: 'owner' as const },
-      { id: targetId, slug: 'relay', name: 'Relay', role: 'editor' as const },
+      { id: currentId, slug: 'atlas', name: 'Atlas', role: 'owner' as const, position: 0 },
+      { id: targetId, slug: 'relay', name: 'Relay', role: 'editor' as const, position: 1 },
     ];
     vi.mocked(store.listWorkspaces).mockResolvedValue(workspaces);
     vi.mocked(store.createWorkspace).mockResolvedValue({

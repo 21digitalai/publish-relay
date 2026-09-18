@@ -142,6 +142,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             name: workspaces.name,
             slug: workspaces.slug,
             role: memberships.role,
+            position: memberships.position,
           })
           .from(memberships)
           .innerJoin(users, eq(users.id, memberships.userId))
@@ -156,6 +157,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
                 name: profile.name,
                 slug: profile.slug,
                 role: profile.role,
+                position: profile.position,
               },
             }
           : null;

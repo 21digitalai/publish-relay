@@ -74,6 +74,10 @@ describe('application', () => {
     expect(
       (await application.inject({ method: 'GET', url: '/core-assets/index.html' })).statusCode,
     ).toBe(200);
+    expect(
+      (await application.inject({ method: 'GET', url: '/core-assets/%2e%2e/package.json' }))
+        .statusCode,
+    ).toBe(404);
   });
 
   it('fails closed when Core routes are registered twice', () => {

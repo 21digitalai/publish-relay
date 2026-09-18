@@ -1,6 +1,6 @@
 {
   "name": "@21digital/publish-relay-core",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "AGPL-3.0-only",
   "type": "module",
   "files": [
@@ -46,6 +46,9 @@
     "start:web": "node dist/entrypoints/web.js",
     "start:worker": "node dist/entrypoints/worker.js",
     "cli": "tsx src/entrypoints/cli.ts",
+    "parity:social-god": "tsx src/entrypoints/social-god-parity.ts",
+    "schedule:social-god": "tsx src/entrypoints/social-god-schedule.ts",
+    "remediate:x": "tsx src/entrypoints/x-remediation.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -56,7 +59,7 @@
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
-    "@fastify/static": "^10.1.4",
+    "@fastify/static": "^8.3.0",
     "@node-rs/argon2": "^2.2.0",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.6.0",
@@ -84,11 +87,6 @@
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.41.0",
     "vite": "^7.1.3",
-    "vitest": "^4.1.11"
-  },
-  "overrides": {
-    "@esbuild-kit/core-utils": {
-      "esbuild": "^0.25.4"
-    }
+    "vitest": "^3.2.4"
   }
 }

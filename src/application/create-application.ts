@@ -201,13 +201,9 @@ export function registerCoreApplication(
   } = options;
   const uiRoot = options.uiRoot ?? fileURLToPath(new URL('../ui/', import.meta.url));
   const uiPrefix = options.uiPrefix ?? '/';
-  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8').replaceAll(
-    '="/assets/',
-    `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`,
-  ).replace(
-    '<body>',
-    `<body data-human-auth-mode="${resolveHumanAuthMode(config)}">`,
-  );
+  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
+    .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
+    .replace('<body>', `<body data-human-auth-mode="${resolveHumanAuthMode(config)}">`);
 
   application.register(fastifyStatic, {
     root: uiRoot,

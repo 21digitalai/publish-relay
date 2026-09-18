@@ -1143,9 +1143,10 @@ function AccountsPage() {
       }
     };
     document.addEventListener('keydown', handleKeyDown);
+    const adapterTrigger = adapterTriggerRef.current;
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      adapterTriggerRef.current?.focus();
+      adapterTrigger?.focus();
     };
   }, [adapterPickerOpen]);
   useEffect(() => {

@@ -18,7 +18,9 @@ export function PostingAdapterList({
           className="adapter-picker-option"
           type="button"
           key={adapter.id}
-          onClick={() => onSelect(adapter)}
+          onClick={() => {
+            onSelect(adapter);
+          }}
         >
           <span className={`adapter-icon adapter-icon-${adapter.id}`} aria-hidden="true">
             <svg viewBox={adapter.icon.viewBox} focusable="false">

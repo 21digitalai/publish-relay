@@ -1308,6 +1308,26 @@ select:focus-visible {
   margin: 0;
   width: auto;
 }
+.workspace-management-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.workspace-management-row {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding-top: 12px;
+}
+.workspace-management-row > span {
+  display: flex;
+  gap: 8px;
+}
+.workspace-management-row > span:first-child {
+  flex-direction: column;
+  gap: 2px;
+}
 .segmented-control {
   display: flex;
   flex-wrap: wrap;

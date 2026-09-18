@@ -29,6 +29,9 @@ beforeEach(async () => {
   await database.exec(
     await readFile(new URL('../migrations/0040_ambiguous_loners.sql', import.meta.url), 'utf8'),
   );
+  await database.exec(
+    await readFile(new URL('../migrations/0042_long_pepper_potts.sql', import.meta.url), 'utf8'),
+  );
 });
 
 afterEach(async () => database.close());

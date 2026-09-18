@@ -26,6 +26,8 @@ function createStore(): AuthStore {
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
     listWorkspaces: vi.fn(),
+    createWorkspace: vi.fn(),
+    reorderWorkspaces: vi.fn(),
     rotateWorkspaceSession: vi.fn(),
   };
 }
@@ -399,6 +401,13 @@ describe('authentication HTTP boundary', () => {
       { id: targetId, slug: 'relay', name: 'Relay', role: 'editor' as const },
     ];
     vi.mocked(store.listWorkspaces).mockResolvedValue(workspaces);
+    vi.mocked(store.createWorkspace).mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000004',
+      slug: 'studio-12345678',
+      name: 'Studio',
+      role: 'owner',
+      position: 2,
+    });
     vi.mocked(store.rotateWorkspaceSession).mockResolvedValue({
       userId,
       workspaceId: targetId,
@@ -413,6 +422,31 @@ describe('authentication HTTP boundary', () => {
       headers: { cookie },
     });
     expect(list.json()).toEqual({ data: { workspaces }, error: null });
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/workspaces',
+      headers: { cookie, 'x-csrf-token': 'csrf-token' },
+      payload: { name: 'Studio' },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toEqual({
+      data: {
+        id: '00000000-0000-4000-8000-000000000004',
+        slug: 'studio-12345678',
+        name: 'Studio',
+        role: 'owner',
+        position: 2,
+      },
+      error: null,
+    });
+    const reordered = await application.inject({
+      method: 'PATCH',
+      url: '/api/workspaces/order',
+      headers: { cookie, 'x-csrf-token': 'csrf-token' },
+      payload: { workspaceIds: [targetId, currentId] },
+    });
+    expect(reordered.statusCode).toBe(200);
+    expect(store.reorderWorkspaces).toHaveBeenCalledWith(userId, [targetId, currentId]);
     const switched = await application.inject({
       method: 'POST',
       url: `/api/workspaces/${targetId}/switch`,

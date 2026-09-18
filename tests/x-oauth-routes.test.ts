@@ -24,6 +24,8 @@ function createStore(): AuthStore {
     findWorkspace: vi.fn(),
     updateWorkspace: vi.fn(),
     listWorkspaces: vi.fn(),
+    createWorkspace: vi.fn(),
+    reorderWorkspaces: vi.fn(),
     rotateWorkspaceSession: vi.fn(),
   };
 }

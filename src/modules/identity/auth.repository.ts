@@ -213,6 +213,50 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           .orderBy(workspaces.name, workspaces.id);
       });
     },
+    async createWorkspace(userId, name, position) {
+      return database.transaction(async (transaction) => {
+        const [workspace] = await transaction
+          .insert(workspaces)
+          .values({ name, slug: workspaceSlug(name) })
+          .returning({ id: workspaces.id, name: workspaces.name, slug: workspaces.slug });
+        if (!workspace) throw new Error('Workspace was not created');
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${workspace.id}, true)`,
+        );
+        await transaction.insert(memberships).values({
+          workspaceId: workspace.id,
+          userId,
+          role: 'owner',
+          position,
+        });
+        await transaction.insert(auditEvents).values({
+          workspaceId: workspace.id,
+          actorType: 'user',
+          actorId: userId,
+          action: 'workspace_created',
+          targetType: 'workspace',
+          targetId: workspace.id,
+          requestId: crypto.randomUUID(),
+          metadata: {},
+        });
+        return { ...workspace, role: 'owner', position };
+      });
+    },
+    async reorderWorkspaces(userId, workspaceIds) {
+      await database.transaction(async (transaction) => {
+        for (const [position, workspaceId] of workspaceIds.entries()) {
+          await transaction.execute(
+            sql`select set_config('app.workspace_id', ${workspaceId}, true)`,
+          );
+          const [updated] = await transaction
+            .update(memberships)
+            .set({ position })
+            .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+            .returning({ workspaceId: memberships.workspaceId });
+          if (!updated) throw new Error('Workspace order contains an unknown workspace');
+        }
+      });
+    },
     async rotateWorkspaceSession(input) {
       return database.transaction(async (transaction) => {
         await transaction.execute(
@@ -256,6 +300,10 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           csrfSecretHash: input.csrfSecretHash,
           expiresAt: input.expiresAt,
         });
+        await transaction
+          .update(users)
+          .set({ defaultWorkspaceId: target.workspaceId, updatedAt: new Date() })
+          .where(eq(users.id, input.userId));
         await transaction.insert(auditEvents).values({
           workspaceId: target.workspaceId,
           actorType: 'user',

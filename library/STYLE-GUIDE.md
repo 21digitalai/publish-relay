@@ -104,6 +104,8 @@ Auth uses a centered 440px panel on the canvas with a restrained violet radial g
 
 Group by provider and show each connected account independently. Rows include provider logo, avatar, display name, handle, health, capabilities, last successful sync, and actions.
 
+`src/ui/posting-adapter-registry.ts` is the single source of truth for adapters exposed by the connected-accounts picker. The Accounts page renders one **Add Posting Adapter** entry and iterates enabled registry entries for provider label, icon, description, OAuth start path, and pre-connect configuration requirements. Adding or disabling an adapter must not require picker markup changes. Provider-specific reconnect actions resolve through the same registry.
+
 - Multiple accounts per provider are normal.
 - Each provider group has Connect another.
 - Search name/handle; filter provider, health, and workspace access.

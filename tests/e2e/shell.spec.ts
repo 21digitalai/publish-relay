@@ -496,8 +496,13 @@ test('edits YouTube destination defaults through the account row', async ({ page
     });
   });
   await page.goto(await workspacePath(page, 'accounts'));
-  await expect(page.getByRole('button', { name: /Connect X/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Connect YouTube/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Add Posting Adapter' }).click();
+  await expect(page.getByRole('dialog', { name: 'Add Posting Adapter' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /X Publish posts and threads/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Close adapter picker' }).click();
+  await expect(page.getByRole('button', { name: /Connect X/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Connect YouTube/ })).toHaveCount(0);
   await expect(page.getByText('Publishing defaults')).toBeVisible();
   await page.getByRole('button', { name: 'Visibility' }).click();
   await expect(page.getByRole('listbox', { name: 'Visibility' })).toBeInViewport();
@@ -587,10 +592,11 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await expect(page.getByLabel('Account health summary')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('accounts-error.png'), fullPage: true });
   await page.goto(await workspacePath(page, 'accounts'));
-  await page.getByRole('button', { name: 'Connect X', exact: true }).click();
-  await expect(page.getByText('Daily Viber')).toBeVisible();
+  await page.getByRole('button', { name: 'Add Posting Adapter' }).click();
+  await page.getByRole('button', { name: /X Publish posts and threads/ }).click();
+  await expect(page.getByText('Example Editorial')).toBeVisible();
   await page.reload();
-  await expect(page.getByText('Daily Viber')).toBeVisible();
+  await expect(page.getByText('Example Editorial')).toBeVisible();
   await expect(page.getByText('Studio Notes')).toBeVisible();
   await expect(page.getByLabel('Account health summary')).toContainText(
     '2Connected accounts2Healthy0Needs attention',
@@ -606,11 +612,11 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await page.getByRole('button', { name: 'Reconnect' }).first().click();
   await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(0);
   expect((await page.request.post('/__test__/block-account-disconnect')).ok()).toBe(true);
-  await page.getByRole('button', { name: 'More actions for Daily Viber' }).click();
+  await page.getByRole('button', { name: 'More actions for Example Editorial' }).click();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await page.getByRole('button', { name: 'Disconnect account' }).click();
   await expect(page.getByRole('alert')).toContainText('Cancel scheduled jobs');
-  await expect(page.getByText('Daily Viber', { exact: true })).toBeVisible();
+  await expect(page.getByText('Example Editorial', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Account health summary')).toContainText(
     '2Connected accounts2Healthy0Needs attention',
   );
@@ -625,7 +631,7 @@ test('persists credential-free fake-provider connect and disconnect through relo
     '1Connected accounts1Healthy0Needs attention',
   );
   await page.reload();
-  await expect(page.getByText('Daily Viber', { exact: true })).toBeVisible();
+  await expect(page.getByText('Example Editorial', { exact: true })).toBeVisible();
   await expect(page.getByText('Studio Notes', { exact: true })).toBeHidden();
   await page.screenshot({
     path: testInfo.outputPath('accounts-disconnect-success.png'),

@@ -5,6 +5,11 @@ import './styles.css';
 import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
 import {
+  getEnabledPostingAdapters,
+  getPostingAdapter,
+  type PostingAdapterConfig,
+} from './posting-adapter-registry.js';
+import {
   CalendarPage,
   ExternalDraftPage,
   JobDetailPage,
@@ -53,21 +58,8 @@ function getCsrfToken(): string {
   return entry ? (entry.split('=')[1] ?? '') : '';
 }
 
-async function beginXConnection(): Promise<void> {
-  const response = await fetch('/api/oauth/x', {
-    method: 'POST',
-    headers: { 'x-csrf-token': getCsrfToken() },
-  });
-  const result = (await response.json()) as {
-    data: { authorizationUrl: string } | null;
-    error: string | null;
-  };
-  if (!response.ok || !result.data) throw new Error(result.error ?? 'Could not start X connection');
-  window.location.href = result.data.authorizationUrl;
-}
-
-async function beginYouTubeConnection(): Promise<void> {
-  const response = await fetch('/api/oauth/youtube', {
+async function beginAdapterConnection(adapter: PostingAdapterConfig): Promise<void> {
+  const response = await fetch(adapter.auth.startPath, {
     method: 'POST',
     headers: { 'x-csrf-token': getCsrfToken() },
   });
@@ -76,7 +68,7 @@ async function beginYouTubeConnection(): Promise<void> {
     error: string | null;
   };
   if (!response.ok || !result.data)
-    throw new Error(result.error ?? 'Could not start YouTube connection');
+    throw new Error(result.error ?? `Could not start ${adapter.label} connection`);
   window.location.href = result.data.authorizationUrl;
 }
 
@@ -91,6 +83,36 @@ function Mark({ provider }: { provider: string }) {
     <span className={`provider-mark ${isX ? 'x' : 'generic'}`} aria-hidden="true">
       {isX ? 'X' : provider.slice(0, 1).toUpperCase()}
     </span>
+  );
+}
+
+function PostingAdapterList({ onSelect }: { onSelect: (adapter: PostingAdapterConfig) => void }) {
+  return (
+    <div className="adapter-picker-list" aria-label="Available posting adapters">
+      {getEnabledPostingAdapters().map((adapter) => (
+        <button
+          className="adapter-picker-option"
+          type="button"
+          key={adapter.id}
+          onClick={() => {
+            onSelect(adapter);
+          }}
+        >
+          <span className={`adapter-icon adapter-icon-${adapter.id}`} aria-hidden="true">
+            <svg viewBox={adapter.icon.viewBox} focusable="false">
+              {adapter.icon.paths.map((path) => (
+                <path d={path} key={path} />
+              ))}
+            </svg>
+          </span>
+          <span>
+            <strong>{adapter.label}</strong>
+            <small>{adapter.description}</small>
+          </span>
+          <span aria-hidden="true">→</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -539,24 +561,18 @@ function OnboardingPage() {
                 Connect securely through the provider. Publish Relay never asks you to paste account
                 tokens.
               </p>
-              <button
-                className="provider-connect-card"
-                onClick={() => {
+              <PostingAdapterList
+                onSelect={(adapter) => {
                   setWorkspaceError(null);
-                  void beginXConnection().catch((error: unknown) => {
+                  void beginAdapterConnection(adapter).catch((error: unknown) => {
                     setWorkspaceError(
-                      error instanceof Error ? error.message : 'Could not start X connection',
+                      error instanceof Error
+                        ? error.message
+                        : `Could not start ${adapter.label} connection`,
                     );
                   });
                 }}
-              >
-                <Mark provider="X" />
-                <span>
-                  <strong>Connect X</strong>
-                  <small>Posts and media · secure redirect</small>
-                </span>
-                <span aria-hidden="true">→</span>
-              </button>
+              />
               <button className="provider-connect-card">
                 <Mark provider="Instagram" />
                 <span>
@@ -1083,6 +1099,7 @@ function AccountRow({
 
 function AccountsPage() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [adapterPickerOpen, setAdapterPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [health, setHealth] = useState('All health');
   const [disconnecting, setDisconnecting] = useState<Account | null>(null);
@@ -1151,16 +1168,12 @@ function AccountsPage() {
         setWorkspaceName('your active workspace');
       });
   }, []);
-  const connectX = () => {
+  const connectAdapter = (adapter: PostingAdapterConfig) => {
     setActionError(null);
-    void beginXConnection().catch((error: unknown) => {
-      setActionError(error instanceof Error ? error.message : 'Could not start X connection');
-    });
-  };
-  const connectYouTube = () => {
-    setActionError(null);
-    void beginYouTubeConnection().catch((error: unknown) => {
-      setActionError(error instanceof Error ? error.message : 'Could not start YouTube connection');
+    void beginAdapterConnection(adapter).catch((error: unknown) => {
+      setActionError(
+        error instanceof Error ? error.message : `Could not start ${adapter.label} connection`,
+      );
     });
   };
   const visible = useMemo(
@@ -1209,14 +1222,14 @@ function AccountsPage() {
             <h1>Connected accounts</h1>
             <p>Manage publishing access and connection health for {workspaceName}.</p>
           </div>
-          <div className="connect-actions">
-            <button className="secondary-button connect-account" onClick={connectX}>
-              ＋ Connect X
-            </button>
-            <button className="primary-button connect-account" onClick={connectYouTube}>
-              ＋ Connect YouTube
-            </button>
-          </div>
+          <button
+            className="primary-button connect-account"
+            onClick={() => {
+              setAdapterPickerOpen(true);
+            }}
+          >
+            ＋ Add Posting Adapter
+          </button>
         </div>
         {renderedState === 'loading' ? (
           <section
@@ -1297,10 +1310,7 @@ function AccountsPage() {
           {(renderedState === 'empty' || (renderedState === 'ready' && accounts.length === 0)) && (
             <div className="filter-empty">
               <h2>Connect your first account</h2>
-              <p>Add a provider account to start scheduling from this workspace.</p>
-              <button className="primary-button" onClick={connectX}>
-                Connect X
-              </button>
+              <p>Use Add Posting Adapter above to start scheduling from this workspace.</p>
             </div>
           )}
           {renderedState === 'ready' &&
@@ -1320,12 +1330,6 @@ function AccountsPage() {
                         </span>
                       </div>
                     </div>
-                    <button
-                      className="text-button"
-                      onClick={provider === 'YouTube' ? connectYouTube : connectX}
-                    >
-                      ＋ Connect another
-                    </button>
                   </header>
                   <div className="account-list">
                     {rows.map((account) => (
@@ -1334,8 +1338,12 @@ function AccountsPage() {
                         key={account.id}
                         onDisconnect={setDisconnecting}
                         onReconnect={() => {
-                          if (account.provider === 'YouTube') connectYouTube();
-                          else connectX();
+                          const adapter = getPostingAdapter(account.provider);
+                          if (adapter) connectAdapter(adapter);
+                          else
+                            setActionError(
+                              `No connection flow is available for ${account.provider}`,
+                            );
                         }}
                         onDefaultsSaved={(updated) => {
                           setAccounts((current) =>
@@ -1373,6 +1381,41 @@ function AccountsPage() {
             setMenuOpen(false);
           }}
         />
+      )}
+      {adapterPickerOpen && (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="adapter-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="adapter-picker-title"
+          >
+            <header>
+              <div>
+                <p className="eyebrow">Posting adapters</p>
+                <h2 id="adapter-picker-title">Add Posting Adapter</h2>
+                <p>Choose the provider account to connect to {workspaceName}.</p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Close adapter picker"
+                autoFocus
+                onClick={() => {
+                  setAdapterPickerOpen(false);
+                }}
+              >
+                ×
+              </button>
+            </header>
+            <PostingAdapterList
+              onSelect={(adapter) => {
+                setAdapterPickerOpen(false);
+                connectAdapter(adapter);
+              }}
+            />
+          </section>
+        </div>
       )}
       {disconnecting && (
         <div className="dialog-backdrop" role="presentation">

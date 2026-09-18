@@ -3,7 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { auditEvents, memberships, sessions, users, workspaces } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import type { AuthStore } from './auth.service.js';
+import type { AuthStore, WorkspaceSummary } from './auth.service.js';
 
 function workspaceSlug(name: string): string {
   const base =
@@ -210,18 +210,10 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
     async listWorkspaces(userId) {
       return database.transaction(async (transaction) => {
         await transaction.execute(sql`select set_config('app.user_id', ${userId}, true)`);
-        return transaction
-          .select({
-            id: workspaces.id,
-            slug: workspaces.slug,
-            name: workspaces.name,
-            role: memberships.role,
-            position: memberships.position,
-          })
-          .from(memberships)
-          .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
-          .where(eq(memberships.userId, userId))
-          .orderBy(memberships.position, memberships.createdAt, workspaces.id);
+        const result = await transaction.execute<WorkspaceSummary & Record<string, unknown>>(
+          sql`select * from public.list_user_workspaces(${userId}::uuid)`,
+        );
+        return result.rows;
       });
     },
     async createWorkspace(userId, name, position) {

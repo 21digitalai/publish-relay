@@ -2,7 +2,7 @@ import cookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import type { AuthIdentity, AuthService } from './auth.service.js';
+import { MAX_WORKSPACES_PER_USER, type AuthIdentity, type AuthService } from './auth.service.js';
 import type { SessionResult } from './auth.service.js';
 import { requireWorkspaceAction, type WorkspaceAction } from './authorization.js';
 import { sessionCookieOptions, verifyCsrfToken } from './session.js';
@@ -38,7 +38,9 @@ const workspaceProfileSchema = z.object({
 });
 const workspaceSwitchSchema = z.object({ workspaceId: z.uuid() });
 const workspaceCreateSchema = z.object({ name: z.string().trim().min(1).max(100) });
-const workspaceOrderSchema = z.object({ workspaceIds: z.array(z.uuid()).min(1).max(100) });
+const workspaceOrderSchema = z.object({
+  workspaceIds: z.array(z.uuid()).min(1).max(MAX_WORKSPACES_PER_USER),
+});
 
 function parseSessionCookie(
   value: string | undefined,
@@ -228,9 +230,15 @@ export function registerAuthRoutes(
     const input = workspaceCreateSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Enter a workspace name' });
-    return reply
-      .code(201)
-      .send({ data: await auth.createWorkspace(identity, input.data.name), error: null });
+    try {
+      return await reply
+        .code(201)
+        .send({ data: await auth.createWorkspace(identity, input.data.name), error: null });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('at most'))
+        return reply.code(409).send({ data: null, error: error.message });
+      throw error;
+    }
   });
 
   application.patch('/api/workspaces/order', async (request, reply) => {

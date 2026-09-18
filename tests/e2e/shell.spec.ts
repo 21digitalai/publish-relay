@@ -415,6 +415,9 @@ test('registers, persists the first workspace update, and reloads the protected 
   await page.getByLabel('Workspace URL').fill(workspaceSlug);
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /X Publish posts and threads/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Instagram/ })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Name your workspace' })).toBeVisible();
   await expect(page.getByLabel('Workspace name')).toHaveValue('Atlas Publishing');
@@ -500,6 +503,14 @@ test('edits YouTube destination defaults through the account row', async ({ page
   await expect(page.getByRole('dialog', { name: 'Add Posting Adapter' })).toBeVisible();
   await expect(page.getByRole('button', { name: /X Publish posts and threads/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Close adapter picker' }).press('Shift+Tab');
+  await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Close adapter picker' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Add Posting Adapter' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add Posting Adapter' })).toBeFocused();
+  await page.getByRole('button', { name: 'Add Posting Adapter' }).click();
   await page.getByRole('button', { name: 'Close adapter picker' }).click();
   await expect(page.getByRole('button', { name: /Connect X/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Connect YouTube/ })).toHaveCount(0);

@@ -4,11 +4,8 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
-import {
-  getEnabledPostingAdapters,
-  getPostingAdapter,
-  type PostingAdapterConfig,
-} from './posting-adapter-registry.js';
+import { PostingAdapterList } from './posting-adapter-list.js';
+import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
 import {
   CalendarPage,
   ExternalDraftPage,
@@ -83,36 +80,6 @@ function Mark({ provider }: { provider: string }) {
     <span className={`provider-mark ${isX ? 'x' : 'generic'}`} aria-hidden="true">
       {isX ? 'X' : provider.slice(0, 1).toUpperCase()}
     </span>
-  );
-}
-
-function PostingAdapterList({ onSelect }: { onSelect: (adapter: PostingAdapterConfig) => void }) {
-  return (
-    <div className="adapter-picker-list" aria-label="Available posting adapters">
-      {getEnabledPostingAdapters().map((adapter) => (
-        <button
-          className="adapter-picker-option"
-          type="button"
-          key={adapter.id}
-          onClick={() => {
-            onSelect(adapter);
-          }}
-        >
-          <span className={`adapter-icon adapter-icon-${adapter.id}`} aria-hidden="true">
-            <svg viewBox={adapter.icon.viewBox} focusable="false">
-              {adapter.icon.paths.map((path) => (
-                <path d={path} key={path} />
-              ))}
-            </svg>
-          </span>
-          <span>
-            <strong>{adapter.label}</strong>
-            <small>{adapter.description}</small>
-          </span>
-          <span aria-hidden="true">→</span>
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -573,14 +540,6 @@ function OnboardingPage() {
                   });
                 }}
               />
-              <button className="provider-connect-card">
-                <Mark provider="Instagram" />
-                <span>
-                  <strong>Connect Instagram</strong>
-                  <small>Available after X setup</small>
-                </span>
-                <span className="coming-soon">Soon</span>
-              </button>
             </>
           )}
           {step === 3 && (
@@ -1100,6 +1059,8 @@ function AccountRow({
 function AccountsPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [adapterPickerOpen, setAdapterPickerOpen] = useState(false);
+  const adapterDialogRef = useRef<HTMLElement>(null);
+  const adapterTriggerRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState('');
   const [health, setHealth] = useState('All health');
   const [disconnecting, setDisconnecting] = useState<Account | null>(null);
@@ -1155,6 +1116,38 @@ function AccountsPage() {
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
+  useEffect(() => {
+    if (!adapterPickerOpen) return;
+    const dialog = adapterDialogRef.current;
+    const focusable = () => [
+      ...(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), [href]') ?? []),
+    ];
+    focusable()[0]?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setAdapterPickerOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      const first = items[0];
+      const last = items.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      adapterTriggerRef.current?.focus();
+    };
+  }, [adapterPickerOpen]);
   useEffect(() => {
     void fetch('/api/auth/session')
       .then(async (response) => {
@@ -1223,6 +1216,7 @@ function AccountsPage() {
             <p>Manage publishing access and connection health for {workspaceName}.</p>
           </div>
           <button
+            ref={adapterTriggerRef}
             className="primary-button connect-account"
             onClick={() => {
               setAdapterPickerOpen(true);
@@ -1385,6 +1379,7 @@ function AccountsPage() {
       {adapterPickerOpen && (
         <div className="dialog-backdrop" role="presentation">
           <section
+            ref={adapterDialogRef}
             className="adapter-picker"
             role="dialog"
             aria-modal="true"

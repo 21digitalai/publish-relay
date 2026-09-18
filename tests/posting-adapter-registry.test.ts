@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
+import { PostingAdapterList } from '../src/ui/posting-adapter-list.js';
 import {
   getEnabledPostingAdapters,
   getPostingAdapter,
@@ -25,6 +28,11 @@ describe('posting adapter registry', () => {
       adapter.id === 'youtube' ? { ...adapter, enabled: false } : adapter,
     );
     expect(getEnabledPostingAdapters(adapters).map((adapter) => adapter.id)).toEqual(['x']);
+    const markup = renderToStaticMarkup(
+      createElement(PostingAdapterList, { adapters, onSelect: () => undefined }),
+    );
+    expect(markup).toContain('Publish posts and threads');
+    expect(markup).not.toContain('Publish videos');
   });
 
   it('resolves account reconnect behavior from the same registry', () => {

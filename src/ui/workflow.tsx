@@ -266,6 +266,13 @@ function workspacePath(): string {
   return window.location.pathname.split('/').slice(0, 3).join('/');
 }
 
+function consumeComposerNavigationIntent(): boolean {
+  const key = 'publish-relay-open-composer';
+  if (window.sessionStorage.getItem(key) !== 'true') return false;
+  window.sessionStorage.removeItem(key);
+  return true;
+}
+
 function startOfDay(value: Date): Date {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
 }
@@ -1193,7 +1200,7 @@ export function QueuePage() {
     [dateRange, provider, query, queueJobs, sort, status, view],
   );
   return (
-    <WorkspaceLayout active="queue">
+    <WorkspaceLayout active="queue" initialComposerOpen={consumeComposerNavigationIntent()}>
       {(openComposer) => (
         <>
           <div className="page-heading">

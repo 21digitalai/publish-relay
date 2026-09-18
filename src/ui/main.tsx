@@ -868,7 +868,16 @@ export function Rail({
           </div>
         </div>
       )}
-      <button className="create-post-button" onClick={onCreate}>
+      <button
+        className="create-post-button"
+        onClick={() => {
+          if (onCreate) onCreate();
+          else {
+            window.sessionStorage.setItem('publish-relay-open-composer', 'true');
+            window.location.href = workspaceHref('queue');
+          }
+        }}
+      >
         <span aria-hidden="true">＋</span> Create post
       </button>
       <nav className="rail-nav">

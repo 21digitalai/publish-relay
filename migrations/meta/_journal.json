@@ -143,6 +143,20 @@
       "breakpoints": true
     },
     {
+      "idx": 20,
+      "version": "7",
+      "when": 1788645330000,
+      "tag": "0020_x_remediation_journal",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788733102000,
+      "tag": "0021_x_remediation_started_phases",
+      "breakpoints": true
+    },
+    {
       "idx": 22,
       "version": "7",
       "when": 1788761890860,
@@ -220,6 +234,13 @@
       "breakpoints": true
     },
     {
+      "idx": 33,
+      "version": "7",
+      "when": 1789044400000,
+      "tag": "0033_open_clips_development_client",
+      "breakpoints": true
+    },
+    {
       "idx": 34,
       "version": "7",
       "when": 1789045228130,
@@ -238,6 +259,41 @@
       "version": "7",
       "when": 1789049400000,
       "tag": "0036_delegated_programmatic_revocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1789119770930,
+      "tag": "0037_brown_wallflower",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1789142450352,
+      "tag": "0038_fancy_scorpion",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789143728228,
+      "tag": "0039_small_madrox",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1789146644544,
+      "tag": "0040_ambiguous_loners",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789148424063,
+      "tag": "0041_chilly_bug",
       "breakpoints": true
     }
   ]

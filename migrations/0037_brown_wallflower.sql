@@ -1,0 +1,1 @@
+ALTER TYPE "public"."publication_job_state" ADD VALUE 'needs_review';

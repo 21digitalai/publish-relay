@@ -6,6 +6,8 @@ import { registerMagicLinkRoutes } from '../src/modules/identity/magic-link.rout
 import type { MagicLinkService } from '../src/modules/identity/magic-link.service.js';
 
 const service = {
+  requestAccess: vi.fn<MagicLinkService['requestAccess']>(),
+  verify: vi.fn<MagicLinkService['verify']>(),
   requestLogin: vi.fn<MagicLinkService['requestLogin']>(),
   verifyLogin: vi.fn<MagicLinkService['verifyLogin']>(),
   requestSignup: vi.fn<MagicLinkService['requestSignup']>(),
@@ -23,7 +25,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('magic-link routes', () => {
   it('returns the same neutral request response while forwarding request bindings', async () => {
-    vi.mocked(service.requestLogin).mockResolvedValue({ accepted: true });
+    vi.mocked(service.requestAccess).mockResolvedValue({ accepted: true });
     const response = await createApp().inject({
       method: 'POST',
       url: '/api/auth/magic-link/request',
@@ -34,11 +36,11 @@ describe('magic-link routes', () => {
     expect(response.json()).toEqual({
       data: {
         accepted: true,
-        message: 'If an account exists, a sign-in link is on its way.',
+        message: 'If the email can be used, a sign-in link is on its way.',
       },
       error: null,
     });
-    expect(service.requestLogin).toHaveBeenCalledWith(
+    expect(service.requestAccess).toHaveBeenCalledWith(
       expect.objectContaining({
         email: 'owner@example.test',
         redirectPath: '/app',
@@ -49,7 +51,7 @@ describe('magic-link routes', () => {
   });
 
   it('sets the secure session cookies and redirects only after successful verification', async () => {
-    vi.mocked(service.verifyLogin).mockResolvedValue({
+    vi.mocked(service.verify).mockResolvedValue({
       userId: 'user-1',
       workspaceId: 'workspace-1',
       role: 'owner',
@@ -74,7 +76,7 @@ describe('magic-link routes', () => {
   });
 
   it('redirects invalid and replayed links without setting cookies', async () => {
-    vi.mocked(service.verifyLogin).mockResolvedValue(null);
+    vi.mocked(service.verify).mockResolvedValue(null);
     const response = await createApp().inject({
       method: 'GET',
       url: `/api/auth/magic-link/verify?token=${'t'.repeat(43)}`,
@@ -84,29 +86,27 @@ describe('magic-link routes', () => {
     expect(response.headers['set-cookie']).toBeUndefined();
   });
 
-  it('requests and verifies explicit signup without exposing draft fields', async () => {
-    vi.mocked(service.requestSignup).mockResolvedValue({
+  it('uses the same email-only request and verification routes for a new account', async () => {
+    vi.mocked(service.requestAccess).mockResolvedValue({
       accepted: true,
-      developmentUrl: 'https://relay.example/verify-signup?token=secret',
+      developmentUrl: 'https://relay.example/verify?token=secret',
     });
     const requested = await createApp().inject({
       method: 'POST',
-      url: '/api/auth/magic-link/signup',
+      url: '/api/auth/magic-link/request',
       headers: { 'user-agent': 'test-browser' },
-      payload: {
-        displayName: 'Relay Owner',
-        email: 'owner@example.test',
-        workspaceName: 'Relay',
-        termsAccepted: true,
-      },
+      payload: { email: 'owner@example.test' },
     });
     expect(requested.statusCode).toBe(202);
     expect(requested.json<{ data: unknown }>().data).toEqual({
       accepted: true,
-      message: 'Check your email to finish creating your account.',
-      developmentUrl: 'https://relay.example/verify-signup?token=secret',
+      message: 'If the email can be used, a sign-in link is on its way.',
+      developmentUrl: 'https://relay.example/verify?token=secret',
     });
-    vi.mocked(service.verifySignup).mockResolvedValue({
+    const requestInput = vi.mocked(service.requestAccess).mock.calls[0]?.[0];
+    expect(requestInput).not.toHaveProperty('displayName');
+    expect(requestInput).not.toHaveProperty('workspaceName');
+    vi.mocked(service.verify).mockResolvedValue({
       userId: 'user-1',
       workspaceId: 'workspace-1',
       role: 'owner',
@@ -117,7 +117,7 @@ describe('magic-link routes', () => {
     });
     const verified = await createApp().inject({
       method: 'GET',
-      url: `/api/auth/magic-link/verify-signup?token=${'t'.repeat(43)}`,
+      url: `/api/auth/magic-link/verify?token=${'t'.repeat(43)}`,
       headers: { 'user-agent': 'test-browser' },
     });
     expect(verified.statusCode).toBe(302);

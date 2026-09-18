@@ -89,10 +89,9 @@ Queue filter menus use the shared `FilterSelect` listbox primitive in `src/ui/wo
 
 ## Authentication and onboarding
 
-Auth uses a centered 440px panel on the canvas with a restrained violet radial glow. No marketing carousel.
+Auth uses a centered 440px panel on the canvas with a restrained violet radial glow. No marketing carousel. In magic-link mode, `/login`, `/register`, and `/forgot-password` render the same canonical email-only access form: one email field, one submit action, and neutral confirmation copy. A new email creates its user and initial `My workspace` tenant only after the one-time link is consumed; an existing email opens its existing default workspace. Names, workspace names, terms controls, and passwords never appear in this mode.
 
-- Login: email, password, reveal toggle, forgot password, submit, registration link.
-- Registration: display name, email, password, first workspace name, visible requirements, terms acknowledgement. Submission atomically creates the user, first workspace, owner membership, and browser session.
+- Password-mode login and registration remain the standalone fallback contract; the hosted production surface uses the unified email-only magic-link form.
 - Errors are inline; server errors also receive a form summary.
 - Loading preserves button dimensions and uses action-specific labels.
 - First run has three steps: confirm/configure the workspace profile and slug created during registration, account connection or explicit skip, then first scheduled post or empty workspace. It must not create a duplicate workspace.

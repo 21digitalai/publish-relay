@@ -90,6 +90,28 @@ describe('authentication HTTP boundary', () => {
     expect(store.createSession).toHaveBeenCalledOnce();
   });
 
+  it('removes password registration and login mutations in magic-link mode', async () => {
+    const store = createStore();
+    const application = createStandaloneApplication({
+      config: {
+        NODE_ENV: 'test',
+        HOST: '127.0.0.1',
+        PORT: 3100,
+        WORKER_POLL_INTERVAL_MS: 1000,
+        PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link',
+      },
+      auth: new AuthService(store),
+    });
+    applications.push(application);
+
+    for (const url of ['/api/auth/register', '/api/auth/login', '/api/auth/forgot-password']) {
+      const response = await application.inject({ method: 'POST', url, payload: {} });
+      expect(response.statusCode).toBe(404);
+    }
+    expect(store.register).not.toHaveBeenCalled();
+    expect(store.findLogin).not.toHaveBeenCalled();
+  });
+
   it('rotates login state, protects the shell, and requires CSRF for logout', async () => {
     const store = createStore();
     vi.mocked(store.findLogin).mockResolvedValue({

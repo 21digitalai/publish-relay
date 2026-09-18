@@ -98,11 +98,16 @@ export function setSessionCookies(
 export function registerAuthRoutes(
   application: FastifyInstance,
   auth: AuthService,
-  options: { secureCookies: boolean; shellHtml: string },
+  options: {
+    secureCookies: boolean;
+    shellHtml: string;
+    humanAuthMode?: 'password' | 'magic_link';
+  },
 ): void {
   application.register(cookie);
 
   application.post('/api/auth/register', async (request, reply) => {
+    if (options.humanAuthMode === 'magic_link') return reply.code(404).send();
     const input = registrationSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Invalid registration details' });
@@ -120,6 +125,7 @@ export function registerAuthRoutes(
   });
 
   application.post('/api/auth/login', async (request, reply) => {
+    if (options.humanAuthMode === 'magic_link') return reply.code(404).send();
     const input = loginSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send({ data: null, error: 'Invalid login details' });
     let redirectPath: string;
@@ -143,13 +149,16 @@ export function registerAuthRoutes(
   });
 
   application.post('/api/auth/forgot-password', (_request, reply) =>
-    reply.code(503).send({
-      data: {
-        status: 'unavailable',
-        supportMessage: 'Password recovery is not available yet. Contact support for assistance.',
-      },
-      error: null,
-    }),
+    options.humanAuthMode === 'magic_link'
+      ? reply.code(404).send()
+      : reply.code(503).send({
+          data: {
+            status: 'unavailable',
+            supportMessage:
+              'Password recovery is not available yet. Contact support for assistance.',
+          },
+          error: null,
+        }),
   );
 
   application.post('/api/auth/logout', async (request, reply) => {

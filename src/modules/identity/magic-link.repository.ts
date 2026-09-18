@@ -137,6 +137,10 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
               sql`${sessions.revokedAt} is null`,
             ),
           );
+        await transaction
+          .update(users)
+          .set({ passwordHash: null, updatedAt: input.now })
+          .where(eq(users.id, challenge.user_id));
         await transaction.insert(sessions).values({
           userId: challenge.user_id,
           workspaceId: challenge.workspace_id,

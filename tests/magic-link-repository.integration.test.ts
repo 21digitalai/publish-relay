@@ -40,7 +40,7 @@ describe('PostgreSQL magic-link repository', () => {
     await database.exec(`
       INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Magic', 'magic');
       INSERT INTO users (id, display_name, email, password_hash, default_workspace_id)
-        VALUES ('${userId}', 'Magic Owner', 'magic@example.test', NULL, '${workspaceId}');
+        VALUES ('${userId}', 'Magic Owner', 'magic@example.test', 'legacy-password-hash', '${workspaceId}');
       SELECT set_config('app.workspace_id', '${workspaceId}', false);
       INSERT INTO memberships (workspace_id, user_id, role)
         VALUES ('${workspaceId}', '${userId}', 'owner');
@@ -69,6 +69,10 @@ describe('PostgreSQL magic-link repository', () => {
     await expect(store.consumeLoginChallenge(input)).resolves.toBeNull();
     const rows = await database.query<{ token_hash: string }>('SELECT token_hash FROM sessions');
     expect(rows.rows).toEqual([{ token_hash: 'session-hash' }]);
+    const users = await database.query<{ password_hash: string | null }>(
+      `SELECT password_hash FROM users WHERE id = '${userId}'`,
+    );
+    expect(users.rows).toEqual([{ password_hash: null }]);
     const audit = await database.query<{ action: string; metadata: unknown }>(
       'SELECT action, metadata FROM audit_events',
     );

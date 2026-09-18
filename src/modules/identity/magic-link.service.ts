@@ -144,6 +144,15 @@ export class MagicLinkService {
     readonly metrics = new MagicLinkMetrics(),
   ) {}
 
+  async verify(input: {
+    token: string;
+    userAgent: string;
+    now?: Date;
+  }): Promise<MagicLinkVerificationResult | null> {
+    const login = await this.verifyLogin(input);
+    return login ?? this.verifySignup(input);
+  }
+
   async verifyLogin(input: {
     token: string;
     userAgent: string;
@@ -203,50 +212,10 @@ export class MagicLinkService {
     correlationId: string;
     now?: Date;
   }): Promise<MagicLinkRequestResult> {
-    const email = normalizeMagicLinkEmail(input.email);
-    const material = createMagicLinkSecretMaterial({
-      email,
-      networkKey: input.networkKey,
-      userAgent: input.userAgent,
-      pepper: this.config.pepper,
-    });
-    const existingUserId = await this.store.findEnabledUserIdByEmail(email);
-    const isAllowed = await this.store.consumeRateLimit(material);
-    if (existingUserId || !isAllowed || !this.delivery.queueMagicLinkChallenge) {
-      this.metrics.increment('request_suppressed');
-      return { accepted: true };
-    }
-    const challenge = {
-      userId: null,
-      tokenHash: material.tokenHash,
-      emailKeyHash: material.emailKeyHash,
-      networkKeyHash: material.networkKeyHash,
-      userAgentHash: material.userAgentHash,
-      purpose: 'signup' as const,
-      redirectPath: '/app',
-      expiresAt: magicLinkExpiresAt(input.now ?? new Date()),
-      correlationId: input.correlationId,
-    };
-    const url = new URL('/api/auth/magic-link/verify-signup', this.config.publicOrigin);
-    url.searchParams.set('token', material.token);
-    const queued = await this.delivery.queueMagicLinkChallenge(challenge, {
-      recipient: email,
-      url: url.toString(),
-      correlationId: input.correlationId,
-      signup: {
-        displayName: input.displayName.trim(),
-        email,
-        workspaceName: input.workspaceName.trim(),
-        termsAccepted: true,
-      },
-    });
-    this.metrics.increment('request_accepted');
-    if (!this.config.exposeDevelopmentUrl) return { accepted: true };
-    await this.store.markDelivery(queued.challengeId, 'sent');
-    return { accepted: true, developmentUrl: url.toString() };
+    return this.requestAccess(input);
   }
 
-  async requestLogin(input: {
+  async requestAccess(input: {
     email: string;
     redirectPath?: string;
     networkKey: string;
@@ -264,25 +233,85 @@ export class MagicLinkService {
     });
     const userId = await this.store.findEnabledUserIdByEmail(email);
     const isAllowed = await this.store.consumeRateLimit(material);
-    if (!userId || !isAllowed) {
+    const queueChallenge = this.delivery.queueMagicLinkChallenge;
+    if (!isAllowed) {
       this.metrics.increment('request_suppressed');
       return { accepted: true };
     }
-    this.metrics.increment('request_accepted');
+    if (userId)
+      return this.queueLoginChallenge({ ...input, email, redirectPath, material, userId });
+    if (!queueChallenge) {
+      this.metrics.increment('request_suppressed');
+      return { accepted: true };
+    }
 
     const challenge = {
-      userId,
+      userId: null,
       tokenHash: material.tokenHash,
       emailKeyHash: material.emailKeyHash,
       networkKeyHash: material.networkKeyHash,
       userAgentHash: material.userAgentHash,
-      purpose: 'login',
+      purpose: 'signup' as const,
       redirectPath,
+      expiresAt: magicLinkExpiresAt(input.now ?? new Date()),
+      correlationId: input.correlationId,
+    };
+    const url = new URL('/api/auth/magic-link/verify', this.config.publicOrigin);
+    url.searchParams.set('token', material.token);
+    const queued = await queueChallenge(challenge, {
+      recipient: email,
+      url: url.toString(),
+      correlationId: input.correlationId,
+      signup: {
+        displayName: email,
+        email,
+        workspaceName: 'My workspace',
+        termsAccepted: true,
+      },
+    });
+    this.metrics.increment('request_accepted');
+    if (!this.config.exposeDevelopmentUrl) return { accepted: true };
+    await this.store.markDelivery(queued.challengeId, 'sent');
+    return { accepted: true, developmentUrl: url.toString() };
+  }
+
+  async requestLogin(input: {
+    email: string;
+    redirectPath?: string;
+    networkKey: string;
+    userAgent: string;
+    correlationId: string;
+    now?: Date;
+  }): Promise<MagicLinkRequestResult> {
+    return this.requestAccess(input);
+  }
+
+  private async queueLoginChallenge(input: {
+    email: string;
+    redirectPath: string;
+    networkKey: string;
+    userAgent: string;
+    correlationId: string;
+    now?: Date;
+    userId: string;
+    material: ReturnType<typeof createMagicLinkSecretMaterial>;
+  }): Promise<MagicLinkRequestResult> {
+    const email = normalizeMagicLinkEmail(input.email);
+    this.metrics.increment('request_accepted');
+
+    const challenge = {
+      userId: input.userId,
+      tokenHash: input.material.tokenHash,
+      emailKeyHash: input.material.emailKeyHash,
+      networkKeyHash: input.material.networkKeyHash,
+      userAgentHash: input.material.userAgentHash,
+      purpose: 'login',
+      redirectPath: input.redirectPath,
       expiresAt: magicLinkExpiresAt(input.now ?? new Date()),
       correlationId: input.correlationId,
     } satisfies MagicLinkChallengeInput;
     const url = new URL('/api/auth/magic-link/verify', this.config.publicOrigin);
-    url.searchParams.set('token', material.token);
+    url.searchParams.set('token', input.material.token);
 
     if (this.delivery.queueMagicLinkChallenge && !this.config.exposeDevelopmentUrl) {
       await this.delivery.queueMagicLinkChallenge(challenge, {

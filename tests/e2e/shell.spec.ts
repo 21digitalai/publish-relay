@@ -92,7 +92,7 @@ test('renders the email-only login surface and development magic-link receipt', 
       body: JSON.stringify({
         data: {
           accepted: true,
-          message: 'If an account exists, a sign-in link is on its way.',
+          message: 'If the email can be used, a sign-in link is on its way.',
           developmentUrl: '/api/auth/magic-link/verify?token=development-token',
         },
         error: null,
@@ -100,10 +100,10 @@ test('renders the email-only login surface and development magic-link receipt', 
     }),
   );
   await page.goto('/login');
-  await expect(page.getByRole('heading', { name: 'Sign in to your cockpit' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Continue to Publish Relay' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Email' }).fill('owner@example.test');
   await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
-  await expect(page.getByRole('status')).toContainText('If an account exists');
+  await expect(page.getByRole('status')).toContainText('If the email can be used');
   await expect(page.getByRole('link', { name: 'Open development sign-in link' })).toHaveAttribute(
     'href',
     '/api/auth/magic-link/verify?token=development-token',
@@ -118,16 +118,19 @@ test('uses the same neutral magic-link operation for account recovery', async ({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        data: { accepted: true, message: 'If an account exists, a sign-in link is on its way.' },
+        data: {
+          accepted: true,
+          message: 'If the email can be used, a sign-in link is on its way.',
+        },
         error: null,
       }),
     }),
   );
   await page.goto('/forgot-password');
-  await expect(page.getByRole('heading', { name: 'Email a recovery link' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Continue to Publish Relay' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Email' }).fill('owner@example.test');
-  await page.getByRole('button', { name: 'Email me a recovery link' }).click();
-  await expect(page.getByRole('status')).toContainText('If an account exists');
+  await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
+  await expect(page.getByRole('status')).toContainText('If the email can be used');
 });
 
 test('hydrates an imported draft in the canonical composer on desktop and mobile', async ({
@@ -362,24 +365,24 @@ test('registers, persists the first workspace update, and reloads the protected 
   page,
 }, testInfo) => {
   const suffix = Math.random().toString(36).slice(2);
-  await page.route('**/api/auth/magic-link/signup', (route) =>
+  await page.route('**/api/auth/magic-link/request', (route) =>
     route.fulfill({
       status: 202,
       contentType: 'application/json',
       body: JSON.stringify({
-        data: { accepted: true, message: 'Check your email to finish creating your account.' },
+        data: {
+          accepted: true,
+          message: 'If the email can be used, a sign-in link is on its way.',
+        },
         error: null,
       }),
     }),
   );
   await page.goto('/register');
-  await page.getByLabel('Name', { exact: true }).fill('Relay Owner');
-  await page.getByLabel('Workspace name').fill(`Atlas Studio ${suffix}`);
   await page.getByLabel('Email').fill(`owner-${suffix}@example.test`);
-  await page.getByRole('checkbox', { name: 'I agree to the terms and privacy policy.' }).click();
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
   await expect(page.getByRole('status')).toContainText('Check your email');
-  await page.unroute('**/api/auth/magic-link/signup');
+  await page.unroute('**/api/auth/magic-link/request');
   const registration = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Relay Owner',

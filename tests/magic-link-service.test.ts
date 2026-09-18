@@ -183,11 +183,14 @@ describe('MagicLinkService', () => {
       correlationId: 'signup-1',
       now: new Date(0),
     });
-    expect(requested.developmentUrl).toContain('/api/auth/magic-link/verify-signup?token=');
+    expect(requested.developmentUrl).toContain('/api/auth/magic-link/verify?token=');
     expect(delivery.queueMagicLinkChallenge).toHaveBeenCalledWith(
       expect.objectContaining({ purpose: 'signup', userId: null }),
       expect.objectContaining({
-        signup: expect.objectContaining({ displayName: 'Relay Owner' }) as unknown,
+        signup: expect.objectContaining({
+          displayName: 'owner@example.test',
+          workspaceName: 'My workspace',
+        }) as unknown,
       }),
     );
     await expect(

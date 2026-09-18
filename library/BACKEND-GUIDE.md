@@ -79,6 +79,8 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Persistence and tenant context
 
+- Human magic-link access has one non-enumerating `POST /api/auth/magic-link/request` boundary for both existing and new emails. Existing users receive a login challenge bound to their current default workspace; unknown emails receive an encrypted signup draft with the email as the internal display label and a neutral `My workspace` tenant default. Both purposes verify through the same one-time route and issue the canonical browser session atomically. Successful magic-link login clears any legacy password hash on that user, so pre-cutover accounts migrate without replacing their identity or workspace.
+
 - Drizzle schema declarations live in `src/database/schema.ts`; immutable forward migrations live in `migrations/`.
 - Tenant repositories require an explicit `workspaceId` and execute through `withTenantTransaction`, which applies transaction-local `app.workspace_id` before any tenant query.
 - Tenant tables use both repository predicates and forced PostgreSQL RLS policies. Adding a tenant table requires `workspace_id`, indexes appropriate to its access path, and an RLS policy in the same migration.

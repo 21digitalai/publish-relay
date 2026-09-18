@@ -123,10 +123,9 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
     null,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [termsAccepted, setTermsAccepted] = useState(false);
-  const isRegister = mode === 'register';
-  const isForgot = mode === 'forgot';
   const usesMagicLinks = document.body.dataset.humanAuthMode === 'magic_link';
+  const isRegister = mode === 'register' && !usesMagicLinks;
+  const isForgot = mode === 'forgot' && !usesMagicLinks;
   const usesPasswordLogin = !isRegister && !isForgot && !usesMagicLinks;
   return (
     <main className="auth-page">
@@ -135,21 +134,29 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
           <span className="brand-signal" /> Publish Relay
         </a>
         <p className="eyebrow">
-          {isRegister ? 'Create your workspace' : isForgot ? 'Account recovery' : 'Welcome back'}
+          {usesMagicLinks
+            ? 'Email access'
+            : isRegister
+              ? 'Create your workspace'
+              : isForgot
+                ? 'Account recovery'
+                : 'Welcome back'}
         </p>
         <h1 id="auth-title">
-          {isRegister
-            ? 'Start scheduling clearly'
-            : isForgot
-              ? 'Email a recovery link'
-              : 'Sign in to your cockpit'}
+          {usesMagicLinks
+            ? 'Continue to Publish Relay'
+            : isRegister
+              ? 'Start scheduling clearly'
+              : isForgot
+                ? 'Email a recovery link'
+                : 'Sign in to your cockpit'}
         </h1>
         <p className="auth-intro">
-          {isForgot
-            ? usesMagicLinks
-              ? 'The same secure one-time link signs you back in. No password reset is needed.'
-              : 'Password recovery is not available yet. Contact support for assistance.'
-            : 'Manage every account, schedule, and recovery path in one focused place.'}
+          {usesMagicLinks
+            ? 'Enter your email and we will send a secure one-time link. New emails create an account automatically.'
+            : isForgot
+              ? 'Password recovery is not available yet. Contact support for assistance.'
+              : 'Manage every account, schedule, and recovery path in one focused place.'}
         </p>
         {error && (
           <div className="form-summary" role="alert">
@@ -165,7 +172,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
             )}
           </div>
         )}
-        {(!isForgot || usesMagicLinks) && (
+        {!isForgot && (
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -182,9 +189,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                       displayName: formText(fields, 'displayName'),
                       email: formText(fields, 'email'),
                       workspaceName,
-                      ...(usesMagicLinks
-                        ? { termsAccepted }
-                        : { password: formText(fields, 'password') }),
+                      password: formText(fields, 'password'),
                     }
                   : usesPasswordLogin
                     ? {
@@ -199,9 +204,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                 try {
                   const response = await fetch(
                     isRegister
-                      ? usesMagicLinks
-                        ? '/api/auth/magic-link/signup'
-                        : '/api/auth/register'
+                      ? '/api/auth/register'
                       : usesPasswordLogin
                         ? '/api/auth/login'
                         : '/api/auth/magic-link/request',
@@ -220,25 +223,16 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     error: string | null;
                   };
                   if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
-                  if (isRegister && !usesMagicLinks) {
+                  if (isRegister) {
                     sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
                     window.location.href = '/onboarding/workspace';
-                  } else if (isRegister) {
-                    setMagicLink({
-                      message:
-                        result.data?.message ?? 'Check your email to finish creating your account.',
-                      ...(result.data?.developmentUrl
-                        ? { developmentUrl: result.data.developmentUrl }
-                        : {}),
-                    });
-                    setIsSubmitting(false);
                   } else if (usesPasswordLogin) {
                     window.location.href = result.data?.redirectPath ?? '/app';
                   } else {
                     setMagicLink({
                       message:
                         result.data?.message ??
-                        'If an account exists, a sign-in link is on its way.',
+                        'If the email can be used, a sign-in link is on its way.',
                       ...(result.data?.developmentUrl
                         ? { developmentUrl: result.data.developmentUrl }
                         : {}),
@@ -279,7 +273,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                 required
               />
             </label>
-            {((isRegister && !usesMagicLinks) || usesPasswordLogin) && (
+            {(isRegister || usesPasswordLogin) && (
               <label className="field-label">
                 Password
                 <span className="password-field">
@@ -303,27 +297,10 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                 </span>
               </label>
             )}
-            {isRegister && !usesMagicLinks && (
+            {isRegister && (
               <p className="field-hint">
                 Use at least 12 characters, including a number and symbol.
               </p>
-            )}
-            {isRegister && usesMagicLinks && (
-              <div className="auth-terms">
-                <button
-                  type="button"
-                  className="auth-terms-checkbox"
-                  role="checkbox"
-                  aria-checked={termsAccepted}
-                  aria-label="I agree to the terms and privacy policy."
-                  onClick={() => {
-                    setTermsAccepted((value) => !value);
-                  }}
-                >
-                  <span aria-hidden="true">{termsAccepted ? '✓' : ''}</span>
-                </button>
-                <span>I agree to the terms and privacy policy.</span>
-              </div>
             )}
             <button className="primary-button" type="submit" disabled={isSubmitting}>
               {isSubmitting
@@ -336,9 +313,7 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                   ? 'Create account'
                   : usesPasswordLogin
                     ? 'Sign in'
-                    : isForgot
-                      ? 'Email me a recovery link'
-                      : 'Email me a sign-in link'}
+                    : 'Email me a sign-in link'}
             </button>
           </form>
         )}
@@ -347,16 +322,18 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
             Forgot password?
           </a>
         )}
-        <p className="auth-switch">
-          {isRegister
-            ? 'Already have an account?'
-            : isForgot
-              ? 'Remembered where to sign in?'
-              : 'New to Publish Relay?'}{' '}
-          <a href={isRegister || isForgot ? '/login' : '/register'}>
-            {isRegister || isForgot ? 'Sign in' : 'Create account'}
-          </a>
-        </p>
+        {!usesMagicLinks && (
+          <p className="auth-switch">
+            {isRegister
+              ? 'Already have an account?'
+              : isForgot
+                ? 'Remembered where to sign in?'
+                : 'New to Publish Relay?'}{' '}
+            <a href={isRegister || isForgot ? '/login' : '/register'}>
+              {isRegister || isForgot ? 'Sign in' : 'Create account'}
+            </a>
+          </p>
+        )}
       </section>
     </main>
   );

@@ -54,6 +54,7 @@ export interface CoreApplicationOptions {
   auth?: AuthService;
   apiKeys?: ApiKeyService;
   uiRoot?: string;
+  uiPrefix?: string;
   database?: NodePgDatabase;
   xOauth?: XOauthOptions;
   mediaStorage?: MediaStorage;
@@ -194,9 +195,16 @@ export function registerCoreApplication(
     publicAuthShells = false,
   } = options;
   const uiRoot = options.uiRoot ?? fileURLToPath(new URL('../ui/', import.meta.url));
-  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8');
+  const uiPrefix = options.uiPrefix ?? '/';
+  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
+    .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`);
 
-  application.register(fastifyStatic, { root: uiRoot, wildcard: false });
+  application.register(fastifyStatic, {
+    root: uiRoot,
+    wildcard: false,
+    prefix: uiPrefix,
+    decorateReply: false,
+  });
 
   registerOperationalRoutes(application, database);
   registerApiDocumentationRoute(application);

@@ -1426,6 +1426,10 @@ function SettingsPage() {
   const isIntegrations = window.location.pathname.endsWith('/settings/integrations');
   const workspaceBase = window.location.pathname.split('/settings/')[0] ?? '';
   const [workspace, setWorkspace] = useState({ name: '', slug: '', timezone: 'UTC' });
+  const [workspaces, setWorkspaces] = useState<
+    { id: string; name: string; slug: string; role: string; position: number }[]
+  >([]);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [keys, setKeys] = useState<ManagedApiKey[]>([]);
   const [grants, setGrants] = useState<DelegatedGrant[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -1459,13 +1463,25 @@ function SettingsPage() {
       : isIntegrations
         ? '/api/settings/delegated-grants'
         : '/api/workspaces/current';
-    void fetch(endpoint)
+    void Promise.all([
+      fetch(endpoint),
+      ...(!isAutomation && !isIntegrations ? [fetch('/api/workspaces')] : []),
+    ])
       .then(async (response) => {
-        const result = (await response.json()) as { data: unknown; error: string | null };
-        if (!response.ok) throw new Error(result.error ?? 'Settings could not be loaded');
+        const primary = response[0];
+        const result = (await primary.json()) as { data: unknown; error: string | null };
+        if (!primary.ok) throw new Error(result.error ?? 'Settings could not be loaded');
         if (isAutomation) setKeys((result.data as { items: ManagedApiKey[] }).items);
         else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
-        else setWorkspace(result.data as typeof workspace);
+        else {
+          setWorkspace(result.data as typeof workspace);
+          const workspaceResponse = response[1];
+          if (!workspaceResponse?.ok) throw new Error('Workspaces could not be loaded');
+          const workspaceResult = (await workspaceResponse.json()) as {
+            data: { workspaces: typeof workspaces };
+          };
+          setWorkspaces(workspaceResult.data.workspaces);
+        }
         setLoadState('ready');
       })
       .catch((error: unknown) => {
@@ -1494,6 +1510,40 @@ function SettingsPage() {
     } finally {
       setIsSavingWorkspace(false);
     }
+  };
+  const createWorkspace = async () => {
+    const response = await fetch('/api/workspaces', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+      body: JSON.stringify({ name: newWorkspaceName }),
+    });
+    const result = (await response.json()) as {
+      data: (typeof workspaces)[number] | null;
+      error: string | null;
+    };
+    if (!response.ok || !result.data)
+      throw new Error(result.error ?? 'Workspace could not be created');
+    setWorkspaces([...workspaces, result.data]);
+    setNewWorkspaceName('');
+    setMessage('Workspace created');
+  };
+  const moveWorkspace = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (!workspaces[index] || !workspaces[target]) return;
+    const ordered = [...workspaces];
+    const current = ordered[index];
+    const destination = ordered[target];
+    if (!current || !destination) return;
+    ordered[index] = destination;
+    ordered[target] = current;
+    const response = await fetch('/api/workspaces/order', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+      body: JSON.stringify({ workspaceIds: ordered.map((item) => item.id) }),
+    });
+    if (!response.ok) throw new Error('Workspace order could not be saved');
+    setWorkspaces(ordered.map((item, position) => ({ ...item, position })));
+    setMessage('Workspace order saved');
   };
   const createKey = async () => {
     if (isCreatingKey) return;
@@ -1570,50 +1620,106 @@ function SettingsPage() {
         </div>
       )}
       {loadState === 'ready' && !isAutomation && !isIntegrations && (
-        <section className="settings-card" aria-labelledby="workspace-settings-title">
-          <h2 id="workspace-settings-title">Workspace profile</h2>
-          <label className="field-label">
-            Name
-            <input
-              className="text-input"
-              value={workspace.name}
-              onChange={(event) => {
-                setWorkspace({ ...workspace, name: event.target.value });
+        <div className="settings-grid">
+          <section className="settings-card" aria-labelledby="workspace-settings-title">
+            <h2 id="workspace-settings-title">Workspace profile</h2>
+            <label className="field-label">
+              Name
+              <input
+                className="text-input"
+                value={workspace.name}
+                onChange={(event) => {
+                  setWorkspace({ ...workspace, name: event.target.value });
+                }}
+              />
+            </label>
+            <label className="field-label">
+              Workspace URL
+              <input
+                className="text-input"
+                value={workspace.slug}
+                readOnly
+                aria-describedby="slug-guard"
+              />
+            </label>
+            <p id="slug-guard" className="field-hint">
+              Contact an administrator before changing this routing identity.
+            </p>
+            <label className="field-label">
+              Timezone
+              <input
+                className="text-input"
+                value={workspace.timezone}
+                onChange={(event) => {
+                  setWorkspace({ ...workspace, timezone: event.target.value });
+                }}
+              />
+            </label>
+            <button
+              className="primary-button"
+              disabled={isSavingWorkspace}
+              onClick={() => {
+                run(saveWorkspace);
               }}
-            />
-          </label>
-          <label className="field-label">
-            Workspace URL
-            <input
-              className="text-input"
-              value={workspace.slug}
-              readOnly
-              aria-describedby="slug-guard"
-            />
-          </label>
-          <p id="slug-guard" className="field-hint">
-            Contact an administrator before changing this routing identity.
-          </p>
-          <label className="field-label">
-            Timezone
-            <input
-              className="text-input"
-              value={workspace.timezone}
-              onChange={(event) => {
-                setWorkspace({ ...workspace, timezone: event.target.value });
+            >
+              {isSavingWorkspace ? 'Saving workspace…' : 'Save workspace'}
+            </button>
+          </section>
+          <section className="settings-card" aria-labelledby="workspace-list-title">
+            <h2 id="workspace-list-title">Manage workspaces</h2>
+            <label className="field-label">
+              New workspace name
+              <input
+                className="text-input"
+                value={newWorkspaceName}
+                onChange={(event) => {
+                  setNewWorkspaceName(event.target.value);
+                }}
+              />
+            </label>
+            <button
+              className="secondary-button"
+              disabled={!newWorkspaceName.trim()}
+              onClick={() => {
+                run(createWorkspace);
               }}
-            />
-          </label>
-          <button
-            className="primary-button"
-            disabled={isSavingWorkspace}
-            onClick={() => {
-              run(saveWorkspace);
-            }}
-          >
-            {isSavingWorkspace ? 'Saving workspace…' : 'Save workspace'}
-          </button>
-        </section>
+            >
+              Create workspace
+            </button>
+            <div className="workspace-management-list">
+              {workspaces.map((item, index) => (
+                <div className="workspace-management-row" key={item.id}>
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small>{item.role}</small>
+                  </span>
+                  <span>
+                    <button
+                      className="secondary-button"
+                      disabled={index === 0}
+                      aria-label={`Move ${item.name} up`}
+                      onClick={() => {
+                        run(() => moveWorkspace(index, -1));
+                      }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={index === workspaces.length - 1}
+                      aria-label={`Move ${item.name} down`}
+                      onClick={() => {
+                        run(() => moveWorkspace(index, 1));
+                      }}
+                    >
+                      ↓
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
       )}
       {loadState === 'ready' && isAutomation && (
         <div className="settings-grid">

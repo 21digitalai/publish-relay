@@ -1392,6 +1392,10 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   let revokeRequests = 0;
   let grantRevokeRequests = 0;
   let keys: Record<string, unknown>[] = [];
+  let workspaces = [
+    { id: 'workspace-1', name: 'Atlas', slug: 'atlas', role: 'owner', position: 0 },
+    { id: 'workspace-2', name: 'Relay', slug: 'relay', role: 'owner', position: 1 },
+  ];
   let failNextKeyListRefresh = false;
   await establishWorkspaceSession(page);
   await page.route('**/api/workspaces/current', async (route) => {
@@ -1406,6 +1410,40 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
     await route.fulfill({
       contentType: 'application/json',
       body: '{"data":{"id":"workspace-1","name":"Atlas","slug":"atlas","timezone":"Europe/Sofia"},"error":null}',
+    });
+  });
+  await page.route('**/api/workspaces', async (route) => {
+    if (route.request().method() === 'POST') {
+      const input = route.request().postDataJSON() as { name: string };
+      const workspace = {
+        id: 'workspace-3',
+        name: input.name,
+        slug: 'new-desk',
+        role: 'owner',
+        position: workspaces.length,
+      };
+      workspaces = [...workspaces, workspace];
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: workspace, error: null }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { workspaces }, error: null }),
+    });
+  });
+  await page.route('**/api/workspaces/order', async (route) => {
+    const input = route.request().postDataJSON() as { workspaceIds: string[] };
+    workspaces = input.workspaceIds.flatMap((id, position) => {
+      const workspace = workspaces.find((candidate) => candidate.id === id);
+      return workspace ? [{ ...workspace, position }] : [];
+    });
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { workspaces }, error: null }),
     });
   });
   await page.route('**/api/settings/api-keys**', async (route) => {
@@ -1482,7 +1520,13 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   });
   await page.goto(await workspacePath(page, 'settings/workspace'));
   await expect(page.getByRole('heading', { name: 'Workspace profile' })).toBeVisible();
-  await page.getByLabel('Name').fill('Atlas Studio');
+  await expect(page.getByRole('heading', { name: 'Manage workspaces' })).toBeVisible();
+  await page.getByLabel('New workspace name').fill('New Desk');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await expect(page.getByText('New Desk', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Move New Desk up' }).click();
+  await expect(page.getByRole('status')).toContainText('Workspace order saved');
+  await page.getByLabel('Name', { exact: true }).fill('Atlas Studio');
   await page.getByRole('button', { name: 'Save workspace' }).click();
   await expect(page.getByRole('status')).toContainText('Workspace settings saved');
   await page.getByRole('link', { name: 'Automation' }).click();

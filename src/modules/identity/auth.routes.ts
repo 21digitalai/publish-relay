@@ -6,10 +6,12 @@ import { MAX_WORKSPACES_PER_USER, type AuthIdentity, type AuthService } from './
 import type { SessionResult } from './auth.service.js';
 import { requireWorkspaceAction, type WorkspaceAction } from './authorization.js';
 import { sessionCookieOptions, verifyCsrfToken } from './session.js';
+import { validateMagicLinkRedirect } from './magic-link.js';
 
 export const SESSION_COOKIE = 'publish_relay_session';
 export const CSRF_COOKIE = 'publish_relay_csrf';
 const credentialsSchema = z.object({ email: z.email(), password: z.string().min(12) });
+const loginSchema = credentialsSchema.extend({ redirectPath: z.string().max(2_048).optional() });
 const registrationSchema = credentialsSchema.extend({
   displayName: z.string().trim().min(1).max(100),
   workspaceName: z.string().trim().min(1).max(100),
@@ -80,7 +82,7 @@ export async function authorizeRequest(
   return identity;
 }
 
-function setSessionCookies(
+export function setSessionCookies(
   reply: FastifyReply,
   session: SessionResult,
   secureCookies: boolean,
@@ -100,11 +102,16 @@ function setSessionCookies(
 export function registerAuthRoutes(
   application: FastifyInstance,
   auth: AuthService,
-  options: { secureCookies: boolean; shellHtml: string },
+  options: {
+    secureCookies: boolean;
+    shellHtml: string;
+    humanAuthMode?: 'password' | 'magic_link';
+  },
 ): void {
   application.register(cookie);
 
   application.post('/api/auth/register', async (request, reply) => {
+    if (options.humanAuthMode === 'magic_link') return reply.code(404).send();
     const input = registrationSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Invalid registration details' });
@@ -122,25 +129,40 @@ export function registerAuthRoutes(
   });
 
   application.post('/api/auth/login', async (request, reply) => {
-    const input = credentialsSchema.safeParse(request.body);
+    if (options.humanAuthMode === 'magic_link') return reply.code(404).send();
+    const input = loginSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send({ data: null, error: 'Invalid login details' });
+    let redirectPath: string;
+    try {
+      redirectPath = validateMagicLinkRedirect(input.data.redirectPath);
+    } catch {
+      return reply.code(400).send({ data: null, error: 'Invalid login continuation' });
+    }
     const session = await auth.login(input.data.email, input.data.password);
     if (!session) return reply.code(401).send({ data: null, error: 'Invalid email or password' });
     setSessionCookies(reply, session, options.secureCookies);
     return {
-      data: { userId: session.userId, workspaceId: session.workspaceId, role: session.role },
+      data: {
+        userId: session.userId,
+        workspaceId: session.workspaceId,
+        role: session.role,
+        redirectPath,
+      },
       error: null,
     };
   });
 
   application.post('/api/auth/forgot-password', (_request, reply) =>
-    reply.code(503).send({
-      data: {
-        status: 'unavailable',
-        supportMessage: 'Password recovery is not available yet. Contact support for assistance.',
-      },
-      error: null,
-    }),
+    options.humanAuthMode === 'magic_link'
+      ? reply.code(404).send()
+      : reply.code(503).send({
+          data: {
+            status: 'unavailable',
+            supportMessage:
+              'Password recovery is not available yet. Contact support for assistance.',
+          },
+          error: null,
+        }),
   );
 
   application.post('/api/auth/logout', async (request, reply) => {

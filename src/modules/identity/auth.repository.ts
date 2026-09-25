@@ -56,7 +56,8 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
         .where(and(sql`lower(${users.email}) = ${email}`, eq(users.isDisabled, false)))
         .limit(1);
       const workspaceId = user?.workspaceId;
-      if (!user || !workspaceId) return null;
+      if (!user || !workspaceId || !user.passwordHash) return null;
+      const passwordHash = user.passwordHash;
       return withTenantTransaction(
         database,
         { workspaceId, userId: user.userId },
@@ -68,7 +69,9 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
               and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, user.userId)),
             )
             .limit(1);
-          return membership ? { ...user, workspaceId, role: membership.role } : null;
+          return membership
+            ? { userId: user.userId, passwordHash, workspaceId, role: membership.role }
+            : null;
         },
       );
     },

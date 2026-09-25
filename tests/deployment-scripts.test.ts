@@ -37,9 +37,9 @@ describe('deployment scripts', () => {
     expect(provisioning).not.toMatch(/PASSWORD|CREATE ROLE [^;]+\sLOGIN(?:\s|;)/);
     expect(bootstrap).toContain('provision-database-roles.sql');
     expect(bootstrap).not.toContain('CREATE ROLE');
-    expect(readFileSync(join(projectRoot, 'src/entrypoints/web.ts'), 'utf8')).toContain(
-      '-c role=publish_relay_web',
-    );
+    expect(
+      readFileSync(join(projectRoot, 'src/application/create-runtime-options.ts'), 'utf8'),
+    ).toContain('-c role=publish_relay_web');
     expect(readFileSync(join(projectRoot, 'src/entrypoints/worker.ts'), 'utf8')).toContain(
       '-c role=publish_relay_worker',
     );

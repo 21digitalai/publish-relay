@@ -74,11 +74,6 @@ function formText(fields: FormData, name: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-function safeLocalNext(): string {
-  const next = new URLSearchParams(window.location.search).get('next');
-  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/app';
-}
-
 function Mark({ provider }: { provider: string }) {
   const isX = provider.toLowerCase() === 'x';
   return (
@@ -88,132 +83,224 @@ function Mark({ provider }: { provider: string }) {
   );
 }
 
-function AuthPage({ mode }: { mode: 'login' | 'register' }) {
+function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [magicLink, setMagicLink] = useState<{ message: string; developmentUrl?: string } | null>(
+    null,
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const isRegister = mode === 'register';
+  const usesMagicLinks = document.body.dataset.humanAuthMode === 'magic_link';
+  const isRegister = mode === 'register' && !usesMagicLinks;
+  const isForgot = mode === 'forgot' && !usesMagicLinks;
+  const usesPasswordLogin = !isRegister && !isForgot && !usesMagicLinks;
   return (
     <main className="auth-page">
       <section className="auth-panel" aria-labelledby="auth-title">
         <a className="brand-lockup" href="/login">
           <span className="brand-signal" /> Publish Relay
         </a>
-        <p className="eyebrow">{isRegister ? 'Create your workspace' : 'Welcome back'}</p>
+        <p className="eyebrow">
+          {usesMagicLinks
+            ? 'Email access'
+            : isRegister
+              ? 'Create your workspace'
+              : isForgot
+                ? 'Account recovery'
+                : 'Welcome back'}
+        </p>
         <h1 id="auth-title">
-          {isRegister ? 'Start scheduling clearly' : 'Sign in to your cockpit'}
+          {usesMagicLinks
+            ? 'Continue to Publish Relay'
+            : isRegister
+              ? 'Start scheduling clearly'
+              : isForgot
+                ? 'Email a recovery link'
+                : 'Sign in to your cockpit'}
         </h1>
         <p className="auth-intro">
-          Manage every account, schedule, and recovery path in one focused place.
+          {usesMagicLinks
+            ? 'Enter your email and we will send a secure one-time link. New emails create an account automatically.'
+            : isForgot
+              ? 'Password recovery is not available yet. Contact support for assistance.'
+              : 'Manage every account, schedule, and recovery path in one focused place.'}
         </p>
         {error && (
           <div className="form-summary" role="alert">
             {error}
           </div>
         )}
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const form = event.currentTarget;
-            void (async () => {
-              setError(null);
-              setIsSubmitting(true);
-              const fields = new FormData(form);
-              const workspaceName = formText(fields, 'workspaceName');
-              const payload = isRegister
-                ? {
-                    displayName: formText(fields, 'displayName'),
-                    email: formText(fields, 'email'),
-                    password: formText(fields, 'password'),
-                    workspaceName,
-                  }
-                : {
-                    email: formText(fields, 'email'),
-                    password: formText(fields, 'password'),
+        {magicLink && (
+          <div className="magic-link-receipt" role="status">
+            <strong>Check your email</strong>
+            <span>{magicLink.message}</span>
+            {magicLink.developmentUrl && (
+              <a href={magicLink.developmentUrl}>Open development sign-in link</a>
+            )}
+          </div>
+        )}
+        {!isForgot && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              void (async () => {
+                setError(null);
+                setMagicLink(null);
+                setIsSubmitting(true);
+                const fields = new FormData(form);
+                const workspaceName = formText(fields, 'workspaceName');
+                const continuation = new URLSearchParams(window.location.search).get('next');
+                const payload = isRegister
+                  ? {
+                      displayName: formText(fields, 'displayName'),
+                      email: formText(fields, 'email'),
+                      workspaceName,
+                      password: formText(fields, 'password'),
+                    }
+                  : usesPasswordLogin
+                    ? {
+                        email: formText(fields, 'email'),
+                        password: formText(fields, 'password'),
+                        ...(continuation ? { redirectPath: continuation } : {}),
+                      }
+                    : {
+                        email: formText(fields, 'email'),
+                        ...(continuation ? { redirectPath: continuation } : {}),
+                      };
+                try {
+                  const response = await fetch(
+                    isRegister
+                      ? '/api/auth/register'
+                      : usesPasswordLogin
+                        ? '/api/auth/login'
+                        : '/api/auth/magic-link/request',
+                    {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify(payload),
+                    },
+                  );
+                  const result = (await response.json()) as {
+                    data: {
+                      message?: string;
+                      developmentUrl?: string;
+                      redirectPath?: string;
+                    } | null;
+                    error: string | null;
                   };
-              try {
-                const response = await fetch(
-                  isRegister ? '/api/auth/register' : '/api/auth/login',
-                  {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(payload),
-                  },
-                );
-                const result = (await response.json()) as { error: string | null };
-                if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
-                if (isRegister) {
-                  sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
-                  window.location.href = '/onboarding/workspace';
-                } else window.location.href = safeLocalNext();
-              } catch (submissionError) {
-                setError(
-                  submissionError instanceof Error
-                    ? submissionError.message
-                    : 'Authentication failed',
-                );
-                setIsSubmitting(false);
-              }
-            })();
-          }}
-          noValidate
-        >
-          {isRegister && (
+                  if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
+                  if (isRegister) {
+                    sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
+                    window.location.href = '/onboarding/workspace';
+                  } else if (usesPasswordLogin) {
+                    window.location.href = result.data?.redirectPath ?? '/app';
+                  } else {
+                    setMagicLink({
+                      message:
+                        result.data?.message ??
+                        'If the email can be used, a sign-in link is on its way.',
+                      ...(result.data?.developmentUrl
+                        ? { developmentUrl: result.data.developmentUrl }
+                        : {}),
+                    });
+                    setIsSubmitting(false);
+                  }
+                } catch (submissionError) {
+                  setError(
+                    submissionError instanceof Error
+                      ? submissionError.message
+                      : 'Authentication failed',
+                  );
+                  setIsSubmitting(false);
+                }
+              })();
+            }}
+            noValidate
+          >
+            {isRegister && (
+              <label className="field-label">
+                Name
+                <input className="text-input" name="displayName" autoComplete="name" required />
+              </label>
+            )}
+            {isRegister && (
+              <label className="field-label">
+                Workspace name
+                <input className="text-input" name="workspaceName" required />
+              </label>
+            )}
             <label className="field-label">
-              Name
-              <input className="text-input" name="displayName" autoComplete="name" required />
-            </label>
-          )}
-          {isRegister && (
-            <label className="field-label">
-              Workspace name
-              <input className="text-input" name="workspaceName" required />
-            </label>
-          )}
-          <label className="field-label">
-            Email
-            <input className="text-input" name="email" type="email" autoComplete="email" required />
-          </label>
-          <label className="field-label">
-            Password
-            <span className="password-field">
+              Email
               <input
                 className="text-input"
-                name="password"
-                type={showPassword ? 'text' : 'password'}
-                autoComplete={isRegister ? 'new-password' : 'current-password'}
+                name="email"
+                type="email"
+                autoComplete="email"
                 required
               />
-              <button
-                className="reveal-password"
-                type="button"
-                onClick={() => {
-                  setShowPassword((value) => !value);
-                }}
-                aria-pressed={showPassword}
-              >
-                {showPassword ? 'Hide' : 'Show'}
-              </button>
-            </span>
-          </label>
-          {isRegister && (
-            <p className="field-hint">Use at least 12 characters, including a number and symbol.</p>
-          )}
-          {!isRegister && (
-            <a className="forgot-link" href="/forgot-password">
-              Forgot password?
-            </a>
-          )}
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Working…' : isRegister ? 'Create account' : 'Sign in'}
-          </button>
-        </form>
-        <p className="auth-switch">
-          {isRegister ? 'Already have an account?' : 'New to Publish Relay?'}{' '}
-          <a href={isRegister ? '/login' : '/register'}>
-            {isRegister ? 'Sign in' : 'Create account'}
+            </label>
+            {(isRegister || usesPasswordLogin) && (
+              <label className="field-label">
+                Password
+                <span className="password-field">
+                  <input
+                    className="text-input"
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete={isRegister ? 'new-password' : 'current-password'}
+                    required
+                  />
+                  <button
+                    className="reveal-password"
+                    type="button"
+                    onClick={() => {
+                      setShowPassword((value) => !value);
+                    }}
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </span>
+              </label>
+            )}
+            {isRegister && (
+              <p className="field-hint">
+                Use at least 12 characters, including a number and symbol.
+              </p>
+            )}
+            <button className="primary-button" type="submit" disabled={isSubmitting}>
+              {isSubmitting
+                ? isRegister
+                  ? 'Creating account…'
+                  : usesPasswordLogin
+                    ? 'Signing in…'
+                    : 'Sending link…'
+                : isRegister
+                  ? 'Create account'
+                  : usesPasswordLogin
+                    ? 'Sign in'
+                    : 'Email me a sign-in link'}
+            </button>
+          </form>
+        )}
+        {usesPasswordLogin && (
+          <a className="auth-secondary-link" href="/forgot-password">
+            Forgot password?
           </a>
-        </p>
+        )}
+        {!usesMagicLinks && (
+          <p className="auth-switch">
+            {isRegister
+              ? 'Already have an account?'
+              : isForgot
+                ? 'Remembered where to sign in?'
+                : 'New to Publish Relay?'}{' '}
+            <a href={isRegister || isForgot ? '/login' : '/register'}>
+              {isRegister || isForgot ? 'Sign in' : 'Create account'}
+            </a>
+          </p>
+        )}
       </section>
     </main>
   );
@@ -317,24 +404,7 @@ function ConsentPage() {
 }
 
 function ForgotPasswordPage() {
-  return (
-    <main className="auth-page">
-      <section className="auth-panel" aria-labelledby="recovery-title">
-        <a className="brand-lockup" href="/login">
-          <span className="brand-signal" /> Publish Relay
-        </a>
-        <p className="eyebrow">Account recovery</p>
-        <h1 id="recovery-title">Recovery is not available yet</h1>
-        <p className="auth-intro">
-          Contact support for assistance. We will not claim that an email was sent while recovery
-          delivery is unavailable.
-        </p>
-        <a className="primary-button" href="/login">
-          Return to sign in
-        </a>
-      </section>
-    </main>
-  );
+  return <AuthPage mode="forgot" />;
 }
 
 function OnboardingPage() {

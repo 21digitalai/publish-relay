@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { RuntimeConfig } from '../config/runtime-config.js';
+import { resolveHumanAuthMode, type RuntimeConfig } from '../config/runtime-config.js';
 import { registerApiDocumentationRoute } from '../modules/api/openapi.js';
 import { registerAgentDiscoveryRoutes } from '../modules/api/agent-discovery.js';
 import { ApiRateLimiter } from '../modules/api/rate-limit.js';
@@ -16,6 +16,8 @@ import {
   registerAuthRoutes,
   registerPublicAuthShellRoutes,
 } from '../modules/identity/auth.routes.js';
+import type { MagicLinkService } from '../modules/identity/magic-link.service.js';
+import { registerMagicLinkRoutes } from '../modules/identity/magic-link.routes.js';
 import type { ApiKeyService } from '../modules/identity/api-key.service.js';
 import { registerApiKeyRoutes } from '../modules/identity/api-key.routes.js';
 import { registerPostRoutes } from '../modules/content/post.routes.js';
@@ -60,6 +62,7 @@ export interface CoreApplicationOptions {
   actionPolicy?: ActionPolicy;
   youtubeOauth?: YouTubeOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
+  magicLinks?: MagicLinkService;
   publicAuthShells?: boolean;
 }
 
@@ -68,6 +71,7 @@ export type StandaloneApplicationOptions = Omit<CoreApplicationOptions, 'publicA
 function registerOperationalRoutes(
   application: FastifyInstance,
   database: NodePgDatabase | undefined,
+  magicLinks: MagicLinkService | undefined,
 ): void {
   application.get('/health/live', () => ({ data: { status: 'ok' }, error: null }));
   application.get('/health/ready', async (_request, reply) => {
@@ -88,6 +92,7 @@ function registerOperationalRoutes(
       '# HELP publish_relay_process_resident_memory_bytes Resident memory in bytes.',
       '# TYPE publish_relay_process_resident_memory_bytes gauge',
       `publish_relay_process_resident_memory_bytes ${String(memory.rss)}`,
+      ...(magicLinks ? magicLinks.metrics.renderPrometheus() : []),
       '',
     ].join('\n');
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(body);
@@ -194,19 +199,27 @@ export function registerCoreApplication(
     publicAuthShells = false,
   } = options;
   const uiRoot = options.uiRoot ?? fileURLToPath(new URL('../ui/', import.meta.url));
-  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8');
+  const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8').replace(
+    '<body>',
+    `<body data-human-auth-mode="${resolveHumanAuthMode(config)}">`,
+  );
 
   application.register(fastifyStatic, { root: uiRoot, wildcard: false });
 
-  registerOperationalRoutes(application, database);
+  registerOperationalRoutes(application, database, options.magicLinks);
   registerApiDocumentationRoute(application);
   registerAgentDiscoveryRoutes(application);
   if (auth)
     registerAuthRoutes(application, auth, {
       secureCookies: config.NODE_ENV === 'production',
       shellHtml,
+      humanAuthMode: resolveHumanAuthMode(config),
     });
   if (auth && publicAuthShells) registerPublicAuthShellRoutes(application, shellHtml);
+  if (options.magicLinks && resolveHumanAuthMode(config) === 'magic_link')
+    registerMagicLinkRoutes(application, options.magicLinks, {
+      secureCookies: config.NODE_ENV === 'production',
+    });
   registerMachineApiRoutes(application, options, actionPolicy);
   registerBrowserRoutes(application, options, actionPolicy, shellHtml);
 

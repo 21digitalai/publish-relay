@@ -1,9 +1,15 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
-import { loadRuntimeConfig, resolveWorkerDatabaseUrl } from '../config/runtime-config.js';
+import {
+  loadRuntimeConfig,
+  resolveHumanAuthMode,
+  resolveWorkerDatabaseUrl,
+} from '../config/runtime-config.js';
 import { resolveWorkerSecurityRuntime } from '../config/runtime-master-keys.js';
 import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
+import { dispatchAuthEmailOutbox } from '../modules/identity/auth-email-outbox.js';
+import { ResendEmailDelivery } from '../modules/identity/resend-email.delivery.js';
 import {
   createFixedMediaRetentionPolicy,
   retainForeverMediaPolicy,
@@ -23,6 +29,15 @@ import {
 } from '../modules/providers/youtube-media-dispatch.service.js';
 
 const config = loadRuntimeConfig();
+const authEmailDelivery =
+  resolveHumanAuthMode(config) === 'magic_link' &&
+  config.PUBLISH_RELAY_RESEND_API_KEY &&
+  config.PUBLISH_RELAY_AUTH_EMAIL_FROM
+    ? new ResendEmailDelivery({
+        apiKey: config.PUBLISH_RELAY_RESEND_API_KEY,
+        from: config.PUBLISH_RELAY_AUTH_EMAIL_FROM,
+      })
+    : null;
 const shutdownController = new AbortController();
 const workerDatabaseUrl = resolveWorkerDatabaseUrl(config);
 const { keys, xCredentials } = resolveWorkerSecurityRuntime(config);
@@ -89,6 +104,14 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 while (!shutdownController.signal.aborted) {
+  if (authEmailDelivery) {
+    const authEmail = await dispatchAuthEmailOutbox(database, keys, authEmailDelivery, {
+      workerId: config.WORKER_ID ?? 'publish-relay-worker',
+      leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+    });
+    if (authEmail.sent || authEmail.failed)
+      process.stdout.write(`${JSON.stringify({ event: 'auth_email_cycle', ...authEmail })}\n`);
+  }
   if (xRuntime) {
     await reconcileXJobs(xRuntime);
     await dispatchDueXJobs(xRuntime);

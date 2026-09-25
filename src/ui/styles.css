@@ -225,6 +225,22 @@ select:focus-visible {
   border-radius: 8px;
   color: #ffd5da;
 }
+.magic-link-receipt {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  margin: 16px 0;
+  color: var(--text);
+  background: rgba(77, 215, 168, 0.1);
+  border: 1px solid var(--success);
+  border-radius: 8px;
+}
+.magic-link-receipt span {
+  color: var(--muted);
+}
+.magic-link-receipt a {
+  color: var(--focus);
+}
 .onboarding-page {
   min-height: 100vh;
   padding: 24px 32px;

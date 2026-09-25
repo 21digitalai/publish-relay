@@ -19,6 +19,9 @@ import { connectProvider } from '../../src/modules/credentials/provider-connecti
 import { authenticateRequest } from '../../src/modules/identity/auth.routes.js';
 import { createPostgresAuthStore } from '../../src/modules/identity/auth.repository.js';
 import { AuthService } from '../../src/modules/identity/auth.service.js';
+import { AuthEmailOutboxDelivery } from '../../src/modules/identity/auth-email-outbox.js';
+import { createPostgresMagicLinkStore } from '../../src/modules/identity/magic-link.repository.js';
+import { MagicLinkService } from '../../src/modules/identity/magic-link.service.js';
 import { verifyCsrfToken } from '../../src/modules/identity/session.js';
 import { createPostgresDelegatedAuthorizationStore } from '../../src/modules/delegated-authorization/delegated-authorization.repository.js';
 import { DelegatedAuthorizationService } from '../../src/modules/delegated-authorization/delegated-authorization.service.js';
@@ -46,16 +49,39 @@ await database.exec(`
 `);
 const typedDatabase = drizzle(database) as unknown as NodePgDatabase;
 const auth = new AuthService(createPostgresAuthStore(typedDatabase));
+const fixtureKey = Buffer.alloc(32, 7);
+const magicLinkMode = process.env.PUBLISH_RELAY_HUMAN_AUTH_MODE === 'magic_link';
 const application = createStandaloneApplication({
-  config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 43199, WORKER_POLL_INTERVAL_MS: 1000 },
+  config: {
+    NODE_ENV: 'test',
+    HOST: '127.0.0.1',
+    PORT: 43199,
+    WORKER_POLL_INTERVAL_MS: 1000,
+    ...(magicLinkMode ? { PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link' } : {}),
+  },
   auth,
+  ...(magicLinkMode
+    ? {
+        magicLinks: new MagicLinkService(
+          createPostgresMagicLinkStore(typedDatabase),
+          new AuthEmailOutboxDelivery(typedDatabase, {
+            currentVersion: () => 'e2e-v1',
+            getKey: () => Promise.resolve(fixtureKey),
+          }),
+          {
+            pepper: 'e2e-pepper-which-is-at-least-32-characters-long',
+            publicOrigin: 'http://127.0.0.1:43199',
+            exposeDevelopmentUrl: true,
+          },
+        ),
+      }
+    : {}),
   uiRoot: resolve(process.cwd(), 'dist/ui'),
   database: typedDatabase,
   delegatedAuthorization: new DelegatedAuthorizationService(
     createPostgresDelegatedAuthorizationStore(typedDatabase),
   ),
 });
-const fixtureKey = Buffer.alloc(32, 7);
 application.post('/api/oauth/x', async (request, reply) => {
   const identity = await authenticateRequest(request, auth);
   if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });

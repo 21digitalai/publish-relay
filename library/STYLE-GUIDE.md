@@ -91,14 +91,14 @@ Queue filter menus use the shared `FilterSelect` listbox primitive in `src/ui/wo
 
 Auth uses a centered 440px panel on the canvas with a restrained violet radial glow. No marketing carousel.
 
-- Login: email, password, reveal toggle, forgot password, submit, registration link.
-- Registration: display name, email, password, first workspace name, visible requirements, terms acknowledgement. Submission atomically creates the user, first workspace, owner membership, and browser session.
+- In `magic_link` mode, `/login`, `/register`, and `/forgot-password` render the same email-only `AuthPage`: one submit requests a one-time link, and the receipt says to check email without revealing account existence. No name, workspace-name, password, or separate registration control appears. The development URL is visible only when explicitly supplied by the non-production API response.
+- In `password` mode, login retains email/password, reveal toggle, forgot-password link, submit, and registration link; registration retains display name, email, password, and first workspace name. Submission atomically creates the user, first workspace, owner membership, and browser session.
 - Errors are inline; server errors also receive a form summary.
 - Loading preserves button dimensions and uses action-specific labels.
 - First run has three steps: confirm/configure the workspace profile and slug created during registration, account connection or explicit skip, then first scheduled post or empty workspace. It must not create a duplicate workspace.
 - OAuth leaves through a labeled secure redirect and returns to a real success/failure receipt.
 - Fastify serves the built SPA from the same deployable. `/login`, `/register`, and `/forgot-password` are public; `/app`, `/onboarding/*`, and `/w/*` require a valid session and redirect unauthenticated users to `/login` before protected data is returned.
-- Until a recovery-token delivery implementation is accepted, `/forgot-password` renders an honest non-enumerating unavailable/support state. It must not claim an email was sent.
+- Password-mode `/forgot-password` renders an honest unavailable/support state; magic-link mode shares the working email request surface.
 
 ## Connected accounts
 

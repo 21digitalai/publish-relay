@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  check,
   customType,
   foreignKey,
   integer,
@@ -73,7 +74,7 @@ export const users = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     displayName: text('display_name').notNull(),
     email: text('email').notNull(),
-    passwordHash: text('password_hash').notNull(),
+    passwordHash: text('password_hash'),
     defaultWorkspaceId: uuid('default_workspace_id').references(() => workspaces.id, {
       onDelete: 'restrict',
     }),
@@ -119,6 +120,86 @@ export const sessions = pgTable(
     ...timestamps,
   },
   (table) => [index('sessions_workspace_user_idx').on(table.workspaceId, table.userId)],
+);
+
+export const loginChallenges = pgTable(
+  'login_challenges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    emailKeyHash: text('email_key_hash').notNull(),
+    networkKeyHash: text('network_key_hash').notNull(),
+    userAgentHash: text('user_agent_hash').notNull(),
+    purpose: text('purpose').notNull(),
+    redirectPath: text('redirect_path').notNull().default('/app'),
+    deliveryState: text('delivery_state').notNull().default('pending'),
+    providerMessageId: text('provider_message_id'),
+    correlationId: text('correlation_id').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('login_challenges_token_hash_unique').on(table.tokenHash),
+    index('login_challenges_email_created_idx').on(table.emailKeyHash, table.createdAt),
+    index('login_challenges_network_created_idx').on(table.networkKeyHash, table.createdAt),
+    index('login_challenges_expiry_idx').on(table.expiresAt),
+    check('login_challenges_purpose_check', sql`${table.purpose} in ('login', 'signup')`),
+    check(
+      'login_challenges_delivery_state_check',
+      sql`${table.deliveryState} in ('pending', 'sent', 'suppressed', 'failed')`,
+    ),
+    check(
+      'login_challenges_redirect_check',
+      sql`${table.redirectPath} like '/%' and ${table.redirectPath} not like '//%'`,
+    ),
+  ],
+);
+
+export const authRateLimitBuckets = pgTable(
+  'auth_rate_limit_buckets',
+  {
+    keyHash: text('key_hash').notNull(),
+    kind: text('kind').notNull(),
+    windowStartedAt: timestamp('window_started_at', { withTimezone: true }).notNull(),
+    requestCount: integer('request_count').notNull().default(1),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.kind, table.keyHash, table.windowStartedAt] }),
+    index('auth_rate_limit_buckets_expiry_idx').on(table.expiresAt),
+    check('auth_rate_limit_buckets_kind_check', sql`${table.kind} in ('email', 'network')`),
+    check('auth_rate_limit_buckets_count_check', sql`${table.requestCount} > 0`),
+  ],
+);
+
+export const authEmailOutbox = pgTable(
+  'auth_email_outbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    challengeId: uuid('challenge_id')
+      .notNull()
+      .references(() => loginChallenges.id, { onDelete: 'cascade' }),
+    keyVersion: text('key_version').notNull(),
+    wrappedKey: bytea('wrapped_key').notNull(),
+    wrappedKeyNonce: bytea('wrapped_key_nonce').notNull(),
+    wrappedKeyTag: bytea('wrapped_key_tag').notNull(),
+    ciphertext: bytea('ciphertext').notNull(),
+    nonce: bytea('nonce').notNull(),
+    tag: bytea('tag').notNull(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
+    leaseOwner: text('lease_owner'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    lastErrorCode: text('last_error_code'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('auth_email_outbox_challenge_unique').on(table.challengeId),
+    index('auth_email_outbox_available_idx').on(table.availableAt, table.leaseExpiresAt),
+  ],
 );
 
 export const apiKeys = pgTable(

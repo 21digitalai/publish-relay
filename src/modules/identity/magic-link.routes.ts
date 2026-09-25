@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { setSessionCookies } from './auth.routes.js';
+import { validateMagicLinkRedirect } from './magic-link.js';
 import type { MagicLinkService } from './magic-link.service.js';
 
 const requestSchema = z.object({
@@ -19,9 +20,15 @@ export function registerMagicLinkRoutes(
     const input = requestSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Enter a valid email address' });
+    let redirectPath: string;
+    try {
+      redirectPath = validateMagicLinkRedirect(input.data.redirectPath);
+    } catch {
+      return reply.code(400).send({ data: null, error: 'Enter a valid redirect path' });
+    }
     const result = await magicLinks.requestAccess({
       email: input.data.email,
-      ...(input.data.redirectPath ? { redirectPath: input.data.redirectPath } : {}),
+      redirectPath,
       networkKey: request.ip,
       userAgent: request.headers['user-agent'] ?? '',
       correlationId: request.id,
@@ -41,7 +48,6 @@ export function registerMagicLinkRoutes(
     if (!input.success) return reply.redirect('/login?magicLink=invalid');
     const session = await magicLinks.verify({
       token: input.data.token,
-      userAgent: request.headers['user-agent'] ?? '',
     });
     if (!session) return reply.redirect('/login?magicLink=invalid');
     setSessionCookies(reply, session, options.secureCookies);
@@ -53,7 +59,6 @@ export function registerMagicLinkRoutes(
     if (!input.success) return reply.redirect('/register?magicLink=invalid');
     const session = await magicLinks.verify({
       token: input.data.token,
-      userAgent: request.headers['user-agent'] ?? '',
     });
     if (!session) return reply.redirect('/login?magicLink=invalid');
     setSessionCookies(reply, session, options.secureCookies);

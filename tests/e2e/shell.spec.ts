@@ -103,8 +103,8 @@ test('renders the login surface and reports an inline authentication error', asy
 
 test('renders the honest recovery unavailable state', async ({ page }) => {
   await page.goto('/forgot-password');
-  await expect(page.getByRole('heading', { name: 'Recovery is not available yet' })).toBeVisible();
-  await expect(page.getByText('We will not claim that an email was sent')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Email a recovery link' })).toBeVisible();
+  await expect(page.getByText('Password recovery is not available yet.')).toBeVisible();
 });
 
 test('hydrates an imported draft in the canonical composer on desktop and mobile', async ({

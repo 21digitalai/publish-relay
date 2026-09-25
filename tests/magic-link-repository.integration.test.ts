@@ -37,7 +37,7 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('PostgreSQL magic-link repository', () => {
-  it('atomically consumes one bound login challenge and issues exactly one session', async () => {
+  it('consumes a login challenge across browsers and issues exactly one session', async () => {
     const userId = '00000000-0000-4000-8000-000000000911';
     const workspaceId = '00000000-0000-4000-8000-000000000912';
     await database.exec(`
@@ -56,7 +56,6 @@ describe('PostgreSQL magic-link repository', () => {
     const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
     const input = {
       tokenHash: 'token-hash',
-      userAgentHash: 'agent-hash',
       sessionTokenHash: 'session-hash',
       csrfSecretHash: 'csrf-hash',
       sessionExpiresAt: new Date('2030-02-01T00:00:00Z'),
@@ -85,12 +84,11 @@ describe('PostgreSQL magic-link repository', () => {
     expect(JSON.stringify(audit.rows)).not.toContain('token-hash');
   });
 
-  it('rejects a challenge presented from a different user-agent binding', async () => {
+  it('rejects a missing challenge', async () => {
     const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
     await expect(
       store.consumeLoginChallenge({
         tokenHash: 'missing',
-        userAgentHash: 'wrong-agent',
         sessionTokenHash: 'session-hash',
         csrfSecretHash: 'csrf-hash',
         sessionExpiresAt: new Date('2030-02-01T00:00:00Z'),
@@ -110,7 +108,6 @@ describe('PostgreSQL magic-link repository', () => {
     const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
     const input = {
       tokenHash: 'signup-token',
-      userAgentHash: 'agent-hash',
       displayName: 'Relay Owner',
       email: 'signup@example.test',
       workspaceName: 'Relay Workspace',

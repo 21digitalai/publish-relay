@@ -105,7 +105,6 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
           JOIN memberships ON memberships.user_id = users.id
             AND memberships.workspace_id = users.default_workspace_id
           WHERE challenge.token_hash = ${input.tokenHash}
-            AND challenge.user_agent_hash = ${input.userAgentHash}
             AND challenge.purpose = 'login'
             AND challenge.delivery_state = 'sent'
             AND challenge.consumed_at IS NULL
@@ -175,7 +174,7 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
         }>(sql`
           SELECT id AS challenge_id, redirect_path, correlation_id
           FROM login_challenges
-          WHERE token_hash = ${input.tokenHash} AND user_agent_hash = ${input.userAgentHash}
+          WHERE token_hash = ${input.tokenHash}
             AND purpose = 'signup' AND delivery_state = 'sent' AND consumed_at IS NULL
             AND expires_at > now()
           FOR UPDATE

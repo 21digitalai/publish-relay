@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createStandaloneApplication } from '../src/application/create-application.js';
 import { registerMagicLinkRoutes } from '../src/modules/identity/magic-link.routes.js';
 import type { MagicLinkService } from '../src/modules/identity/magic-link.service.js';
 
@@ -48,6 +49,60 @@ describe('magic-link routes', () => {
         userAgent: 'test-browser',
       }),
     );
+  });
+
+  it('rejects an unsafe redirect at the HTTP boundary', async () => {
+    const response = await createApp().inject({
+      method: 'POST',
+      url: '/api/auth/magic-link/request',
+      payload: { email: 'owner@example.test', redirectPath: '//attacker.example' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(service.requestAccess).not.toHaveBeenCalled();
+  });
+
+  it('uses distinct client buckets behind the local proxy but ignores forged remote headers', async () => {
+    vi.mocked(service.requestAccess).mockResolvedValue({ accepted: true });
+    const app = createStandaloneApplication({
+      config: {
+        NODE_ENV: 'test',
+        HOST: '127.0.0.1',
+        PORT: 3100,
+        WORKER_POLL_INTERVAL_MS: 1000,
+        PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link',
+      },
+      magicLinks: service as unknown as MagicLinkService,
+    });
+    try {
+      for (const client of ['203.0.113.11', '203.0.113.12']) {
+        await app.inject({
+          method: 'POST',
+          url: '/api/auth/magic-link/request',
+          remoteAddress: '127.0.0.1',
+          headers: { 'x-forwarded-for': client },
+          payload: { email: 'owner@example.test' },
+        });
+      }
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/magic-link/request',
+        remoteAddress: '127.0.0.1',
+        headers: { 'x-forwarded-for': '203.0.113.99, 203.0.113.13' },
+        payload: { email: 'owner@example.test' },
+      });
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/magic-link/request',
+        remoteAddress: '198.51.100.20',
+        headers: { 'x-forwarded-for': '203.0.113.99' },
+        payload: { email: 'owner@example.test' },
+      });
+      expect(
+        vi.mocked(service.requestAccess).mock.calls.map(([input]) => input.networkKey),
+      ).toEqual(['203.0.113.11', '203.0.113.12', '203.0.113.13', '198.51.100.20']);
+    } finally {
+      await app.close();
+    }
   });
 
   it('sets the secure session cookies and redirects only after successful verification', async () => {

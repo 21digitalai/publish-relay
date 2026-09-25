@@ -48,7 +48,6 @@ describe('MagicLinkService', () => {
     });
     const result = await createService(store, createDelivery()).verifyLogin({
       token: 'one-time-token',
-      userAgent: 'browser',
       now: new Date(0),
     });
 
@@ -64,7 +63,6 @@ describe('MagicLinkService', () => {
     expect(store.consumeLoginChallenge).toHaveBeenCalledWith(
       expect.objectContaining({
         tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
-        userAgentHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
         sessionTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
         csrfSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
       }),
@@ -145,7 +143,7 @@ describe('MagicLinkService', () => {
     const store = createStore();
     const service = createService(store, createDelivery());
     await service.requestLogin(request);
-    await service.verifyLogin({ token: 'invalid-token', userAgent: 'browser', now: new Date(0) });
+    await service.verifyLogin({ token: 'invalid-token', now: new Date(0) });
 
     const output = service.metrics.renderPrometheus().join('\n');
     expect(output).toContain('event="request_accepted"} 1');
@@ -194,7 +192,7 @@ describe('MagicLinkService', () => {
       }),
     );
     await expect(
-      service.verifySignup({ token: 'signup-token', userAgent: 'browser', now: new Date(0) }),
+      service.verifySignup({ token: 'signup-token', now: new Date(0) }),
     ).resolves.toMatchObject({ userId: 'user-1', workspaceId: 'workspace-1' });
   });
 });

@@ -12,7 +12,10 @@ for (const route of ['/login', '/register', '/forgot-password']) {
   });
 }
 
-test('first-time email creates a session through a single-use link', async ({ page }) => {
+test('first-time email opens across devices and creates a single-use session', async ({
+  page,
+  browser,
+}) => {
   await page.goto('/register');
   await page.getByLabel('Email').fill(`new-${crypto.randomUUID()}@example.test`);
   await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
@@ -20,10 +23,16 @@ test('first-time email creates a session through a single-use link', async ({ pa
   const developmentLink = page.getByRole('link', { name: 'Open development sign-in link' });
   const url = await developmentLink.getAttribute('href');
   if (!url) throw new Error('Development link was not rendered');
-  await developmentLink.click();
-  await expect(page).toHaveURL(/\/app|\/w\//);
-  await page.reload();
-  await expect(page).not.toHaveURL(/\/login/);
-  await page.goto(url);
-  await expect(page).toHaveURL(/\/login\?magicLink=invalid/);
+  const otherDevice = await browser.newContext({ userAgent: 'separate-email-client' });
+  try {
+    const otherPage = await otherDevice.newPage();
+    await otherPage.goto(url);
+    await expect(otherPage).toHaveURL(/\/app|\/w\//);
+    await otherPage.reload();
+    await expect(otherPage).not.toHaveURL(/\/login/);
+    await page.goto(url);
+    await expect(page).toHaveURL(/\/login\?magicLink=invalid/);
+  } finally {
+    await otherDevice.close();
+  }
 });

@@ -1,6 +1,5 @@
 import {
   createMagicLinkSecretMaterial,
-  hashMagicLinkBinding,
   magicLinkExpiresAt,
   normalizeMagicLinkEmail,
   validateMagicLinkRedirect,
@@ -33,7 +32,6 @@ export interface MagicLinkStore {
   ) => Promise<void>;
   consumeLoginChallenge: (input: {
     tokenHash: string;
-    userAgentHash: string;
     sessionTokenHash: string;
     csrfSecretHash: string;
     sessionExpiresAt: Date;
@@ -61,7 +59,6 @@ export interface SignupDraft {
 
 export interface SignupConsumeInput extends Omit<SignupDraft, 'termsAccepted'> {
   tokenHash: string;
-  userAgentHash: string;
   sessionTokenHash: string;
   csrfSecretHash: string;
   sessionExpiresAt: Date;
@@ -144,18 +141,13 @@ export class MagicLinkService {
     readonly metrics = new MagicLinkMetrics(),
   ) {}
 
-  async verify(input: {
-    token: string;
-    userAgent: string;
-    now?: Date;
-  }): Promise<MagicLinkVerificationResult | null> {
+  async verify(input: { token: string; now?: Date }): Promise<MagicLinkVerificationResult | null> {
     const login = await this.verifyLogin(input);
     return login ?? this.verifySignup(input);
   }
 
   async verifyLogin(input: {
     token: string;
-    userAgent: string;
     now?: Date;
   }): Promise<MagicLinkVerificationResult | null> {
     const now = input.now ?? new Date();
@@ -164,7 +156,6 @@ export class MagicLinkService {
     const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30);
     const identity = await this.store.consumeLoginChallenge({
       tokenHash: hashOpaqueToken(input.token),
-      userAgentHash: hashMagicLinkBinding(input.userAgent, this.config.pepper),
       sessionTokenHash: hashOpaqueToken(token),
       csrfSecretHash: hashOpaqueToken(csrfToken),
       sessionExpiresAt: expiresAt,
@@ -176,7 +167,6 @@ export class MagicLinkService {
 
   async verifySignup(input: {
     token: string;
-    userAgent: string;
     now?: Date;
   }): Promise<MagicLinkVerificationResult | null> {
     if (!this.delivery.readSignupDraft) return null;
@@ -189,7 +179,6 @@ export class MagicLinkService {
     const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30);
     const identity = await this.store.consumeSignupChallenge({
       tokenHash,
-      userAgentHash: hashMagicLinkBinding(input.userAgent, this.config.pepper),
       displayName: draft.displayName,
       email: draft.email,
       workspaceName: draft.workspaceName,

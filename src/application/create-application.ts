@@ -229,6 +229,11 @@ export function registerCoreApplication(
 export function createStandaloneApplication(
   options: StandaloneApplicationOptions,
 ): FastifyInstance {
-  const application = Fastify({ logger: options.config.NODE_ENV !== 'test' });
+  const application = Fastify({
+    logger: options.config.NODE_ENV !== 'test',
+    // The standalone listener is bound to loopback behind the local TLS reverse proxy.
+    // Never trust forwarded addresses from a directly connected remote client.
+    trustProxy: (address) => address === '127.0.0.1' || address === '::1',
+  });
   return registerCoreApplication(application, { ...options, publicAuthShells: true });
 }

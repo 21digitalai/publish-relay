@@ -27,6 +27,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:e2e": "playwright test",
+    "test:e2e:all": "playwright test && playwright test tests/e2e/magic-link.spec.ts",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

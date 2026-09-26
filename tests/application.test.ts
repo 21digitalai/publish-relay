@@ -58,6 +58,28 @@ describe('application', () => {
     expect((await application.inject({ method: 'GET', url: '/login' })).statusCode).toBe(404);
   });
 
+  it('keeps a Hosted root while serving one magic-link auth shell and prefixed assets', async () => {
+    const application = Fastify();
+    application.get('/', () => 'Hosted landing');
+    registerCoreApplication(application, {
+      config: { ...testConfig, PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link' },
+      auth: {} as never,
+      publicAuthShells: true,
+      uiPrefix: '/core-assets/',
+    });
+    applications.push(application);
+
+    expect((await application.inject({ method: 'GET', url: '/' })).body).toBe('Hosted landing');
+    const login = await application.inject({ method: 'GET', url: '/login' });
+    const register = await application.inject({ method: 'GET', url: '/register' });
+    expect(login.statusCode).toBe(200);
+    expect(login.body).toBe(register.body);
+    expect(login.body).toContain('data-human-auth-mode="magic_link"');
+    expect(
+      (await application.inject({ method: 'GET', url: '/core-assets/index.html' })).statusCode,
+    ).toBe(200);
+  });
+
   it('fails closed when Core routes are registered twice', () => {
     const application = Fastify();
     applications.push(application);

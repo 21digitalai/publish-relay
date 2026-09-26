@@ -127,15 +127,28 @@ async function writePackage(staging, sourcePackage, commit) {
   }
 }
 
-async function verifyFreshInstall(artifact, staging) {
+async function verifyFreshInstall(artifact, staging, commit) {
   const consumer = join(staging, 'consumer');
   await mkdir(consumer);
   await writeFile(join(consumer, 'package.json'), '{"private":true,"type":"module"}\n');
-  command('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', artifact], consumer);
+  command(
+    'npm',
+    [
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--cache',
+      join(staging, 'fresh-cache'),
+      artifact,
+    ],
+    consumer,
+  );
   const installed = join(consumer, 'node_modules', '@21digital', 'publish-relay-core');
   const metadata = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'));
-  if (metadata.name !== PACKAGE_NAME)
-    throw new Error('Fresh install has the wrong package identity');
+  if (metadata.name !== PACKAGE_NAME || metadata.publishRelaySourceCommit !== commit) {
+    throw new Error('Fresh install has the wrong package identity or source commit');
+  }
   const count = await verifyMigrations(join(root, 'migrations'), join(installed, 'migrations'));
   for (const entry of ['application', 'runtime', 'auth', 'policy']) {
     command(
@@ -182,12 +195,13 @@ async function updateHosted(hosted, artifact, sourcePackage, commit, releaseId, 
     .update(await readFile(artifact))
     .digest('base64')}`;
   locked.dependencies = sourcePackage.dependencies;
-  await mkdir(dirname(vendorPath), { recursive: true });
-  await cp(artifact, vendorPath);
+  const candidate = join(staging, 'hosted-candidate');
+  await mkdir(join(candidate, 'vendor'), { recursive: true });
+  await cp(artifact, join(candidate, 'vendor', vendorName));
   await Promise.all([
-    writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n'),
-    writeFile(packagePath, JSON.stringify(hostedPackage, null, 2) + '\n'),
-    writeFile(lockPath, JSON.stringify(lock, null, 2) + '\n'),
+    writeFile(join(candidate, 'release-manifest.json'), JSON.stringify(manifest, null, 2) + '\n'),
+    writeFile(join(candidate, 'package.json'), JSON.stringify(hostedPackage, null, 2) + '\n'),
+    writeFile(join(candidate, 'package-lock.json'), JSON.stringify(lock, null, 2) + '\n'),
   ]);
   command(
     'npm',
@@ -200,12 +214,19 @@ async function updateHosted(hosted, artifact, sourcePackage, commit, releaseId, 
       '--cache',
       join(staging, 'npm-cache'),
     ],
-    hosted,
+    candidate,
   );
-  const finalLock = JSON.parse(await readFile(lockPath, 'utf8'));
+  const finalLock = JSON.parse(await readFile(join(candidate, 'package-lock.json'), 'utf8'));
   if (finalLock.packages[`node_modules/${PACKAGE_NAME}`]?.integrity !== locked.integrity) {
     throw new Error('npm changed the Core artifact integrity during lock refresh');
   }
+  await mkdir(dirname(vendorPath), { recursive: true });
+  await cp(join(candidate, 'vendor', vendorName), vendorPath);
+  await Promise.all([
+    cp(join(candidate, 'release-manifest.json'), manifestPath),
+    cp(join(candidate, 'package.json'), packagePath),
+    cp(join(candidate, 'package-lock.json'), lockPath),
+  ]);
   return vendorPath;
 }
 
@@ -226,7 +247,7 @@ async function main() {
       command('npm', ['pack', '--json', '--pack-destination', output], packageRoot),
     );
     const artifact = join(output, basename(packed[0].filename));
-    const migrationCount = await verifyFreshInstall(artifact, staging);
+    const migrationCount = await verifyFreshInstall(artifact, staging, commit);
     let vendorPath;
     if (options['--hosted-dir']) {
       vendorPath = await updateHosted(

@@ -11,7 +11,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "db:generate": "drizzle-kit generate",
+    "db:generate": "node scripts/guarded-migration-generate.mjs",
     "db:migrate": "tsx src/database/migrate.ts",
     "db:migrate:production": "node dist/database/migrate.js",
     "dev:web": "tsx watch src/entrypoints/web.ts",

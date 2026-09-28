@@ -1161,6 +1161,91 @@ describe('X media staging', () => {
     expect(rows.rows[1]?.provider_reference).toBe('fresh-reference');
   });
 
+  it('fails closed when an expired artifact cannot be retired', async () => {
+    const postId = '00000000-0000-4000-8000-0000000002c1';
+    const revisionId = '00000000-0000-4000-8000-0000000002c2';
+    const mediaId = '00000000-0000-4000-8000-0000000002c3';
+    const jobId = '00000000-0000-4000-8000-0000000002c4';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"type":"text","text":"Media"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'media/race', 'hash', 'image/png', 1, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state, lease_owner)
+        VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now(), 'leased', 'worker-a');
+      INSERT INTO provider_staging_artifacts
+        (workspace_id, job_id, media_id, provider_reference, expires_at, upload_phase, next_segment)
+        VALUES ('${workspaceId}', '${jobId}', '${mediaId}', 'expired-reference', now() - interval '1 hour', 'finalized', 1);
+      CREATE OR REPLACE FUNCTION reject_expired_retirement() RETURNS trigger AS $$
+      BEGIN
+        RETURN NULL;
+      END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER reject_expired_retirement BEFORE UPDATE ON provider_staging_artifacts
+        FOR EACH ROW EXECUTE FUNCTION reject_expired_retirement();
+    `);
+    const init = vi.fn(() => Promise.reject(new Error('unexpected INIT')));
+    const status = vi.fn(() => Promise.reject(new Error('stale reference queried')));
+    const client: XMediaUploadClient = {
+      init,
+      status,
+      append: () => Promise.resolve(),
+      finalize: () => Promise.resolve({ state: 'succeeded' }),
+      discard: () => Promise.resolve(),
+    };
+    await expect(
+      stageXMedia(
+        drizzle(database) as unknown as NodePgDatabase,
+        { load: () => Promise.reject(new Error('unexpected media load')) },
+        client,
+        { workspaceId, jobId, mediaId, idempotencyKey: 'race', leaseOwner: 'worker-a' },
+      ),
+    ).rejects.toThrow('could not be retired');
+    expect(init).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('does not recover expired X staging after a publication attempt exists', async () => {
+    const postId = '00000000-0000-4000-8000-0000000002d1';
+    const revisionId = '00000000-0000-4000-8000-0000000002d2';
+    const mediaId = '00000000-0000-4000-8000-0000000002d3';
+    const jobId = '00000000-0000-4000-8000-0000000002d4';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"type":"text","text":"Media"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'media/attempt', 'hash', 'image/png', 1, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state)
+        VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now(), 'leased');
+      INSERT INTO provider_staging_artifacts
+        (workspace_id, job_id, media_id, provider_reference, expires_at, upload_phase, next_segment)
+        VALUES ('${workspaceId}', '${jobId}', '${mediaId}', 'expired-reference', now() - interval '1 hour', 'finalized', 1);
+      INSERT INTO publication_attempts
+        (workspace_id, job_id, attempt_number, idempotency_key, request_fingerprint, started_at)
+        VALUES ('${workspaceId}', '${jobId}', 1, 'prior-attempt', 'fingerprint', now());
+    `);
+    const init = vi.fn(() => Promise.reject(new Error('unexpected INIT')));
+    const status = vi.fn(() => Promise.reject(new Error('stale reference queried')));
+    const client: XMediaUploadClient = {
+      init,
+      status,
+      append: () => Promise.resolve(),
+      finalize: () => Promise.resolve({ state: 'succeeded' }),
+      discard: () => Promise.resolve(),
+    };
+    await expect(
+      stageXMedia(
+        drizzle(database) as unknown as NodePgDatabase,
+        { load: () => Promise.reject(new Error('unexpected media load')) },
+        client,
+        { workspaceId, jobId, mediaId, idempotencyKey: 'attempt' },
+      ),
+    ).rejects.toThrow('lease or attempt changed');
+    expect(init).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalled();
+  });
+
   it('serializes concurrent staging against one canonical artifact', async () => {
     const postId = '00000000-0000-4000-8000-000000000294';
     const revisionId = '00000000-0000-4000-8000-000000000295';

@@ -167,6 +167,7 @@ describe('X media dispatch composition', () => {
         jobId: 'job-1',
         mediaId: 'media-1',
         idempotencyKey: 'job-key:media-1',
+        leaseOwner: 'worker-1',
       },
     );
   });
@@ -378,6 +379,7 @@ describe('X media dispatch composition', () => {
         jobId: 'job-1',
         mediaId: 'media-1',
         idempotencyKey: 'job-key:media-1',
+        leaseOwner: 'worker-1',
       },
     );
   });

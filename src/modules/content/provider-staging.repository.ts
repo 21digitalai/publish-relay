@@ -5,7 +5,7 @@ import { providerStagingArtifacts, publicationJobs } from '../../database/schema
 
 export async function retireExpiredUnattemptedStagingArtifact(
   database: NodePgDatabase,
-  input: { workspaceId: string; jobId: string; artifactId: string; now: Date },
+  input: { workspaceId: string; jobId: string; artifactId: string; now: Date; leaseOwner?: string },
 ): Promise<boolean> {
   const rows = await database
     .update(providerStagingArtifacts)
@@ -17,11 +17,31 @@ export async function retireExpiredUnattemptedStagingArtifact(
         eq(providerStagingArtifacts.id, input.artifactId),
         isNull(providerStagingArtifacts.deletedAt),
         lt(providerStagingArtifacts.expiresAt, input.now),
-        sql`EXISTS (SELECT 1 FROM publication_jobs job WHERE job.id = ${input.jobId} AND job.workspace_id = ${input.workspaceId} AND job.state = 'leased')`,
+        sql`EXISTS (SELECT 1 FROM publication_jobs job WHERE job.id = ${input.jobId} AND job.workspace_id = ${input.workspaceId} AND job.state = 'leased' AND (${input.leaseOwner ?? null}::text IS NULL OR job.lease_owner = ${input.leaseOwner ?? null}))`,
         sql`NOT EXISTS (SELECT 1 FROM publication_attempts attempt WHERE attempt.job_id = ${input.jobId} AND attempt.workspace_id = ${input.workspaceId})`,
       ),
     )
     .returning({ id: providerStagingArtifacts.id });
+  return rows.length > 0;
+}
+
+export async function isUnattemptedLeasedJob(
+  database: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; leaseOwner?: string },
+): Promise<boolean> {
+  const rows = await database
+    .select({ id: publicationJobs.id })
+    .from(publicationJobs)
+    .where(
+      and(
+        eq(publicationJobs.workspaceId, input.workspaceId),
+        eq(publicationJobs.id, input.jobId),
+        eq(publicationJobs.state, 'leased'),
+        ...(input.leaseOwner ? [eq(publicationJobs.leaseOwner, input.leaseOwner)] : []),
+        sql`NOT EXISTS (SELECT 1 FROM publication_attempts attempt WHERE attempt.job_id = ${input.jobId} AND attempt.workspace_id = ${input.workspaceId})`,
+      ),
+    )
+    .limit(1);
   return rows.length > 0;
 }
 

@@ -5,6 +5,7 @@ import {
   createStagingArtifact,
   findStagingArtifact,
   getStagingArtifactById,
+  isUnattemptedLeasedJob,
   retireExpiredUnattemptedStagingArtifact,
   updateStagingUploadProgress,
 } from '../content/provider-staging.repository.js';
@@ -47,6 +48,7 @@ export async function stageXMedia(
     jobId: string;
     mediaId: string;
     idempotencyKey: string;
+    leaseOwner?: string;
     now?: Date;
   },
 ): Promise<{ mediaId: string; state: 'succeeded' | 'pending' }> {
@@ -62,9 +64,27 @@ export async function stageXMedia(
           jobId: input.jobId,
           artifactId: existing.id,
           now,
+          ...(input.leaseOwner ? { leaseOwner: input.leaseOwner } : {}),
         }),
       );
-      if (!retired) return resumeStaging(database, source, client, input, existing);
+      if (!retired) {
+        const recovery = await withTenantTransaction(database, input, async (transaction) => ({
+          allowed: await isUnattemptedLeasedJob(transaction, input),
+          active: await findStagingArtifact(
+            transaction,
+            input.workspaceId,
+            input.jobId,
+            input.mediaId,
+          ),
+        }));
+        if (!recovery.allowed) throw new Error('X media staging lease or attempt changed');
+        if (recovery.active) {
+          if (recovery.active.expiresAt.getTime() < now.getTime()) {
+            throw new Error('Expired X media staging could not be retired');
+          }
+          return resumeStaging(database, source, client, input, recovery.active);
+        }
+      }
     } else {
       return resumeStaging(database, source, client, input, existing);
     }

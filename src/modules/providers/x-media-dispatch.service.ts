@@ -40,6 +40,7 @@ export interface XMediaDispatchInput {
   credential: string;
   mediaIds: readonly string[];
   idempotencyKey: string;
+  leaseOwner?: string;
 }
 
 export type XMediaClientFactory = (credential: string) => XMediaUploadClient & Partial<XClient>;
@@ -234,6 +235,7 @@ export async function dispatchDueXJobs(
           credential: plaintext.toString('utf8'),
           mediaIds: context.media.map((media) => media.id),
           idempotencyKey,
+          leaseOwner: runtime.workerId,
         },
       );
       if (stagedMedia.state === 'pending') continue;
@@ -416,6 +418,7 @@ export async function stageXJobMedia(
         jobId: input.jobId,
         mediaId,
         idempotencyKey: `${input.idempotencyKey}:${mediaId}`,
+        ...(input.leaseOwner ? { leaseOwner: input.leaseOwner } : {}),
       }),
     );
   }

@@ -23,6 +23,8 @@ import {
   reconcileXJobs,
 } from '../modules/providers/x-media-dispatch.service.js';
 import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
+import { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
+import { dispatchDueLinkedInJobs } from '../modules/providers/linkedin-dispatch.service.js';
 import {
   dispatchDueYouTubeJobs,
   reconcileYouTubeJobs,
@@ -88,6 +90,19 @@ const youtubeRuntime =
         leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
       }
     : null;
+const linkedinRuntime =
+  config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID && config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET
+    ? {
+        database,
+        keys,
+        client: new LinkedInHttpClient({
+          clientId: config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID,
+          clientSecret: config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET,
+        }),
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      }
+    : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
@@ -95,6 +110,10 @@ if (!xRuntime)
 if (!youtubeRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'youtube', reason: 'missing_configuration' })}\n`,
+  );
+if (!linkedinRuntime)
+  process.stdout.write(
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'linkedin', reason: 'missing_configuration' })}\n`,
   );
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -120,6 +139,7 @@ while (!shutdownController.signal.aborted) {
     await reconcileYouTubeJobs(youtubeRuntime);
     await dispatchDueYouTubeJobs(youtubeRuntime);
   }
+  if (linkedinRuntime) await dispatchDueLinkedInJobs(linkedinRuntime);
   const now = new Date();
   const deletedStagingObjects = await reconcileMediaStaging(now);
   if (deletedStagingObjects !== undefined) {

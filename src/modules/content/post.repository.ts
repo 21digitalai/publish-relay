@@ -11,6 +11,7 @@ import {
 } from '../../database/schema.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { resolveYouTubeSettings } from '../providers/youtube-settings.js';
+import { validateLinkedInTextContent } from '../providers/linkedin-content.js';
 
 export interface PostRevisionInput {
   content: Record<string, unknown>;
@@ -90,6 +91,9 @@ async function createRevisionTargets(
     .select({
       id: providerAccounts.id,
       provider: providerConnections.provider,
+      status: providerConnections.status,
+      expiresAt: providerConnections.expiresAt,
+      disconnectedAt: providerAccounts.disconnectedAt,
       adapterDefaults: providerAccounts.adapterDefaults,
     })
     .from(providerAccounts)
@@ -105,6 +109,25 @@ async function createRevisionTargets(
     input.providerAccountIds.map((accountId) => {
       const account = accountsById.get(accountId);
       if (!account) throw new PostValidationError('Provider account is unavailable');
+      if (account.provider === 'linkedin') {
+        if (
+          account.status !== 'active' ||
+          account.disconnectedAt ||
+          !account.expiresAt ||
+          account.expiresAt <= input.scheduledAt
+        )
+          throw new PostValidationError(
+            'Reconnect LinkedIn before scheduling beyond its token expiry',
+          );
+        try {
+          validateLinkedInTextContent(input.content, input.mediaIds);
+        } catch (error) {
+          throw new PostValidationError(
+            error instanceof Error ? error.message : 'Invalid LinkedIn content',
+          );
+        }
+        return [accountId, null] as const;
+      }
       if (account.provider !== 'youtube') return [accountId, null] as const;
       const content = input.content as {
         kind?: unknown;

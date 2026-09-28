@@ -59,6 +59,7 @@ const migrations = [
   '0016_common_barracuda.sql',
   '0025_lucky_legion.sql',
   '0019_media_retention_lifecycle.sql',
+  '0044_linkedin_connection_expiry.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -94,6 +95,44 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('credential and OAuth persistence', () => {
+  it('stores LinkedIn expiry as tenant-scoped connection metadata without exposing the credential', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const key = Buffer.alloc(32, 7);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    const expiresAt = new Date('2026-11-20T12:00:00.000Z');
+    await connectProvider(
+      db,
+      keys,
+      new FakeProviderConnectionAdapter([
+        { providerAccountId: 'urn:li:person:member-1', displayName: 'Member One' },
+      ]),
+      {
+        workspaceId,
+        userId,
+        provider: 'linkedin',
+        accessToken: JSON.stringify({
+          accessToken: 'private',
+          expiresAt: expiresAt.toISOString(),
+          memberUrn: 'urn:li:person:member-1',
+        }),
+        expiresAt,
+        requestId: 'req-linkedin',
+      },
+    );
+    const accounts = await listProviderAccounts(db, workspaceId);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      provider: 'linkedin',
+      displayName: 'Member One',
+      expiresAt,
+    });
+    expect(JSON.stringify(accounts)).not.toContain('private');
+    expect(JSON.stringify(accounts)).not.toContain('credentialId');
+  });
+
   it('rotates optimistically and revokes once without exposing plaintext fields', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const created = await withTenantTransaction(db, { workspaceId }, (tx) =>
@@ -544,6 +583,7 @@ describe('credential and OAuth persistence', () => {
       'status',
       'adapterDefaults',
       'updatedAt',
+      'expiresAt',
     ]);
     const principal = {
       id: '00000000-0000-4000-8000-000000000501',

@@ -315,6 +315,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       provider: string;
       displayName: string;
       status: string;
+      expiresAt?: string | null;
       adapterDefaults: { madeForKids?: boolean };
     }[]
   >([]);
@@ -379,6 +380,15 @@ function Composer({ onClose }: { onClose: () => void }) {
   const selected = accounts.filter((account) => selectedAccounts.includes(account.id));
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
+  const isLinkedInOnly =
+    selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
+  const textLimit = isLinkedInOnly ? 3000 : 280;
+  const linkedinExpiresBeforeDispatch = selected.some(
+    (account) =>
+      account.provider === 'linkedin' &&
+      (!account.expiresAt ||
+        (scheduledAt && new Date(account.expiresAt).getTime() <= scheduledAt.getTime())),
+  );
   const youtubeHasMadeForKids = selected[0]?.adapterDefaults.madeForKids !== undefined;
   const scheduleError =
     scheduled && scheduleOptions.length === 0
@@ -399,9 +409,10 @@ function Composer({ onClose }: { onClose: () => void }) {
   const invalid =
     (isYouTube
       ? !video || !videoTitle.trim() || (!youtubeHasMadeForKids && madeForKids === 'default')
-      : !body.trim()) ||
+      : !body.trim() || body.length > textLimit) ||
     (includesYouTube && !isYouTube) ||
     selectedAccounts.length === 0 ||
+    linkedinExpiresBeforeDispatch ||
     state !== 'ready' ||
     draftState !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
@@ -438,13 +449,18 @@ function Composer({ onClose }: { onClose: () => void }) {
               provider: string;
               displayName: string;
               status: string;
+              expiresAt?: string | null;
               adapterDefaults: { madeForKids?: boolean };
             }[];
           };
         }>;
       })
       .then(({ data }) => {
-        const active = data.accounts.filter((account) => account.status === 'active');
+        const active = data.accounts.filter(
+          (account) =>
+            account.status === 'active' &&
+            (!account.expiresAt || new Date(account.expiresAt).getTime() > Date.now()),
+        );
         setAccounts(active);
         setSelectedAccounts(active.map((account) => account.id));
         setState('ready');
@@ -687,6 +703,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               ) : (
                 <textarea
                   className="composer-body"
+                  maxLength={textLimit}
                   value={body}
                   onChange={(event) => {
                     setBody(event.target.value);
@@ -697,7 +714,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               <small>
                 {isYouTube
                   ? `${String(videoTitle.length)}/100`
-                  : `${String(body.length)}/280 per X post`}
+                  : `${String(body.length)}/${String(textLimit)} ${isLinkedInOnly ? 'per LinkedIn post' : 'per X post'}`}
               </small>
             </label>
             {isYouTube && (
@@ -785,6 +802,12 @@ function Composer({ onClose }: { onClose: () => void }) {
             )}
             {isYouTube && !youtubeHasMadeForKids && madeForKids === 'default' && (
               <p className="inline-validation">Choose whether this video is made for kids.</p>
+            )}
+            {linkedinExpiresBeforeDispatch && (
+              <p className="inline-validation" role="alert">
+                LinkedIn access expires before this post. Reconnect the account or choose an earlier
+                time.
+              </p>
             )}
             <fieldset className="schedule-choice">
               <legend>Publishing time</legend>

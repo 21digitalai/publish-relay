@@ -460,6 +460,7 @@ export const providerConnections = pgTable(
       .notNull()
       .references(() => credentials.id, { onDelete: 'restrict' }),
     status: text('status').notNull().default('active'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     ...timestamps,
   },
   (table) => [

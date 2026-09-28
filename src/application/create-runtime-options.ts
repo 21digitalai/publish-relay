@@ -16,6 +16,7 @@ import { createPostgresMagicLinkStore } from '../modules/identity/magic-link.rep
 import { MagicLinkService } from '../modules/identity/magic-link.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
 import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
+import { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
 import type { CoreApplicationOptions } from './create-application.js';
 
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
@@ -33,8 +34,18 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
 
   const xCredentials = resolveXProviderCredentials(config);
   const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
-  if ((xCredentials || config.PUBLISH_RELAY_GOOGLE_CLIENT_ID) && !publicOrigin)
+  if (
+    (xCredentials ||
+      config.PUBLISH_RELAY_GOOGLE_CLIENT_ID ||
+      config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID) &&
+    !publicOrigin
+  )
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required when OAuth providers are enabled');
+  if (
+    Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID) !==
+    Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET)
+  )
+    throw new Error('LinkedIn OAuth requires both client ID and secret');
 
   const pool = new pg.Pool({
     connectionString: config.DATABASE_URL,
@@ -74,6 +85,20 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                 clientSecret: config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET,
               }),
               callbackUrl: new URL('/api/oauth/youtube/callback', publicOrigin).toString(),
+            },
+          }
+        : {}),
+      ...(config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID &&
+      config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET &&
+      publicOrigin
+        ? {
+            linkedinOauth: {
+              keys: masterKeys,
+              client: new LinkedInHttpClient({
+                clientId: config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID,
+                clientSecret: config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET,
+              }),
+              callbackUrl: new URL('/api/oauth/linkedin/callback', publicOrigin).toString(),
             },
           }
         : {}),

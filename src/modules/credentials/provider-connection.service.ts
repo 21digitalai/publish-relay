@@ -24,6 +24,7 @@ export async function connectProvider(
     provider: string;
     accessToken: string;
     requestId: string;
+    expiresAt?: Date;
   },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{
@@ -53,6 +54,7 @@ export async function connectProvider(
         credentialId: credential.id,
         accounts,
         requestId: input.requestId,
+        ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
       });
       if (connection.replacedCredentialId)
         await revokeCredential(

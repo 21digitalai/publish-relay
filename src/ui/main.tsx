@@ -20,6 +20,7 @@ interface Account {
   name: string;
   handle: string;
   health: 'Connected' | 'Reconnect required';
+  expiresAt?: string | null;
   adapterDefaults: {
     privacyStatus?: 'public' | 'unlisted' | 'private';
     madeForKids?: boolean;
@@ -874,6 +875,13 @@ function AccountRow({
   onDefaultsSaved: (account: Account) => void;
 }) {
   const needsReconnect = account.health === 'Reconnect required';
+  const linkedinMillisecondsLeft =
+    account.provider === 'LinkedIn' && account.expiresAt
+      ? new Date(account.expiresAt).getTime() - Date.now()
+      : null;
+  const linkedinDaysLeft =
+    linkedinMillisecondsLeft === null ? null : Math.ceil(linkedinMillisecondsLeft / 86_400_000);
+  const linkedinExpiringSoon = linkedinDaysLeft !== null && linkedinDaysLeft <= 7;
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [defaultsAnnouncement, setDefaultsAnnouncement] = useState<string | null>(null);
@@ -902,15 +910,26 @@ function AccountRow({
         <span>{account.provider}</span>
       </div>
       <div>
-        <span className={`status-badge ${needsReconnect ? 'warning' : 'success'}`}>
-          <span aria-hidden="true">{needsReconnect ? '!' : '✓'}</span> {account.health}
+        <span
+          className={`status-badge ${needsReconnect || linkedinExpiringSoon ? 'warning' : 'success'}`}
+        >
+          <span aria-hidden="true">{needsReconnect || linkedinExpiringSoon ? '!' : '✓'}</span>{' '}
+          {account.health}
         </span>
       </div>
       <div className="account-capabilities">
-        <span>Connection status is current</span>
+        <span>
+          {needsReconnect
+            ? `${account.provider} access needs reconnection before posting.`
+            : linkedinDaysLeft !== null && linkedinDaysLeft <= 7
+              ? linkedinMillisecondsLeft !== null && linkedinMillisecondsLeft < 86_400_000
+                ? 'LinkedIn access expires in less than a day. Reconnect before expiry.'
+                : `LinkedIn access expires in ${String(linkedinDaysLeft)} days. Reconnect before expiry.`
+              : 'Connection status is current'}
+        </span>
       </div>
       <div className="account-actions">
-        {needsReconnect && (
+        {(needsReconnect || linkedinExpiringSoon) && (
           <button className="secondary-button reconnect" onClick={onReconnect}>
             Reconnect
           </button>
@@ -1067,6 +1086,7 @@ function AccountsPage() {
               provider: string;
               displayName: string;
               status: string;
+              expiresAt?: string | null;
               updatedAt: string;
               adapterDefaults: Account['adapterDefaults'];
             }[];
@@ -1084,10 +1104,17 @@ function AccountsPage() {
                   ? 'X'
                   : account.provider.toLowerCase() === 'youtube'
                     ? 'YouTube'
-                    : account.provider,
+                    : account.provider.toLowerCase() === 'linkedin'
+                      ? 'LinkedIn'
+                      : account.provider,
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
               handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
-              health: account.status === 'active' ? 'Connected' : 'Reconnect required',
+              health:
+                account.status === 'active' &&
+                (!account.expiresAt || new Date(account.expiresAt).getTime() > Date.now())
+                  ? 'Connected'
+                  : 'Reconnect required',
+              ...(account.expiresAt !== undefined ? { expiresAt: account.expiresAt } : {}),
               adapterDefaults: account.adapterDefaults,
             };
           }),

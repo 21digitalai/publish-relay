@@ -621,6 +621,49 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
   });
 });
 
+test('LinkedIn reconnect sends selected account and explains member mismatch', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  const accountId = '00000000-0000-4000-8000-000000000299';
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: accountId,
+              provider: 'linkedin',
+              displayName: 'Member B',
+              status: 'reconnect_required',
+              updatedAt: new Date().toISOString(),
+              adapterDefaults: {},
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  let reconnectBody: unknown;
+  await page.route('**/api/oauth/linkedin', (route) => {
+    reconnectBody = route.request().postDataJSON();
+    return route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'Reconnect unavailable' }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'accounts'));
+  await page.getByRole('button', { name: 'Reconnect' }).click();
+  await expect(page.getByText('Reconnect unavailable')).toBeVisible();
+  expect(reconnectBody).toEqual({ accountId });
+  await page.goto('/app?oauth=linkedin-member-mismatch');
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'A different LinkedIn member signed in' }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
+});
+
 test('uses the mobile navigation drawer', async ({ page }) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
@@ -903,7 +946,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('composer.png'), fullPage: true });
-  await expect(page.getByRole('button', { name: 'Choose files' })).toBeDisabled();
+  await expect(page.getByText('Choose files')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
   const scheduleInput = page.getByLabel('Date and time');

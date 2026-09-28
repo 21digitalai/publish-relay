@@ -4,6 +4,7 @@ import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { consumeOauthCallback, issueOauthTransaction } from '../credentials/oauth.service.js';
 import { connectProvider } from '../credentials/provider-connection.service.js';
+import { getLinkedInMemberForAccount } from '../credentials/provider-connection.repository.js';
 import {
   allowAllActionPolicy,
   enforceWorkspaceAction,
@@ -15,7 +16,13 @@ export async function beginLinkedInConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   client: LinkedInHttpClient,
-  input: { workspaceId: string; userId: string; callbackUrl: string; requestId: string },
+  input: {
+    workspaceId: string;
+    userId: string;
+    callbackUrl: string;
+    requestId: string;
+    accountId?: string;
+  },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ authorizationUrl: string; expiresAt: Date }> {
   await withTenantTransaction(database, input, (transaction) =>
@@ -26,11 +33,22 @@ export async function beginLinkedInConnection(
       request: { provider: 'linkedin', requestId: input.requestId },
     }),
   );
+  const reconnectAccountId = input.accountId;
+  const expectedMemberUrn = reconnectAccountId
+    ? await withTenantTransaction(database, input, (transaction) =>
+        getLinkedInMemberForAccount(transaction, input.workspaceId, reconnectAccountId),
+      )
+    : null;
+  if (input.accountId && !expectedMemberUrn)
+    throw new Error(
+      'The selected LinkedIn account is no longer available. Reload Accounts and retry.',
+    );
   const transaction = await issueOauthTransaction(database, keys, {
     workspaceId: input.workspaceId,
     userId: input.userId,
     provider: 'linkedin',
     redirectUri: input.callbackUrl,
+    ...(expectedMemberUrn ? { intent: expectedMemberUrn } : {}),
   });
   return {
     authorizationUrl: client.authorizationUrl({
@@ -58,6 +76,8 @@ export async function completeLinkedInConnection(
     code: input.code,
     redirectUri: transaction.redirectUri,
   });
+  if (transaction.intent && credential.memberUrn !== transaction.intent)
+    throw new LinkedInMemberMismatchError();
   return connectProvider(
     database,
     keys,
@@ -84,4 +104,12 @@ export async function completeLinkedInConnection(
       requestId: input.requestId,
     },
   );
+}
+
+export class LinkedInMemberMismatchError extends Error {
+  constructor() {
+    super(
+      'A different LinkedIn member signed in. The selected account was not changed. Switch LinkedIn accounts and retry Reconnect.',
+    );
+  }
 }

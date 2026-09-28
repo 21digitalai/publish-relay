@@ -56,10 +56,14 @@ function getCsrfToken(): string {
   return entry ? (entry.split('=')[1] ?? '') : '';
 }
 
-async function beginAdapterConnection(adapter: PostingAdapterConfig): Promise<void> {
+async function beginAdapterConnection(
+  adapter: PostingAdapterConfig,
+  accountId?: string,
+): Promise<void> {
   const response = await fetch(adapter.auth.startPath, {
     method: 'POST',
-    headers: { 'x-csrf-token': getCsrfToken() },
+    headers: { 'x-csrf-token': getCsrfToken(), 'content-type': 'application/json' },
+    body: JSON.stringify(accountId && adapter.id === 'linkedin' ? { accountId } : {}),
   });
   const result = (await response.json()) as {
     data: { authorizationUrl: string } | null;
@@ -1062,6 +1066,8 @@ function AccountRow({
 }
 
 function AccountsPage() {
+  const oauthMismatch =
+    new URLSearchParams(window.location.search).get('oauth') === 'linkedin-member-mismatch';
   const [menuOpen, setMenuOpen] = useState(false);
   const [adapterPickerOpen, setAdapterPickerOpen] = useState(false);
   const adapterDialogRef = useRef<HTMLElement>(null);
@@ -1175,9 +1181,9 @@ function AccountsPage() {
         setWorkspaceName('your active workspace');
       });
   }, []);
-  const connectAdapter = (adapter: PostingAdapterConfig) => {
+  const connectAdapter = (adapter: PostingAdapterConfig, accountId?: string) => {
     setActionError(null);
-    void beginAdapterConnection(adapter).catch((error: unknown) => {
+    void beginAdapterConnection(adapter, accountId).catch((error: unknown) => {
       setActionError(
         error instanceof Error ? error.message : `Could not start ${adapter.label} connection`,
       );
@@ -1272,6 +1278,12 @@ function AccountsPage() {
               <p>{actionError}</p>
             </div>
           )}
+          {oauthMismatch && (
+            <div className="accounts-error" role="alert">
+              A different LinkedIn member signed in. The selected account was not changed. Switch
+              LinkedIn accounts and retry Reconnect.
+            </div>
+          )}
           <div className="account-toolbar">
             <label className="search-control">
               <span aria-hidden="true">⌕</span>
@@ -1347,7 +1359,7 @@ function AccountsPage() {
                         onDisconnect={setDisconnecting}
                         onReconnect={() => {
                           const adapter = getPostingAdapter(account.provider);
-                          if (adapter) connectAdapter(adapter);
+                          if (adapter) connectAdapter(adapter, account.id);
                           else
                             setActionError(
                               `No connection flow is available for ${account.provider}`,

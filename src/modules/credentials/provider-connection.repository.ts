@@ -22,6 +22,27 @@ export async function assertActiveMembership(
   if (!rows[0]) throw new Error('Active workspace membership is required');
 }
 
+export async function getLinkedInMemberForAccount(
+  database: NodePgDatabase,
+  workspaceId: string,
+  accountId: string,
+): Promise<string | null> {
+  const rows = await database
+    .select({ memberUrn: providerConnections.memberUrn })
+    .from(providerAccounts)
+    .innerJoin(providerConnections, eq(providerAccounts.connectionId, providerConnections.id))
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, workspaceId),
+        eq(providerAccounts.id, accountId),
+        eq(providerConnections.workspaceId, workspaceId),
+        eq(providerConnections.provider, 'linkedin'),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.memberUrn ?? null;
+}
+
 export async function replaceProviderConnection(
   database: NodePgDatabase,
   input: {

@@ -22,13 +22,21 @@ function sha256(value: string): string {
 export async function issueOauthTransaction(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
-  input: { workspaceId: string; userId: string; provider: string; redirectUri: string; now?: Date },
+  input: {
+    workspaceId: string;
+    userId: string;
+    provider: string;
+    redirectUri: string;
+    intent?: string;
+    now?: Date;
+  },
 ): Promise<{ state: string; codeChallenge: string; expiresAt: Date }> {
   const now = input.now ?? new Date();
   const state = randomBytes(32).toString('base64url');
   const verifier = randomBytes(32).toString('base64url');
   const expiresAt = new Date(now.getTime() + OAUTH_TTL_MS);
-  const encryptedVerifier = await encryptCredential(Buffer.from(verifier), keys);
+  const secret = input.intent ? JSON.stringify({ verifier, intent: input.intent }) : verifier;
+  const encryptedVerifier = await encryptCredential(Buffer.from(secret), keys);
   await withTenantTransaction(
     database,
     { workspaceId: input.workspaceId, userId: input.userId },
@@ -66,6 +74,7 @@ export async function consumeOauthCallback(
   provider: string;
   redirectUri: string;
   codeVerifier: string;
+  intent?: string | null;
 } | null> {
   const now = input.now ?? new Date();
   return withTenantTransaction(
@@ -95,11 +104,16 @@ export async function consumeOauthCallback(
           consumed.id,
           consumed.secretCredentialId,
         );
+        const secret = verifier.toString('utf8');
+        const payload = secret.startsWith('{')
+          ? (JSON.parse(secret) as { verifier: string; intent?: string })
+          : { verifier: secret };
         return {
           userId: consumed.userId,
           provider: consumed.provider,
           redirectUri: consumed.redirectUri,
-          codeVerifier: verifier.toString('utf8'),
+          codeVerifier: payload.verifier,
+          intent: payload.intent ?? null,
         };
       } finally {
         verifier.fill(0);

@@ -38,6 +38,12 @@ import {
 } from '../src/modules/providers/x-oauth.service.js';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 import { completeYouTubeOauthConnection } from '../src/modules/providers/youtube-oauth.service.js';
+import {
+  beginLinkedInConnection,
+  completeLinkedInConnection,
+  LinkedInMemberMismatchError,
+} from '../src/modules/providers/linkedin-oauth.service.js';
+import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
 import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import {
@@ -163,6 +169,103 @@ describe('credential and OAuth persistence', () => {
     expect(
       currentCredentials.rows.find((row) => row.member_urn === 'urn:li:person:member-2'),
     ).toEqual(secondCredential);
+  });
+
+  it('binds LinkedIn reconnect to selected member across OAuth and preserves both accounts on mismatch', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const key = Buffer.alloc(32, 7);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    for (const member of ['member-1', 'member-2'])
+      await connectProvider(
+        db,
+        keys,
+        new FakeProviderConnectionAdapter([
+          { providerAccountId: `urn:li:person:${member}`, displayName: member },
+        ]),
+        {
+          workspaceId,
+          userId,
+          provider: 'linkedin',
+          accessToken: `original-${member}`,
+          requestId: member,
+        },
+      );
+    const accounts = await listProviderAccounts(db, workspaceId);
+    const selected = accounts.find((account) => account.displayName === 'member-2');
+    expect(selected).toBeDefined();
+    const before = await database.query<{ member_urn: string; credential_id: string }>(
+      "select member_urn, credential_id from provider_connections where provider = 'linkedin' order by member_urn",
+    );
+    const client = {
+      authorizationUrl: ({ state }: { state: string }) =>
+        `https://linkedin.example/authorize?state=${state}`,
+      exchangeCode: ({ code }: { code: string }) =>
+        Promise.resolve({
+          accessToken: `new-${code}`,
+          memberUrn: `urn:li:person:${code}`,
+          expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          scope: 'w_member_social',
+        }),
+      discoverMember: (token: string) =>
+        Promise.resolve({
+          memberUrn: `urn:li:person:${token.replace('new-', '')}`,
+          displayName: token.replace('new-', ''),
+        }),
+    } as unknown as LinkedInHttpClient;
+    if (!selected) throw new Error('Member Two account fixture is missing');
+    await expect(
+      beginLinkedInConnection(db, keys, client, {
+        workspaceId,
+        userId,
+        callbackUrl: 'https://relay.example/callback',
+        requestId: 'missing-account',
+        accountId: '00000000-0000-4000-8000-000000000999',
+      }),
+    ).rejects.toThrow('selected LinkedIn account is no longer available');
+    const begin = async () => {
+      const result = await beginLinkedInConnection(db, keys, client, {
+        workspaceId,
+        userId,
+        callbackUrl: 'https://relay.example/callback',
+        requestId: 'begin',
+        accountId: selected.id,
+      });
+      const state = new URL(result.authorizationUrl).searchParams.get('state');
+      if (!state) throw new Error('LinkedIn OAuth state was not issued');
+      return state;
+    };
+    await expect(
+      completeLinkedInConnection(db, keys, client, {
+        workspaceId,
+        userId,
+        state: await begin(),
+        code: 'member-1',
+        requestId: 'wrong-member',
+      }),
+    ).rejects.toBeInstanceOf(LinkedInMemberMismatchError);
+    expect(
+      (
+        await database.query(
+          "select member_urn, credential_id from provider_connections where provider = 'linkedin' order by member_urn",
+        )
+      ).rows,
+    ).toEqual(before.rows);
+    await completeLinkedInConnection(db, keys, client, {
+      workspaceId,
+      userId,
+      state: await begin(),
+      code: 'member-2',
+      requestId: 'correct-member',
+    });
+    const after = await database.query<{ member_urn: string; credential_id: string }>(
+      "select member_urn, credential_id from provider_connections where provider = 'linkedin' order by member_urn",
+    );
+    expect(after.rows[0]).toEqual(before.rows[0]);
+    expect(after.rows[1]?.credential_id).not.toBe(before.rows[1]?.credential_id);
+    expect(await listProviderAccounts(db, workspaceId)).toHaveLength(2);
   });
 
   it('stores LinkedIn expiry as tenant-scoped connection metadata without exposing the credential', async () => {

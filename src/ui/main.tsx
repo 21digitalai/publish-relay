@@ -6,6 +6,9 @@ import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
+import { linkedInExpiryWarning } from './linkedin-expiry.js';
+import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
+import { beginAdapterConnection, getCsrfToken } from './posting-adapter-connection.js';
 import {
   CalendarPage,
   ExternalDraftPage,
@@ -48,27 +51,6 @@ const YOUTUBE_CATEGORIES: [string, string][] = [
   ['28', 'Science & Technology'],
   ['29', 'Nonprofits & Activism'],
 ];
-
-function getCsrfToken(): string {
-  const entry = document.cookie
-    .split('; ')
-    .find((value) => value.startsWith('publish_relay_csrf='));
-  return entry ? (entry.split('=')[1] ?? '') : '';
-}
-
-async function beginAdapterConnection(adapter: PostingAdapterConfig): Promise<void> {
-  const response = await fetch(adapter.auth.startPath, {
-    method: 'POST',
-    headers: { 'x-csrf-token': getCsrfToken() },
-  });
-  const result = (await response.json()) as {
-    data: { authorizationUrl: string } | null;
-    error: string | null;
-  };
-  if (!response.ok || !result.data)
-    throw new Error(result.error ?? `Could not start ${adapter.label} connection`);
-  window.location.href = result.data.authorizationUrl;
-}
 
 function formText(fields: FormData, name: string): string {
   const value = fields.get(name);
@@ -882,6 +864,18 @@ function AccountRow({
   const linkedinDaysLeft =
     linkedinMillisecondsLeft === null ? null : Math.ceil(linkedinMillisecondsLeft / 86_400_000);
   const linkedinExpiringSoon = linkedinDaysLeft !== null && linkedinDaysLeft <= 7;
+  const linkedinWarning =
+    account.provider === 'LinkedIn'
+      ? linkedInExpiryWarning(
+          {
+            id: account.id,
+            displayName: account.name,
+            status: needsReconnect ? 'reconnect_required' : 'active',
+            ...(account.expiresAt !== undefined ? { expiresAt: account.expiresAt } : {}),
+          },
+          Date.now(),
+        )
+      : null;
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [defaultsAnnouncement, setDefaultsAnnouncement] = useState<string | null>(null);
@@ -919,13 +913,10 @@ function AccountRow({
       </div>
       <div className="account-capabilities">
         <span>
-          {needsReconnect
-            ? `${account.provider} access needs reconnection before posting.`
-            : linkedinDaysLeft !== null && linkedinDaysLeft <= 7
-              ? linkedinMillisecondsLeft !== null && linkedinMillisecondsLeft < 86_400_000
-                ? 'LinkedIn access expires in less than a day. Reconnect before expiry.'
-                : `LinkedIn access expires in ${String(linkedinDaysLeft)} days. Reconnect before expiry.`
-              : 'Connection status is current'}
+          {linkedinWarning ??
+            (needsReconnect
+              ? `${account.provider} access needs reconnection before posting.`
+              : 'Connection status is current')}
         </span>
       </div>
       <div className="account-actions">
@@ -1223,6 +1214,7 @@ function AccountsPage() {
             <span className="brand-signal" /> Publish Relay
           </span>
         </header>
+        <LinkedInExpiryNotice />
         <div className="page-heading">
           <div>
             <p className="eyebrow">Workspace settings</p>

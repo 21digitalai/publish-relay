@@ -23,6 +23,8 @@ Principles:
 
 LinkedIn member connections reuse the Accounts adapter picker and account row. The picker is visible only when the LinkedIn OAuth client pair is configured; the account row surfaces token-expiry/reconnect copy at seven days or less, with urgent three- and one-day states, and the Composer excludes expired destinations and omits YouTube-only media controls for a LinkedIn-only selection. No separate provider-specific account screen is introduced.
 
+The shared authenticated workflow shell and Connected accounts page render the same on-visit LinkedIn expiry notice when an active member token has 7, 3, or 1 days left. It names the member, gives the exact local expiry date/time, and offers a direct Reconnect action. It is explicitly in-app/on-visit; there is no email or background notification channel. The notice is absent outside the warning window and reports account-health load or reconnect errors without hiding the rest of the page.
+
 ## Design tokens
 
 ### Color

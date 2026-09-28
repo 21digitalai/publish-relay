@@ -1,0 +1,22 @@
+import type { PostingAdapterConfig } from './posting-adapter-registry.js';
+
+export function getCsrfToken(): string {
+  const entry = document.cookie
+    .split('; ')
+    .find((value) => value.startsWith('publish_relay_csrf='));
+  return entry ? (entry.split('=')[1] ?? '') : '';
+}
+
+export async function beginAdapterConnection(adapter: PostingAdapterConfig): Promise<void> {
+  const response = await fetch(adapter.auth.startPath, {
+    method: 'POST',
+    headers: { 'x-csrf-token': getCsrfToken() },
+  });
+  const result = (await response.json()) as {
+    data: { authorizationUrl: string } | null;
+    error: string | null;
+  };
+  if (!response.ok || !result.data)
+    throw new Error(result.error ?? `Could not start ${adapter.label} connection`);
+  window.location.href = result.data.authorizationUrl;
+}

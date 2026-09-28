@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Rail } from './main.js';
 import { LiveRegion } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
 type JobState =
@@ -979,6 +980,7 @@ export function WorkspaceLayout({
             <span className="brand-signal" /> Publish Relay
           </span>
         </header>
+        <LinkedInExpiryNotice />
         {typeof children === 'function'
           ? children(() => {
               setComposerOpen(true);

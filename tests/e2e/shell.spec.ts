@@ -596,15 +596,34 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
     }),
   );
   await page.goto(await workspacePath(page, 'accounts'));
-  await expect(page.getByText(/LinkedIn access expires in less than a day/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
+  await expect(
+    page.getByRole('complementary', { name: 'LinkedIn connection warnings' }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/LinkedIn access for Member One expires within 1 day/).first(),
+  ).toBeVisible();
+  await expect(page.getByText('In-app LinkedIn connection warning')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reconnect Member One' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath('linkedin-expiry-account.png'),
     fullPage: true,
   });
+  await page.route('**/api/oauth/linkedin', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'Reconnect is temporarily unavailable' }),
+    }),
+  );
+  await page.getByRole('button', { name: 'Reconnect Member One' }).click();
+  await expect(page.getByText('Reconnect is temporarily unavailable')).toBeVisible();
   if (testInfo.project.name === 'mobile')
     await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: 'Create post' }).click();
+  await expect(
+    page.getByRole('complementary', { name: 'LinkedIn connection warnings' }),
+  ).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
   await expect(
     page.getByText(

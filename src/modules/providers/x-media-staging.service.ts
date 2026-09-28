@@ -5,6 +5,7 @@ import {
   createStagingArtifact,
   findStagingArtifact,
   getStagingArtifactById,
+  retireExpiredUnattemptedStagingArtifact,
   updateStagingUploadProgress,
 } from '../content/provider-staging.repository.js';
 import { withProviderStagingLock } from '../content/provider-staging-lock.js';
@@ -53,7 +54,20 @@ export async function stageXMedia(
     findStagingArtifact(transaction, input.workspaceId, input.jobId, input.mediaId),
   );
   if (existing) {
-    return resumeStaging(database, source, client, input, existing);
+    const now = input.now ?? new Date();
+    if (existing.expiresAt.getTime() < now.getTime()) {
+      const retired = await withTenantTransaction(database, input, (transaction) =>
+        retireExpiredUnattemptedStagingArtifact(transaction, {
+          workspaceId: input.workspaceId,
+          jobId: input.jobId,
+          artifactId: existing.id,
+          now,
+        }),
+      );
+      if (!retired) return resumeStaging(database, source, client, input, existing);
+    } else {
+      return resumeStaging(database, source, client, input, existing);
+    }
   }
 
   const media = await source.load(input);

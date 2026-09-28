@@ -1111,6 +1111,56 @@ describe('X media staging', () => {
     ).resolves.toEqual({ mediaId: 'x-static-image', state: 'succeeded' });
   });
 
+  it('replaces expired X staging only before any publish attempt', async () => {
+    const postId = '00000000-0000-4000-8000-0000000002b1';
+    const revisionId = '00000000-0000-4000-8000-0000000002b2';
+    const mediaId = '00000000-0000-4000-8000-0000000002b3';
+    const jobId = '00000000-0000-4000-8000-0000000002b4';
+    await database.exec(`
+      INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${postId}', '${workspaceId}', '${userId}');
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+        VALUES ('${revisionId}', '${workspaceId}', '${postId}', 1, '{"type":"text","text":"Media"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'media/expired', 'hash', 'image/png', 1, 'ready');
+      INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state)
+        VALUES ('${jobId}', '${workspaceId}', '${postId}', '${revisionId}', '${accountOne}', now(), 'leased');
+      INSERT INTO provider_staging_artifacts
+        (workspace_id, job_id, media_id, provider_reference, expires_at, upload_phase, next_segment)
+        VALUES ('${workspaceId}', '${jobId}', '${mediaId}', 'expired-reference', now() - interval '1 hour', 'finalized', 1);
+    `);
+    const init = vi.fn(() =>
+      Promise.resolve({ mediaId: 'fresh-reference', expiresAfterSeconds: 3600 }),
+    );
+    const client: XMediaUploadClient = {
+      init,
+      append: () => Promise.resolve(),
+      finalize: () => Promise.resolve({ state: 'succeeded' }),
+      status: (reference) =>
+        reference === 'fresh-reference'
+          ? Promise.resolve({ state: 'not_finalized' })
+          : Promise.reject(new Error('expired reference must not be queried')),
+      discard: () => Promise.resolve(),
+    };
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    await expect(
+      stageXMedia(
+        db,
+        {
+          load: () => Promise.resolve({ bytes: Buffer.from('x'), mimeType: 'image/png' }),
+        },
+        client,
+        { workspaceId, jobId, mediaId, idempotencyKey: 'expired' },
+      ),
+    ).resolves.toEqual({ mediaId: 'fresh-reference', state: 'succeeded' });
+    expect(init).toHaveBeenCalledTimes(1);
+    const rows = await database.query<{ provider_reference: string; deleted_at: Date | null }>(
+      `SELECT provider_reference, deleted_at FROM provider_staging_artifacts WHERE job_id = '${jobId}' ORDER BY created_at`,
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows[0]?.deleted_at).not.toBeNull();
+    expect(rows.rows[1]?.provider_reference).toBe('fresh-reference');
+  });
+
   it('serializes concurrent staging against one canonical artifact', async () => {
     const postId = '00000000-0000-4000-8000-000000000294';
     const revisionId = '00000000-0000-4000-8000-000000000295';

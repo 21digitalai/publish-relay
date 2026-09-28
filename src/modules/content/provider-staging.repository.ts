@@ -1,7 +1,29 @@
-import { and, eq, inArray, isNull, lt } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { providerStagingArtifacts, publicationJobs } from '../../database/schema.js';
+
+export async function retireExpiredUnattemptedStagingArtifact(
+  database: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; artifactId: string; now: Date },
+): Promise<boolean> {
+  const rows = await database
+    .update(providerStagingArtifacts)
+    .set({ deletedAt: input.now, updatedAt: input.now })
+    .where(
+      and(
+        eq(providerStagingArtifacts.workspaceId, input.workspaceId),
+        eq(providerStagingArtifacts.jobId, input.jobId),
+        eq(providerStagingArtifacts.id, input.artifactId),
+        isNull(providerStagingArtifacts.deletedAt),
+        lt(providerStagingArtifacts.expiresAt, input.now),
+        sql`EXISTS (SELECT 1 FROM publication_jobs job WHERE job.id = ${input.jobId} AND job.workspace_id = ${input.workspaceId} AND job.state = 'leased')`,
+        sql`NOT EXISTS (SELECT 1 FROM publication_attempts attempt WHERE attempt.job_id = ${input.jobId} AND attempt.workspace_id = ${input.workspaceId})`,
+      ),
+    )
+    .returning({ id: providerStagingArtifacts.id });
+  return rows.length > 0;
+}
 
 const TERMINAL_JOB_STATES = ['published', 'failed', 'cancelled', 'superseded'] as const;
 

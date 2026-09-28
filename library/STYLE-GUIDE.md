@@ -114,6 +114,7 @@ Group by provider and show each connected account independently. Rows include pr
 - Each provider group has Connect another.
 - Search name/handle; filter provider, health, and workspace access.
 - Reconnect is primary for expired credentials.
+- LinkedIn tokens within seven days of expiry remain usable but show Needs attention consistently in the account summary, health filter, and row badge; expired tokens show Reconnect required. Exact expiry warnings include a timezone.
 - Disconnect names the account, explains scheduled-job impact, and requires explicit confirmation.
 - Account rows load from the tenant-scoped account API. Connect and reconnect use provider-specific secure OAuth redirects for X and YouTube; successful callbacks return to the protected workspace. YouTube rows expose an inline destination-defaults form for visibility, Made for Kids, and subscriber notification so routine schedules need only sparse overrides. Saving is explicit, disables during submission, and keeps errors inline. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
 

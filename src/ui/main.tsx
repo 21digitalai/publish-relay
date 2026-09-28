@@ -6,7 +6,7 @@ import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
-import { linkedInExpiryWarning } from './linkedin-expiry.js';
+import { linkedInExpiringSoon, linkedInExpiryWarning } from './linkedin-expiry.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
 import { beginAdapterConnection, getCsrfToken } from './posting-adapter-connection.js';
 import {
@@ -22,7 +22,7 @@ interface Account {
   provider: string;
   name: string;
   handle: string;
-  health: 'Connected' | 'Reconnect required';
+  health: 'Connected' | 'Needs attention' | 'Reconnect required';
   expiresAt?: string | null;
   adapterDefaults: {
     privacyStatus?: 'public' | 'unlisted' | 'private';
@@ -857,13 +857,7 @@ function AccountRow({
   onDefaultsSaved: (account: Account) => void;
 }) {
   const needsReconnect = account.health === 'Reconnect required';
-  const linkedinMillisecondsLeft =
-    account.provider === 'LinkedIn' && account.expiresAt
-      ? new Date(account.expiresAt).getTime() - Date.now()
-      : null;
-  const linkedinDaysLeft =
-    linkedinMillisecondsLeft === null ? null : Math.ceil(linkedinMillisecondsLeft / 86_400_000);
-  const linkedinExpiringSoon = linkedinDaysLeft !== null && linkedinDaysLeft <= 7;
+  const linkedinExpiringSoon = account.health === 'Needs attention';
   const linkedinWarning =
     account.provider === 'LinkedIn'
       ? linkedInExpiryWarning(
@@ -1101,10 +1095,13 @@ function AccountsPage() {
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
               handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
               health:
-                account.status === 'active' &&
-                (!account.expiresAt || new Date(account.expiresAt).getTime() > Date.now())
-                  ? 'Connected'
-                  : 'Reconnect required',
+                account.status !== 'active' ||
+                (account.expiresAt && new Date(account.expiresAt).getTime() <= Date.now())
+                  ? 'Reconnect required'
+                  : account.provider.toLowerCase() === 'linkedin' &&
+                      linkedInExpiringSoon(account, Date.now())
+                    ? 'Needs attention'
+                    : 'Connected',
               ...(account.expiresAt !== undefined ? { expiresAt: account.expiresAt } : {}),
               adapterDefaults: account.adapterDefaults,
             };
@@ -1287,6 +1284,7 @@ function AccountsPage() {
               >
                 <option>All health</option>
                 <option>Connected</option>
+                <option>Needs attention</option>
                 <option>Reconnect required</option>
               </select>
             </label>

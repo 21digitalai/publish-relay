@@ -815,6 +815,36 @@ textarea:focus-visible {
 .account-row:last-child {
   border-bottom: 0;
 }
+.linkedin-expiry-notice {
+  margin: 16px 24px;
+  padding: 16px;
+  border: 1px solid var(--warning);
+  border-radius: 12px;
+  background: var(--surface-2);
+  display: grid;
+  gap: 10px;
+}
+.linkedin-expiry-notice > strong {
+  color: var(--warning);
+}
+.linkedin-expiry-notice p {
+  margin: 0;
+}
+.linkedin-expiry-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+@media (max-width: 767px) {
+  .linkedin-expiry-notice {
+    margin: 12px;
+  }
+  .linkedin-expiry-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 .adapter-picker {
   width: min(520px, calc(100% - 24px));
   padding: 24px;

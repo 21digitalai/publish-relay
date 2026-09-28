@@ -84,6 +84,10 @@ export function normalizeStoredXContent(content: StoredXContent): {
   const kind = typeof content.kind === 'string' ? content.kind : content.type;
   if (kind === 'thread') {
     if (!Array.isArray(content.posts)) throw new Error('Stored X thread content is invalid');
+    const hasObjectPart = content.posts.some((part) => typeof part !== 'string');
+    if (hasObjectPart && content.posts.some((part) => typeof part === 'string')) {
+      throw new Error('Stored X thread content is invalid');
+    }
     const posts = content.posts.map(normalizeStoredThreadPart).filter(Boolean);
     if (posts.length === 0) throw new Error('Stored X thread content is empty');
     return { kind: 'text', text: posts.join('\n\n') };

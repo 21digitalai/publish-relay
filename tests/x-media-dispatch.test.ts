@@ -94,6 +94,14 @@ describe('X media dispatch composition', () => {
     expect(() => normalizeStoredXContent({ kind: 'thread', posts: [{ text: 'Opening' }] })).toThrow(
       'Stored X thread content is invalid',
     );
+    for (const posts of [
+      ['Opening', { text: 'Closing', mediaIds: [] }],
+      [{ text: 'Opening', mediaIds: [] }, 'Closing'],
+    ]) {
+      expect(() => normalizeStoredXContent({ kind: 'thread', posts })).toThrow(
+        'Stored X thread content is invalid',
+      );
+    }
   });
 
   it('binds one credential-scoped client and stages every scheduled job media item', async () => {

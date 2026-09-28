@@ -19,6 +19,7 @@ export interface ProviderAccountSummary {
   status: string;
   adapterDefaults: unknown;
   updatedAt: Date;
+  expiresAt?: Date | null;
 }
 
 export function listProviderAccounts(
@@ -34,6 +35,7 @@ export function listProviderAccounts(
         status: providerConnections.status,
         adapterDefaults: providerAccounts.adapterDefaults,
         updatedAt: providerAccounts.updatedAt,
+        expiresAt: providerConnections.expiresAt,
       })
       .from(providerAccounts)
       .innerJoin(

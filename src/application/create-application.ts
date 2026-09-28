@@ -34,6 +34,8 @@ import type { XHttpClient } from '../modules/providers/x-http-client.js';
 import { registerXOauthRoutes } from '../modules/providers/x-oauth.routes.js';
 import type { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
 import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.routes.js';
+import type { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
+import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth.routes.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
@@ -51,6 +53,11 @@ interface YouTubeOauthOptions {
   client: YouTubeHttpClient;
   callbackUrl: string;
 }
+interface LinkedInOauthOptions {
+  keys: MasterKeyProvider;
+  client: LinkedInHttpClient;
+  callbackUrl: string;
+}
 
 export interface CoreApplicationOptions {
   config: RuntimeConfig;
@@ -63,6 +70,7 @@ export interface CoreApplicationOptions {
   mediaStorage?: MediaStorage;
   actionPolicy?: ActionPolicy;
   youtubeOauth?: YouTubeOauthOptions;
+  linkedinOauth?: LinkedInOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
   magicLinks?: MagicLinkService;
   publicAuthShells?: boolean;
@@ -162,8 +170,16 @@ function registerBrowserRoutes(
   actionPolicy: ActionPolicy,
   shellHtml: string,
 ): void {
-  const { config, auth, database, mediaStorage, xOauth, youtubeOauth, delegatedAuthorization } =
-    options;
+  const {
+    config,
+    auth,
+    database,
+    mediaStorage,
+    xOauth,
+    youtubeOauth,
+    linkedinOauth,
+    delegatedAuthorization,
+  } = options;
   if (auth && database) {
     registerProviderAccountRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {
@@ -185,6 +201,8 @@ function registerBrowserRoutes(
     registerXOauthRoutes(application, { auth, database, actionPolicy, ...xOauth });
   if (auth && database && youtubeOauth)
     registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
+  if (auth && database && linkedinOauth)
+    registerLinkedInOauthRoutes(application, { auth, database, actionPolicy, ...linkedinOauth });
   if (auth && delegatedAuthorization)
     registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
 }
@@ -203,7 +221,7 @@ export function registerCoreApplication(
   const uiRoot = options.uiRoot ?? fileURLToPath(new URL('../ui/', import.meta.url));
   const uiPrefix = options.uiPrefix ?? '/';
   const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
-    .replace('<body>', `<body data-human-auth-mode="${resolveHumanAuthMode(config)}">`)
+    .replace('<body>', `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}">`)
     .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
     .replace('href="/favicon.svg"', `href="${uiPrefix === '/' ? '/' : uiPrefix}favicon.svg"`);
 

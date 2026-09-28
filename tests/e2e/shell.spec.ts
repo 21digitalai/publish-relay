@@ -608,6 +608,56 @@ test('recovers the composer account gate after a failed account load', async ({ 
   expect(requests).toBe(2);
 });
 
+test('shows LinkedIn expiry and prevents scheduling after the token lifetime', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000299',
+              provider: 'linkedin',
+              displayName: 'Member One',
+              status: 'active',
+              expiresAt,
+              updatedAt: new Date().toISOString(),
+              adapterDefaults: {},
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(await workspacePath(page, 'accounts'));
+  await expect(page.getByText(/LinkedIn access expires in less than a day/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('linkedin-expiry-account.png'),
+    fullPage: true,
+  });
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: 'Create post' }).click();
+  await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  await expect(
+    page.getByText(
+      'LinkedIn access expires before this post. Reconnect the account or choose an earlier time.',
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /Schedule 1 post/ })).toBeDisabled();
+  await expect(page.locator('.composer-body')).toHaveAttribute('maxlength', '3000');
+  await page.screenshot({
+    path: testInfo.outputPath('linkedin-expiry-composer.png'),
+    fullPage: true,
+  });
+});
+
 test('uses the mobile navigation drawer', async ({ page }) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);

@@ -233,7 +233,9 @@ export async function getBrowserJobDetail(
         ? `https://x.com/${job.providerAccount.handle}/status/${published.externalPostId}`
         : job.providerAccount.provider === 'youtube'
           ? `https://www.youtube.com/watch?v=${published.externalPostId}`
-          : null
+          : job.providerAccount.provider === 'linkedin'
+            ? `https://www.linkedin.com/feed/update/${encodeURIComponent(published.externalPostId)}/`
+            : null
       : null;
     return {
       ...job,

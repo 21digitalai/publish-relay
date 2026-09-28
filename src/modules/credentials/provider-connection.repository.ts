@@ -64,6 +64,7 @@ export async function replaceProviderConnection(
     credentialId: string;
     accounts: readonly DiscoveredProviderAccount[];
     requestId: string;
+    expiresAt?: Date;
   },
 ): Promise<{ connectionId: string; replacedCredentialId: string | null }> {
   const existing = await database
@@ -80,7 +81,12 @@ export async function replaceProviderConnection(
   const connectionRows = current
     ? await database
         .update(providerConnections)
-        .set({ credentialId: input.credentialId, status: 'active', updatedAt: new Date() })
+        .set({
+          credentialId: input.credentialId,
+          status: 'active',
+          expiresAt: input.expiresAt ?? null,
+          updatedAt: new Date(),
+        })
         .where(
           and(
             eq(providerConnections.workspaceId, input.workspaceId),
@@ -94,6 +100,7 @@ export async function replaceProviderConnection(
           workspaceId: input.workspaceId,
           provider: input.provider,
           credentialId: input.credentialId,
+          expiresAt: input.expiresAt,
         })
         .returning({ id: providerConnections.id });
   const connection = connectionRows[0];

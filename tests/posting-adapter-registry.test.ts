@@ -10,8 +10,8 @@ import {
 } from '../src/ui/posting-adapter-registry.js';
 
 describe('posting adapter registry', () => {
-  it('defines unique, self-rendering X and YouTube adapters', () => {
-    expect(POSTING_ADAPTERS.map((adapter) => adapter.id)).toEqual(['x', 'youtube']);
+  it('defines unique, self-rendering X, YouTube and LinkedIn adapters', () => {
+    expect(POSTING_ADAPTERS.map((adapter) => adapter.id)).toEqual(['x', 'youtube', 'linkedin']);
     expect(new Set(POSTING_ADAPTERS.map((adapter) => adapter.id)).size).toBe(
       POSTING_ADAPTERS.length,
     );

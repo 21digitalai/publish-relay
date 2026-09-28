@@ -418,6 +418,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       provider: string;
       displayName: string;
       status: string;
+      expiresAt?: string | null;
       adapterDefaults: { madeForKids?: boolean };
     }[]
   >([]);
@@ -517,6 +518,15 @@ function Composer({ onClose }: { onClose: () => void }) {
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const isX = selected.length > 0 && selected.every((account) => account.provider === 'x');
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
+  const isLinkedInOnly =
+    selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
+  const textLimit = isLinkedInOnly ? 3000 : 280;
+  const linkedinExpiresBeforeDispatch = selected.some(
+    (account) =>
+      account.provider === 'linkedin' &&
+      (!account.expiresAt ||
+        (scheduledAt && new Date(account.expiresAt).getTime() <= scheduledAt.getTime())),
+  );
   const youtubeHasMadeForKids = selected[0]?.adapterDefaults.madeForKids !== undefined;
   const scheduleError =
     scheduled && (!localSchedule.split('T')[0] || !localSchedule.split('T')[1])
@@ -541,10 +551,11 @@ function Composer({ onClose }: { onClose: () => void }) {
       ? mediaFiles.length !== 1 ||
         !videoTitle.trim() ||
         (!youtubeHasMadeForKids && madeForKids === 'default')
-      : !body.trim()) ||
+      : !body.trim() || body.length > textLimit) ||
     (includesYouTube && !isYouTube) ||
     (mediaFiles.length > 0 && !isYouTube && !isX) ||
     selectedAccounts.length === 0 ||
+    linkedinExpiresBeforeDispatch ||
     state !== 'ready' ||
     draftState !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
@@ -594,13 +605,18 @@ function Composer({ onClose }: { onClose: () => void }) {
               provider: string;
               displayName: string;
               status: string;
+              expiresAt?: string | null;
               adapterDefaults: { madeForKids?: boolean };
             }[];
           };
         }>;
       })
       .then(({ data }) => {
-        const active = data.accounts.filter((account) => account.status === 'active');
+        const active = data.accounts.filter(
+          (account) =>
+            account.status === 'active' &&
+            (!account.expiresAt || new Date(account.expiresAt).getTime() > Date.now()),
+        );
         setAccounts(active);
         setSelectedAccounts(active.map((account) => account.id));
         setAccountLoadState('ready');
@@ -953,6 +969,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               ) : (
                 <textarea
                   className="composer-body"
+                  maxLength={textLimit}
                   value={body}
                   onChange={(event) => {
                     setBody(event.target.value);
@@ -1121,6 +1138,12 @@ function Composer({ onClose }: { onClose: () => void }) {
             )}
             {isYouTube && !youtubeHasMadeForKids && madeForKids === 'default' && (
               <p className="inline-validation">Choose whether this video is made for kids.</p>
+            )}
+            {linkedinExpiresBeforeDispatch && (
+              <p className="inline-validation" role="alert">
+                LinkedIn access expires before this post. Reconnect the account or choose an earlier
+                time.
+              </p>
             )}
             <fieldset className="schedule-choice" inert={hasUncertainPost}>
               <legend>Publishing time</legend>

@@ -62,6 +62,20 @@ interface StoredXContent {
   quotedPostId?: unknown;
 }
 
+function normalizeStoredThreadPart(part: unknown): string {
+  if (typeof part === 'string') return part.trim();
+  if (!part || typeof part !== 'object') throw new Error('Stored X thread content is invalid');
+  const entry = part as { text?: unknown; mediaIds?: unknown };
+  if (
+    typeof entry.text !== 'string' ||
+    !Array.isArray(entry.mediaIds) ||
+    entry.mediaIds.some((id) => typeof id !== 'string')
+  ) {
+    throw new Error('Stored X thread content is invalid');
+  }
+  return entry.text.trim();
+}
+
 export function normalizeStoredXContent(content: StoredXContent): {
   kind: 'text' | 'quote';
   text: string;
@@ -69,9 +83,8 @@ export function normalizeStoredXContent(content: StoredXContent): {
 } {
   const kind = typeof content.kind === 'string' ? content.kind : content.type;
   if (kind === 'thread') {
-    if (!Array.isArray(content.posts) || content.posts.some((post) => typeof post !== 'string'))
-      throw new Error('Stored X thread content is invalid');
-    const posts = (content.posts as string[]).map((post) => post.trim()).filter(Boolean);
+    if (!Array.isArray(content.posts)) throw new Error('Stored X thread content is invalid');
+    const posts = content.posts.map(normalizeStoredThreadPart).filter(Boolean);
     if (posts.length === 0) throw new Error('Stored X thread content is empty');
     return { kind: 'text', text: posts.join('\n\n') };
   }

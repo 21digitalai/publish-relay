@@ -73,11 +73,26 @@ describe('X media dispatch composition', () => {
     expect(
       normalizeStoredXContent({ kind: 'thread', posts: ['Opening', 'Middle', 'Closing'] }),
     ).toEqual({ kind: 'text', text: 'Opening\n\nMiddle\n\nClosing' });
+    expect(
+      normalizeStoredXContent({
+        kind: 'thread',
+        posts: [
+          { text: 'Opening', mediaIds: ['media-1'] },
+          { text: 'Closing', mediaIds: [] },
+        ],
+      }),
+    ).toEqual({ kind: 'text', text: 'Opening\n\nClosing' });
   });
 
   it('rejects malformed migrated thread content instead of publishing media by itself', () => {
     expect(() => normalizeStoredXContent({ kind: 'thread', posts: [] })).toThrow(
       'Stored X thread content is empty',
+    );
+    expect(() =>
+      normalizeStoredXContent({ kind: 'thread', posts: [{ text: 'Opening', mediaIds: [1] }] }),
+    ).toThrow('Stored X thread content is invalid');
+    expect(() => normalizeStoredXContent({ kind: 'thread', posts: [{ text: 'Opening' }] })).toThrow(
+      'Stored X thread content is invalid',
     );
   });
 
@@ -189,7 +204,13 @@ describe('X media dispatch composition', () => {
       {
         credentialId: 'credential-1',
         accountId: 'x-account-1',
-        content: { kind: 'thread', posts: ['Opening', 'Closing'] } as never,
+        content: {
+          kind: 'thread',
+          posts: [
+            { text: 'Opening', mediaIds: ['media-1'] },
+            { text: 'Closing', mediaIds: [] },
+          ],
+        } as never,
         mediaId: 'media-1',
         mimeType: 'image/png',
       },

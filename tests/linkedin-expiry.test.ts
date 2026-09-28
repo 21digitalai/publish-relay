@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { linkedInExpiryWarning } from '../src/ui/linkedin-expiry.js';
+import { linkedInExpiringSoon, linkedInExpiryWarning } from '../src/ui/linkedin-expiry.js';
 
 describe('LinkedIn on-visit expiry warnings', () => {
   const now = Date.parse('2026-09-28T07:00:00Z');
@@ -20,6 +20,8 @@ describe('LinkedIn on-visit expiry warnings', () => {
       expect(message).toContain(
         new Date(at(days)).toLocaleDateString(undefined, { dateStyle: 'medium' }),
       );
+      expect(message).toMatch(/\b(?:UTC|GMT|[A-Z]{2,5}|GMT[+-]\d+)\b/);
+      expect(linkedInExpiringSoon({ ...account, expiresAt: at(days) }, now)).toBe(true);
     }
   });
 
@@ -28,5 +30,7 @@ describe('LinkedIn on-visit expiry warnings', () => {
       'has expired or needs reconnection',
     );
     expect(linkedInExpiryWarning(account, now)).toBeNull();
+    expect(linkedInExpiringSoon({ ...account, expiresAt: at(-1) }, now)).toBe(false);
+    expect(linkedInExpiringSoon({ ...account, expiresAt: at(8) }, now)).toBe(false);
   });
 });

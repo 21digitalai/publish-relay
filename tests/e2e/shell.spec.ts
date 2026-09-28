@@ -642,6 +642,16 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
     page.getByText(/LinkedIn access for Member One expires within 1 day/).first(),
   ).toBeVisible();
   await expect(page.getByText('In-app LinkedIn connection warning')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Account health summary' })).toContainText(
+    '1Connected accounts0Healthy1Needs attention',
+  );
+  await expect(page.locator('.account-row .status-badge')).toHaveText('! Needs attention');
+  await page.locator('.health-filter').selectOption('Needs attention');
+  await expect(page.locator('.account-row')).toHaveCount(1);
+  await page.locator('.health-filter').selectOption('Connected');
+  await expect(page.locator('.account-row')).toHaveCount(0);
+  await page.locator('.health-filter').selectOption('All health');
+  await expect(page.locator('.account-row')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Reconnect Member One' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible();
   await page.screenshot({

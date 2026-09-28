@@ -60,6 +60,7 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0019_media_retention_lifecycle.sql',
   '0044_linkedin_connection_expiry.sql',
+  '0045_linkedin_member_connections.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -95,6 +96,74 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('credential and OAuth persistence', () => {
+  it('connects two LinkedIn members and reconnects only the matching identity', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const key = Buffer.alloc(32, 7);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(key),
+    };
+    const connect = (member: string, token: string, label: string) =>
+      connectProvider(
+        db,
+        keys,
+        new FakeProviderConnectionAdapter([
+          { providerAccountId: `urn:li:person:${member}`, displayName: label },
+        ]),
+        {
+          workspaceId,
+          userId,
+          provider: 'linkedin',
+          accessToken: token,
+          requestId: `req-${member}-${token}`,
+        },
+      );
+    const first = await connect('member-1', 'first-token', 'Member One');
+    const second = await connect('member-2', 'second-token', 'Member Two');
+    const before = await listProviderAccounts(db, workspaceId);
+    expect(before).toHaveLength(2);
+    expect(before.map((account) => account.displayName).sort()).toEqual([
+      'Member One',
+      'Member Two',
+    ]);
+    expect(first.connectionId).not.toBe(second.connectionId);
+    const priorCredentials = await database.query<{
+      id: string;
+      member_urn: string;
+      revoked_at: Date | null;
+    }>(`
+      SELECT credential.id, connection.member_urn, credential.revoked_at
+      FROM provider_connections connection
+      JOIN credentials credential ON credential.id = connection.credential_id
+      WHERE connection.workspace_id = '${workspaceId}' AND connection.provider = 'linkedin'
+    `);
+    const secondCredential = priorCredentials.rows.find(
+      (row) => row.member_urn === 'urn:li:person:member-2',
+    );
+
+    const reconnect = await connect('member-1', 'new-first-token', 'Member One Updated');
+    const after = await listProviderAccounts(db, workspaceId);
+    expect(reconnect.connectionId).toBe(first.connectionId);
+    expect(after).toHaveLength(2);
+    expect(after.find((account) => account.displayName === 'Member Two')).toEqual(
+      before.find((account) => account.displayName === 'Member Two'),
+    );
+    expect(after.some((account) => account.displayName === 'Member One Updated')).toBe(true);
+    const currentCredentials = await database.query<{
+      id: string;
+      member_urn: string;
+      revoked_at: Date | null;
+    }>(`
+      SELECT credential.id, connection.member_urn, credential.revoked_at
+      FROM provider_connections connection
+      JOIN credentials credential ON credential.id = connection.credential_id
+      WHERE connection.workspace_id = '${workspaceId}' AND connection.provider = 'linkedin'
+    `);
+    expect(
+      currentCredentials.rows.find((row) => row.member_urn === 'urn:li:person:member-2'),
+    ).toEqual(secondCredential);
+  });
+
   it('stores LinkedIn expiry as tenant-scoped connection metadata without exposing the credential', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const key = Buffer.alloc(32, 7);

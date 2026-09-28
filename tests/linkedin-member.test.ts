@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { validateLinkedInTextContent } from '../src/modules/providers/linkedin-content.js';
+import { classifyLinkedInDispatchFailure } from '../src/modules/providers/linkedin-dispatch.service.js';
 import {
   LinkedInHttpClient,
   LinkedInRequestError,
@@ -9,6 +10,35 @@ import {
 const options = { clientId: 'client-id', clientSecret: 'client-secret', now: () => 1_000 };
 
 describe('LinkedIn member integration', () => {
+  it('retries definite rate-limit rejection but holds ambiguous delivery outcomes', () => {
+    const now = new Date('2026-09-28T07:00:00Z');
+    const rejected = new LinkedInRequestError(429, 'rate_limit', 'Rate limited');
+    expect(classifyLinkedInDispatchFailure(rejected, 1, now, () => 0.5)).toEqual({
+      outcome: 'rate_limit',
+      retryAt: new Date(now.getTime() + 15_000),
+    });
+    expect(classifyLinkedInDispatchFailure(rejected, 5, now, () => 0.5)).toEqual({
+      outcome: 'rate_limit',
+    });
+    expect(
+      classifyLinkedInDispatchFailure(
+        new LinkedInRequestError(503, 'transient', 'Server error'),
+        1,
+        now,
+      ),
+    ).toEqual({ outcome: 'unknown' });
+    expect(
+      classifyLinkedInDispatchFailure(
+        new LinkedInRequestError(0, 'permanent', 'Missing receipt', true),
+        1,
+        now,
+      ),
+    ).toEqual({ outcome: 'unknown' });
+    expect(classifyLinkedInDispatchFailure(new Error('Network disconnected'), 1, now)).toEqual({
+      outcome: 'unknown',
+    });
+  });
+
   it('requests member-posting scope and binds the exact callback and state', () => {
     const client = new LinkedInHttpClient(options);
     const url = new URL(
@@ -91,6 +121,27 @@ describe('LinkedIn member integration', () => {
     request.mockResolvedValueOnce(new Response(null, { status: 201 }));
     await expect(client.publishText({ credential, text: 'Hello members' })).rejects.toMatchObject({
       outcomeUnknown: true,
+    });
+  });
+
+  it('classifies HTTP rejection and ambiguous provider failure from the actual publish client', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 429 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }));
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(client.publishText({ credential, text: 'Hello' })).rejects.toMatchObject({
+      kind: 'rate_limit',
+      outcomeUnknown: false,
+    });
+    await expect(client.publishText({ credential, text: 'Hello' })).rejects.toMatchObject({
+      kind: 'transient',
     });
   });
 

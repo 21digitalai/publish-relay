@@ -456,6 +456,7 @@ export const providerConnections = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     provider: text('provider').notNull(),
+    memberUrn: text('member_urn'),
     credentialId: uuid('credential_id')
       .notNull()
       .references(() => credentials.id, { onDelete: 'restrict' }),
@@ -465,9 +466,15 @@ export const providerConnections = pgTable(
   },
   (table) => [
     index('provider_connections_workspace_idx').on(table.workspaceId),
-    uniqueIndex('provider_connections_workspace_provider_unique').on(
-      table.workspaceId,
-      table.provider,
+    uniqueIndex('provider_connections_workspace_provider_unique')
+      .on(table.workspaceId, table.provider)
+      .where(sql`${table.provider} <> 'linkedin'`),
+    uniqueIndex('provider_connections_linkedin_member_unique')
+      .on(table.workspaceId, table.memberUrn)
+      .where(sql`${table.provider} = 'linkedin'`),
+    check(
+      'provider_connections_linkedin_member_required',
+      sql`${table.provider} <> 'linkedin' OR ${table.memberUrn} IS NOT NULL`,
     ),
   ],
 );

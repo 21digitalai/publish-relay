@@ -21,7 +21,7 @@ Principles:
 5. Dense, not cramped.
 6. Recovery is first-class and actionable.
 
-LinkedIn member connections reuse the Accounts adapter picker and account row. The picker is visible only when the LinkedIn OAuth client pair is configured; the account row surfaces token-expiry/reconnect copy at seven days or less, with urgent three- and one-day states, and the Composer excludes expired destinations. No separate provider-specific account screen is introduced.
+LinkedIn member connections reuse the Accounts adapter picker and account row. The picker is visible only when the LinkedIn OAuth client pair is configured; the account row surfaces token-expiry/reconnect copy at seven days or less, with urgent three- and one-day states, and the Composer excludes expired destinations and omits YouTube-only media controls for a LinkedIn-only selection. No separate provider-specific account screen is introduced.
 
 ## Design tokens
 

@@ -772,29 +772,24 @@ function Composer({ onClose }: { onClose: () => void }) {
                 />
               </div>
             )}
-            <div className="media-dropzone">
-              <strong>Add media</strong>
-              <span>
-                {isYouTube
-                  ? video
-                    ? video.name
-                    : 'Choose exactly one MP4 video'
-                  : 'Media upload is available for YouTube destinations'}
-              </span>
-              <label className="secondary-button" htmlFor="composer-media-upload">
-                Choose files
-              </label>
-              <input
-                id="composer-media-upload"
-                className="sr-only"
-                type="file"
-                accept="video/mp4"
-                disabled={!isYouTube}
-                onChange={(event) => {
-                  setVideo(event.target.files?.[0] ?? null);
-                }}
-              />
-            </div>
+            {isYouTube && (
+              <div className="media-dropzone">
+                <strong>Add media</strong>
+                <span>{video ? video.name : 'Choose exactly one MP4 video'}</span>
+                <label className="secondary-button" htmlFor="composer-media-upload">
+                  Choose files
+                </label>
+                <input
+                  id="composer-media-upload"
+                  className="sr-only"
+                  type="file"
+                  accept="video/mp4"
+                  onChange={(event) => {
+                    setVideo(event.target.files?.[0] ?? null);
+                  }}
+                />
+              </div>
+            )}
             {includesYouTube && !isYouTube && (
               <p className="inline-validation" role="alert">
                 YouTube videos must target exactly one YouTube channel.

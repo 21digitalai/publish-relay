@@ -18,6 +18,7 @@ import {
   recoverExpiredDispatches,
   startDispatchAttempt,
 } from '../scheduler/job.repository.js';
+import { calculateFullJitterDelay } from '../scheduler/retry-policy.js';
 import {
   LinkedInRequestError,
   type LinkedInCredential,
@@ -32,6 +33,25 @@ const credentialSchema = z.object({
   scope: z.string().min(1),
 });
 const contentSchema = z.looseObject({ text: z.string().trim().min(1).max(3_000) });
+const LINKEDIN_RETRY_POLICY = { baseDelayMs: 30_000, maximumDelayMs: 900_000, maximumAttempts: 5 };
+
+export function classifyLinkedInDispatchFailure(
+  error: unknown,
+  attemptNumber: number,
+  now: Date,
+  random: () => number = Math.random,
+): { outcome: 'unknown' | LinkedInRequestError['kind']; retryAt?: Date } {
+  const requestError = error instanceof LinkedInRequestError ? error : null;
+  // A 429 rejects the request. A 5xx, transport error, or missing receipt may follow acceptance.
+  if (!requestError || requestError.outcomeUnknown || requestError.kind === 'transient')
+    return { outcome: 'unknown' };
+  if (requestError.kind !== 'rate_limit') return { outcome: requestError.kind };
+  const retryDelay = calculateFullJitterDelay(attemptNumber, LINKEDIN_RETRY_POLICY, random);
+  return {
+    outcome: 'rate_limit',
+    ...(retryDelay !== null ? { retryAt: new Date(now.getTime() + retryDelay) } : {}),
+  };
+}
 
 export interface LinkedInDispatchRuntime {
   database: NodePgDatabase;
@@ -164,15 +184,15 @@ async function dispatchJob(
     const requestError = error instanceof LinkedInRequestError ? error : null;
     if (requestError?.kind === 'auth' && connectionId)
       await markReconnectRequired(runtime, job.workspaceId, connectionId);
-    const unknown =
-      requestError?.outcomeUnknown === true || requestError?.kind === 'transient' || !requestError;
+    const failure = classifyLinkedInDispatchFailure(error, attempt.attemptNumber, now);
     await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,
       attemptId: attempt.attemptId,
-      outcome: unknown ? 'unknown' : requestError.kind,
+      outcome: failure.outcome,
       now,
-      ...(unknown ? { reconciliationKey: `linkedin:${job.id}` } : {}),
+      ...(failure.retryAt ? { retryAt: failure.retryAt } : {}),
+      ...(failure.outcome === 'unknown' ? { reconciliationKey: `linkedin:${job.id}` } : {}),
       redactedError: requestError?.message ?? 'LinkedIn dispatch outcome is unknown',
     });
     return false;

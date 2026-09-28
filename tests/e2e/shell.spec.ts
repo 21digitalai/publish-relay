@@ -652,6 +652,8 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /Schedule 1 post/ })).toBeDisabled();
   await expect(page.locator('.composer-body')).toHaveAttribute('maxlength', '3000');
+  await expect(page.getByText('Choose files')).toHaveCount(0);
+  await expect(page.locator('#composer-media-upload')).toHaveCount(0);
   await page.screenshot({
     path: testInfo.outputPath('linkedin-expiry-composer.png'),
     fullPage: true,

@@ -67,6 +67,12 @@ export async function replaceProviderConnection(
     expiresAt?: Date;
   },
 ): Promise<{ connectionId: string; replacedCredentialId: string | null }> {
+  const memberUrn = input.provider === 'linkedin' ? input.accounts[0]?.providerAccountId : null;
+  if (
+    input.provider === 'linkedin' &&
+    (input.accounts.length !== 1 || !memberUrn?.startsWith('urn:li:person:'))
+  )
+    throw new Error('LinkedIn connection must identify exactly one member');
   const existing = await database
     .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
     .from(providerConnections)
@@ -74,6 +80,7 @@ export async function replaceProviderConnection(
       and(
         eq(providerConnections.workspaceId, input.workspaceId),
         eq(providerConnections.provider, input.provider),
+        ...(memberUrn ? [eq(providerConnections.memberUrn, memberUrn)] : []),
       ),
     )
     .limit(1);
@@ -99,6 +106,7 @@ export async function replaceProviderConnection(
         .values({
           workspaceId: input.workspaceId,
           provider: input.provider,
+          memberUrn,
           credentialId: input.credentialId,
           expiresAt: input.expiresAt,
         })

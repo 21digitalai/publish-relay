@@ -62,6 +62,28 @@ describe('X OAuth 1.0a HTTP client', () => {
     });
   });
 
+  it('uses native X reply linkage without attaching root media to the reply', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: 'reply-1' } }))
+      .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }));
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+    }).bindCredential(credential);
+    await client.createPost({
+      text: 'Source: https://example.test',
+      mediaIds: [],
+      replyToPostId: 'root-1',
+      idempotencyKey: 'reply-key',
+    });
+    expect(JSON.parse(request.mock.calls[0]?.[1]?.body as string)).toEqual({
+      text: 'Source: https://example.test',
+      reply: { in_reply_to_tweet_id: 'root-1' },
+    });
+  });
+
   it('returns null for lookup 404 and preserves retry headers', async () => {
     const notFound = vi.fn<typeof fetch>().mockResolvedValue(response({}, 404));
     const client = new XHttpClient({

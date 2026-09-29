@@ -48,6 +48,7 @@ import {
 } from '../src/modules/scheduler/job.repository.js';
 
 const databaseTransaction = {
+  execute: vi.fn(() => Promise.resolve({ rows: [] })),
   select: vi.fn(() => databaseTransaction),
   from: vi.fn(() => databaseTransaction),
   innerJoin: vi.fn(() => databaseTransaction),
@@ -195,7 +196,7 @@ describe('X media dispatch composition', () => {
     );
   });
 
-  it('sends migrated thread text and staged media together in the provider request', async () => {
+  it('sends migrated thread root with media and a separate linked reply', async () => {
     vi.mocked(claimDueJobs).mockResolvedValue([
       {
         id: 'job-thread',
@@ -226,7 +227,10 @@ describe('X media dispatch composition', () => {
     vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
     vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
     vi.mocked(stageXMedia).mockResolvedValue({ mediaId: 'x-media-1', state: 'succeeded' });
-    const createPost = vi.fn(() => Promise.resolve({ id: 'post-1', username: 'exampleeditorial' }));
+    const createPost = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'root-1', username: 'exampleeditorial' })
+      .mockResolvedValueOnce({ id: 'reply-1', username: 'exampleeditorial' });
 
     await expect(
       dispatchDueXMedia({
@@ -239,8 +243,13 @@ describe('X media dispatch composition', () => {
       }),
     ).resolves.toBe(1);
 
-    expect(createPost).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Opening\n\nClosing', mediaIds: ['x-media-1'] }),
+    expect(createPost).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ text: 'Opening', mediaIds: ['x-media-1'] }),
+    );
+    expect(createPost).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ text: 'Closing', mediaIds: [], replyToPostId: 'root-1' }),
     );
   });
 

@@ -15,7 +15,7 @@ export interface XApiError {
   outcomeUnknown?: boolean;
 }
 
-const X_MAX_MEDIA_PER_POST = 4;
+export const X_MAX_MEDIA_PER_POST = 4;
 
 export interface XClient {
   connect(authorizationCode: string): Promise<{ credential: string }>;
@@ -24,6 +24,7 @@ export interface XClient {
     text: string;
     mediaIds: string[];
     quoteTweetId?: string;
+    replyToPostId?: string;
     idempotencyKey: string;
   }): Promise<{ id: string; username: string }>;
   getPost(id: string): Promise<{ id: string; username: string } | null>;

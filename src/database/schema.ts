@@ -771,6 +771,39 @@ export const publicationAttempts = pgTable(
   ],
 );
 
+export const xThreadParts = pgTable(
+  'x_thread_parts',
+  {
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    jobId: uuid('job_id').notNull(),
+    position: integer('position').notNull(),
+    dispatchKey: text('dispatch_key').notNull(),
+    state: text('state').notNull(),
+    dispatchStartedAt: timestamp('dispatch_started_at', { withTimezone: true }).notNull(),
+    externalPostId: text('external_post_id'),
+    externalUrl: text('external_url'),
+    replyToPostId: text('reply_to_post_id'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.workspaceId, table.jobId, table.position],
+      name: 'x_thread_parts_workspace_id_job_id_position_pk',
+    }),
+    uniqueIndex('x_thread_parts_external_post_unique').on(table.workspaceId, table.externalPostId),
+    uniqueIndex('x_thread_parts_dispatch_key_unique').on(table.workspaceId, table.dispatchKey),
+    foreignKey({
+      columns: [table.workspaceId, table.jobId],
+      foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
+      name: 'x_thread_parts_workspace_job_fk',
+    }).onDelete('cascade'),
+    check('x_thread_parts_position_nonnegative', sql`${table.position} >= 0`),
+    check('x_thread_parts_state_valid', sql`${table.state} in ('dispatching', 'published')`),
+  ],
+);
+
 export const xRemediationJournals = pgTable(
   'x_remediation_journals',
   {

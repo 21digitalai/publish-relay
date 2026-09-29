@@ -26,8 +26,14 @@ import {
   resolveReconciliation,
   startDispatchAttempt,
 } from '../scheduler/job.repository.js';
-import { XProviderAdapter, type XClient } from './x-adapter.js';
+import { X_MAX_MEDIA_PER_POST, XProviderAdapter, type XClient } from './x-adapter.js';
+import type { PublishOutcome } from './contract.js';
 import { XHttpClient, type XHttpClientOptions } from './x-http-client.js';
+import {
+  publishXThread,
+  XThreadOutcomeUnknown,
+  type XThreadPart,
+} from './x-thread-dispatch.service.js';
 import {
   stageXMedia,
   type XMediaSource,
@@ -74,6 +80,42 @@ function normalizeStoredThreadPart(part: unknown): string {
     throw new Error('Stored X thread content is invalid');
   }
   return entry.text.trim();
+}
+
+function resolveStoredThreadParts(
+  content: StoredXContent,
+  mediaIds: readonly string[],
+  stagedIds: readonly string[],
+): XThreadPart[] {
+  if (!Array.isArray(content.posts) || content.posts.length < 2)
+    throw new Error('Stored X thread requires at least two parts');
+  const allowed = new Set(mediaIds);
+  const assigned = new Set<string>();
+  const parts = content.posts.map((part, position) => {
+    const text = normalizeStoredThreadPart(part);
+    if (!text) throw new Error('Stored X thread contains an empty part');
+    const ids =
+      typeof part === 'string'
+        ? position === 0
+          ? [...mediaIds]
+          : []
+        : (part as { mediaIds: string[] }).mediaIds;
+    if (ids.length > X_MAX_MEDIA_PER_POST)
+      throw new Error('Stored X thread part exceeds the media attachment limit');
+    const resolved = ids.map((id) => {
+      if (!allowed.has(id) || assigned.has(id))
+        throw new Error('Stored X thread media assignment is invalid');
+      assigned.add(id);
+      const index = mediaIds.indexOf(id);
+      const staged = stagedIds[index];
+      if (!staged) throw new Error('Staged X media is unavailable');
+      return staged;
+    });
+    return { text, mediaIds: resolved };
+  });
+  if (assigned.size !== mediaIds.length)
+    throw new Error('Stored X thread leaves revision media unassigned');
+  return parts;
 }
 
 export function normalizeStoredXContent(content: StoredXContent): {
@@ -256,10 +298,15 @@ export async function dispatchDueXJobs(
         },
       );
       if (stagedMedia.state === 'pending') continue;
-      const normalized = normalizeStoredXContent(context.content);
-      const text = normalized.text;
+      const isThread =
+        (context.content.kind ?? context.content.type) === 'thread' &&
+        context.media.length > 0 &&
+        Array.isArray(context.content.posts) &&
+        context.content.posts.every((part) => part !== null && typeof part === 'object');
+      const normalized = isThread ? null : normalizeStoredXContent(context.content);
+      const text = normalized?.text ?? '';
       const content =
-        normalized.kind === 'quote' && normalized.quotedPostId
+        normalized?.kind === 'quote' && normalized.quotedPostId
           ? {
               kind: 'quote' as const,
               text,
@@ -270,17 +317,26 @@ export async function dispatchDueXJobs(
       const adapter = new XProviderAdapter(
         runtime.createClient(plaintext.toString('utf8')) as XMediaUploadClient & XClient,
       );
-      const staged = await adapter.stage(
-        context.accountId,
-        {
-          ...content,
-          media: content.media.map((media, index) => ({
-            ...media,
-            id: stagedMedia.mediaIds[index] ?? media.id,
-          })),
-        },
-        idempotencyKey,
-      );
+      const staged = isThread
+        ? null
+        : await adapter.stage(
+            context.accountId,
+            {
+              ...content,
+              media: content.media.map((media, index) => ({
+                ...media,
+                id: stagedMedia.mediaIds[index] ?? media.id,
+              })),
+            },
+            idempotencyKey,
+          );
+      const threadParts = isThread
+        ? resolveStoredThreadParts(
+            context.content,
+            context.media.map((media) => media.id),
+            stagedMedia.mediaIds,
+          )
+        : null;
       const attempt = await startDispatchAttempt(runtime.database, {
         workspaceId: job.workspaceId,
         jobId: job.id,
@@ -289,10 +345,33 @@ export async function dispatchDueXJobs(
         now,
       });
       if (!attempt) continue;
-      const outcome = await adapter.publish(staged);
-      const failed = outcome.status === 'failed';
+      let outcome: PublishOutcome;
+      if (threadParts) {
+        try {
+          const published = await publishXThread({
+            database: runtime.database,
+            client: runtime.createClient(plaintext.toString('utf8')) as XClient,
+            workspaceId: job.workspaceId,
+            jobId: job.id,
+            idempotencyKey,
+            parts: threadParts,
+            now,
+          });
+          outcome = { status: 'published' as const, ...published };
+        } catch (error) {
+          if (!(error instanceof XThreadOutcomeUnknown)) throw error;
+          outcome = {
+            status: 'unknown' as const,
+            reconciliationKey: `x:manual:thread:${job.id}:${String(error.position)}`,
+          };
+        }
+      } else {
+        if (!staged) throw new Error('X staged publication is unavailable');
+        outcome = await adapter.publish(staged);
+      }
       const retryAt =
-        failed && (outcome.code === 'rate_limit' || outcome.code === 'transient')
+        outcome.status === 'failed' &&
+        (outcome.code === 'rate_limit' || outcome.code === 'transient')
           ? new Date(now.getTime() + (outcome.retryAfterSeconds ?? 30) * 1000)
           : undefined;
       await finishDispatchAttempt(runtime.database, {

@@ -36,11 +36,14 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
+  '0038_fancy_scorpion.sql',
+  '0039_small_madrox.sql',
+  '0044_x_thread_reply_link.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000501';
 const jobId = '00000000-0000-4000-8000-000000000508';
 
-it('claims persisted object-post content and publishes one X Premium post with staged media', async () => {
+it('publishes persisted media root plus separate linked reply and records each external ID', async () => {
   const database = new PGlite();
   try {
     for (const migration of migrations) {
@@ -69,7 +72,7 @@ it('claims persisted object-post content and publishes one X Premium post with s
       INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
         VALUES ('00000000-0000-4000-8000-000000000507', '${workspaceId}',
           '00000000-0000-4000-8000-000000000506', 1,
-          '{"kind":"thread","posts":[{"text":"Opening","mediaIds":["00000000-0000-4000-8000-000000000509"]},{"text":"Closing","mediaIds":[]}]}');
+          '{"kind":"thread","posts":[{"text":"Article text","mediaIds":["00000000-0000-4000-8000-000000000509"]},{"text":"Source: https://example.test/article","mediaIds":[]}]}');
       INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
         VALUES ('00000000-0000-4000-8000-000000000509', '${workspaceId}',
           'premium/media', 'hash', 'image/png', 1, 'ready');
@@ -82,7 +85,11 @@ it('claims persisted object-post content and publishes one X Premium post with s
           '00000000-0000-4000-8000-000000000505', '2026-09-01T00:00:00Z');
     `);
     const db = drizzle(database) as unknown as NodePgDatabase;
-    const createPost = vi.fn(() => Promise.resolve({ id: 'x-post-1', username: 'premium' }));
+    const createPost = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'x-root-1', username: 'premium' })
+      .mockResolvedValueOnce({ id: 'x-reply-1', username: 'premium' });
+    const getPost = vi.fn((id: string) => Promise.resolve({ id, username: 'premium' }));
     const client = {
       init: () => Promise.resolve({ mediaId: 'x-media-1', expiresAfterSeconds: 3600 }),
       append: () => Promise.resolve(),
@@ -90,6 +97,7 @@ it('claims persisted object-post content and publishes one X Premium post with s
       status: () => Promise.resolve({ state: 'not_finalized' as const }),
       discard: () => Promise.resolve(),
       createPost,
+      getPost,
     } as unknown as XMediaUploadClient & XClient;
     const dispatched = await dispatchDueXJobs(
       {
@@ -103,10 +111,19 @@ it('claims persisted object-post content and publishes one X Premium post with s
       new Date('2026-09-02T00:00:00Z'),
     );
     expect(dispatched).toBe(1);
-    expect(createPost).toHaveBeenCalledWith(
+    expect(createPost).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
-        text: 'Opening\n\nClosing',
+        text: 'Article text',
         mediaIds: ['x-media-1'],
+      }),
+    );
+    expect(createPost).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        text: 'Source: https://example.test/article',
+        mediaIds: [],
+        replyToPostId: 'x-root-1',
       }),
     );
     const result = await database.query<{ state: string; attempts: number }>(`
@@ -114,6 +131,80 @@ it('claims persisted object-post content and publishes one X Premium post with s
       LEFT JOIN publication_attempts a ON a.job_id = j.id WHERE j.id = '${jobId}'
       GROUP BY j.state`);
     expect(result.rows[0]).toMatchObject({ state: 'published', attempts: 1 });
+    const attempt = await database.query<{ external_post_id: string }>(`
+      SELECT external_post_id FROM publication_attempts WHERE job_id = '${jobId}'`);
+    expect(attempt.rows[0]?.external_post_id).toBe('x-root-1');
+    const parts = await database.query<{
+      position: number;
+      external_post_id: string;
+      reply_to_post_id: string | null;
+    }>(`
+      SELECT position, external_post_id, reply_to_post_id FROM x_thread_parts
+      WHERE job_id = '${jobId}' ORDER BY position`);
+    expect(parts.rows).toMatchObject([
+      { position: 0, external_post_id: 'x-root-1', reply_to_post_id: null },
+      { position: 1, external_post_id: 'x-reply-1', reply_to_post_id: 'x-root-1' },
+    ]);
+
+    // A failed reply response is ambiguous: the root is retained, and even a forced retry
+    // must never send either part again without reconciliation of the reserved reply.
+    const interruptedJobId = '00000000-0000-4000-8000-000000000510';
+    await database.exec(`INSERT INTO publication_jobs
+      (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+      SELECT '${interruptedJobId}', workspace_id, post_id, revision_id, provider_account_id,
+        scheduled_at FROM publication_jobs WHERE id = '${jobId}'`);
+    createPost.mockResolvedValueOnce({ id: 'x-root-2', username: 'premium' });
+    createPost.mockRejectedValueOnce(new Error('response lost'));
+    expect(
+      await dispatchDueXJobs(
+        {
+          database: db,
+          keys: {} as never,
+          source: {
+            load: () => Promise.resolve({ bytes: Buffer.from('x'), mimeType: 'image/png' }),
+          },
+          createClient: () => client,
+          workerId: 'premium-worker',
+          leaseMs: 30_000,
+        },
+        new Date('2026-09-02T00:00:01Z'),
+      ),
+    ).toBe(1);
+    const interrupted = await database.query<{ state: string; reconciliation_required: boolean }>(`
+      SELECT state, reconciliation_required FROM publication_jobs WHERE id = '${interruptedJobId}'`);
+    expect(interrupted.rows[0]).toMatchObject({
+      state: 'dispatching',
+      reconciliation_required: true,
+    });
+    const reserved = await database.query<{
+      position: number;
+      state: string;
+      external_post_id: string | null;
+    }>(`
+      SELECT position, state, external_post_id FROM x_thread_parts
+      WHERE job_id = '${interruptedJobId}' ORDER BY position`);
+    expect(reserved.rows).toMatchObject([
+      { position: 0, state: 'published', external_post_id: 'x-root-2' },
+      { position: 1, state: 'dispatching', external_post_id: null },
+    ]);
+    await database.exec(`UPDATE publication_jobs SET state = 'retry_wait', reconciliation_required = false,
+      next_attempt_at = '2026-09-02T00:00:02Z' WHERE id = '${interruptedJobId}'`);
+    expect(
+      await dispatchDueXJobs(
+        {
+          database: db,
+          keys: {} as never,
+          source: {
+            load: () => Promise.resolve({ bytes: Buffer.from('x'), mimeType: 'image/png' }),
+          },
+          createClient: () => client,
+          workerId: 'premium-worker',
+          leaseMs: 30_000,
+        },
+        new Date('2026-09-02T00:00:03Z'),
+      ),
+    ).toBe(1);
+    expect(createPost).toHaveBeenCalledTimes(4);
   } finally {
     await database.close();
   }

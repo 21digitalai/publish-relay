@@ -33,6 +33,7 @@ export function registerTikTokMediaRoutes(
   application.get<{ Params: { grant: string; token: string } }>(
     '/provider-media/tiktok/:grant/:token',
     async (request, reply) => {
+      reply.header('cache-control', 'private, no-store');
       if (request.protocol !== 'https') return reply.code(404).send();
       const grant = await dependencies.grants.resolve(request.params.grant, request.params.token);
       if (!grant) return reply.code(404).send();
@@ -72,7 +73,6 @@ export function registerTikTokMediaRoutes(
         body = bytes.subarray(start, end + 1);
       }
       reply
-        .header('cache-control', 'private, no-store')
         .header('x-content-type-options', 'nosniff')
         .header('accept-ranges', 'bytes')
         .header('content-length', end - start + 1)

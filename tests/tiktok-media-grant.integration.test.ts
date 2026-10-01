@@ -162,7 +162,10 @@ describe('TikTok scoped pull grant', () => {
       headers: { ...headers, range: 'bytes=0-1,4-5' },
     });
     expect(invalid.statusCode).toBe(416);
-    expect((await server.inject({ method: 'GET', url: path })).statusCode).toBe(404);
+    expect(invalid.headers['cache-control']).toBe('private, no-store');
+    const insecure = await server.inject({ method: 'GET', url: path });
+    expect(insecure.statusCode).toBe(404);
+    expect(insecure.headers['cache-control']).toBe('private, no-store');
     await server.close();
   });
 

@@ -1909,6 +1909,14 @@ select:focus-visible {
 .media-dropzone .secondary-button {
   margin-top: 8px;
 }
+.composer-media-attachment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
 .youtube-composer-options {
   display: grid;
   grid-template-columns: 1fr 1fr;

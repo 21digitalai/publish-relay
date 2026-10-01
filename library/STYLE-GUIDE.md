@@ -125,6 +125,7 @@ Order:
 1. Visual multi-account picker grouped by provider.
 2. Post body with target-specific capability/character feedback.
 3. Media previews, progress, constraints, removal, and errors.
+   The shared media control accepts one MP4 for a single YouTube destination, or up to four X images / one X GIF or MP4 for X-only destinations. It shows attached filenames and removal, validates type/count/size before upload, and uses the existing browser media lifecycle during schedule submission.
 4. Now/Schedule segmented control.
 5. Date-time picker with visible timezone.
 6. Per-provider preview and validation.

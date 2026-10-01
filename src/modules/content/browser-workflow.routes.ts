@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
@@ -23,7 +24,12 @@ import { getReadyMediaForDownload } from './media.repository.js';
 import { deleteUnattachedMedia } from './media-retention.service.js';
 import type { MediaStorage } from './media-storage.js';
 import { FfprobeMediaProbe, type MediaProbe } from './media-probe.js';
-import { detectMimeType, storeStagedMediaInTransaction } from './media.service.js';
+import {
+  detectMimeType,
+  storeMediaInTransaction,
+  storeStagedMediaInTransaction,
+  validateMediaContentType,
+} from './media.service.js';
 import { createPostRequestSchema } from './post.contract.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import {
@@ -61,6 +67,8 @@ const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
 const BROWSER_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+const BROWSER_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const BROWSER_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 const BROWSER_VIDEO_LIMITS = { maxDurationMs: 60 * 60 * 1000, maxWidth: 8192, maxHeight: 8192 };
 
 function authorizeMutation(request: FastifyRequest): boolean {
@@ -188,6 +196,16 @@ export function registerBrowserWorkflowRoutes(
       },
     );
   if (mediaStorage)
+    for (const contentType of BROWSER_IMAGE_TYPES)
+      if (!application.hasContentTypeParser(contentType))
+        application.addContentTypeParser(
+          contentType,
+          { parseAs: 'buffer', bodyLimit: BROWSER_IMAGE_MAX_BYTES },
+          (_request, body, done) => {
+            done(null, body);
+          },
+        );
+  if (mediaStorage)
     application.post('/api/workflow/media', async (request, reply) => {
       let temporaryKey: string | undefined;
       try {
@@ -202,6 +220,63 @@ export function registerBrowserWorkflowRoutes(
             .code(400)
             .send({ data: null, error: 'A valid Idempotency-Key is required' });
         const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
+        const isImage = BROWSER_IMAGE_TYPES.some((type) => type === contentType);
+        z.string().min(1).max(255).parse(request.headers['x-file-name']);
+        if (contentType && isImage && Buffer.isBuffer(request.body)) {
+          const bytes = request.body;
+          validateMediaContentType(bytes, contentType);
+          const fingerprint = createHash('sha256')
+            .update(contentType)
+            .update('\0')
+            .update(bytes)
+            .digest('hex');
+          const result = await executeBrowserMutation(
+            dependencies.database,
+            {
+              workspaceId: identity.workspaceId,
+              userId: identity.userId,
+              operation: 'media.create',
+              idempotencyKey: key,
+              requestFingerprint: fingerprint,
+            },
+            async (transaction) => {
+              const media = await storeMediaInTransaction(
+                transaction,
+                mediaStorage,
+                {
+                  workspaceId: identity.workspaceId,
+                  userId: identity.userId,
+                  actor: { type: 'user', id: identity.userId },
+                  requestId: request.id,
+                  idempotencyKey: key,
+                  bytes,
+                  maxBytes: BROWSER_IMAGE_MAX_BYTES,
+                },
+                actionPolicy,
+              );
+              temporaryKey = `${identity.workspaceId}/${media.mediaId}/${media.sha256}`;
+              return {
+                statusCode: 201,
+                body: {
+                  data: {
+                    id: media.mediaId,
+                    mimeType: media.mimeType,
+                    byteSize: media.byteSize,
+                    state: 'ready',
+                  },
+                  error: null,
+                },
+              };
+            },
+          );
+          temporaryKey = undefined;
+          if (result.kind === 'conflict')
+            return await reply
+              .code(409)
+              .send({ data: null, error: 'Idempotency key was already used' });
+          if (result.kind === 'replayed') void reply.header('Idempotency-Replayed', 'true');
+          return await reply.code(result.response.statusCode).send(result.response.body);
+        }
         if (
           contentType !== 'video/mp4' ||
           !mediaStorage.stageStream ||
@@ -211,7 +286,6 @@ export function registerBrowserWorkflowRoutes(
           return await reply
             .code(400)
             .send({ data: null, error: 'A valid MP4 upload is required' });
-        z.string().min(1).max(255).parse(request.headers['x-file-name']);
         const staged = await mediaStorage.stageStream({
           stream: request.body as Readable,
           maxBytes: videoConfig.maxBytes,

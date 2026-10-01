@@ -992,6 +992,72 @@ test('dismisses the composer safely and restores its Create post trigger', async
   await expect(trigger).toBeFocused();
 });
 
+test('selects and schedules X image media through the canonical composer', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000201',
+              provider: 'x',
+              displayName: 'Example Editorial',
+              status: 'active',
+              adapterDefaults: {},
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  const uploads: string[] = [];
+  await page.route('**/api/workflow/media', (route) => {
+    uploads.push(route.request().headers()['content-type'] ?? '');
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: `media-${String(uploads.length)}` }, error: null }),
+    });
+  });
+  let submittedMedia: string[] = [];
+  await page.route('**/api/workflow/posts', (route) => {
+    submittedMedia = (route.request().postDataJSON() as { mediaIds: string[] }).mediaIds;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { jobs: [{}] }, error: null }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByPlaceholder('What should your audience know?').fill('Image post');
+  await page
+    .locator('#composer-media-upload')
+    .setInputFiles({ name: 'notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from('pdf') });
+  await expect(page.getByRole('alert')).toContainText('supported image');
+  await expect(page.locator('.composer-media-attachment')).toHaveCount(0);
+  const fileChooser = page.waitForEvent('filechooser');
+  await page.getByText('Choose files').click();
+  await (
+    await fileChooser
+  ).setFiles({
+    name: 'image.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+  });
+  await expect(page.locator('.composer-media-attachment')).toContainText('image.png');
+  await page.screenshot({ path: testInfo.outputPath('x-media-attached.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  expect(uploads).toEqual(['image/png']);
+  expect(submittedMedia).toEqual(['media-1']);
+});
+
 test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await establishWorkspaceSession(page);

@@ -330,7 +330,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [draftState, setDraftState] = useState<'loading' | 'ready' | 'error'>(
     draftId ? 'loading' : 'ready',
   );
-  const [video, setVideo] = useState<File | null>(null);
+  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [videoTitle, setVideoTitle] = useState('');
   const [videoDescription, setVideoDescription] = useState('');
   const [madeForKids, setMadeForKids] = useState<'default' | 'yes' | 'no'>('default');
@@ -347,29 +347,28 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
-  const uploadedMediaId = useRef<string | null>(null);
+  const uploadedMediaIds = useRef<string[]>([]);
+  const uploadedIntentKey = useRef<string | null>(null);
   const discardUpload = async (): Promise<boolean> => {
-    const mediaId = uploadedMediaId.current;
-    if (!mediaId) return true;
-    try {
-      const response = await fetch(`/api/workflow/media/${mediaId}`, {
-        method: 'DELETE',
-        headers: { 'x-csrf-token': cookieValue('publish_relay_csrf') },
-      });
-      const envelope = (await response.json()) as { data?: { deleted?: boolean } };
-      if (response.ok && envelope.data?.deleted === true) {
-        uploadedMediaId.current = null;
-        return true;
+    for (const mediaId of [...uploadedMediaIds.current]) {
+      try {
+        const response = await fetch(`/api/workflow/media/${mediaId}`, {
+          method: 'DELETE',
+          headers: { 'x-csrf-token': cookieValue('publish_relay_csrf') },
+        });
+        const envelope = (await response.json()) as { data?: { deleted?: boolean } };
+        if (response.ok && envelope.data?.deleted === true)
+          uploadedMediaIds.current = uploadedMediaIds.current.filter((id) => id !== mediaId);
+      } catch {
+        // Keep the media identity so a retry can resume server-owned cleanup.
       }
-    } catch {
-      // Keep the media identity so a retry can resume server-owned cleanup.
     }
-    return false;
+    return uploadedMediaIds.current.length === 0;
   };
   const closeComposer = async () => {
     if (state === 'saving') return;
     if (await discardUpload()) onClose();
-    else setError('The uploaded video is still being cleaned up. Try closing again.');
+    else setError('Uploaded media is still being cleaned up. Try closing again.');
   };
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -390,6 +389,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const scheduledAtMillis = scheduledAt ? scheduledAt.getTime() : null;
   const selected = accounts.filter((account) => selectedAccounts.includes(account.id));
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
+  const isX = selected.length > 0 && selected.every((account) => account.provider === 'x');
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const youtubeHasMadeForKids = selected[0]?.adapterDefaults.madeForKids !== undefined;
   const scheduleError =
@@ -410,9 +410,12 @@ function Composer({ onClose }: { onClose: () => void }) {
     : [];
   const invalid =
     (isYouTube
-      ? !video || !videoTitle.trim() || (!youtubeHasMadeForKids && madeForKids === 'default')
+      ? mediaFiles.length !== 1 ||
+        !videoTitle.trim() ||
+        (!youtubeHasMadeForKids && madeForKids === 'default')
       : !body.trim()) ||
     (includesYouTube && !isYouTube) ||
+    (mediaFiles.length > 0 && !isYouTube && !isX) ||
     selectedAccounts.length === 0 ||
     state !== 'ready' ||
     draftState !== 'ready' ||
@@ -503,7 +506,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     scheduleOption,
     scheduled,
     selectedAccounts,
-    video,
+    mediaFiles,
     videoDescription,
     videoTitle,
   ]);
@@ -515,27 +518,38 @@ function Composer({ onClose }: { onClose: () => void }) {
     if (!targetTime) return;
     try {
       let mediaIds: string[] = draftMediaIds;
-      if (isYouTube && video) {
-        if (uploadedMediaId.current) mediaIds = [uploadedMediaId.current];
-        else {
-          const uploadResponse = await fetch('/api/workflow/media', {
-            method: 'POST',
-            headers: {
-              'content-type': 'video/mp4',
-              'x-file-name': video.name,
-              'x-csrf-token': cookieValue('publish_relay_csrf'),
-              'idempotency-key': `${intentKey.current}-media`,
-            },
-            body: video,
-          });
-          const upload = (await uploadResponse.json()) as {
-            data?: { id: string };
-            error?: string | null;
-          };
-          if (!uploadResponse.ok || !upload.data)
-            throw new Error(upload.error ?? 'The video could not be uploaded.');
-          mediaIds = [upload.data.id];
-          uploadedMediaId.current = upload.data.id;
+      if (mediaFiles.length === 0 && !(await discardUpload()))
+        throw new Error('Previous media cleanup is still pending. Try again.');
+      if (mediaFiles.length > 0) {
+        if (
+          uploadedIntentKey.current === intentKey.current &&
+          uploadedMediaIds.current.length === mediaFiles.length
+        ) {
+          mediaIds = [...mediaIds, ...uploadedMediaIds.current];
+        } else {
+          if (!(await discardUpload()))
+            throw new Error('Previous media cleanup is still pending. Try again.');
+          uploadedIntentKey.current = intentKey.current;
+          for (const [index, file] of mediaFiles.entries()) {
+            const uploadResponse = await fetch('/api/workflow/media', {
+              method: 'POST',
+              headers: {
+                'content-type': file.type,
+                'x-file-name': file.name,
+                'x-csrf-token': cookieValue('publish_relay_csrf'),
+                'idempotency-key': `${intentKey.current}-media-${String(index)}`,
+              },
+              body: file,
+            });
+            const upload = (await uploadResponse.json()) as {
+              data?: { id: string };
+              error?: string | null;
+            };
+            if (!uploadResponse.ok || !upload.data)
+              throw new Error(upload.error ?? 'The media could not be uploaded.');
+            mediaIds = [...mediaIds, upload.data.id];
+            uploadedMediaIds.current.push(upload.data.id);
+          }
         }
       }
       const youtubeOverrides = {
@@ -570,7 +584,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         error?: string | null;
       };
       if (!response.ok) throw new Error(envelope.error ?? 'The post could not be scheduled.');
-      uploadedMediaId.current = null;
+      uploadedMediaIds.current = [];
       setReceipt({
         count: selectedAccounts.length,
         scheduledAt: targetTime.toISOString(),
@@ -674,6 +688,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     type="checkbox"
                     checked={selectedAccounts.includes(account.id)}
                     onChange={() => {
+                      setMediaFiles([]);
                       setSelectedAccounts((current) =>
                         current.includes(account.id)
                           ? current.filter((id) => id !== account.id)
@@ -777,24 +792,88 @@ function Composer({ onClose }: { onClose: () => void }) {
               <strong>Add media</strong>
               <span>
                 {isYouTube
-                  ? video
-                    ? video.name
+                  ? mediaFiles[0]
+                    ? mediaFiles[0].name
                     : 'Choose exactly one MP4 video'
-                  : 'Media upload is available for YouTube destinations'}
+                  : isX
+                    ? 'Up to four images, or one GIF or MP4 video'
+                    : 'Select only X accounts or one YouTube channel to add media'}
               </span>
-              <label className="secondary-button" htmlFor="composer-media-upload">
-                Choose files
-              </label>
-              <input
-                id="composer-media-upload"
-                className="sr-only"
-                type="file"
-                accept="video/mp4"
-                disabled={!isYouTube}
-                onChange={(event) => {
-                  setVideo(event.target.files?.[0] ?? null);
-                }}
-              />
+              {(isYouTube || isX) && (
+                <>
+                  <label className="secondary-button" htmlFor="composer-media-upload">
+                    Choose files
+                  </label>
+                  <input
+                    id="composer-media-upload"
+                    className="sr-only"
+                    type="file"
+                    accept={
+                      isYouTube
+                        ? 'video/mp4'
+                        : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
+                    }
+                    multiple={isX}
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      event.target.value = '';
+                      const allowed = isYouTube
+                        ? ['video/mp4']
+                        : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
+                      if (files.some((file) => !allowed.includes(file.type))) {
+                        setError('Choose a supported image, GIF, or MP4 file.');
+                        return;
+                      }
+                      if (isYouTube && files.length !== 1) {
+                        setError('Choose exactly one MP4 video.');
+                        return;
+                      }
+                      if (
+                        isX &&
+                        (files.length > 4 ||
+                          (files.length > 1 &&
+                            files.some(
+                              (file) => file.type === 'video/mp4' || file.type === 'image/gif',
+                            )))
+                      ) {
+                        setError('X accepts up to four images, or one GIF or MP4 video.');
+                        return;
+                      }
+                      if (
+                        files.some(
+                          (file) =>
+                            file.size >
+                            (file.type === 'video/mp4' ? (isYouTube ? 2048 : 512) : 5) *
+                              1024 *
+                              1024,
+                        )
+                      ) {
+                        setError('One or more files exceed the destination size limit.');
+                        return;
+                      }
+                      setError(null);
+                      setMediaFiles(files);
+                    }}
+                  />
+                </>
+              )}
+              {mediaFiles.map((file) => (
+                <div
+                  className="composer-media-attachment"
+                  key={`${file.name}-${String(file.size)}`}
+                >
+                  <span>{file.name}</span>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setMediaFiles((current) => current.filter((item) => item !== file));
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
             </div>
             {includesYouTube && !isYouTube && (
               <p className="inline-validation" role="alert">

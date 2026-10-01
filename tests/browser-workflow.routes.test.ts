@@ -13,6 +13,7 @@ const requestOperatorRetry = vi.fn();
 const verifyCsrfToken = vi.fn(() => true);
 const executeBrowserMutation = vi.fn();
 const storeStagedMediaInTransaction = vi.fn();
+const storeMediaInTransaction = vi.fn();
 const deleteUnattachedMedia = vi.fn();
 const getExternalDraftForWorkspace = vi.fn();
 const transitionExternalDraft = vi.fn();
@@ -29,6 +30,7 @@ vi.mock('../src/modules/content/browser-idempotency.repository.js', () => ({
 vi.mock('../src/modules/content/media.service.js', async (importOriginal) => ({
   ...(await importOriginal()),
   storeStagedMediaInTransaction,
+  storeMediaInTransaction,
 }));
 vi.mock('../src/modules/content/media-retention.service.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -499,6 +501,12 @@ describe('browser workflow MP4 ingest', () => {
       sha256: 'a'.repeat(64),
       byteSize: 128,
     });
+    storeMediaInTransaction.mockResolvedValue({
+      mediaId: '00000000-0000-4000-8000-000000000899',
+      mimeType: 'image/png',
+      sha256: 'b'.repeat(64),
+      byteSize: 12,
+    });
     executeBrowserMutation.mockImplementation(
       async (
         _database: unknown,
@@ -568,6 +576,53 @@ describe('browser workflow MP4 ingest', () => {
       error: null,
     });
     expect(response.body).not.toContain('sha256');
+  });
+
+  it('accepts bounded signed image bytes through the same browser media lifecycle', async () => {
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, {
+      auth: {} as AuthService,
+      database: {} as never,
+      mediaStorage: storage,
+    });
+    const headers = {
+      'content-type': 'image/png',
+      'x-file-name': 'picture.png',
+      'idempotency-key': 'browser-image',
+      'x-csrf-token': 'csrf',
+      cookie: 'publish_relay_csrf=csrf',
+    };
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/media',
+      headers,
+      payload: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+    });
+    expect(response.statusCode).toBe(201);
+    expect(storeMediaInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      storage,
+      expect.objectContaining({ workspaceId, userId: 'user', maxBytes: 5 * 1024 * 1024 }),
+      expect.anything(),
+    );
+    expect(response.json()).toEqual({
+      data: {
+        id: '00000000-0000-4000-8000-000000000899',
+        mimeType: 'image/png',
+        byteSize: 12,
+        state: 'ready',
+      },
+      error: null,
+    });
+    const invalid = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/media',
+      headers: { ...headers, 'idempotency-key': 'browser-image-invalid' },
+      payload: Buffer.from('not-an-image'),
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(storeMediaInTransaction).toHaveBeenCalledTimes(1);
+    await application.close();
   });
 
   it('rejects missing sessions and CSRF before staging bytes', async () => {

@@ -6,6 +6,13 @@ import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
+import type { MasterKeyProvider } from './envelope.js';
+import type { TikTokHttpClient } from '../providers/tiktok-http-client.js';
+import { TikTokRequestError } from '../providers/tiktok-http-client.js';
+import {
+  fetchTikTokCapabilitySnapshot,
+  TikTokCapabilityUnavailableError,
+} from '../providers/tiktok-capabilities.service.js';
 import {
   disconnectProviderAccount,
   listProviderAccounts,
@@ -16,7 +23,11 @@ const accountParamsSchema = z.object({ accountId: z.uuid() });
 
 export function registerProviderAccountRoutes(
   application: FastifyInstance,
-  dependencies: { auth: AuthService; database: NodePgDatabase },
+  dependencies: {
+    auth: AuthService;
+    database: NodePgDatabase;
+    tiktok?: { keys: MasterKeyProvider; client: TikTokHttpClient };
+  },
 ): void {
   application.get('/api/provider-accounts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
@@ -24,6 +35,40 @@ export function registerProviderAccountRoutes(
     const accounts = await listProviderAccounts(dependencies.database, identity.workspaceId);
     return { data: { accounts }, error: null };
   });
+
+  application.get(
+    '/api/provider-accounts/:accountId/tiktok-capabilities',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      const params = accountParamsSchema.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid account' });
+      if (!dependencies.tiktok)
+        return reply.code(503).send({ data: null, error: 'TikTok options are unavailable' });
+      try {
+        const snapshot = await fetchTikTokCapabilitySnapshot(
+          dependencies.database,
+          dependencies.tiktok.keys,
+          dependencies.tiktok.client,
+          {
+            workspaceId: identity.workspaceId,
+            accountId: params.data.accountId,
+            requestId: request.id,
+          },
+        );
+        return { data: snapshot, error: null };
+      } catch (error) {
+        if (error instanceof TikTokCapabilityUnavailableError)
+          return reply.code(409).send({ data: null, error: 'Reconnect this TikTok account' });
+        if (error instanceof TikTokRequestError)
+          return reply
+            .code(502)
+            .send({ data: null, error: 'TikTok options could not be refreshed' });
+        throw error;
+      }
+    },
+  );
 
   application.delete('/api/provider-accounts/:accountId', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');

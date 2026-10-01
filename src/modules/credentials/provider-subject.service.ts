@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -107,7 +107,16 @@ export async function disconnectProviderSubject(
         and(
           eq(publicationJobs.workspaceId, input.workspaceId),
           eq(providerAccounts.connectionId, connection.id),
-          inArray(publicationJobs.state, ['scheduled', 'leased', 'dispatching', 'retry_wait']),
+          or(
+            inArray(publicationJobs.state, [
+              'scheduled',
+              'leased',
+              'dispatching',
+              'accepted_pending',
+              'retry_wait',
+            ]),
+            eq(publicationJobs.reconciliationRequired, true),
+          ),
         ),
       )
       .limit(1);

@@ -289,6 +289,46 @@ describe('credential and OAuth persistence', () => {
         requestId: 'stale-refresh',
       }),
     ).toBe(false);
+    const firstAccount = await database.query<{ id: string }>(
+      "SELECT id FROM provider_accounts WHERE provider_account_id = 'subject-one'",
+    );
+    const post = await database.query<{ id: string }>(
+      `INSERT INTO posts (workspace_id, created_by_user_id) VALUES ($1, $2) RETURNING id`,
+      [workspaceId, userId],
+    );
+    const revision = await database.query<{ id: string }>(
+      `INSERT INTO post_revisions (workspace_id, post_id, revision_number, content)
+         VALUES ($1, $2, 1, '{}') RETURNING id`,
+      [workspaceId, post.rows[0]?.id],
+    );
+    await database.query(
+      `INSERT INTO publication_jobs
+           (workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state)
+         VALUES ($1, $2, $3, $4, now(), 'accepted_pending')`,
+      [workspaceId, post.rows[0]?.id, revision.rows[0]?.id, firstAccount.rows[0]?.id],
+    );
+    await expect(
+      disconnectProviderSubject(db, {
+        workspaceId,
+        userId,
+        provider: 'tiktok',
+        externalSubjectId: 'subject-one',
+        requestId: 'disconnect-pending',
+      }),
+    ).rejects.toThrow('Scheduled publications must be resolved before disconnect');
+    await database.query(
+      "UPDATE publication_jobs SET state = 'failed', reconciliation_required = true WHERE state = 'accepted_pending'",
+    );
+    await expect(
+      disconnectProviderSubject(db, {
+        workspaceId,
+        userId,
+        provider: 'tiktok',
+        externalSubjectId: 'subject-one',
+        requestId: 'disconnect-unresolved',
+      }),
+    ).rejects.toThrow('Scheduled publications must be resolved before disconnect');
+    await database.query('UPDATE publication_jobs SET reconciliation_required = false');
     const disconnected = await disconnectProviderSubject(db, {
       workspaceId,
       userId,

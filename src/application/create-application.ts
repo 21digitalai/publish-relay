@@ -148,7 +148,16 @@ function registerMachineApiRoutes(
   const rateLimiter = createApiRateLimiter();
   registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
   if (!database) return;
-  registerDestinationRoutes(application, database, apiKeys, rateLimiter, delegatedAuthorization);
+  registerDestinationRoutes(
+    application,
+    database,
+    apiKeys,
+    rateLimiter,
+    delegatedAuthorization,
+    options.tiktokOauth
+      ? { keys: options.tiktokOauth.keys, client: options.tiktokOauth.client }
+      : undefined,
+  );
   if (!config.CURSOR_SIGNING_SECRET)
     throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
   registerPostRoutes(

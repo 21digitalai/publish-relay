@@ -50,6 +50,22 @@ const destinationCollectionSchema = z.object({
     }),
   ),
 });
+const tiktokCapabilitySchema = z.object({
+  id: z.uuid(),
+  accountId: z.uuid(),
+  nickname: z.string().min(1),
+  privacyOptions: z
+    .array(
+      z.enum(['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY']),
+    )
+    .min(1),
+  commentDisabled: z.boolean(),
+  duetDisabled: z.boolean(),
+  stitchDisabled: z.boolean(),
+  maxVideoDurationSeconds: z.number().int().positive(),
+  fetchedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+});
 const mediaMutationSchema = z.object({
   id: z.uuid(),
   mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4']),
@@ -203,6 +219,36 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               description: 'Read rate limit exceeded',
               content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
             },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/tiktok-capabilities': {
+        get: {
+          operationId: 'fetchTikTokDestinationCapabilities',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Fresh account-bound creator capabilities; no privacy default',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(tiktokCapabilitySchema)),
+                },
+              },
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing destinations:read capability' },
+            '409': { description: 'Destination or grant unavailable' },
+            '429': { description: 'Rate limited' },
+            '502': { description: 'Provider lookup failed; no fallback capabilities returned' },
+            '503': { description: 'TikTok transport not configured' },
           },
         },
       },

@@ -535,6 +535,55 @@ export const providerAccounts = pgTable(
   ],
 );
 
+export const providerCapabilitySnapshots = pgTable(
+  'provider_capability_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    accountId: uuid('account_id').notNull(),
+    connectionId: uuid('connection_id').notNull(),
+    externalSubjectId: text('external_subject_id').notNull(),
+    credentialVersion: integer('credential_version').notNull(),
+    nickname: text('nickname').notNull(),
+    privacyOptions: jsonb('privacy_options').$type<string[]>().notNull(),
+    commentDisabled: boolean('comment_disabled').notNull(),
+    duetDisabled: boolean('duet_disabled').notNull(),
+    stitchDisabled: boolean('stitch_disabled').notNull(),
+    maxVideoDurationSeconds: integer('max_video_duration_seconds').notNull(),
+    providerLogId: text('provider_log_id'),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index('provider_capability_snapshots_account_fetched_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.fetchedAt,
+    ),
+    index('provider_capability_snapshots_expiry_idx').on(table.workspaceId, table.expiresAt),
+    check(
+      'provider_capability_snapshots_duration_check',
+      sql`${table.maxVideoDurationSeconds} > 0`,
+    ),
+    check(
+      'provider_capability_snapshots_expiry_check',
+      sql`${table.expiresAt} > ${table.fetchedAt}`,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'provider_capability_snapshots_workspace_account_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.connectionId],
+      foreignColumns: [providerConnections.workspaceId, providerConnections.id],
+      name: 'provider_capability_snapshots_workspace_connection_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
 export const oauthTransactions = pgTable(
   'oauth_transactions',
   {

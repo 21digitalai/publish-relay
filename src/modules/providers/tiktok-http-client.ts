@@ -249,10 +249,26 @@ export class TikTokHttpClient {
   }
 
   public async creatorInfo(accessToken: string): Promise<TikTokCreatorInfo> {
-    return validated(
+    return (await this.creatorInfoWithLog(accessToken)).creator;
+  }
+
+  public async creatorInfoWithLog(
+    accessToken: string,
+  ): Promise<{ creator: TikTokCreatorInfo; logId?: string }> {
+    const metadata: { logId?: string } = {};
+    const creator = validated(
       creatorSchema,
-      await this.call('/v2/post/publish/creator_info/query/', {}, accessToken),
+      await this.call(
+        '/v2/post/publish/creator_info/query/',
+        {},
+        accessToken,
+        'api',
+        false,
+        false,
+        metadata,
+      ),
     );
+    return { creator, ...(metadata.logId ? { logId: metadata.logId } : {}) };
   }
 
   public async initDirectPost(
@@ -355,6 +371,7 @@ export class TikTokHttpClient {
     format: 'api' | 'oauth' = 'api',
     init = false,
     emptySuccess = false,
+    metadata?: { logId?: string },
   ): Promise<unknown> {
     const headers: Record<string, string> = {
       accept: 'application/json',
@@ -431,6 +448,7 @@ export class TikTokHttpClient {
         undefined,
         init && response.ok,
       );
+    if (metadata && logId) metadata.logId = logId;
     return envelope.data.data;
   }
 }

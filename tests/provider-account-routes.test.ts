@@ -11,6 +11,10 @@ vi.mock('../src/modules/credentials/provider-account.service.js', () => ({
   listProviderAccounts: vi.fn(() => Promise.resolve([])),
   updateYouTubeAccountDefaults: vi.fn(() => Promise.resolve('updated')),
 }));
+vi.mock('../src/modules/providers/tiktok-capabilities.service.js', () => ({
+  fetchTikTokCapabilitySnapshot: vi.fn(),
+  TikTokCapabilityUnavailableError: class extends Error {},
+}));
 
 import { authorizeRequest } from '../src/modules/identity/auth.routes.js';
 import {
@@ -18,14 +22,19 @@ import {
   updateYouTubeAccountDefaults,
 } from '../src/modules/credentials/provider-account.service.js';
 import { registerProviderAccountRoutes } from '../src/modules/credentials/provider-account.routes.js';
+import { fetchTikTokCapabilitySnapshot } from '../src/modules/providers/tiktok-capabilities.service.js';
 
 const accountId = '00000000-0000-4000-8000-000000000204';
 const identity = { workspaceId: 'workspace-1', userId: 'user-1' };
 
-async function application() {
+async function application(withTikTok = false) {
   const app = Fastify();
   await app.register(cookie);
-  registerProviderAccountRoutes(app, { auth: {} as never, database: {} as never });
+  registerProviderAccountRoutes(app, {
+    auth: {} as never,
+    database: {} as never,
+    ...(withTikTok ? { tiktok: { keys: {} as never, client: {} as never } } : {}),
+  });
   return app;
 }
 
@@ -125,5 +134,38 @@ describe('provider account routes', () => {
       payload: {},
     });
     expect(missing.statusCode).toBe(404);
+  });
+
+  it('serves a no-store, session-scoped TikTok creator snapshot to the Composer', async () => {
+    const snapshot = {
+      id: '00000000-0000-4000-8000-000000000399',
+      accountId,
+      nickname: 'Fresh Creator',
+      privacyOptions: ['PUBLIC_TO_EVERYONE'],
+      commentDisabled: false,
+      duetDisabled: true,
+      stitchDisabled: true,
+      maxVideoDurationSeconds: 60,
+      fetchedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    } as const;
+    vi.mocked(fetchTikTokCapabilitySnapshot).mockResolvedValueOnce(snapshot as never);
+    const response = await (
+      await application(true)
+    ).inject({
+      method: 'GET',
+      url: `/api/provider-accounts/${accountId}/tiktok-capabilities`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.json()).toEqual({ data: snapshot, error: null });
+    expect(response.body).not.toContain('credentialVersion');
+    expect(response.body).not.toContain('connectionId');
+    expect(fetchTikTokCapabilitySnapshot).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ workspaceId: identity.workspaceId, accountId }),
+    );
   });
 });

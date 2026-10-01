@@ -224,7 +224,11 @@ function registerBrowserRoutes(
     });
   }
   if (auth && database) {
-    registerProviderAccountRoutes(application, { auth, database });
+    registerProviderAccountRoutes(application, {
+      auth,
+      database,
+      ...(tiktokOauth ? { tiktok: { keys: tiktokOauth.keys, client: tiktokOauth.client } } : {}),
+    });
     registerTikTokConsentRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {
       auth,

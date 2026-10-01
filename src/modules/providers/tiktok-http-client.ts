@@ -42,7 +42,9 @@ const statusSchema = z.object({
     'FAILED',
   ]),
   fail_reason: z.string().optional(),
-  publicaly_available_post_id: z.array(z.union([z.string(), z.number().int()])).optional(),
+  publicaly_available_post_id: z
+    .array(z.union([z.string().regex(/^\d+$/), z.number().int().transform(String)]))
+    .optional(),
   uploaded_bytes: z.number().int().nonnegative().optional(),
   downloaded_bytes: z.number().int().nonnegative().optional(),
 });
@@ -100,10 +102,47 @@ export interface TikTokDirectPost {
   coverTimestampMs?: number;
 }
 
-function validated<T>(schema: z.ZodType<T>, value: unknown): T {
+function validated<T>(schema: z.ZodType<T>, value: unknown, outcomeUnknown = false): T {
   const result = schema.safeParse(value);
-  if (!result.success) throw new TikTokRequestError(200, 'permanent');
+  if (!result.success)
+    throw new TikTokRequestError(200, 'permanent', undefined, undefined, undefined, outcomeUnknown);
   return result.data;
+}
+
+function parseProviderJson(text: string): unknown {
+  // Quote unsafe integer literals before JSON.parse can round an int64 post ID.
+  let quoted = false;
+  let escaped = false;
+  let normalized = '';
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index] ?? '';
+    if (quoted) {
+      normalized += character;
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') {
+      quoted = true;
+      normalized += character;
+      continue;
+    }
+    if (!/[-\d]/.test(character)) {
+      normalized += character;
+      continue;
+    }
+    const number = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(index));
+    if (!number) {
+      normalized += character;
+      continue;
+    }
+    const value = number[0];
+    normalized +=
+      /^-?\d+$/.test(value) && !Number.isSafeInteger(Number(value)) ? JSON.stringify(value) : value;
+    index += value.length - 1;
+  }
+  return JSON.parse(normalized) as unknown;
 }
 
 function safeProviderField(value: string | undefined): string | undefined {
@@ -210,6 +249,7 @@ export class TikTokHttpClient {
         'api',
         true,
       ),
+      true,
     );
     return { publishId: data.publish_id };
   }
@@ -271,7 +311,7 @@ export class TikTokHttpClient {
       return undefined;
     let json: unknown;
     try {
-      json = await response.json();
+      json = parseProviderJson(await response.text());
     } catch {
       throw new TikTokRequestError(
         response.status,
@@ -311,7 +351,15 @@ export class TikTokHttpClient {
         retryAfter(response, this.now()),
       );
     if (format === 'oauth') return json;
-    if (!envelope?.success) throw new TikTokRequestError(response.status, 'permanent');
+    if (!envelope?.success)
+      throw new TikTokRequestError(
+        response.status,
+        'permanent',
+        undefined,
+        undefined,
+        undefined,
+        init && response.ok,
+      );
     return envelope.data.data;
   }
 }

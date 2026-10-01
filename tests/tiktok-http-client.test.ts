@@ -192,7 +192,10 @@ describe('TikTokHttpClient transport', () => {
     const request = vi
       .fn<typeof fetch>()
       .mockRejectedValueOnce(new Error('secret-token'))
-      .mockResolvedValueOnce(new Response('not json', { status: 200 }));
+      .mockResolvedValueOnce(new Response('not json', { status: 200 }))
+      .mockResolvedValueOnce(response(ok({})))
+      .mockResolvedValueOnce(response(ok({ publish_id: '' })))
+      .mockResolvedValueOnce(response({ unexpected: true }));
     const api = client(request);
     const input = {
       title: 'secret-caption',
@@ -211,7 +214,25 @@ describe('TikTokHttpClient transport', () => {
     await expect(api.initDirectPost('secret-token', input)).rejects.toMatchObject({
       outcomeUnknown: true,
     });
-    expect(request).toHaveBeenCalledTimes(2);
+    for (let index = 0; index < 3; index += 1)
+      await expect(api.initDirectPost('secret-token', input)).rejects.toMatchObject({
+        outcomeUnknown: true,
+      });
+    expect(request).toHaveBeenCalledTimes(5);
+  });
+
+  it('preserves a TikTok int64 external post ID as an exact decimal string', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(
+          '{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":[7333862123456789012]},"error":{"code":"ok"}}',
+          { status: 200 },
+        ),
+      );
+    await expect(client(request).status('token', 'publish-1')).resolves.toMatchObject({
+      publicaly_available_post_id: ['7333862123456789012'],
+    });
   });
 
   it('rejects partial rotated tokens and classifies auth and transient responses', async () => {

@@ -17,6 +17,7 @@ import { registerMediaRoutes } from '../src/modules/content/media.routes.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { registerBrowserWorkflowRoutes } from '../src/modules/content/browser-workflow.routes.js';
 import { registerExternalDraftRoutes } from '../src/modules/content/external-draft.routes.js';
+import { disconnectProviderAccount } from '../src/modules/credentials/provider-account.service.js';
 import { registerApiKeyRoutes } from '../src/modules/identity/api-key.routes.js';
 import { ApiKeyAuthorizationError } from '../src/modules/identity/api-key.service.js';
 import type { ApiKeyService } from '../src/modules/identity/api-key.service.js';
@@ -661,6 +662,95 @@ describe('browser workflow PostgreSQL boundary', () => {
   const browserHeaders = {
     cookie: `publish_relay_session=${workspaceId}.browser-token`,
   };
+
+  it('rejects a disconnected Meta destination while its sibling remains schedulable', async () => {
+    const facebookId = '00000000-0000-4000-8000-000000000890';
+    const imageId = '00000000-0000-4000-8000-000000000891';
+    await database.exec("UPDATE provider_connections SET provider = 'x' WHERE provider = 'fake'");
+    await database.exec(
+      await readFile(
+        new URL('../migrations/0045_meta_destination_foundation.sql', import.meta.url),
+        'utf8',
+      ),
+    );
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'meta' WHERE workspace_id = '${workspaceId}';
+      UPDATE provider_accounts SET destination_provider = 'instagram'
+        WHERE id = '${providerAccountId}';
+      INSERT INTO provider_accounts
+        (id, workspace_id, connection_id, provider_account_id, remote_account_id, display_name, destination_provider)
+        VALUES ('${facebookId}', '${workspaceId}', '00000000-0000-4000-8000-000000000806',
+          'page-one', 'page-one', 'Page One', 'facebook_page');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${imageId}', '${workspaceId}', 'meta.jpg', 'meta-image', 'image/jpeg', 10, 'ready');
+    `);
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    await expect(
+      disconnectProviderAccount(db, {
+        workspaceId,
+        userId,
+        accountId: providerAccountId,
+        requestId: 'meta-disconnect-one',
+      }),
+    ).resolves.toBe('disconnected');
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=meta-disconnect-csrf`,
+      'x-csrf-token': 'meta-disconnect-csrf',
+    };
+    const create = (
+      key: string,
+      accountId: string,
+      content: Record<string, unknown>,
+      mediaIds: string[],
+    ) =>
+      application.inject({
+        method: 'POST',
+        url: '/api/workflow/posts',
+        headers: { ...headers, 'idempotency-key': key },
+        payload: {
+          content,
+          mediaIds,
+          providerAccountIds: [accountId],
+          scheduledAt: '2026-09-02T10:00:00.000Z',
+        },
+      });
+    const rejected = await create(
+      'meta-disconnected-destination',
+      providerAccountId,
+      { kind: 'single_image', text: 'Disconnected' },
+      [imageId],
+    );
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json()).toMatchObject({
+      error: 'One or more provider accounts are disconnected',
+    });
+    const sibling = await create(
+      'meta-connected-sibling',
+      facebookId,
+      { kind: 'link', text: 'Connected', linkUrl: 'https://example.com/post' },
+      [],
+    );
+    expect(sibling.statusCode).toBe(201);
+    await database.exec(`UPDATE provider_connections SET status = 'disconnected'
+      WHERE workspace_id = '${workspaceId}' AND provider = 'meta'`);
+    const connectionRejected = await create(
+      'meta-disconnected-connection',
+      facebookId,
+      { kind: 'link', text: 'Blocked', linkUrl: 'https://example.com/post' },
+      [],
+    );
+    expect(connectionRejected.statusCode).toBe(400);
+    expect(connectionRejected.json()).toMatchObject({
+      error: 'One or more provider accounts are disconnected',
+    });
+    const counts = await database.query<{ posts: number; jobs: number; mutations: number }>(`
+      SELECT (SELECT count(*)::int FROM posts WHERE workspace_id = '${workspaceId}') AS posts,
+        (SELECT count(*)::int FROM publication_jobs WHERE workspace_id = '${workspaceId}') AS jobs,
+        (SELECT count(*)::int FROM browser_mutation_results WHERE idempotency_key
+          IN ('meta-disconnected-destination', 'meta-disconnected-connection')) AS mutations`);
+    expect(counts.rows[0]).toEqual({ posts: 1, jobs: 1, mutations: 0 });
+  });
 
   it('persists independent Meta jobs and rejects unavailable, incompatible, or foreign targets', async () => {
     const facebookId = '00000000-0000-4000-8000-000000000890';

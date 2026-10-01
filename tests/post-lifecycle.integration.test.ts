@@ -49,7 +49,8 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
-  '0044_linkedin_connection_expiry.sql',
+  '0046_linkedin_connection_expiry.sql',
+  '0047_linkedin_member_connections.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

@@ -57,7 +57,8 @@ const migrations = [
   '0032_little_stellaris.sql',
   '0034_simple_jamie_braddock.sql',
   '0035_delegated_account_receipt.sql',
-  '0044_linkedin_connection_expiry.sql',
+  '0046_linkedin_connection_expiry.sql',
+  '0047_linkedin_member_connections.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';

@@ -7,7 +7,10 @@ export function getCsrfToken(): string {
   return entry ? (entry.split('=')[1] ?? '') : '';
 }
 
-export async function beginAdapterConnection(adapter: PostingAdapterConfig, accountId?: string): Promise<void> {
+export async function beginAdapterConnection(
+  adapter: PostingAdapterConfig,
+  accountId?: string,
+): Promise<void> {
   const response = await fetch(adapter.auth.startPath, {
     method: 'POST',
     headers: { 'x-csrf-token': getCsrfToken(), 'content-type': 'application/json' },

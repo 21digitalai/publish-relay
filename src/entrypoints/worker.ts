@@ -137,7 +137,7 @@ if (linkedinRuntime)
   destinationDispatchAdapters.push({
     destinationProvider: 'linkedin',
     dispatch: () => dispatchDueLinkedInJobs(linkedinRuntime),
-    reconcile: async () => 0,
+    reconcile: () => Promise.resolve(0),
   });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

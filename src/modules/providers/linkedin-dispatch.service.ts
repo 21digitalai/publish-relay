@@ -209,7 +209,7 @@ export async function dispatchDueLinkedInJobs(
     now,
     leaseMs: runtime.leaseMs,
     limit: 10,
-    provider: 'linkedin',
+    destinationProvider: 'linkedin',
   });
   let published = 0;
   for (const job of jobs) if (await dispatchJob(runtime, job, now)) published += 1;

@@ -47,6 +47,7 @@ describe('YouTube OAuth service', () => {
         refreshToken: 'r',
         expiresAt: '2026-09-09T00:00:00.000Z',
       }),
+      discoverPrincipal: vi.fn().mockResolvedValue('google-sub'),
     };
     await expect(
       completeYouTubeOauthConnection({} as never, {} as never, client as never, {
@@ -80,11 +81,13 @@ describe('YouTube OAuth service', () => {
     };
     const client = {
       exchangeCode: vi.fn().mockResolvedValue(credential),
+      discoverPrincipal: vi.fn().mockResolvedValue('google-sub'),
       discoverChannels: vi
         .fn()
         .mockResolvedValue([{ id: 'channel', displayName: 'Channel', privateField: 'drop' }]),
     };
     vi.mocked(connectProvider).mockImplementation(async (_db, _keys, adapter, connectionInput) => {
+      expect(connectionInput.externalSubjectId).toBe('google-sub');
       expect(JSON.parse(connectionInput.accessToken)).toEqual(credential);
       await expect(adapter.discoverAccounts(connectionInput.accessToken)).resolves.toEqual([
         { providerAccountId: 'channel', displayName: 'Channel' },

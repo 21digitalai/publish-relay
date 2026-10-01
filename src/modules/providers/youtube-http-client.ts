@@ -16,6 +16,7 @@ const channelResponseSchema = z.object({
     }),
   ),
 });
+const principalResponseSchema = z.object({ sub: z.string().min(1) });
 
 const YOUTUBE_UPLOAD_ORIGIN = 'https://www.googleapis.com';
 const YOUTUBE_UPLOAD_PATH = '/upload/youtube/v3/videos';
@@ -131,7 +132,7 @@ export class YouTubeHttpClient {
       redirect_uri: input.redirectUri,
       response_type: 'code',
       scope:
-        'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
+        'openid https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
       access_type: 'offline',
       prompt: 'consent',
       state: input.state,
@@ -176,6 +177,14 @@ export class YouTubeHttpClient {
       id: item.id,
       displayName: item.snippet.title,
     }));
+  }
+
+  public async discoverPrincipal(accessToken: string): Promise<string> {
+    const response = await this.request('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
+    });
+    const body = await this.responseJson(response, 'Google principal discovery');
+    return principalResponseSchema.parse(body).sub;
   }
 
   public async revoke(token: string): Promise<void> {

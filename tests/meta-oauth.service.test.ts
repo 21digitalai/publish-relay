@@ -56,18 +56,23 @@ interface RevokeHarness {
 function createRevokeHarness(): RevokeHarness {
   const updates: Record<string, unknown>[] = [];
   const audits: Record<string, unknown>[] = [];
+  let selected = 0;
   const transaction = {
-    select: (projection: Record<string, unknown>) => ({
+    select: () => ({
       from: () => ({
+        innerJoin: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve(
+                ++selected % 2 === 1 ? [{ id: 'connection', credentialId: 'authority' }] : [],
+              ),
+          }),
+        }),
         where: () =>
-          'id' in projection
-            ? {
-                limit: () => Promise.resolve([{ id: 'connection', credentialId: 'authority' }]),
-              }
-            : Promise.resolve([
-                { credentialId: 'page-credential' },
-                { credentialId: 'page-credential' },
-              ]),
+          Promise.resolve([
+            { credentialId: 'page-credential' },
+            { credentialId: 'page-credential' },
+          ]),
       }),
     }),
     update: () => ({
@@ -172,6 +177,7 @@ describe('Meta OAuth service', () => {
         revokeMetaConnection({} as never, {} as never, client as never, {
           workspaceId: 'workspace',
           userId: 'user',
+          accountId: 'account',
           requestId: 'request',
         }),
       ).resolves.toBe(true);
@@ -219,7 +225,12 @@ describe('Meta OAuth service', () => {
       Buffer.from(JSON.stringify({ accessToken: 'active-token' })),
     );
     const client = { revoke: vi.fn().mockResolvedValue(undefined) };
-    const input = { workspaceId: 'workspace', userId: 'user', requestId: 'request' };
+    const input = {
+      workspaceId: 'workspace',
+      userId: 'user',
+      accountId: 'account',
+      requestId: 'request',
+    };
 
     await expect(
       revokeMetaConnection({} as never, {} as never, client as never, input),
@@ -253,6 +264,7 @@ describe('Meta OAuth service', () => {
       revokeMetaConnection({} as never, {} as never, client as never, {
         workspaceId: 'workspace',
         userId: 'user',
+        accountId: 'account',
         requestId: 'request',
       }),
     ).rejects.toMatchObject({ kind: 'transient' });

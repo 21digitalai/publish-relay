@@ -1,6 +1,4 @@
-import { randomUUID } from 'node:crypto';
-
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -8,6 +6,7 @@ import {
   memberships,
   providerAccounts,
   providerConnections,
+  workspaces,
 } from '../../database/schema.js';
 import type { DiscoveredProviderAccount } from './provider-adapter.js';
 import type { DestinationProvider } from '../providers/contract.js';
@@ -15,6 +14,12 @@ import type { DestinationProvider } from '../providers/contract.js';
 interface NormalizedDestination extends DiscoveredProviderAccount {
   destinationProvider: DestinationProvider;
   remoteAccountId: string;
+}
+
+export class ProviderDestinationConflictError extends Error {
+  public constructor() {
+    super('Provider destination belongs to another connection; manual resolution required');
+  }
 }
 
 function normalizeDestination(
@@ -112,6 +117,17 @@ export async function replaceProviderConnection(
   )
     throw new Error('TikTok connection must identify exactly one stable provider subject');
   const subjectId = input.externalSubjectId ?? memberUrn;
+  if (!subjectId || subjectId.startsWith('legacy:'))
+    throw new Error('Provider connection requires a verified principal subject');
+  const destinations = input.accounts.map((account) =>
+    normalizeDestination(input.provider, account),
+  );
+  // Serialize grants in one workspace so two principals cannot claim a destination.
+  await database
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .for('update');
   const existing = await database
     .select({
       id: providerConnections.id,
@@ -123,17 +139,34 @@ export async function replaceProviderConnection(
       and(
         eq(providerConnections.workspaceId, input.workspaceId),
         eq(providerConnections.provider, input.provider),
-        ...(subjectId ? [eq(providerConnections.externalSubjectId, subjectId)] : []),
+        eq(providerConnections.externalSubjectId, subjectId),
       ),
     )
+    .for('update')
     .limit(1);
   const current = existing[0];
+  for (const destination of destinations) {
+    const owners = await database
+      .select({ connectionId: providerAccounts.connectionId })
+      .from(providerAccounts)
+      .innerJoin(providerConnections, eq(providerAccounts.connectionId, providerConnections.id))
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerConnections.provider, input.provider),
+          eq(providerAccounts.destinationProvider, destination.destinationProvider),
+          eq(providerAccounts.remoteAccountId, destination.remoteAccountId),
+        ),
+      );
+    if (owners.some((owner) => owner.connectionId !== current?.id))
+      throw new ProviderDestinationConflictError();
+  }
   const connectionRows = current
     ? await database
         .update(providerConnections)
         .set({
           credentialId: input.credentialId,
-          externalSubjectId: subjectId ?? current.externalSubjectId,
+          externalSubjectId: subjectId,
           status: 'active',
           expiresAt: input.expiresAt ?? null,
           scopes: input.scopes ? [...input.scopes] : [],
@@ -157,13 +190,7 @@ export async function replaceProviderConnection(
           workspaceId: input.workspaceId,
           provider: input.provider,
           memberUrn,
-          externalSubjectId:
-            subjectId ??
-            (input.provider === 'meta'
-              ? `legacy:${randomUUID()}`
-              : (input.accounts[0]?.remoteAccountId ??
-                input.accounts[0]?.providerAccountId ??
-                `legacy:${randomUUID()}`)),
+          externalSubjectId: subjectId,
           credentialId: input.credentialId,
           expiresAt: input.expiresAt,
           scopes: input.scopes ? [...input.scopes] : [],
@@ -173,9 +200,6 @@ export async function replaceProviderConnection(
         .returning({ id: providerConnections.id });
   const connection = connectionRows[0];
   if (!connection) throw new Error('Provider connection write returned no record');
-  const destinations = input.accounts.map((account) =>
-    normalizeDestination(input.provider, account),
-  );
   const existingAccounts = await database
     .select({
       id: providerAccounts.id,
@@ -349,6 +373,7 @@ export async function markProviderDestinationsUnavailable(
     workspaceId: string;
     userId: string;
     provider: string;
+    connectionId: string;
     availability: 'reauth_required' | 'permission_lost';
     requestId: string;
   },
@@ -360,10 +385,10 @@ export async function markProviderDestinationsUnavailable(
       and(
         eq(providerConnections.workspaceId, input.workspaceId),
         eq(providerConnections.provider, input.provider),
+        eq(providerConnections.id, input.connectionId),
       ),
     );
-  const connectionIds = connections.map((connection) => connection.id);
-  const connectionId = connectionIds[0];
+  const connectionId = connections[0]?.id;
   if (!connectionId) return 0;
   const now = new Date();
   const rows = await database
@@ -372,7 +397,7 @@ export async function markProviderDestinationsUnavailable(
     .where(
       and(
         eq(providerAccounts.workspaceId, input.workspaceId),
-        inArray(providerAccounts.connectionId, connectionIds),
+        eq(providerAccounts.connectionId, connectionId),
       ),
     )
     .returning({ id: providerAccounts.id });

@@ -3,6 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import type { MasterKeyProvider } from '../credentials/envelope.js';
+import { ProviderDestinationConflictError } from '../credentials/provider-connection.repository.js';
 import { authenticateRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
@@ -63,17 +64,24 @@ export function registerYouTubeOauthRoutes(
     const query = callbackQuerySchema.safeParse(request.query);
     if (!query.success)
       return reply.code(400).send({ data: null, error: 'Invalid YouTube OAuth callback' });
-    const result = await completeYouTubeOauthConnection(
-      dependencies.database,
-      dependencies.keys,
-      dependencies.client,
-      {
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
-        ...query.data,
-        requestId: request.id,
-      },
-    );
+    let result;
+    try {
+      result = await completeYouTubeOauthConnection(
+        dependencies.database,
+        dependencies.keys,
+        dependencies.client,
+        {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          ...query.data,
+          requestId: request.id,
+        },
+      );
+    } catch (error) {
+      if (error instanceof ProviderDestinationConflictError)
+        return reply.code(409).send({ data: null, error: error.message });
+      throw error;
+    }
     return result
       ? reply.redirect('/app?oauth=youtube-connected')
       : reply

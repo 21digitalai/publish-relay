@@ -132,21 +132,23 @@ export async function completeXOauthConnection(
     consumed.requestTokenSecret,
     input.verifier,
   );
+  const account = await client.currentAccount(completed.credential);
+  if (!/^\d+$/.test(account.id))
+    throw new Error('X OAuth identity did not contain a stable numeric subject');
   return connectProvider(
     database,
     keys,
     {
-      discoverAccounts: async (credential) => {
-        const account = await client.currentAccount(credential);
-        return [
+      discoverAccounts: () =>
+        Promise.resolve([
           { providerAccountId: account.id, displayName: `${account.name} (@${account.username})` },
-        ];
-      },
+        ]),
     },
     {
       workspaceId: input.workspaceId,
       userId: consumed.userId,
       provider: 'x',
+      externalSubjectId: account.id,
       accessToken: completed.credential,
       requestId: input.requestId,
     },

@@ -877,11 +877,13 @@ export function Rail({
 function AccountRow({
   account,
   onDisconnect,
+  onRevokeGrant,
   onReconnect,
   onDefaultsSaved,
 }: {
   account: Account;
   onDisconnect: (account: Account) => void;
+  onRevokeGrant: (account: Account) => void;
   onReconnect: () => void;
   onDefaultsSaved: (account: Account) => void;
 }) {
@@ -962,6 +964,16 @@ function AccountRow({
         >
           •••
         </button>
+        {account.provider === 'Meta' && (
+          <button
+            className="meta-grant-revoke-button secondary-button"
+            onClick={() => {
+              onRevokeGrant(account);
+            }}
+          >
+            Revoke Meta connection
+          </button>
+        )}
       </div>
       {account.provider === 'YouTube' && (
         <form
@@ -1089,7 +1101,9 @@ function AccountsPage() {
   const adapterTriggerRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState('');
   const [health, setHealth] = useState('All health');
-  const [disconnecting, setDisconnecting] = useState<Account | null>(null);
+  const [disconnecting, setDisconnecting] = useState<{ account: Account; remote: boolean } | null>(
+    null,
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -1388,7 +1402,12 @@ function AccountsPage() {
                       <AccountRow
                         account={account}
                         key={account.id}
-                        onDisconnect={setDisconnecting}
+                        onDisconnect={(selected) => {
+                          setDisconnecting({ account: selected, remote: false });
+                        }}
+                        onRevokeGrant={(selected) => {
+                          setDisconnecting({ account: selected, remote: true });
+                        }}
                         onReconnect={() => {
                           const adapter = getPostingAdapter(account.provider);
                           if (adapter) connectAdapter(adapter, account.id);
@@ -1479,10 +1498,20 @@ function AccountsPage() {
             aria-labelledby="disconnect-title"
           >
             <span className="danger-icon">!</span>
-            <h2 id="disconnect-title">Disconnect {disconnecting.name}?</h2>
+            <h2 id="disconnect-title">
+              {disconnecting.remote ? 'Revoke Meta connection for' : 'Disconnect'}{' '}
+              {disconnecting.account.name}?
+            </h2>
             <p>
-              Scheduled jobs for <strong>{disconnecting.handle}</strong> must be cancelled first.
-              Published posts will remain live.
+              {disconnecting.remote ? (
+                'This revokes the Meta grant for every Page and Instagram destination connected by this login. Scheduled jobs for those destinations must be cancelled first.'
+              ) : (
+                <>
+                  Scheduled jobs for <strong>{disconnecting.account.handle}</strong> must be
+                  cancelled first. Published posts will remain live. This only disconnects this
+                  account locally; it does not revoke the provider grant.
+                </>
+              )}
             </p>
             <div className="dialog-actions">
               <button
@@ -1497,19 +1526,29 @@ function AccountsPage() {
               <button
                 className="danger-button"
                 onClick={() => {
-                  const accountId = disconnecting.id;
+                  const accountId = disconnecting.account.id;
+                  const remote = disconnecting.remote;
                   setActionError(null);
-                  void fetch(`/api/provider-accounts/${accountId}`, {
-                    method: 'DELETE',
-                    headers: { 'x-csrf-token': getCsrfToken() },
-                  })
+                  void fetch(
+                    remote ? '/api/oauth/meta/revoke' : `/api/provider-accounts/${accountId}`,
+                    {
+                      method: remote ? 'POST' : 'DELETE',
+                      headers: {
+                        'x-csrf-token': getCsrfToken(),
+                        ...(remote ? { 'content-type': 'application/json' } : {}),
+                      },
+                      ...(remote ? { body: JSON.stringify({ accountId }) } : {}),
+                    },
+                  )
                     .then(async (response) => {
                       const result = (await response.json()) as { error: string | null };
                       if (!response.ok)
                         throw new Error(result.error ?? 'Could not disconnect account');
-                      setAccounts((current) =>
-                        current.filter((account) => account.id !== accountId),
-                      );
+                      if (remote) loadAccounts();
+                      else
+                        setAccounts((current) =>
+                          current.filter((account) => account.id !== accountId),
+                        );
                       setDisconnecting(null);
                     })
                     .catch((error: unknown) => {
@@ -1520,7 +1559,7 @@ function AccountsPage() {
                     });
                 }}
               >
-                Disconnect account
+                {disconnecting.remote ? 'Revoke Meta grant' : 'Disconnect account'}
               </button>
             </div>
           </section>

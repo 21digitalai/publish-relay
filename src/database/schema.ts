@@ -481,9 +481,6 @@ export const providerConnections = pgTable(
       table.provider,
       table.externalSubjectId,
     ),
-    uniqueIndex('provider_connections_workspace_provider_unique')
-      .on(table.workspaceId, table.provider)
-      .where(sql`${table.provider} NOT IN ('linkedin', 'tiktok')`),
     uniqueIndex('provider_connections_linkedin_member_unique')
       .on(table.workspaceId, table.memberUrn)
       .where(sql`${table.provider} = 'linkedin'`),

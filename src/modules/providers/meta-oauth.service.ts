@@ -1,7 +1,12 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { auditEvents, providerAccounts, providerConnections } from '../../database/schema.js';
+import {
+  auditEvents,
+  providerAccounts,
+  providerConnections,
+  publicationJobs,
+} from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
   createCredential,
@@ -16,7 +21,6 @@ import {
 import { consumeOauthCallback, issueOauthTransaction } from '../credentials/oauth.service.js';
 import {
   assertActiveMembership,
-  markProviderDestinationsUnavailable,
   replaceProviderConnection,
 } from '../credentials/provider-connection.repository.js';
 import {
@@ -169,6 +173,7 @@ async function persistMetaDiscovery(
           workspaceId: input.workspaceId,
           userId: input.userId,
           provider: 'meta',
+          externalSubjectId: credential.userId,
           credentialId: authority.id,
           accounts,
           requestId: input.requestId,
@@ -233,19 +238,7 @@ export async function completeMetaOauthConnection(
     return await persistMetaDiscovery(database, keys, input, credential, pages);
   } catch (error) {
     await recordMetaOauthAudit(database, input, 'meta.oauth.failed');
-    if (error instanceof MetaRequestError && (error.kind === 'auth' || error.kind === 'permission'))
-      await withTenantTransaction(
-        database,
-        { workspaceId: input.workspaceId, userId: input.userId },
-        (tenant) =>
-          markProviderDestinationsUnavailable(tenant, {
-            workspaceId: input.workspaceId,
-            userId: input.userId,
-            provider: 'meta',
-            availability: error.kind === 'auth' ? 'reauth_required' : 'permission_lost',
-            requestId: input.requestId,
-          }),
-      );
+    // A callback failure has no verified existing connection to mark unavailable.
     throw error;
   }
 }
@@ -280,11 +273,17 @@ export async function revokeRemoteMetaGrant(
   }
 }
 
+export class MetaConnectionHasActiveJobsError extends Error {
+  public constructor() {
+    super('Cancel or resolve scheduled publications before revoking this Meta connection');
+  }
+}
+
 export async function revokeMetaConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   client: MetaHttpClient,
-  input: { workspaceId: string; userId: string; requestId: string },
+  input: { workspaceId: string; userId: string; accountId: string; requestId: string },
 ): Promise<boolean> {
   const connection = await withTenantTransaction(
     database,
@@ -293,14 +292,41 @@ export async function revokeMetaConnection(
       await assertActiveMembership(transaction, input.workspaceId, input.userId);
       const rows = await transaction
         .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
-        .from(providerConnections)
+        .from(providerAccounts)
+        .innerJoin(providerConnections, eq(providerAccounts.connectionId, providerConnections.id))
         .where(
           and(
             eq(providerConnections.workspaceId, input.workspaceId),
             eq(providerConnections.provider, 'meta'),
+            eq(providerAccounts.workspaceId, input.workspaceId),
+            eq(providerAccounts.id, input.accountId),
           ),
         )
         .limit(1);
+      if (rows[0]) {
+        const activeJobs = await transaction
+          .select({ id: publicationJobs.id })
+          .from(publicationJobs)
+          .innerJoin(providerAccounts, eq(publicationJobs.providerAccountId, providerAccounts.id))
+          .where(
+            and(
+              eq(publicationJobs.workspaceId, input.workspaceId),
+              eq(providerAccounts.connectionId, rows[0].id),
+              or(
+                inArray(publicationJobs.state, [
+                  'scheduled',
+                  'leased',
+                  'dispatching',
+                  'accepted_pending',
+                  'retry_wait',
+                ]),
+                eq(publicationJobs.reconciliationRequired, true),
+              ),
+            ),
+          )
+          .limit(1);
+        if (activeJobs[0]) throw new MetaConnectionHasActiveJobsError();
+      }
       return rows[0] ?? null;
     },
   );

@@ -106,6 +106,7 @@ application.post('/api/oauth/x', async (request, reply) => {
       workspaceId: identity.workspaceId,
       userId: identity.userId,
       provider: 'x',
+      externalSubjectId: '123456789',
       accessToken: 'credential-free-e2e-token',
       requestId: request.id,
     },

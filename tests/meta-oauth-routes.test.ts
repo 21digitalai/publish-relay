@@ -2,6 +2,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/modules/providers/meta-oauth.service.js', () => ({
+  MetaConnectionHasActiveJobsError: class MetaConnectionHasActiveJobsError extends Error {
+    constructor() {
+      super('Cancel or resolve scheduled publications before revoking this Meta connection');
+    }
+  },
   beginMetaOauthConnection: vi.fn(),
   completeMetaOauthConnection: vi.fn(),
   failMetaOauthConnection: vi.fn(),
@@ -10,9 +15,11 @@ vi.mock('../src/modules/providers/meta-oauth.service.js', () => ({
 
 import { createStandaloneApplication } from '../src/application/create-application.js';
 import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
+import { ProviderDestinationConflictError } from '../src/modules/credentials/provider-connection.repository.js';
 import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
 import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 import {
+  MetaConnectionHasActiveJobsError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
   failMetaOauthConnection,
@@ -121,8 +128,48 @@ describe('Meta OAuth routes', () => {
     expect(callback.headers.location).toBe('/app?oauth=meta-connected');
     vi.mocked(revokeMetaConnection).mockResolvedValue(true);
     expect(
-      (await app.inject({ method: 'POST', url: '/api/oauth/meta/revoke', headers: csrf })).json(),
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/oauth/meta/revoke',
+          headers: csrf,
+          payload: { accountId: '00000000-0000-4000-8000-000000000001' },
+        })
+      ).json(),
     ).toEqual({ data: { revoked: true }, error: null });
+  });
+
+  it('returns an actionable conflict when selected Meta grant still owns jobs', async () => {
+    const app = application(true);
+    vi.mocked(revokeMetaConnection).mockRejectedValue(new MetaConnectionHasActiveJobsError());
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/meta/revoke',
+      headers: csrf,
+      payload: { accountId: '00000000-0000-4000-8000-000000000001' },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      data: null,
+      error: 'Cancel or resolve scheduled publications before revoking this Meta connection',
+    });
+  });
+
+  it('reports overlapping Meta destinations as a callback conflict', async () => {
+    const app = application(true);
+    vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+      new ProviderDestinationConflictError(),
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=state&code=code',
+      headers: { cookie: session },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      data: null,
+      error: 'Provider destination belongs to another connection; manual resolution required',
+    });
   });
 
   it('consumes provider-error state and never reflects provider error details', async () => {

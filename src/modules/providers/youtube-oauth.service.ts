@@ -60,6 +60,7 @@ export async function completeYouTubeOauthConnection(
     codeVerifier: transaction.codeVerifier,
     redirectUri: transaction.redirectUri,
   });
+  const subjectId = await client.discoverPrincipal(credential.accessToken);
   return connectProvider(
     database,
     keys,
@@ -79,6 +80,7 @@ export async function completeYouTubeOauthConnection(
       workspaceId: input.workspaceId,
       userId: input.userId,
       provider: 'youtube',
+      externalSubjectId: subjectId,
       accessToken: JSON.stringify(credential),
       requestId: input.requestId,
     },

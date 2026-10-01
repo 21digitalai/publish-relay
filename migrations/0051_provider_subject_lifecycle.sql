@@ -13,7 +13,10 @@ SET "external_subject_id" = COALESCE(
   (SELECT MIN(account."remote_account_id")
    FROM "provider_accounts" AS account
    WHERE account."connection_id" = connection."id"
-     AND connection."provider" <> 'meta'
+     AND connection."provider" = 'x'
+     AND account."remote_account_id" ~ '^[0-9]+$'
+     AND (SELECT COUNT(*) FROM "provider_accounts" AS all_accounts
+          WHERE all_accounts."connection_id" = connection."id") = 1
    HAVING COUNT(*) = 1),
   'legacy:' || connection."id"::text
 );
@@ -26,6 +29,3 @@ CREATE UNIQUE INDEX "provider_connections_workspace_subject_unique"
   ON "provider_connections" ("workspace_id", "provider", "external_subject_id");
 
 DROP INDEX "provider_connections_workspace_provider_unique";
-CREATE UNIQUE INDEX "provider_connections_workspace_provider_unique"
-  ON "provider_connections" ("workspace_id", "provider")
-  WHERE "provider" NOT IN ('linkedin', 'tiktok');

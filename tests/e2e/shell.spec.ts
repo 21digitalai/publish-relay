@@ -141,6 +141,50 @@ async function mockMetaDestinations(page: Page) {
   );
 }
 
+test('selected Meta grant revoke distinguishes remote and local actions', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await mockMetaDestinations(page);
+  let selectedAccountId: string | undefined;
+  await page.route('**/api/oauth/meta/revoke', (route) => {
+    selectedAccountId = (route.request().postDataJSON() as { accountId: string }).accountId;
+    return route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: null,
+        error: 'Cancel or resolve scheduled publications before revoking this Meta connection',
+      }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'accounts'));
+  const firstRow = page
+    .locator('.provider-group')
+    .filter({ has: page.getByRole('heading', { name: 'Meta' }) })
+    .locator('.account-row')
+    .first();
+  await firstRow.getByRole('button', { name: 'Revoke Meta connection' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('every Page and Instagram destination');
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.screenshot({
+    path: testInfo.outputPath('meta-grant-revoke-desktop.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Revoke Meta grant' }).click();
+  await expect(page.getByRole('alert')).toContainText('Cancel or resolve scheduled publications');
+  expect(selectedAccountId).toBe('00000000-0000-4000-8000-000000000211');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: testInfo.outputPath('meta-grant-revoke-error-mobile.png'),
+    fullPage: true,
+  });
+  await firstRow.getByRole('button', { name: 'More actions for @mira' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText(
+    'only disconnects this account locally',
+  );
+});
+
 test('computes Meta destination capability intersection on desktop and mobile', async ({
   page,
 }, testInfo) => {

@@ -48,6 +48,7 @@ describe('MetaHttpClient', () => {
           data: {
             is_valid: true,
             app_id: 'app',
+            user_id: 'meta-user-one',
             expires_at: 2_000_000_000,
             scopes: META_PERMISSIONS,
           },
@@ -65,7 +66,11 @@ describe('MetaHttpClient', () => {
         code: 'code',
         redirectUri: 'https://relay.test/api/oauth/meta/callback',
       }),
-    ).resolves.toMatchObject({ accessToken: 'long', scopes: META_PERMISSIONS });
+    ).resolves.toMatchObject({
+      accessToken: 'long',
+      userId: 'meta-user-one',
+      scopes: META_PERMISSIONS,
+    });
     expect(request).toHaveBeenCalledTimes(3);
     const firstTarget = request.mock.calls[0]?.[0];
     const firstUrl =
@@ -82,11 +87,16 @@ describe('MetaHttpClient', () => {
       appId: 'app',
       appSecret: 'secret',
       graphVersion: 'v23.0',
-      fetch: vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          response({ data: { is_valid: true, app_id: 'app', scopes: ['pages_show_list'] } }),
-        ),
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(
+        response({
+          data: {
+            is_valid: true,
+            app_id: 'app',
+            user_id: 'meta-user-one',
+            scopes: ['pages_show_list'],
+          },
+        }),
+      ),
     });
     const error = await client
       .validateCredential({ access_token: 'token' })

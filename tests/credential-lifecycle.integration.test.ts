@@ -212,6 +212,71 @@ it('serves bounded Meta destination variants and a live LinkedIn destination thr
 afterEach(async () => database.close());
 
 describe('credential and OAuth persistence', () => {
+  it.each(['x', 'youtube', 'meta'])(
+    'keeps two %s grant principals isolated and refuses overlapping destinations',
+    async (provider) => {
+      const db = drizzle(database) as unknown as NodePgDatabase;
+      const keys: MasterKeyProvider = {
+        currentVersion: () => 'v1',
+        getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+      };
+      const destinationProvider =
+        provider === 'meta' ? ('facebook_page' as const) : (provider as 'x' | 'youtube');
+      const connect = (subject: string, destination: string, token: string) =>
+        connectProvider(
+          db,
+          keys,
+          new FakeProviderConnectionAdapter([
+            {
+              providerAccountId: destination,
+              remoteAccountId: destination,
+              destinationProvider,
+              displayName: destination,
+            },
+          ]),
+          {
+            workspaceId,
+            userId,
+            provider,
+            externalSubjectId: subject,
+            accessToken: token,
+            requestId: `connect-${subject}`,
+          },
+        );
+      const first = await connect('principal-one', 'destination-one', 'token-one');
+      const sibling = await connect('principal-two', 'destination-two', 'token-two');
+      expect(first.connectionId).not.toBe(sibling.connectionId);
+      expect((await connect('principal-one', 'destination-one', 'replacement')).connectionId).toBe(
+        first.connectionId,
+      );
+      await expect(connect('principal-three', 'destination-two', 'conflict')).rejects.toThrow(
+        'manual resolution required',
+      );
+      const rows = await database.query<{ external_subject_id: string; ciphertext: Uint8Array }>(
+        'SELECT pc.external_subject_id, c.ciphertext FROM provider_connections pc JOIN credentials c ON c.id = pc.credential_id ORDER BY pc.external_subject_id',
+      );
+      expect(rows.rows.map((row) => row.external_subject_id)).toEqual([
+        'principal-one',
+        'principal-two',
+      ]);
+      const siblingRow = rows.rows[1];
+      if (!siblingRow) throw new Error('Expected sibling connection');
+      const priorCiphertext = Buffer.from(siblingRow.ciphertext).toString('hex');
+      await database.exec(
+        `UPDATE provider_connections SET external_subject_id = 'legacy:${sibling.connectionId}' WHERE id = '${sibling.connectionId}'`,
+      );
+      await expect(connect('principal-two', 'destination-two', 'new-grant')).rejects.toThrow(
+        'manual resolution required',
+      );
+      const retained = await database.query<{ ciphertext: Uint8Array }>(
+        `SELECT c.ciphertext FROM provider_connections pc JOIN credentials c ON c.id = pc.credential_id WHERE pc.id = '${sibling.connectionId}'`,
+      );
+      const retainedRow = retained.rows[0];
+      if (!retainedRow) throw new Error('Expected retained sibling credential');
+      expect(Buffer.from(retainedRow.ciphertext).toString('hex')).toBe(priorCiphertext);
+    },
+  );
+
   it('keeps two subject-keyed connections independent through reconnect', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const keys: MasterKeyProvider = {
@@ -671,6 +736,7 @@ describe('credential and OAuth persistence', () => {
       },
       discoverChannels: () =>
         Promise.resolve([{ id: 'channel-1', displayName: 'Channel One', privateField: 'discard' }]),
+      discoverPrincipal: () => Promise.resolve('google-sub'),
     };
     const connected = await completeYouTubeOauthConnection(db, keys, client as never, {
       workspaceId,
@@ -775,6 +841,7 @@ describe('credential and OAuth persistence', () => {
       workspaceId,
       userId,
       provider: 'fake',
+      externalSubjectId: 'fake-subject',
       accessToken: 'first-secret',
       requestId: 'req-connect',
     });
@@ -789,6 +856,7 @@ describe('credential and OAuth persistence', () => {
       workspaceId,
       userId,
       provider: 'fake',
+      externalSubjectId: 'fake-subject',
       accessToken: 'second-secret',
       requestId: 'req-reconnect',
     });
@@ -849,6 +917,7 @@ describe('credential and OAuth persistence', () => {
         workspaceId,
         userId,
         provider: 'x',
+        externalSubjectId: 'numeric-subject',
         accessToken: 'invalid-secret',
         requestId: 'invalid-destination',
       }),
@@ -871,6 +940,7 @@ describe('credential and OAuth persistence', () => {
         workspaceId,
         userId,
         provider: 'meta',
+        externalSubjectId: 'meta-subject',
         accessToken: 'meta-secret',
         requestId: 'valid-meta-destinations',
       }),
@@ -914,7 +984,11 @@ describe('credential and OAuth persistence', () => {
       });
       const client = {
         exchangeCode: () =>
-          Promise.resolve({ accessToken: `authority-${state}`, scopes: [] as never[] }),
+          Promise.resolve({
+            accessToken: `authority-${state}`,
+            userId: 'meta-user',
+            scopes: [] as never[],
+          }),
         discoverPages: () => Promise.resolve(pages),
       };
       return completeMetaOauthConnection(db, keys, client as never, {
@@ -925,7 +999,7 @@ describe('credential and OAuth persistence', () => {
         requestId: state,
       });
     };
-    await connect('first', [
+    const first = await connect('first', [
       {
         id: 'page-1',
         name: 'Page One',
@@ -970,6 +1044,7 @@ describe('credential and OAuth persistence', () => {
         workspaceId,
         userId,
         provider: 'meta',
+        connectionId: first?.connectionId ?? '',
         availability: 'reauth_required',
         requestId: 'meta-reauth-required',
       }),
@@ -985,6 +1060,7 @@ describe('credential and OAuth persistence', () => {
         workspaceId,
         userId,
         provider: 'meta',
+        connectionId: first?.connectionId ?? '',
         availability: 'permission_lost',
         requestId: 'meta-permission-lost',
       }),
@@ -1084,7 +1160,7 @@ describe('credential and OAuth persistence', () => {
       ),
       new Response('oauth_token=access-token&oauth_token_secret=access-secret'),
       Response.json({
-        data: { id: 'x-account', name: 'Example Editorial', username: 'example_editorial' },
+        data: { id: '123456789', name: 'Example Editorial', username: 'example_editorial' },
       }),
     ];
     const client = new XHttpClient({
@@ -1129,7 +1205,7 @@ describe('credential and OAuth persistence', () => {
       requestId: 'x-connect',
     });
     expect(connected?.accounts).toEqual([
-      { providerAccountId: 'x-account', displayName: 'Example Editorial (@example_editorial)' },
+      { providerAccountId: '123456789', displayName: 'Example Editorial (@example_editorial)' },
     ]);
     await expect(
       completeXOauthConnection(db, keys, client, {
@@ -1168,6 +1244,7 @@ describe('credential and OAuth persistence', () => {
         workspaceId,
         userId,
         provider: 'x',
+        externalSubjectId: 'external-account',
         accessToken: 'secret-token',
         requestId: 'req-connect-account',
       },
@@ -1377,6 +1454,7 @@ describe('credential and OAuth persistence', () => {
         workspaceId,
         userId,
         provider: 'x',
+        externalSubjectId: 'external-account',
         accessToken: 'replacement-secret-token',
         requestId: 'req-reconnect-account',
       },

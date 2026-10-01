@@ -29,6 +29,7 @@ const debugSchema = z.object({
   data: z.object({
     is_valid: z.boolean(),
     app_id: z.string().min(1),
+    user_id: z.string().min(1),
     expires_at: z.number().int().nonnegative().optional(),
     scopes: z.array(z.string()).default([]),
   }),
@@ -72,6 +73,7 @@ export class MetaRequestError extends Error {
 
 export interface MetaCredential {
   accessToken: string;
+  userId: string;
   expiresAt?: string;
   scopes: MetaPermission[];
 }
@@ -174,6 +176,7 @@ export class MetaHttpClient {
       throw new MetaRequestError(401, 'auth');
     return {
       accessToken: token.access_token,
+      userId: debug.data.user_id,
       ...(expiresAtSeconds
         ? { expiresAt: new Date(expiresAtSeconds * 1000).toISOString() }
         : token.expires_in

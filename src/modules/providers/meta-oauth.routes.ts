@@ -3,12 +3,14 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import type { MasterKeyProvider } from '../credentials/envelope.js';
+import { ProviderDestinationConflictError } from '../credentials/provider-connection.repository.js';
 import { authenticateRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-policy.js';
 import type { MetaHttpClient } from './meta-http-client.js';
 import {
+  MetaConnectionHasActiveJobsError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
   failMetaOauthConnection,
@@ -17,6 +19,7 @@ import {
 
 const successCallbackSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
 const failureCallbackSchema = z.object({ state: z.string().min(1), error: z.string().min(1) });
+const revokeSchema = z.object({ accountId: z.uuid() });
 
 function hasValidCsrf(request: {
   cookies: Record<string, string | undefined>;
@@ -81,17 +84,24 @@ export function registerMetaOauthRoutes(
     const query = successCallbackSchema.safeParse(request.query);
     if (!query.success)
       return reply.code(400).send({ data: null, error: 'Invalid Meta OAuth callback' });
-    const result = await completeMetaOauthConnection(
-      dependencies.database,
-      dependencies.keys,
-      dependencies.client,
-      {
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
-        ...query.data,
-        requestId: request.id,
-      },
-    );
+    let result;
+    try {
+      result = await completeMetaOauthConnection(
+        dependencies.database,
+        dependencies.keys,
+        dependencies.client,
+        {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          ...query.data,
+          requestId: request.id,
+        },
+      );
+    } catch (error) {
+      if (error instanceof ProviderDestinationConflictError)
+        return reply.code(409).send({ data: null, error: error.message });
+      throw error;
+    }
     return result
       ? reply.redirect('/app?oauth=meta-connected')
       : reply.code(400).send({ data: null, error: 'Meta OAuth transaction is invalid or expired' });
@@ -102,16 +112,27 @@ export function registerMetaOauthRoutes(
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     if (!hasValidCsrf(request))
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
-    const revoked = await revokeMetaConnection(
-      dependencies.database,
-      dependencies.keys,
-      dependencies.client,
-      {
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
-        requestId: request.id,
-      },
-    );
+    const body = revokeSchema.safeParse(request.body);
+    if (!body.success)
+      return reply.code(400).send({ data: null, error: 'Select a Meta connection to revoke' });
+    let revoked;
+    try {
+      revoked = await revokeMetaConnection(
+        dependencies.database,
+        dependencies.keys,
+        dependencies.client,
+        {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          accountId: body.data.accountId,
+          requestId: request.id,
+        },
+      );
+    } catch (error) {
+      if (error instanceof MetaConnectionHasActiveJobsError)
+        return reply.code(409).send({ data: null, error: error.message });
+      throw error;
+    }
     return revoked
       ? { data: { revoked: true }, error: null }
       : reply.code(404).send({ data: null, error: 'Meta connection was not found' });

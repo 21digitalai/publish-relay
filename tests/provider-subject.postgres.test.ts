@@ -28,6 +28,90 @@ function encrypted(marker: number): EncryptedCredential {
 }
 
 describe.skipIf(!connectionString)('subject connection lifecycle on PostgreSQL', () => {
+  it.each(['x', 'youtube', 'meta'])(
+    'isolates two %s grant principals on real PostgreSQL',
+    async (provider) => {
+      const pool = new pg.Pool({ connectionString });
+      const database = drizzle(pool);
+      const workspaceId = randomUUID();
+      const userId = randomUUID();
+      const keys = {
+        currentVersion: () => 'v1',
+        getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+      };
+      try {
+        await pool.query('INSERT INTO workspaces (id, name, slug) VALUES ($1, $2, $3)', [
+          workspaceId,
+          'Subject Family Test',
+          workspaceId,
+        ]);
+        await pool.query(
+          'INSERT INTO users (id, email, password_hash, display_name) VALUES ($1, $2, $3, $4)',
+          [userId, `${userId}@example.test`, 'redacted', 'Subject Family Tester'],
+        );
+        await pool.query(
+          'INSERT INTO memberships (workspace_id, user_id, role) VALUES ($1, $2, $3)',
+          [workspaceId, userId, 'owner'],
+        );
+        const destinationProvider =
+          provider === 'meta' ? ('facebook_page' as const) : (provider as 'x' | 'youtube');
+        const connect = (subject: string, destination: string, token: string) =>
+          connectProvider(
+            database,
+            keys,
+            new FakeProviderConnectionAdapter([
+              {
+                providerAccountId: destination,
+                remoteAccountId: destination,
+                destinationProvider,
+                displayName: destination,
+              },
+            ]),
+            {
+              workspaceId,
+              userId,
+              provider,
+              externalSubjectId: subject,
+              accessToken: token,
+              requestId: randomUUID(),
+            },
+          );
+        const first = await connect('principal-one', 'destination-one', 'first');
+        const sibling = await connect('principal-two', 'destination-two', 'second');
+        expect(first.connectionId).not.toBe(sibling.connectionId);
+        expect(
+          (await connect('principal-one', 'destination-one', 'replacement')).connectionId,
+        ).toBe(first.connectionId);
+        await expect(connect('principal-three', 'destination-two', 'conflict')).rejects.toThrow(
+          'manual resolution required',
+        );
+        const rows = await pool.query<{ external_subject_id: string; credential_id: string }>(
+          'SELECT external_subject_id, credential_id FROM provider_connections WHERE workspace_id = $1 ORDER BY external_subject_id',
+          [workspaceId],
+        );
+        expect(rows.rows.map((row) => row.external_subject_id)).toEqual([
+          'principal-one',
+          'principal-two',
+        ]);
+        const siblingCredential = rows.rows[1]?.credential_id;
+        await pool.query('UPDATE provider_connections SET external_subject_id = $1 WHERE id = $2', [
+          `legacy:${sibling.connectionId}`,
+          sibling.connectionId,
+        ]);
+        await expect(connect('principal-two', 'destination-two', 'new-grant')).rejects.toThrow(
+          'manual resolution required',
+        );
+        const retained = await pool.query<{ credential_id: string }>(
+          'SELECT credential_id FROM provider_connections WHERE id = $1',
+          [sibling.connectionId],
+        );
+        expect(retained.rows[0]?.credential_id).toBe(siblingCredential);
+      } finally {
+        await pool.end();
+      }
+    },
+  );
+
   it('isolates subjects and tenants, rotates atomically, and refuses unresolved jobs on disconnect', async () => {
     const pool = new pg.Pool({ connectionString });
     const database = drizzle(pool);

@@ -112,6 +112,7 @@ describe.skipIf(!connectionString)('TikTok consent on PostgreSQL', () => {
       const receipt = await issueTikTokPublicationConsent(db, {
         workspaceId,
         userId,
+        actor: { type: 'user', id: userId },
         postId,
         revisionId,
         accountId,
@@ -122,14 +123,21 @@ describe.skipIf(!connectionString)('TikTok consent on PostgreSQL', () => {
       });
       const scope = {
         workspaceId,
-        userId,
         postId,
         revisionId,
         accountId,
         receiptId: receipt.id,
-        actorType: 'user' as const,
+        actor: { type: 'user' as const, id: userId },
       };
       expect((await verifyTikTokPublicationConsent(db, scope)).mediaSha256).toBe('a'.repeat(64));
+      expect(
+        (
+          await verifyTikTokPublicationConsent(db, {
+            ...scope,
+            actor: { type: 'api-key', id: randomUUID() },
+          })
+        ).mediaSha256,
+      ).toBe('a'.repeat(64));
       await expect(
         verifyTikTokPublicationConsent(db, {
           ...scope,

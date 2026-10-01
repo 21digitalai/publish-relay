@@ -39,6 +39,7 @@ const migrationNames = [
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000102';
+const machineId = '00000000-0000-4000-8000-000000000103';
 const postId = '00000000-0000-4000-8000-000000000301';
 const revisionId = '00000000-0000-4000-8000-000000000302';
 const mediaId = '00000000-0000-4000-8000-000000000401';
@@ -54,6 +55,7 @@ function command(): TikTokConsentCommand {
   return {
     workspaceId,
     userId,
+    actor: { type: 'user', id: userId },
     postId,
     revisionId,
     accountId,
@@ -125,6 +127,24 @@ beforeEach(async () => {
 afterEach(async () => pg.close());
 
 describe('revision-bound TikTok consent', () => {
+  it('allows only the authenticated human principal to issue consent', async () => {
+    for (const type of ['api-key', 'delegated'] as const) {
+      await expect(
+        issueTikTokPublicationConsent(db, {
+          ...command(),
+          actor: { type, id: machineId },
+        }),
+      ).rejects.toThrow('invalid');
+    }
+    await expect(
+      issueTikTokPublicationConsent(db, {
+        ...command(),
+        actor: { type: 'user', id: '00000000-0000-4000-8000-000000000999' },
+      }),
+    ).rejects.toThrow('invalid');
+    const rows = await pg.query('select id from publication_consents');
+    expect(rows.rows).toHaveLength(0);
+  });
   it('has no privacy, AI or declaration defaults in the browser command', () => {
     const valid = command();
     expect(tiktokConsentRequestSchema.safeParse(valid).success).toBe(false);
@@ -153,12 +173,11 @@ describe('revision-bound TikTok consent', () => {
     expect(Number.isFinite(Date.parse(receipt.consentedAt))).toBe(true);
     const verified = await verifyTikTokPublicationConsent(db, {
       workspaceId,
-      userId,
       postId,
       revisionId,
       accountId,
       receiptId: receipt.id,
-      actorType: 'user',
+      actor: { type: 'user', id: userId },
     });
     expect(verified).toMatchObject({
       mediaSha256: mediaHash,
@@ -175,26 +194,48 @@ describe('revision-bound TikTok consent', () => {
       pg.exec(`update publication_consents set payload_hash = '${'b'.repeat(64)}'
         where id = '${receipt.id}'`),
     ).rejects.toThrow();
+    for (const type of ['api-key', 'delegated'] as const) {
+      expect(
+        (
+          await verifyTikTokPublicationConsent(db, {
+            workspaceId,
+            postId,
+            revisionId,
+            accountId,
+            receiptId: receipt.id,
+            actor: { type, id: machineId },
+          })
+        ).mediaSha256,
+      ).toBe(mediaHash);
+    }
     await expect(
       verifyTikTokPublicationConsent(db, {
         workspaceId,
-        userId,
         postId,
         revisionId,
         accountId,
+        receiptId: '00000000-0000-4000-8000-000000000999',
+        actor: { type: 'api-key', id: machineId },
+      }),
+    ).rejects.toThrow('invalid');
+    await expect(
+      verifyTikTokPublicationConsent(db, {
+        workspaceId,
+        postId,
+        revisionId,
+        accountId: '00000000-0000-4000-8000-000000000999',
         receiptId: receipt.id,
-        actorType: 'api-key',
+        actor: { type: 'api-key', id: machineId },
       }),
     ).rejects.toThrow('invalid');
     await expect(
       verifyTikTokPublicationConsent(db, {
         workspaceId: otherWorkspaceId,
-        userId,
         postId,
         revisionId,
         accountId,
         receiptId: receipt.id,
-        actorType: 'user',
+        actor: { type: 'user', id: userId },
       }),
     ).rejects.toThrow('invalid');
   });
@@ -247,12 +288,11 @@ describe('revision-bound TikTok consent', () => {
     await expect(
       verifyTikTokPublicationConsent(db, {
         workspaceId,
-        userId,
         postId,
         revisionId,
         accountId,
         receiptId: receipt.id,
-        actorType: 'user',
+        actor: { type: 'user', id: userId },
       }),
     ).rejects.toThrow('invalid');
   });
@@ -297,12 +337,11 @@ describe('revision-bound TikTok consent', () => {
       (
         await verifyTikTokPublicationConsent(db, {
           workspaceId,
-          userId,
           postId,
           revisionId: brandedRevisionId,
           accountId,
           receiptId: receipt.id,
-          actorType: 'user',
+          actor: { type: 'user', id: userId },
         })
       ).options.aiGenerated,
     ).toBe(true);

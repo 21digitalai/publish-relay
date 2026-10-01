@@ -42,12 +42,14 @@ export const tiktokConsentRequestSchema = z.strictObject({
 export const tiktokConsentCommandSchema = tiktokConsentRequestSchema.extend({
   workspaceId: z.uuid(),
   userId: z.uuid(),
+  actor: z.strictObject({ type: z.enum(['user', 'api-key', 'delegated']), id: z.uuid() }),
 });
 export type TikTokConsentCommand = z.input<typeof tiktokConsentCommandSchema>;
 
 const receiptPayloadSchema = tiktokConsentCommandSchema
   .omit({
     musicUsageConfirmed: true,
+    actor: true,
   })
   .extend({
     schemaVersion: z.literal(1),
@@ -166,7 +168,11 @@ async function lockAccountGrant(db: NodePgDatabase, workspaceId: string, account
   if (locked.rows.length !== 1) throw new TikTokConsentInvalidError();
 }
 
-function validateSource(source: ConsentSource, input: TikTokConsentCommand, now: Date) {
+function validateSource(
+  source: ConsentSource,
+  input: Omit<TikTokConsentCommand, 'actor'>,
+  now: Date,
+) {
   const content = revisionContentSchema.safeParse(source.content);
   if (!content.success || source.currentRevisionId !== input.revisionId)
     throw new TikTokConsentInvalidError();
@@ -221,6 +227,8 @@ export async function issueTikTokPublicationConsent(
   now = new Date(),
 ): Promise<{ id: string; payloadHash: string; consentedAt: string }> {
   const input = tiktokConsentCommandSchema.parse(rawInput);
+  if (input.actor.type !== 'user' || input.actor.id !== input.userId)
+    throw new TikTokConsentInvalidError();
   return withTenantTransaction(database, input, async (transaction) => {
     // Post mutations lock the workspace first; retain that order across consent issuance.
     const workspace = await transaction.execute(
@@ -297,20 +305,14 @@ export async function verifyTikTokPublicationConsent(
   database: NodePgDatabase,
   input: {
     workspaceId: string;
-    userId: string;
     postId: string;
     revisionId: string;
     accountId: string;
     receiptId: string;
-    actorType: 'user' | 'api-key' | 'delegated';
+    actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
   },
 ): Promise<z.infer<typeof receiptPayloadSchema>> {
-  if (input.actorType !== 'user') throw new TikTokConsentInvalidError();
   return withTenantTransaction(database, input, async (transaction) => {
-    const member = await transaction.execute(sql`select 1 from memberships
-      where workspace_id = ${input.workspaceId} and user_id = ${input.userId}
-        and role in ('owner', 'admin', 'editor')`);
-    if (member.rows.length !== 1) throw new TikTokConsentInvalidError();
     await lockAccountGrant(transaction, input.workspaceId, input.accountId);
     const receipt = await transaction.execute<{
       payload: unknown;
@@ -330,17 +332,21 @@ export async function verifyTikTokPublicationConsent(
     if (
       !row ||
       !parsed.success ||
-      row.userId !== input.userId ||
+      (input.actor.type === 'user' && input.actor.id !== row.userId) ||
       hashPayload(parsed.data) !== row.payloadHash ||
       parsed.data.mediaSha256 !== row.mediaSha256 ||
       parsed.data.credentialVersion !== row.credentialVersion ||
       parsed.data.workspaceId !== input.workspaceId ||
-      parsed.data.userId !== input.userId ||
+      parsed.data.userId !== row.userId ||
       parsed.data.postId !== input.postId ||
       parsed.data.revisionId !== input.revisionId ||
       parsed.data.accountId !== input.accountId
     )
       throw new TikTokConsentInvalidError();
+    const member = await transaction.execute(sql`select 1 from memberships
+      where workspace_id = ${input.workspaceId} and user_id = ${row.userId}
+        and role in ('owner', 'admin', 'editor')`);
+    if (member.rows.length !== 1) throw new TikTokConsentInvalidError();
     const source = await readConsentSource(transaction, {
       workspaceId: input.workspaceId,
       postId: input.postId,

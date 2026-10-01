@@ -36,6 +36,7 @@ const migrations = [
   '0049_meta_effective_payload.sql',
   '0051_provider_subject_lifecycle.sql',
   '0052_provider_capability_snapshots.sql',
+  '0053_publication_consents.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000201';
@@ -379,7 +380,7 @@ it.each(['fresh', 'upgrade'] as const)(
         if (!previous) throw new Error('Previous migration missing');
         await applyPending(previous.folderMillis);
         const absent = await fresh.query(
-          "SELECT to_regclass('public.provider_capability_snapshots') AS table_name",
+          "SELECT to_regclass('public.publication_consents') AS table_name",
         );
         expect(absent.rows[0]).toEqual({ table_name: null });
       }
@@ -400,6 +401,10 @@ it.each(['fresh', 'upgrade'] as const)(
           )
         ).rows[0],
       ).toEqual({ table_name: 'provider_capability_snapshots' });
+      expect(
+        (await fresh.query("SELECT to_regclass('public.publication_consents') AS table_name"))
+          .rows[0],
+      ).toEqual({ table_name: 'publication_consents' });
     } finally {
       await fresh.close();
     }

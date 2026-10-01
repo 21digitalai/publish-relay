@@ -557,6 +557,10 @@ export const providerCapabilitySnapshots = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },
   (table) => [
+    uniqueIndex('provider_capability_snapshots_workspace_id_unique').on(
+      table.workspaceId,
+      table.id,
+    ),
     index('provider_capability_snapshots_account_fetched_idx').on(
       table.workspaceId,
       table.accountId,
@@ -772,6 +776,57 @@ export const revisionMedia = pgTable(
       columns: [table.workspaceId, table.mediaId],
       foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
       name: 'revision_media_workspace_media_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const publicationConsents = pgTable(
+  'publication_consents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    postId: uuid('post_id').notNull(),
+    revisionId: uuid('revision_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    mediaId: uuid('media_id').notNull(),
+    mediaSha256: text('media_sha256').notNull(),
+    capabilitySnapshotId: uuid('capability_snapshot_id').notNull(),
+    credentialVersion: integer('credential_version').notNull(),
+    declarationVersion: integer('declaration_version').notNull(),
+    payload: jsonb('payload').notNull(),
+    payloadHash: text('payload_hash').notNull(),
+    consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('publication_consents_workspace_id_unique').on(table.workspaceId, table.id),
+    index('publication_consents_revision_idx').on(table.workspaceId, table.revisionId),
+    foreignKey({
+      columns: [table.workspaceId, table.postId],
+      foreignColumns: [posts.workspaceId, posts.id],
+      name: 'publication_consents_workspace_post_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.revisionId],
+      foreignColumns: [postRevisions.workspaceId, postRevisions.id],
+      name: 'publication_consents_workspace_revision_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'publication_consents_workspace_account_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.mediaId],
+      foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
+      name: 'publication_consents_workspace_media_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.capabilitySnapshotId],
+      foreignColumns: [providerCapabilitySnapshots.workspaceId, providerCapabilitySnapshots.id],
+      name: 'publication_consents_workspace_snapshot_fk',
     }).onDelete('restrict'),
   ],
 );

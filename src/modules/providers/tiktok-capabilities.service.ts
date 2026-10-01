@@ -1,4 +1,4 @@
-import { and, eq, isNull, lt } from 'drizzle-orm';
+import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -210,14 +210,15 @@ export async function fetchTikTokCapabilitySnapshot(
         valid.credentialVersion !== current.credentialVersion
       )
         throw new TikTokCapabilityUnavailableError();
-      await transaction
-        .delete(providerCapabilitySnapshots)
-        .where(
-          and(
-            eq(providerCapabilitySnapshots.workspaceId, input.workspaceId),
-            lt(providerCapabilitySnapshots.expiresAt, new Date(fetchedAt.getTime() - RETENTION_MS)),
-          ),
-        );
+      await transaction.delete(providerCapabilitySnapshots).where(
+        and(
+          eq(providerCapabilitySnapshots.workspaceId, input.workspaceId),
+          lt(providerCapabilitySnapshots.expiresAt, new Date(fetchedAt.getTime() - RETENTION_MS)),
+          sql`not exists (select 1 from publication_consents consent
+              where consent.workspace_id = ${providerCapabilitySnapshots.workspaceId}
+                and consent.capability_snapshot_id = ${providerCapabilitySnapshots.id})`,
+        ),
+      );
       const rows = await transaction
         .insert(providerCapabilitySnapshots)
         .values({

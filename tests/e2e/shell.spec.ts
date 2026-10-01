@@ -1625,6 +1625,81 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await page.screenshot({ path: testInfo.outputPath('calendar-error.png'), fullPage: true });
 });
 
+test('refreshes background publication outcomes without replaying historical toasts', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.clock.install();
+  let state = 'scheduled';
+  let polls = 0;
+  await page.route('**/api/workflow/jobs?limit=100', (route) => {
+    polls += 1;
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: 'outcome-job',
+              state,
+              scheduledAt: '2026-10-01T12:00:00Z',
+              contentPreview: 'Publication update',
+              providerAccount: { displayName: 'Avery Editorial', handle: 'avery', provider: 'x' },
+            },
+          ],
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/workflow/jobs/outcome-job', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { state, providerResult: { url: 'https://x.com/avery/status/123' } },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto('/w/avery/calendar?mode=Week&date=2026-10-01');
+  await expect(page.getByRole('link', { name: /Avery Editorial, Scheduled/ })).toBeVisible();
+  expect(await page.getByText('Published on X').count()).toBe(0);
+  state = 'published';
+  await page.clock.fastForward(10_000);
+  await expect(page.getByRole('link', { name: /Avery Editorial, Published/ })).toBeVisible();
+  await expect(page.locator('.publication-toast')).toHaveCount(1);
+  await expect(
+    page.locator('.publication-toast').getByRole('link', { name: 'View post' }),
+  ).toHaveAttribute('href', 'https://x.com/avery/status/123');
+  await page.screenshot({
+    path: testInfo.outputPath('publication-toast.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.locator('.publication-toast')).toHaveCount(1);
+  expect(polls).toBeGreaterThanOrEqual(2);
+  await page.reload();
+  await expect(page.getByRole('link', { name: /Avery Editorial, Published/ })).toBeVisible();
+  await expect(page.locator('.publication-toast')).toHaveCount(0);
+
+  state = 'scheduled';
+  await page.goto('/w/avery/queue');
+  await expect(page.locator('.queue-row').getByText('Scheduled')).toBeVisible();
+  state = 'retry_wait';
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.locator('.queue-row').getByText('Retrying')).toBeVisible();
+  await expect(page.locator('.publication-toast')).toHaveCount(0);
+  state = 'failed';
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.locator('.queue-row').getByText('Failed')).toBeVisible();
+  await expect(page.locator('.publication-toast')).toHaveCount(1);
+  await expect(page.locator('.publication-toast')).toContainText('Post needs attention');
+  await expect(
+    page.locator('.publication-toast').getByRole('link', { name: 'View details' }),
+  ).toHaveAttribute('href', '/w/avery/jobs/outcome-job');
+});
+
 test('shows published jobs as success across calendar modes after reload', async ({ page }) => {
   await establishWorkspaceSession(page);
   await page.route('**/api/workflow/jobs?limit=100', (route) =>

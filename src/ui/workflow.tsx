@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Rail } from './main.js';
-import { LiveRegion } from './feedback.js';
+import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
@@ -99,6 +99,90 @@ const COLLISION_SPACING_MS = 15 * 60_000;
 const COLLISION_PAGE_LIMIT = 100;
 const COLLISION_MAX_PAGES_PER_ACCOUNT = 50;
 const COLLISION_WINDOW_MS = 7 * 24 * 60 * 60_000;
+const PUBLICATION_REFRESH_MS = 10_000;
+
+function useVisiblePublicationJobs(errorMessage: string) {
+  const [jobs, setJobs] = useState<Job[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<PublicationToast[]>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let previous: Map<string, JobState> | null = null;
+    let busy = false;
+    const refresh = async () => {
+      if (document.hidden || busy) return;
+      busy = true;
+      try {
+        const response = await fetch('/api/workflow/jobs?limit=100', { signal: controller.signal });
+        const result = (await response.json()) as {
+          data: { items: QueueJobDto[] } | null;
+          error: string | null;
+        };
+        if (!response.ok || !result.data) throw new Error(result.error ?? errorMessage);
+        const current = result.data.items.map(toJob);
+        const changed = previous
+          ? current.filter((job) => {
+              const prior = previous?.get(job.id);
+              return prior && prior !== job.state && ['published', 'failed'].includes(job.state);
+            })
+          : [];
+        previous = new Map(current.map((job) => [job.id, job.state]));
+        setJobs(current);
+        setLoadError(null);
+        for (const job of changed.slice(0, 3)) {
+          let externalUrl: string | null | undefined;
+          if (job.state === 'published') {
+            const detailResponse = await fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}`, {
+              signal: controller.signal,
+            }).catch(() => null);
+            if (detailResponse?.ok) {
+              const detail = (await detailResponse.json()) as { data: JobDetailDto | null };
+              if (detail.data?.state === job.state) externalUrl = detail.data.providerResult?.url;
+            }
+          }
+          const safeExternalUrl =
+            externalUrl && /^https:\/\//i.test(externalUrl) ? externalUrl : null;
+          if (controller.signal.aborted) return;
+          const toast: PublicationToast = {
+            id: `${job.id}:${job.state}`,
+            state: job.state === 'published' ? 'published' : 'failed',
+            provider: job.provider,
+            account: [job.handle, job.account].filter(Boolean).join(' · '),
+            href: job.state === 'published' && safeExternalUrl ? safeExternalUrl : jobPath(job),
+            external: Boolean(job.state === 'published' && safeExternalUrl),
+          };
+          setToasts((items) =>
+            [toast, ...items.filter((item) => item.id !== toast.id)].slice(0, 3),
+          );
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (previous === null) setLoadError(error instanceof Error ? error.message : errorMessage);
+      } finally {
+        busy = false;
+      }
+    };
+    const onFocus = () => void refresh();
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), PUBLICATION_REFRESH_MS);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [errorMessage]);
+  return {
+    jobs,
+    loadError,
+    toasts,
+    dismissToast: (id: string) => {
+      setToasts((items) => items.filter((item) => item.id !== id));
+    },
+  };
+}
 
 function WorkflowLoading({
   kind,
@@ -201,9 +285,11 @@ function toJob(dto: QueueJobDto): Job {
     scheduledAt: dto.scheduledAt,
     text: dto.contentPreview,
     account: dto.providerAccount.displayName,
-    handle: dto.providerAccount.handle.startsWith('@')
-      ? dto.providerAccount.handle
-      : `@${dto.providerAccount.handle}`,
+    handle: dto.providerAccount.handle
+      ? dto.providerAccount.handle.startsWith('@')
+        ? dto.providerAccount.handle
+        : `@${dto.providerAccount.handle}`
+      : '',
     provider: dto.providerAccount.provider.toUpperCase(),
     media: dto.media,
     creator: dto.creator,
@@ -1275,30 +1361,12 @@ export function QueuePage() {
   const [provider, setProvider] = useState(initialParams.get('provider') ?? 'any');
   const [dateRange, setDateRange] = useState(initialParams.get('date') ?? 'any');
   const [sort, setSort] = useState(initialParams.get('sort') ?? 'priority');
-  const [queueJobs, setQueueJobs] = useState<Job[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch('/api/workflow/jobs?limit=100', { signal: controller.signal })
-      .then(async (response) => {
-        const result = (await response.json()) as {
-          data: { items: QueueJobDto[] } | null;
-          error: string | null;
-        };
-        if (!response.ok || !result.data)
-          throw new Error(result.error ?? 'Could not load the publication queue');
-        setQueueJobs(result.data.items.map(toJob));
-      })
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        setLoadError(
-          error instanceof Error ? error.message : 'Could not load the publication queue',
-        );
-      });
-    return () => {
-      controller.abort();
-    };
-  }, []);
+  const {
+    jobs: queueJobs,
+    loadError,
+    toasts,
+    dismissToast,
+  } = useVisiblePublicationJobs('Could not load the publication queue');
   useEffect(() => {
     const params = new URLSearchParams();
     if (query) params.set('q', query);
@@ -1352,6 +1420,7 @@ export function QueuePage() {
     <WorkspaceLayout active="queue" initialComposerOpen={consumeComposerNavigationIntent()}>
       {(openComposer) => (
         <>
+          <PublicationToastStack toasts={toasts} onDismiss={dismissToast} />
           <div className="page-heading">
             <div>
               <p className="eyebrow">Publishing operations</p>
@@ -1522,28 +1591,9 @@ export function CalendarPage() {
     const parsed = supplied ? new Date(`${supplied}T12:00:00`) : new Date();
     return Number.isFinite(parsed.getTime()) ? startOfDay(parsed) : startOfDay(new Date());
   });
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch('/api/workflow/jobs?limit=100', { signal: controller.signal })
-      .then(async (response) => {
-        const result = (await response.json()) as {
-          data: { items: QueueJobDto[] } | null;
-          error: string | null;
-        };
-        if (!response.ok || !result.data)
-          throw new Error(result.error ?? 'Could not load the publication calendar');
-        setJobs(result.data.items.map(toJob));
-      })
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        setLoadError(error instanceof Error ? error.message : 'Could not load the calendar');
-      });
-    return () => {
-      controller.abort();
-    };
-  }, []);
+  const { jobs, loadError, toasts, dismissToast } = useVisiblePublicationJobs(
+    'Could not load the calendar',
+  );
   useEffect(() => {
     const params = new URLSearchParams({
       mode,
@@ -1557,6 +1607,7 @@ export function CalendarPage() {
       : addDays(date, direction * (mode === 'Week' ? 7 : 1));
   return (
     <WorkspaceLayout active="calendar">
+      <PublicationToastStack toasts={toasts} onDismiss={dismissToast} />
       <div className="calendar-heading">
         <div>
           <p className="eyebrow">Europe/Sofia · EEST</p>

@@ -23,6 +23,12 @@ Principles:
 
 The tab icon reuses the header's `.brand-signal` lime ring and violet offset accent. `src/ui/favicon.svg` is its single source; the Core build also copies it to the stable `/favicon.svg` asset path so Hosted pages can link `/core-assets/favicon.svg` without duplicating the mark.
 
+## Background publication feedback
+
+Queue and Calendar share one visible-tab workspace-scoped job refresh owner in `src/ui/workflow.tsx`: about every 10 seconds and on tab focus/visibility return. Existing Status and Calendar published marks remain the persistent truth. Only a previously observed job changing to Published or terminal Failed creates a toast; initial hydration, reload, filter changes, retries, and unchanged polls do not. The status refresh never requires WebSocket/SSE.
+
+The shared `PublicationToastStack` in `src/ui/feedback.tsx` renders at most three newest notices above the bottom safe area. A success headline names the provider (`Published on X`), shows the known account/handle, and offers `View post` only for a canonical HTTPS provider result URL; otherwise it offers `View details`. Success closes after about six seconds, pausing on hover or keyboard focus. Failure says `Post needs attention`, links to job details, and persists until dismissed or navigation. Dismissal changes no job state. The icon and headline carry meaning without color; success uses `success` and failure uses `danger` on the dark `surface-2` panel. The toast is keyboard reachable without stealing focus, with polite success and assertive actionable-failure announcements. Entry motion is restrained and removed to opacity-only under reduced motion.
+
 ## Design tokens
 
 ### Color

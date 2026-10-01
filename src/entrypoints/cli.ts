@@ -72,6 +72,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'availability',
     'remoteParentAccountId',
     'capabilitySnapshot',
+    'schemaVersion',
     'capabilitiesCheckedAt',
     'capabilityFreshness',
     'contentKinds',

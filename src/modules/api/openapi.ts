@@ -34,7 +34,7 @@ const destinationCollectionSchema = z.object({
     z.object({
       id: z.uuid(),
       provider: z.string().min(1),
-      destinationProvider: z.enum(['x', 'youtube', 'instagram', 'facebook_page']),
+      destinationProvider: z.enum(['x', 'youtube', 'linkedin', 'instagram', 'facebook_page']),
       displayName: z.string().min(1),
       status: z.string().min(1),
       availability: z.enum(['active', 'reauth_required', 'permission_lost', 'remote_missing']),

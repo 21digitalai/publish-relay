@@ -62,6 +62,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'availability',
     'remoteParentAccountId',
     'capabilitySnapshot',
+    'schemaVersion',
     'capabilitiesCheckedAt',
     'capabilityFreshness',
     'contentKinds',

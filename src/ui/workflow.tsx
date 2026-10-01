@@ -1062,7 +1062,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                 <small>
                   {isYouTube
                     ? `${String(videoTitle.length)}/100`
-                    : `${String(body.length)}/280 per X post`}
+                    : includesMeta
+                      ? `${String(body.length)}/280 characters`
+                      : `${String(body.length)}/280 per X post`}
                 </small>
               </span>
               {isYouTube ? (
@@ -1089,7 +1091,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 {isYouTube
                   ? `${String(videoTitle.length)}/100`
                   : includesMeta
-                    ? `${String(body.length)} characters`
+                    ? 'Shared caption or message for each destination'
                     : `${String(body.length)}/280 per X post`}
               </small>
             </label>

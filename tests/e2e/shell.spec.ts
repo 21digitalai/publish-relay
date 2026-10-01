@@ -122,6 +122,17 @@ async function mockMetaDestinations(page: Page) {
               capabilitySnapshot: { contentKinds: ['single_image', 'carousel'] },
               adapterDefaults: {},
             },
+            ...(['reauth_required', 'permission_lost'] as const).map((availability, index) => ({
+              id: `00000000-0000-4000-8000-00000000021${String(index + 4)}`,
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: `Unavailable Page ${String(index + 1)}`,
+              status: 'active',
+              availability,
+              capabilityFreshness: 'stale',
+              capabilitySnapshot: { contentKinds: ['link', 'single_image'] },
+              adapterDefaults: {},
+            })),
           ],
         },
         error: null,
@@ -132,9 +143,28 @@ async function mockMetaDestinations(page: Page) {
 
 test('computes Meta destination capability intersection on desktop and mobile', async ({
   page,
-}) => {
+}, testInfo) => {
   await establishWorkspaceSession(page);
   await mockMetaDestinations(page);
+  await page.goto(await workspacePath(page, 'accounts'));
+  const metaGroup = page
+    .locator('.provider-group')
+    .filter({ has: page.getByRole('heading', { name: 'Meta' }) });
+  await expect(metaGroup.locator('.account-row')).toHaveCount(5);
+  await expect(metaGroup.locator('.account-provider')).toContainText([
+    'Instagram',
+    'Facebook',
+    'Instagram',
+    'Facebook',
+    'Facebook',
+  ]);
+  await expect(
+    metaGroup.getByText('Reconnect Meta and restore publishing permissions.'),
+  ).toBeVisible();
+  await expect(
+    metaGroup.getByText('Reconnect Meta to refresh destinations; history remains available.'),
+  ).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('meta-accounts.png'), fullPage: true });
   await page.goto(await workspacePath(page, 'queue'));
   await page
     .locator('.page-heading')
@@ -142,13 +172,121 @@ test('computes Meta destination capability intersection on desktop and mobile', 
     .click();
   await page.getByText('Instagram · @mira').click();
   await expect(page.getByRole('button', { name: 'carousel' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'link' })).toHaveCount(0);
   await page.getByText('Facebook · Mira Studio').click();
   await expect(page.getByRole('button', { name: 'single image' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
   await expect(page.getByText(/remote missing · reconnect to schedule/)).toBeVisible();
+  await expect(page.locator('.composer-body-heading')).toContainText('0/280 characters');
+  await expect(page.locator('.composer-body-heading')).not.toContainText('X post');
+  await expect(page.getByText(/reauth required · reconnect to schedule/)).toBeVisible();
+  await expect(page.getByText(/permission lost · reconnect to schedule/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('meta-shared-shape.png'), fullPage: true });
+  await page.getByText('Instagram · @mira').click();
+  await expect(page.getByRole('button', { name: 'link' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.composer-sheet')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'single image' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'link' })).toBeVisible();
+  let submitted:
+    { content: { kind: string; linkUrl: string }; providerAccountIds: string[] } | undefined;
+  await page.route('**/api/workflow/posts', (route) => {
+    submitted = route.request().postDataJSON() as typeof submitted;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { jobs: [{}] }, error: null }),
+    });
+  });
+  await page.getByRole('button', { name: 'link' }).click();
+  await page.getByPlaceholder('What should your audience know?').fill('Facebook link post');
+  await page.getByLabel('HTTPS link').fill('http://example.test');
+  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath('meta-link-validation.png'), fullPage: true });
+  await page.getByLabel('HTTPS link').fill('https://example.test');
+  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('meta-link-success.png'), fullPage: true });
+  expect(submitted?.content).toMatchObject({ kind: 'link', linkUrl: 'https://example.test' });
+  expect(submitted?.providerAccountIds).toEqual(['00000000-0000-4000-8000-000000000212']);
+});
+
+test('validates Instagram carousel and schedules the shared Meta image shape', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await mockMetaDestinations(page);
+  let uploadCount = 0;
+  await page.route('**/api/workflow/media', (route) => {
+    uploadCount += 1;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { id: `00000000-0000-4000-8000-00000000022${String(uploadCount)}` },
+        error: null,
+      }),
+    });
+  });
+  let submitted:
+    { content: { kind: string }; mediaIds: string[]; providerAccountIds: string[] } | undefined;
+  await page.route('**/api/workflow/posts', (route) => {
+    submitted = route.request().postDataJSON() as typeof submitted;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { jobs: [{}, {}] }, error: null }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page
+    .locator('.page-heading')
+    .getByRole('button', { name: /Create post/ })
+    .click();
+  for (const name of [
+    'Instagram · @missing',
+    'Facebook · Unavailable Page 1',
+    'Facebook · Unavailable Page 2',
+  ])
+    await expect(
+      page.locator('.account-picker label').filter({ hasText: name }).locator('input'),
+    ).toBeDisabled();
+  await page.getByText('Instagram · @mira').click();
+  await page.getByRole('button', { name: 'carousel' }).click();
+  await page.getByPlaceholder('What should your audience know?').fill('Shared Meta image');
+  const image = (name: string) => ({
+    name,
+    mimeType: 'image/png',
+    buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]),
+  });
+  await page.locator('#composer-media-upload').setInputFiles([image('first.png')]);
+  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeDisabled();
+  await page.screenshot({
+    path: testInfo.outputPath('meta-carousel-needs-images.png'),
+    fullPage: true,
+  });
+  await page
+    .locator('#composer-media-upload')
+    .setInputFiles([image('first.png'), image('second.png')]);
+  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+  await page.getByText('Facebook · Mira Studio').click();
+  await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
+  await page.locator('#composer-media-upload').setInputFiles([image('shared.png')]);
+  await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
+  await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('meta-shared-image-success.png'),
+    fullPage: true,
+  });
+  expect(uploadCount).toBe(1);
+  expect(submitted?.content.kind).toBe('single_image');
+  expect(submitted?.mediaIds).toHaveLength(1);
+  expect(submitted?.providerAccountIds).toEqual([
+    '00000000-0000-4000-8000-000000000211',
+    '00000000-0000-4000-8000-000000000212',
+  ]);
 });
 
 test('renders the login surface and reports an inline authentication error', async ({

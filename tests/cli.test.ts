@@ -345,9 +345,19 @@ describe('Publish Relay CLI', () => {
         items: [
           {
             id: 'destination-1',
-            provider: 'youtube',
-            displayName: 'Studio',
+            provider: 'meta',
+            destinationProvider: 'instagram',
+            displayName: '@studio',
             status: 'active',
+            availability: 'active',
+            remoteParentAccountId: 'page-one',
+            capabilitySnapshot: {
+              schemaVersion: 1,
+              contentKinds: ['single_image', 'carousel'],
+              media: { minImages: 1, maxImages: 10 },
+            },
+            capabilitiesCheckedAt: '2026-09-07T20:00:00.000Z',
+            capabilityFreshness: 'fresh',
             updatedAt: '2026-09-07T20:00:00.000Z',
             credentialId: 'private',
           },
@@ -362,9 +372,19 @@ describe('Publish Relay CLI', () => {
     const output = JSON.parse(result.stdout) as { data: { items: unknown[] } };
     expect(output.data.items[0]).toEqual({
       id: 'destination-1',
-      provider: 'youtube',
-      displayName: 'Studio',
+      provider: 'meta',
+      destinationProvider: 'instagram',
+      displayName: '@studio',
       status: 'active',
+      availability: 'active',
+      remoteParentAccountId: 'page-one',
+      capabilitySnapshot: {
+        schemaVersion: 1,
+        contentKinds: ['single_image', 'carousel'],
+        media: { minImages: 1, maxImages: 10 },
+      },
+      capabilitiesCheckedAt: '2026-09-07T20:00:00.000Z',
+      capabilityFreshness: 'fresh',
       updatedAt: '2026-09-07T20:00:00.000Z',
       credentialId: '[REDACTED]',
     });

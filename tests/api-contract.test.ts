@@ -67,6 +67,13 @@ describe('API v1 contract', () => {
     });
   });
 
+  it('documents every live destination provider, including LinkedIn', () => {
+    const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
+    const document = JSON.stringify(paths['/api/v1/destinations']);
+    for (const provider of ['x', 'youtube', 'linkedin', 'instagram', 'facebook_page'])
+      expect(document).toContain(provider);
+  });
+
   it('publishes provider-neutral post collection and direct-resource contracts', () => {
     expect(apiV1OpenApiDocument()).toMatchObject({
       paths: {

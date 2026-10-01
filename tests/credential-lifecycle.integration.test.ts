@@ -48,6 +48,7 @@ import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-
 import { completeMetaOauthConnection } from '../src/modules/providers/meta-oauth.service.js';
 import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
+import { apiV1OpenApiDocument } from '../src/modules/api/openapi.js';
 import {
   ApiKeyAuthorizationError,
   type ApiKeyService,
@@ -101,6 +102,105 @@ beforeEach(async () => {
     SELECT set_config('app.workspace_id', '${workspaceId}', false);
     INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${workspaceId}', '${userId}', 'owner');
   `);
+});
+
+it('serves bounded Meta destination variants and a live LinkedIn destination through the machine route', async () => {
+  const db = drizzle(database) as unknown as NodePgDatabase;
+  const instagramId = '00000000-0000-4000-8000-000000000601';
+  const facebookId = '00000000-0000-4000-8000-000000000602';
+  const linkedInId = '00000000-0000-4000-8000-000000000603';
+  await database.exec(`
+    INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+      VALUES ('00000000-0000-4000-8000-000000000604', '${workspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+    INSERT INTO provider_connections (id, workspace_id, provider, credential_id, member_urn) VALUES
+      ('00000000-0000-4000-8000-000000000605', '${workspaceId}', 'meta', '00000000-0000-4000-8000-000000000604', null),
+      ('00000000-0000-4000-8000-000000000606', '${workspaceId}', 'linkedin', '00000000-0000-4000-8000-000000000604', 'urn:li:person:mira');
+    INSERT INTO provider_accounts
+      (id, workspace_id, connection_id, provider_account_id, remote_account_id, display_name,
+       destination_provider, remote_parent_account_id, availability, capabilities_checked_at) VALUES
+      ('${instagramId}', '${workspaceId}', '00000000-0000-4000-8000-000000000605',
+       'ig', 'ig', '@mira', 'instagram', 'page-one', 'active', now()),
+      ('${facebookId}', '${workspaceId}', '00000000-0000-4000-8000-000000000605',
+       'page-one', 'page-one', 'Mira Studio', 'facebook_page', null, 'remote_missing', now() - interval '2 days'),
+      ('${linkedInId}', '${workspaceId}', '00000000-0000-4000-8000-000000000606',
+       'member-one', 'member-one', 'Mira LinkedIn', 'linkedin', null, 'active', now());
+  `);
+  const principal = {
+    id: '00000000-0000-4000-8000-000000000607',
+    workspaceId,
+    createdByUserId: userId,
+    workspaceLabel: 'Credential Workspace',
+    prefix: 'pr_test',
+    capabilities: ['destinations:read'],
+    expiresAt: null,
+  };
+  const keys = {
+    authenticate: () => Promise.resolve(principal),
+    requireCapability: () => Promise.resolve(),
+  } as unknown as ApiKeyService;
+  const application = Fastify();
+  registerDestinationRoutes(
+    application,
+    db,
+    keys,
+    new ApiRateLimiter({
+      workspace: 10,
+      key: 10,
+      mutationWorkspace: 10,
+      mutationKey: 10,
+      windowMs: 60_000,
+    }),
+  );
+  const response = await application.inject({
+    method: 'GET',
+    url: '/api/v1/destinations',
+    headers: {
+      authorization: 'Bearer test-key',
+      'x-publish-relay-workspace': workspaceId,
+    },
+  });
+  expect(response.statusCode).toBe(200);
+  const body = response.json<{ data: { items: Record<string, unknown>[] } }>();
+  expect(body.data.items).toHaveLength(3);
+  expect(body.data.items.find((item) => item.id === instagramId)).toMatchObject({
+    provider: 'meta',
+    destinationProvider: 'instagram',
+    availability: 'active',
+    remoteParentAccountId: 'page-one',
+    capabilityFreshness: 'fresh',
+  });
+  expect(body.data.items.find((item) => item.id === facebookId)).toMatchObject({
+    provider: 'meta',
+    destinationProvider: 'facebook_page',
+    availability: 'remote_missing',
+    capabilityFreshness: 'stale',
+  });
+  expect(body.data.items.find((item) => item.id === linkedInId)).toMatchObject({
+    provider: 'linkedin',
+    destinationProvider: 'linkedin',
+    availability: 'active',
+  });
+  expect(JSON.stringify(body)).not.toMatch(/credentialId|connectionId|adapterDefaults|secret/i);
+  for (const availability of ['reauth_required', 'permission_lost', 'remote_missing', 'active']) {
+    await database.exec(
+      `UPDATE provider_accounts SET availability = '${availability}' WHERE id = '${facebookId}'`,
+    );
+    const variant = await application.inject({
+      method: 'GET',
+      url: '/api/v1/destinations',
+      headers: {
+        authorization: 'Bearer test-key',
+        'x-publish-relay-workspace': workspaceId,
+      },
+    });
+    expect(variant.statusCode).toBe(200);
+    const items = variant.json<{ data: { items: Record<string, unknown>[] } }>().data.items;
+    expect(items.find((item) => item.id === facebookId)).toMatchObject({ availability });
+    expect(items.find((item) => item.id === instagramId)).toMatchObject({ availability: 'active' });
+  }
+  const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
+  expect(JSON.stringify(paths['/api/v1/destinations'])).toContain('linkedin');
+  await application.close();
 });
 
 afterEach(async () => database.close());

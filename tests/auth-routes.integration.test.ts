@@ -327,6 +327,36 @@ describe('authentication HTTP boundary', () => {
     }
   });
 
+  it('sends valid sessions from login to the app but keeps expired sessions on login', async () => {
+    const store = createStore();
+    const application = createTestApplication(store);
+    const headers = { cookie: 'publish_relay_session=w1.token' };
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    const signedIn = await application.inject({ method: 'GET', url: '/login', headers });
+    expect(signedIn.statusCode).toBe(302);
+    expect(signedIn.headers.location).toBe('/app');
+    expect(signedIn.headers['cache-control']).toBe('no-store');
+
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() - 60_000),
+      revokedAt: null,
+    });
+    const expired = await application.inject({ method: 'GET', url: '/login', headers });
+    expect(expired.statusCode).toBe(200);
+    expect(expired.body).toContain('<div id="root"></div>');
+    expect(expired.headers['cache-control']).toBe('no-store');
+  });
+
   it('keeps auth/session and protected app routes when public auth shells are omitted', async () => {
     const application = Fastify();
     applications.push(application);

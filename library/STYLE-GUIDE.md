@@ -118,6 +118,7 @@ Group by provider and show each connected account independently. Rows include pr
 An external-draft cockpit link opens the canonical Composer sheet directly. A compact imported-draft status banner names the friendly source label and attached-media count without exposing actor IDs, client IDs, internal storage fields, or raw provenance. All destination, content, timing, validation, success, and failure states remain owned by the existing Composer; there is no separate imported-draft editor.
 
 The composer is a 640px right sheet on desktop, full-screen on mobile, and may expand to 880px for preview.
+Its X, Escape, and backdrop-only dismissal all use the same cleanup-aware close path; inside-sheet clicks do not dismiss, saving prevents dismissal, and focus returns to the Create post trigger.
 
 Order:
 

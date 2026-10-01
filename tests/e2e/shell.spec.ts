@@ -964,6 +964,34 @@ test('reports collision guidance as unavailable instead of an empty result', asy
   await expect(page.getByText('Nearby schedule guidance is unavailable.')).toBeVisible();
 });
 
+test('dismisses the composer safely and restores its Create post trigger', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  await page.goto(await workspacePath(page, 'queue'));
+  const trigger = page.getByRole('button', { name: 'Create post' }).last();
+  const dialog = page.getByRole('dialog', { name: 'Create post' });
+
+  await trigger.click();
+  await dialog.getByText('Add media').click();
+  await expect(dialog).toBeVisible();
+  if (testInfo.project.name === 'desktop') {
+    await page.locator('.sheet-backdrop').click({ position: { x: 5, y: 5 } });
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+  }
+  await dialog.getByPlaceholder('What should your audience know?').focus();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
 test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await establishWorkspaceSession(page);

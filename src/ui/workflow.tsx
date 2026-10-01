@@ -367,9 +367,21 @@ function Composer({ onClose }: { onClose: () => void }) {
     return false;
   };
   const closeComposer = async () => {
+    if (state === 'saving') return;
     if (await discardUpload()) onClose();
     else setError('The uploaded video is still being cleaned up. Try closing again.');
   };
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      void closeComposer();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+    };
+  });
   const initialSchedule = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
   const [localSchedule, setLocalSchedule] = useState(localDateTimeValue(initialSchedule));
   const scheduleOptions = useMemo(() => matchingLocalInstants(localSchedule), [localSchedule]);
@@ -574,7 +586,12 @@ function Composer({ onClose }: { onClose: () => void }) {
     }
   };
   return (
-    <div className="sheet-backdrop">
+    <div
+      className="sheet-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) void closeComposer();
+      }}
+    >
       <section
         className="composer-sheet"
         role="dialog"
@@ -590,6 +607,7 @@ function Composer({ onClose }: { onClose: () => void }) {
             className="icon-button"
             onClick={() => void closeComposer()}
             aria-label="Close composer"
+            autoFocus
             disabled={state === 'saving'}
           >
             ×
@@ -931,6 +949,16 @@ export function WorkspaceLayout({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(initialComposerOpen);
+  const composerTrigger = useRef<HTMLElement | null>(null);
+  const openComposer = () => {
+    composerTrigger.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setComposerOpen(true);
+  };
+  const closeComposer = () => {
+    setComposerOpen(false);
+    requestAnimationFrame(() => composerTrigger.current?.focus());
+  };
   return (
     <div className="workspace-app">
       <a className="skip-link" href="#main-content">
@@ -942,9 +970,7 @@ export function WorkspaceLayout({
           setMenuOpen(false);
         }}
         active={active}
-        onCreate={() => {
-          setComposerOpen(true);
-        }}
+        onCreate={openComposer}
       />
       <main className="main-content workflow-main" id="main-content">
         <header className="mobile-header">
@@ -961,11 +987,7 @@ export function WorkspaceLayout({
             <span className="brand-signal" /> Publish Relay
           </span>
         </header>
-        {typeof children === 'function'
-          ? children(() => {
-              setComposerOpen(true);
-            })
-          : children}
+        {typeof children === 'function' ? children(openComposer) : children}
       </main>
       {menuOpen && (
         <button
@@ -976,13 +998,7 @@ export function WorkspaceLayout({
           }}
         />
       )}
-      {composerOpen && (
-        <Composer
-          onClose={() => {
-            setComposerOpen(false);
-          }}
-        />
-      )}
+      {composerOpen && <Composer onClose={closeComposer} />}
     </div>
   );
 }

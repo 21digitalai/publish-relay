@@ -1294,7 +1294,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 className="primary-button"
-                disabled={invalid && !hasUncertainPost}
+                disabled={state === 'saving' || (invalid && !hasUncertainPost)}
                 onClick={() => void submit()}
               >
                 {state === 'saving'

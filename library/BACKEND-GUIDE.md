@@ -216,6 +216,10 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 # Agent destination discovery
 
+## Meta grant revoke reservation
+
+Selected Meta remote-grant revoke reserves the connection with durable `revoking` status before calling Meta. Workspace-row locking serializes that reservation with subject reconnect, local account disconnect, and post creation/revision admission. A `revoking` connection cannot receive new jobs or credentials; active/reconciliation jobs block reservation. The selected credential ID is rechecked at finalization, which atomically disconnects linked accounts and revokes authority/Page credentials. Transient remote failure or remote-success/local-failure leaves `revoking` in place: retry uses the same credential, treats Meta already-invalid grant responses as success, and finishes local cleanup without replacing a newer grant. A completed `revoked` retry is idempotent. The API returns a recovery-oriented pending message rather than silently reopening admission.
+
 ## External draft handoff
 
 - `external_drafts` is the durable tenant-scoped handoff aggregate for authorized external applications. Identity and canonical replay are keyed by workspace, authenticated actor type/id, and the caller's opaque `external_id`; `request_fingerprint` detects changed-input conflicts without overloading the generic mutation-replay ledger.

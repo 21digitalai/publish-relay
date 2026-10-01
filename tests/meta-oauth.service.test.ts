@@ -46,6 +46,7 @@ import {
   revokeRemoteMetaGrant,
 } from '../src/modules/providers/meta-oauth.service.js';
 import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
+import { providerAccounts, providerConnections, workspaces } from '../src/database/schema.js';
 
 interface RevokeHarness {
   transaction: unknown;
@@ -57,28 +58,44 @@ function createRevokeHarness(): RevokeHarness {
   const updates: Record<string, unknown>[] = [];
   const audits: Record<string, unknown>[] = [];
   let selected = 0;
+  let status = 'active';
   const transaction = {
     select: () => ({
-      from: () => ({
+      from: (table: unknown) => ({
         innerJoin: () => ({
           where: () => ({
             limit: () =>
               Promise.resolve(
-                ++selected % 2 === 1 ? [{ id: 'connection', credentialId: 'authority' }] : [],
+                ++selected % 2 === 1
+                  ? [{ id: 'connection', credentialId: 'authority', status }]
+                  : [],
               ),
           }),
         }),
-        where: () =>
-          Promise.resolve([
-            { credentialId: 'page-credential' },
-            { credentialId: 'page-credential' },
-          ]),
+        where: () => ({
+          for: () =>
+            table === workspaces
+              ? Promise.resolve([{ id: 'workspace' }])
+              : {
+                  limit: () =>
+                    Promise.resolve(status === 'revoking' ? [{ id: 'connection', status }] : []),
+                },
+          then: (resolve: (value: unknown) => unknown) =>
+            Promise.resolve(
+              table === providerAccounts
+                ? [{ credentialId: 'page-credential' }, { credentialId: 'page-credential' }]
+                : table === providerConnections
+                  ? [{ id: 'connection', status }]
+                  : [],
+            ).then(resolve),
+        }),
       }),
     }),
     update: () => ({
       set: (values: Record<string, unknown>) => ({
         where: () => {
           updates.push(values);
+          if (typeof values.status === 'string') status = values.status;
           return Promise.resolve();
         },
       }),
@@ -96,6 +113,7 @@ function createRevokeHarness(): RevokeHarness {
 describe('Meta OAuth service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getActiveCredential).mockReset();
     vi.mocked(revokeCredential).mockResolvedValue(true);
   });
 
@@ -240,13 +258,13 @@ describe('Meta OAuth service', () => {
     ).resolves.toBe(true);
 
     expect(client.revoke).toHaveBeenCalledTimes(1);
-    expect(harness.updates.filter((update) => update.status === 'revoked')).toHaveLength(2);
+    expect(harness.updates.filter((update) => update.status === 'revoked')).toHaveLength(1);
     expect(
       harness.audits.filter((audit) => audit.action === 'meta.connection.revoked'),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
-  it('does not mutate local lifecycle state after a transient remote revoke failure', async () => {
+  it('keeps a durable reservation for retry after a transient remote revoke failure', async () => {
     const harness = createRevokeHarness();
     const { withTenantTransaction } = await import('../src/database/tenant-transaction.js');
     vi.mocked(withTenantTransaction).mockImplementation(async (_database, _tenant, work) =>
@@ -267,9 +285,9 @@ describe('Meta OAuth service', () => {
         accountId: 'account',
         requestId: 'request',
       }),
-    ).rejects.toMatchObject({ kind: 'transient' });
+    ).rejects.toMatchObject({ cause: { kind: 'transient' } });
 
-    expect(harness.updates).toHaveLength(0);
+    expect(harness.updates).toEqual([expect.objectContaining({ status: 'revoking' })]);
     expect(revokeCredential).not.toHaveBeenCalled();
     expect(harness.audits).toHaveLength(0);
   });

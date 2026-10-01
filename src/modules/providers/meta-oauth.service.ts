@@ -6,6 +6,7 @@ import {
   providerAccounts,
   providerConnections,
   publicationJobs,
+  workspaces,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
@@ -279,19 +280,154 @@ export class MetaConnectionHasActiveJobsError extends Error {
   }
 }
 
+export class MetaRevocationPendingError extends Error {
+  public constructor(cause: unknown) {
+    super(
+      'Meta grant revocation is pending. Retry Revoke Meta connection to finish; scheduling and reconnect are paused',
+      { cause },
+    );
+  }
+}
+
+async function lockMetaWorkspace(transaction: NodePgDatabase, workspaceId: string): Promise<void> {
+  await transaction
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .for('update');
+}
+
+async function assertNoMetaActiveJobs(
+  transaction: NodePgDatabase,
+  workspaceId: string,
+  connectionId: string,
+): Promise<void> {
+  const activeJobs = await transaction
+    .select({ id: publicationJobs.id })
+    .from(publicationJobs)
+    .innerJoin(providerAccounts, eq(publicationJobs.providerAccountId, providerAccounts.id))
+    .where(
+      and(
+        eq(publicationJobs.workspaceId, workspaceId),
+        eq(providerAccounts.connectionId, connectionId),
+        or(
+          inArray(publicationJobs.state, [
+            'scheduled',
+            'leased',
+            'dispatching',
+            'accepted_pending',
+            'retry_wait',
+          ]),
+          eq(publicationJobs.reconciliationRequired, true),
+        ),
+      ),
+    )
+    .limit(1);
+  if (activeJobs[0]) throw new MetaConnectionHasActiveJobsError();
+}
+
+interface MetaRevokeInput {
+  workspaceId: string;
+  userId: string;
+  accountId: string;
+  requestId: string;
+}
+
+interface MetaRevokeConnection {
+  id: string;
+  credentialId: string;
+  status: string;
+}
+
+async function finalizeMetaGrantRevoke(
+  database: NodePgDatabase,
+  input: MetaRevokeInput,
+  connection: MetaRevokeConnection,
+): Promise<void> {
+  await withTenantTransaction(database, input, async (transaction) => {
+    await lockMetaWorkspace(transaction, input.workspaceId);
+    const reserved = await transaction
+      .select({ status: providerConnections.status })
+      .from(providerConnections)
+      .where(
+        and(
+          eq(providerConnections.workspaceId, input.workspaceId),
+          eq(providerConnections.id, connection.id),
+          eq(providerConnections.credentialId, connection.credentialId),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (reserved[0]?.status === 'revoked') return;
+    if (reserved[0]?.status !== 'revoking')
+      throw new Error('Meta grant changed during revoke; local state was preserved');
+    const now = new Date();
+    const accountRows = await transaction
+      .select({ credentialId: providerAccounts.credentialId })
+      .from(providerAccounts)
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerAccounts.connectionId, connection.id),
+        ),
+      );
+    await transaction
+      .update(providerAccounts)
+      .set({ availability: 'reauth_required', disconnectedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerAccounts.connectionId, connection.id),
+        ),
+      );
+    await transaction
+      .update(providerConnections)
+      .set({ status: 'revoked', updatedAt: now })
+      .where(
+        and(
+          eq(providerConnections.workspaceId, input.workspaceId),
+          eq(providerConnections.id, connection.id),
+          eq(providerConnections.credentialId, connection.credentialId),
+          eq(providerConnections.status, 'revoking'),
+        ),
+      );
+    for (const credentialId of new Set([
+      connection.credentialId,
+      ...accountRows.flatMap((account) => (account.credentialId ? [account.credentialId] : [])),
+    ]))
+      await revokeCredential(transaction, input.workspaceId, credentialId, now);
+    await transaction.insert(auditEvents).values({
+      workspaceId: input.workspaceId,
+      actorType: 'user',
+      actorId: input.userId,
+      action: 'meta.connection.revoked',
+      targetType: 'provider_connection',
+      targetId: connection.id,
+      requestId: input.requestId,
+      metadata: { destinationCount: accountRows.length },
+    });
+  });
+}
+
 export async function revokeMetaConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   client: MetaHttpClient,
-  input: { workspaceId: string; userId: string; accountId: string; requestId: string },
+  input: MetaRevokeInput,
 ): Promise<boolean> {
   const connection = await withTenantTransaction(
     database,
     { workspaceId: input.workspaceId, userId: input.userId },
     async (transaction) => {
       await assertActiveMembership(transaction, input.workspaceId, input.userId);
+      // The same workspace row is locked by reconnect and publication admission.
+      await lockMetaWorkspace(transaction, input.workspaceId);
       const rows = await transaction
-        .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
+        .select({
+          id: providerConnections.id,
+          credentialId: providerConnections.credentialId,
+          status: providerConnections.status,
+        })
         .from(providerAccounts)
         .innerJoin(providerConnections, eq(providerAccounts.connectionId, providerConnections.id))
         .where(
@@ -303,97 +439,45 @@ export async function revokeMetaConnection(
           ),
         )
         .limit(1);
-      if (rows[0]) {
-        const activeJobs = await transaction
-          .select({ id: publicationJobs.id })
-          .from(publicationJobs)
-          .innerJoin(providerAccounts, eq(publicationJobs.providerAccountId, providerAccounts.id))
+      if (rows[0]?.status === 'active') {
+        await assertNoMetaActiveJobs(transaction, input.workspaceId, rows[0].id);
+        await transaction
+          .update(providerConnections)
+          .set({ status: 'revoking', updatedAt: new Date() })
           .where(
             and(
-              eq(publicationJobs.workspaceId, input.workspaceId),
-              eq(providerAccounts.connectionId, rows[0].id),
-              or(
-                inArray(publicationJobs.state, [
-                  'scheduled',
-                  'leased',
-                  'dispatching',
-                  'accepted_pending',
-                  'retry_wait',
-                ]),
-                eq(publicationJobs.reconciliationRequired, true),
-              ),
+              eq(providerConnections.workspaceId, input.workspaceId),
+              eq(providerConnections.id, rows[0].id),
+              eq(providerConnections.status, 'active'),
             ),
-          )
-          .limit(1);
-        if (activeJobs[0]) throw new MetaConnectionHasActiveJobsError();
+          );
       }
       return rows[0] ?? null;
     },
   );
   if (!connection) return false;
-  const credential = await withTenantTransaction(
-    database,
-    { workspaceId: input.workspaceId },
-    (transaction) => getActiveCredential(transaction, input.workspaceId, connection.credentialId),
-  );
-  if (credential) {
-    const decrypted = await decryptCredential(credential, keys);
-    try {
-      const value = JSON.parse(decrypted.toString('utf8')) as { accessToken?: unknown };
-      if (typeof value.accessToken !== 'string') throw new Error('Meta credential is invalid');
-      await revokeRemoteMetaGrant(client, value.accessToken);
-    } finally {
-      decrypted.fill(0);
+  if (connection.status === 'revoked') return true;
+  if (connection.status !== 'active' && connection.status !== 'revoking')
+    throw new Error('Meta connection is not active');
+  try {
+    const credential = await withTenantTransaction(
+      database,
+      { workspaceId: input.workspaceId },
+      (transaction) => getActiveCredential(transaction, input.workspaceId, connection.credentialId),
+    );
+    if (credential) {
+      const decrypted = await decryptCredential(credential, keys);
+      try {
+        const value = JSON.parse(decrypted.toString('utf8')) as { accessToken?: unknown };
+        if (typeof value.accessToken !== 'string') throw new Error('Meta credential is invalid');
+        await revokeRemoteMetaGrant(client, value.accessToken);
+      } finally {
+        decrypted.fill(0);
+      }
     }
+    await finalizeMetaGrantRevoke(database, input, connection);
+    return true;
+  } catch (error) {
+    throw new MetaRevocationPendingError(error);
   }
-  await withTenantTransaction(
-    database,
-    { workspaceId: input.workspaceId, userId: input.userId },
-    async (transaction) => {
-      const now = new Date();
-      const accountRows = await transaction
-        .select({ credentialId: providerAccounts.credentialId })
-        .from(providerAccounts)
-        .where(
-          and(
-            eq(providerAccounts.workspaceId, input.workspaceId),
-            eq(providerAccounts.connectionId, connection.id),
-          ),
-        );
-      await transaction
-        .update(providerAccounts)
-        .set({ availability: 'reauth_required', disconnectedAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(providerAccounts.workspaceId, input.workspaceId),
-            eq(providerAccounts.connectionId, connection.id),
-          ),
-        );
-      await transaction
-        .update(providerConnections)
-        .set({ status: 'revoked', updatedAt: now })
-        .where(
-          and(
-            eq(providerConnections.workspaceId, input.workspaceId),
-            eq(providerConnections.id, connection.id),
-          ),
-        );
-      for (const credentialId of new Set([
-        connection.credentialId,
-        ...accountRows.flatMap((account) => (account.credentialId ? [account.credentialId] : [])),
-      ]))
-        await revokeCredential(transaction, input.workspaceId, credentialId, now);
-      await transaction.insert(auditEvents).values({
-        workspaceId: input.workspaceId,
-        actorType: 'user',
-        actorId: input.userId,
-        action: 'meta.connection.revoked',
-        targetType: 'provider_connection',
-        targetId: connection.id,
-        requestId: input.requestId,
-        metadata: { destinationCount: accountRows.length },
-      });
-    },
-  );
-  return true;
 }

@@ -50,6 +50,11 @@ export function registerProviderAccountRoutes(
         data: null,
         error: 'Cancel scheduled jobs for this account before disconnecting it',
       });
+    if (result === 'revoking')
+      return reply.code(409).send({
+        data: null,
+        error: 'This Meta grant is being revoked; retry the grant revoke first',
+      });
     return { data: { disconnected: true }, error: null };
   });
 

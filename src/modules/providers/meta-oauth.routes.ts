@@ -15,6 +15,7 @@ import {
   completeMetaOauthConnection,
   failMetaOauthConnection,
   revokeMetaConnection,
+  MetaRevocationPendingError,
 } from './meta-oauth.service.js';
 
 const successCallbackSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
@@ -131,6 +132,8 @@ export function registerMetaOauthRoutes(
     } catch (error) {
       if (error instanceof MetaConnectionHasActiveJobsError)
         return reply.code(409).send({ data: null, error: error.message });
+      if (error instanceof MetaRevocationPendingError)
+        return reply.code(503).send({ data: null, error: error.message });
       throw error;
     }
     return revoked

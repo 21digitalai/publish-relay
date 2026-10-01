@@ -28,7 +28,8 @@ interface Account {
     | 'Needs attention'
     | 'Reconnect required'
     | 'Permission lost'
-    | 'Remote account missing';
+    | 'Remote account missing'
+    | 'Revocation pending';
   expiresAt?: string | null;
   availability: string;
   capabilityFreshness: 'fresh' | 'stale' | 'unknown';
@@ -68,6 +69,7 @@ function destinationLabel(provider: string): string {
 }
 
 function destinationHealth(availability: string, status: string): Account['health'] {
+  if (status === 'revoking') return 'Revocation pending';
   if (availability === 'permission_lost') return 'Permission lost';
   if (availability === 'remote_missing') return 'Remote account missing';
   if (availability === 'reauth_required' || status !== 'active') return 'Reconnect required';
@@ -887,7 +889,9 @@ function AccountRow({
   onReconnect: () => void;
   onDefaultsSaved: (account: Account) => void;
 }) {
-  const needsReconnect = account.health !== 'Connected' && account.health !== 'Needs attention';
+  const revocationPending = account.health === 'Revocation pending';
+  const needsReconnect =
+    account.health !== 'Connected' && account.health !== 'Needs attention' && !revocationPending;
   const linkedinExpiringSoon = account.health === 'Needs attention';
   const linkedinWarning =
     account.provider === 'LinkedIn'
@@ -930,23 +934,27 @@ function AccountRow({
       </div>
       <div>
         <span
-          className={`status-badge ${needsReconnect || linkedinExpiringSoon ? 'warning' : 'success'}`}
+          className={`status-badge ${needsReconnect || linkedinExpiringSoon || revocationPending ? 'warning' : 'success'}`}
         >
-          <span aria-hidden="true">{needsReconnect || linkedinExpiringSoon ? '!' : '✓'}</span>{' '}
+          <span aria-hidden="true">
+            {needsReconnect || linkedinExpiringSoon || revocationPending ? '!' : '✓'}
+          </span>{' '}
           {account.health}
         </span>
       </div>
       <div className="account-capabilities">
         <span>
-          {account.health === 'Needs attention'
-            ? linkedinWarning
-            : account.health === 'Connected'
-              ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · capabilities ${account.capabilityFreshness}`
-              : account.health === 'Permission lost'
-                ? 'Reconnect Meta and restore publishing permissions.'
-                : account.health === 'Remote account missing'
-                  ? 'Reconnect Meta to refresh destinations; history remains available.'
-                  : 'Reconnect this provider account to schedule new work.'}
+          {revocationPending
+            ? 'Grant revocation is unfinished. Retry Revoke Meta connection; scheduling and reconnect are paused.'
+            : account.health === 'Needs attention'
+              ? linkedinWarning
+              : account.health === 'Connected'
+                ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · capabilities ${account.capabilityFreshness}`
+                : account.health === 'Permission lost'
+                  ? 'Reconnect Meta and restore publishing permissions.'
+                  : account.health === 'Remote account missing'
+                    ? 'Reconnect Meta to refresh destinations; history remains available.'
+                    : 'Reconnect this provider account to schedule new work.'}
         </span>
       </div>
       <div className="account-actions">

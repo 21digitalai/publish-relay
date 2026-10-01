@@ -133,6 +133,7 @@ export async function replaceProviderConnection(
       id: providerConnections.id,
       credentialId: providerConnections.credentialId,
       externalSubjectId: providerConnections.externalSubjectId,
+      status: providerConnections.status,
     })
     .from(providerConnections)
     .where(
@@ -145,6 +146,8 @@ export async function replaceProviderConnection(
     .for('update')
     .limit(1);
   const current = existing[0];
+  if (current?.status === 'revoking')
+    throw new Error('This provider grant is being revoked; retry after revocation completes');
   for (const destination of destinations) {
     const owners = await database
       .select({ connectionId: providerAccounts.connectionId })

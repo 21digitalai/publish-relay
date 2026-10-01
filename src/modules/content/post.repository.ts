@@ -9,6 +9,7 @@ import {
   providerConnections,
   publicationJobs,
   revisionMedia,
+  workspaces,
 } from '../../database/schema.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
@@ -91,6 +92,12 @@ async function validateTargetOwnership(
     workspaceId: string;
   },
 ): Promise<void> {
+  // Serialize admission with grant revoke reservation and subject reconnect.
+  await database
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .for('update');
   const accounts = await database
     .select({
       id: providerAccounts.id,
@@ -115,9 +122,13 @@ async function validateTargetOwnership(
     accounts.some((account) => account.destinationProvider !== input.selectedDestination)
   )
     throw new PostValidationError('Selected provider does not match the connected destination');
+  if (accounts.some((account) => account.connectionStatus === 'revoking'))
+    throw new PostValidationError(
+      'Meta grant revocation is pending; retry revoke before scheduling',
+    );
   if (
     accounts.some(
-      (account) => account.disconnectedAt !== null || account.connectionStatus === 'disconnected',
+      (account) => account.disconnectedAt !== null || account.connectionStatus !== 'active',
     )
   )
     throw new PostValidationError('One or more provider accounts are disconnected');

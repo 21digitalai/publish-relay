@@ -185,6 +185,90 @@ test('selected Meta grant revoke distinguishes remote and local actions', async 
   );
 });
 
+test('Meta revoke pending state survives reload and retry isolates the selected grant', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  let phase: 'active' | 'pending' | 'revoked' | 'reconnected' = 'active';
+  let revokeCalls = 0;
+  const selected = {
+    id: '00000000-0000-4000-8000-000000000221',
+    provider: 'meta',
+    destinationProvider: 'facebook_page',
+    displayName: 'Selected Page',
+    availability: 'active',
+    capabilitySnapshot: { contentKinds: ['link', 'single_image'] },
+    adapterDefaults: {},
+  };
+  const sibling = {
+    ...selected,
+    id: '00000000-0000-4000-8000-000000000222',
+    displayName: 'Sibling Page',
+  };
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            ...(phase === 'revoked'
+              ? []
+              : [{ ...selected, status: phase === 'pending' ? 'revoking' : 'active' }]),
+            { ...sibling, status: 'active' },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/oauth/meta/revoke', (route) => {
+    expect((route.request().postDataJSON() as { accountId: string }).accountId).toBe(selected.id);
+    revokeCalls += 1;
+    phase = revokeCalls === 1 ? 'pending' : 'revoked';
+    return route.fulfill({
+      status: revokeCalls === 1 ? 503 : 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: revokeCalls === 1 ? null : { revoked: true },
+        error:
+          revokeCalls === 1
+            ? 'Meta grant revocation is pending. Retry Revoke Meta connection to finish; scheduling and reconnect are paused'
+            : null,
+      }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'accounts'));
+  const row = page.locator('.account-row').filter({ hasText: 'Selected Page' });
+  await row.getByRole('button', { name: 'Revoke Meta connection' }).click();
+  await page.getByRole('button', { name: 'Revoke Meta grant' }).click();
+  await expect(page.getByRole('alert')).toContainText('revocation is pending');
+  await page.reload();
+  await expect(row).toContainText('Revocation pending');
+  await expect(row.getByRole('button', { name: 'Reconnect' })).toHaveCount(0);
+  await expect(page.locator('.account-row').filter({ hasText: 'Sibling Page' })).toContainText(
+    'Connected',
+  );
+  await page.screenshot({
+    path: testInfo.outputPath('meta-revoke-pending-desktop.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: testInfo.outputPath('meta-revoke-pending-mobile.png'),
+    fullPage: true,
+  });
+  await row.getByRole('button', { name: 'Revoke Meta connection' }).click();
+  await page.getByRole('button', { name: 'Revoke Meta grant' }).click();
+  await expect(row).toHaveCount(0);
+  await page.reload();
+  await expect(row).toHaveCount(0);
+  await expect(page.locator('.account-row').filter({ hasText: 'Sibling Page' })).toBeVisible();
+  phase = 'reconnected';
+  await page.reload();
+  await expect(row).toContainText('Connected');
+  expect(revokeCalls).toBe(2);
+});
+
 test('computes Meta destination capability intersection on desktop and mobile', async ({
   page,
 }, testInfo) => {

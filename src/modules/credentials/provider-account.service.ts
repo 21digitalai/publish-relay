@@ -7,6 +7,7 @@ import {
   providerAccounts,
   providerConnections,
   publicationJobs,
+  workspaces,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { z } from 'zod';
@@ -134,15 +135,21 @@ export async function updateYouTubeAccountDefaults(
 export async function disconnectProviderAccount(
   database: NodePgDatabase,
   input: { workspaceId: string; userId: string; accountId: string; requestId: string },
-): Promise<'disconnected' | 'missing' | 'scheduled'> {
+): Promise<'disconnected' | 'missing' | 'scheduled' | 'revoking'> {
   return withTenantTransaction(
     database,
     { workspaceId: input.workspaceId, userId: input.userId },
     async (transaction) => {
+      await transaction
+        .select({ id: workspaces.id })
+        .from(workspaces)
+        .where(eq(workspaces.id, input.workspaceId))
+        .for('update');
       const rows = await transaction
         .select({
           connectionId: providerAccounts.connectionId,
           credentialId: providerConnections.credentialId,
+          connectionStatus: providerConnections.status,
         })
         .from(providerAccounts)
         .innerJoin(
@@ -161,6 +168,7 @@ export async function disconnectProviderAccount(
         .limit(1);
       const account = rows[0];
       if (!account) return 'missing';
+      if (account.connectionStatus === 'revoking') return 'revoking';
       const activeJobs = await transaction
         .select({ id: publicationJobs.id })
         .from(publicationJobs)

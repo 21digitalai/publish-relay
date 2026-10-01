@@ -1452,8 +1452,12 @@ function Composer({ onClose }: { onClose: () => void }) {
               </p>
             )}
             <footer>
-              <button className="secondary-button" onClick={onClose} disabled={hasUncertainPost}>
-                Save draft
+              <button
+                className="secondary-button"
+                onClick={() => void closeComposer()}
+                disabled={hasUncertainPost}
+              >
+                Close
               </button>
               <button
                 className="primary-button"

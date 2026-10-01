@@ -42,7 +42,7 @@ const migrations = [
   '0022_truthful_post_actors.sql',
   '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
-  '0037_meta_destination_foundation.sql',
+  '0045_meta_destination_foundation.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';

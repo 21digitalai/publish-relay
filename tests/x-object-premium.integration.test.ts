@@ -39,6 +39,7 @@ const migrations = [
   '0038_fancy_scorpion.sql',
   '0039_small_madrox.sql',
   '0044_x_thread_reply_link.sql',
+  '0045_meta_destination_foundation.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000501';
 const jobId = '00000000-0000-4000-8000-000000000508';
@@ -63,9 +64,9 @@ it('publishes persisted media root plus separate linked reply and records each e
       INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
         VALUES ('00000000-0000-4000-8000-000000000504', '${workspaceId}', 'x',
           '00000000-0000-4000-8000-000000000503');
-      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name, destination_provider, remote_account_id)
         VALUES ('00000000-0000-4000-8000-000000000505', '${workspaceId}',
-          '00000000-0000-4000-8000-000000000504', 'x-premium', 'Premium');
+          '00000000-0000-4000-8000-000000000504', 'x-premium', 'Premium', 'x', 'x-premium');
       INSERT INTO posts (id, workspace_id, created_by_user_id)
         VALUES ('00000000-0000-4000-8000-000000000506', '${workspaceId}',
           '00000000-0000-4000-8000-000000000502');

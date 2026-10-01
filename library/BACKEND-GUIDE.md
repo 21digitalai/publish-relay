@@ -85,7 +85,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - LinkedIn member connection uses the same one-time tenant/user-bound OAuth state and encrypted credential store, requests `openid profile email w_member_social`, and discovers only the signed-in `urn:li:person` member. Each workspace/member URN owns a distinct connection and credential; reconnect replaces only that member's credential without disconnecting other members. The connection row carries token expiry for truthful account status; no refresh is assumed. Text-only dispatch reads tenant-owned jobs and credentials, refuses expired/mismatched members, records the REST `/rest/posts` receipt, retries definite HTTP 429 rejection with bounded backoff ([LinkedIn rate-limit contract](https://learn.microsoft.com/en-us/linkedin/shared/api-guide/concepts/rate-limits): rate-limited requests receive 429), and holds ambiguous 5xx/transport/missing-receipt outcomes for explicit reconciliation rather than posting twice. The LinkedIn picker appears only when its own OAuth client pair is configured. Organization posting and live provider activation are not implied by this adapter.
 - YouTube access tokens refresh through `getFreshYouTubeCredential`. Refresh is triggered before expiry, writes through the credential repository's optimistic version guard, and reloads the winning encrypted credential when another process rotates first. Provider calls receive only the resulting access token in memory.
 - Revocation is idempotent. Reconnect flows update the canonical connection rather than treating credentials copied from another scheduler as portable authorization.
-- The authenticated account-management boundary uses `GET /api/provider-accounts` for a tenant-scoped allowlisted summary, CSRF-protected `PATCH /api/provider-accounts/:accountId/youtube-defaults` for owner-managed YouTube destination defaults, and CSRF-protected `DELETE /api/provider-accounts/:accountId` for disconnect. The defaults mutation accepts only the strict YouTube defaults contract and emits an audit event. Disconnect fails with `409` while scheduled, leased, dispatching, or retry-wait jobs still reference the account; it never silently abandons queued work. Disconnection is a soft state transition so historical publication jobs retain their provider-account audit reference, while normal account lists exclude disconnected rows. Removing the final connected account on a provider connection marks the connection disconnected and revokes its credential.
+- The authenticated account-management boundary uses `GET /api/provider-accounts` for a tenant-scoped allowlisted summary, CSRF-protected `PATCH /api/provider-accounts/:accountId/youtube-defaults` for owner-managed YouTube destination defaults, and CSRF-protected `DELETE /api/provider-accounts/:accountId` for disconnect. The defaults mutation accepts only the strict YouTube defaults contract and emits an audit event. Disconnect fails with `409` while scheduled, leased, dispatching, or retry-wait jobs still reference the account; it never silently abandons queued work. Disconnection is a soft state transition so historical publication jobs retain their provider-account audit reference, while normal account lists exclude disconnected rows. Canonical post-target validation rejects both explicitly disconnected destination rows and a disconnected parent connection before creating a post or job, including when a sibling destination remains connected. Removing the final connected account on a provider connection marks the connection disconnected and revokes its credential.
 - Browser job recovery uses authenticated, tenant-scoped `POST /api/workflow/jobs/:jobId/cancel` and `POST /api/workflow/jobs/:jobId/retry`. Both require double-submit CSRF and a bounded `Idempotency-Key`. Their repository transitions are state-idempotent: cancellation replays as cancelled, retry replays while already queued, and conflicting lifecycle states return `409` without creating another visible job.
 - Browser media previews use authenticated, tenant-scoped `GET /api/workflow/media/:mediaId`. The route resolves only `ready` media through the tenant repository, reads bytes through the canonical `MediaStorage` contract, verifies the persisted byte size, and returns the persisted MIME type with a short private cache policy. Missing and cross-tenant identities are indistinguishable `404` responses.
 - Browser create and revision mutations reject scheduled timestamps more than 60 seconds in the past before reserving idempotency state. This named grace exists only for client/server clock skew and the immediate Now flow; it is not a general backdating allowance.
@@ -141,14 +141,46 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Destination-scoped provider defaults
 
+- Meta OAuth is a server-owned connection-family boundary. The web process derives the one exact
+  callback `/api/oauth/meta/callback` from `PUBLISH_RELAY_PUBLIC_ORIGIN`; initiation is
+  authenticated and CSRF-protected, and the callback consumes hashed one-time state bound to the
+  initiating workspace/user before any exchange. `MetaHttpClient` pins an explicit Graph version,
+  requests the configured Page-linked permission allowlist, exchanges and introspects tokens,
+  paginates allowlisted Page/linked-Instagram discovery fields, and emits only finite redacted
+  failures plus bounded retry timing. Provider error bodies, codes, tokens, and signed URLs never
+  enter API responses, logs, audit metadata, or plaintext persistence.
+- A Meta connection retains encrypted long-lived rediscovery authority only at connection level.
+  Each managed Page receives a newly encrypted Page credential referenced by both its
+  `facebook_page` destination and any linked `instagram` destination. Reconnect creates the new
+  credential graph, updates stable destination rows, marks missing or task-invalid destinations
+  unavailable, records redacted lifecycle audits, and revokes replaced credentials in the same
+  tenant transaction. Revoke invalidates the remote grant first, then marks destinations
+  `reauth_required` and revokes every local credential. Jobs/history continue to reference the
+  stable internal destination ID. No Meta publishing adapter or endpoint is reachable in this
+  discovery slice.
+- Existing Vault Meta app/token records are evidence only. Core never reads or imports them
+  automatically; runtime Meta app ID/secret/version/permissions must be explicitly injected after
+  the approved Meta dashboard configuration exists.
 - `provider_connections.provider` identifies the connection family. `provider_accounts.destination_provider` identifies the publishing adapter and may differ from the family (one `meta` connection can own `instagram` and `facebook_page` destinations).
-- Destination identity is stable and unique by connection, destination provider, and remote account ID. Sync updates rows in place, reactivates rediscovered rows, and marks missing rows `remote_missing`; it never deletes destination history or queued job references. Parent remote identity, per-destination credential reference, capability snapshot/freshness, and availability remain workspace-scoped through composite foreign keys and RLS.
+- Destination identity is stable and unique by connection, destination provider, and remote account ID. Sync updates rows in place, reactivates rediscovered rows, and marks missing rows `remote_missing`; it never deletes destination history or queued job references. `disconnected_at` is reserved for an explicit user disconnect. Soft provider states (`reauth_required`, `permission_lost`, and `remote_missing`) remain queryable in authenticated account and destination reads while scheduling rejects them through the availability contract. Parent remote identity, per-destination credential reference, capability snapshot/freshness, and availability remain workspace-scoped through composite foreign keys and RLS.
 - `provider_accounts.adapter_defaults` is the destination-scoped source for optional provider policy defaults; it never stores credentials.
 - The browser account-management summary includes `adapterDefaults` only for its authenticated owner-facing settings form; the public/API-key destination collection remains a smaller contract and does not expose defaults.
 - Scheduling resolves sparse request overrides against those defaults before inserting target jobs. Each `publication_jobs.effective_provider_settings` value is the immutable, complete provider snapshot used for dispatch and returned by job-facing contracts.
 - YouTube resolution is owned by `src/modules/providers/youtube-settings.ts`: public and `notifySubscribers=false` are product defaults, `madeForKids` must resolve from either the destination or request, and omitted tags/category remain absent.
 - `src/modules/providers/youtube-http-client.ts` owns Google token exchange/refresh/revocation and exact owned-channel discovery behind an injected HTTP boundary; persistence services encrypt its credential value and serialize refresh writes.
 - Revisions keep caller content; target-specific effective settings belong to the independent job so multiple destinations may resolve differently without mutating shared revision history.
+- `src/modules/providers/destination-capabilities.ts` owns the bounded phase-one destination
+  capability vocabulary and 24-hour freshness label. The authenticated and machine destination
+  collections allowlist destination provider, display identity, remote parent identity,
+  availability, capability snapshot/freshness, and timestamps; connection IDs, credentials,
+  provider metadata, defaults, and ownership fields remain absent from the machine collection.
+- Meta scheduling validates the selected destination set against that capability contract before
+  mutation. Instagram accepts `single_image` or `carousel` (2–10 images); Facebook Pages accept
+  `single_image` or `link` (HTTPS only). Selecting both therefore admits only `single_image`.
+  Unavailable destinations fail closed. Every inserted job stores its own immutable
+  `effective_payload`; shared revision content never becomes shared target success state. The
+  browser image-ingest boundary accepts signature-verified PNG, JPEG, GIF, or WebP up to 20 MB and
+  retains the existing unattached-media cleanup lifecycle. No Meta dispatch adapter is registered.
 
 - `getWorkspaceUsageFacts` is the sole transactional owner of workspace usage facts for policy and application consumers. It derives retained media bytes and lifecycle counts, active connected accounts/provider families, publication-job target rows, active queued targets, scheduling horizon, and membership count from canonical Core tables under tenant RLS.
 - A publication target fact is one `publication_jobs` row, including historical rows; multiple jobs aimed at one connected account remain multiple targets. Connected-account facts require both a non-disconnected account and an active parent connection. Deleted media remains visible in lifecycle counts but contributes no retained bytes.
@@ -178,7 +210,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `createPostgresDelegatedAuthorizationStore` is the only application adapter for delegated grant/code/token persistence. Tenant-known mutations use the canonical tenant transaction; opaque credential resolution calls only the audited hash-based functions above.
 - Grant approval and revocation write `delegated_grant.approved` and `delegated_grant.revoked` audit events in the same tenant transaction as the lifecycle mutation. The authenticated user is the actor, the grant is the target, request correlation is retained, and approval metadata contains only client ID and approved scopes.
 
-`GET /api/v1/destinations` is the canonical account-scoped discovery surface for API customers. It requires `destinations:read` and returns only the provider-account ID, provider, display name, connection status, and update timestamp. Credential IDs, connection IDs, provider metadata, defaults, ownership fields, and secret material are never exposed by this collection contract.
+`GET /api/v1/destinations` is the canonical account-scoped discovery surface for API customers. It requires `destinations:read` and returns only the provider-account ID, connection family, destination provider, display name, connection status, availability, remote parent identity where useful, the bounded capability snapshot/freshness, and timestamps. Credential IDs, connection IDs, provider metadata, defaults, ownership fields, and secret material are never exposed by this collection contract.
 
 `POST /api/v1/jobs/:jobId/retry` is the canonical agent retry surface. It requires `publishes:retry`, an idempotency key, and a tenant-owned failed job whose outcome does not require reconciliation. The API-key identity is retained as the policy and event actor; unknown outcomes must be reconciled rather than blindly retried.
 

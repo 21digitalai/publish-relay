@@ -34,8 +34,18 @@ const destinationCollectionSchema = z.object({
     z.object({
       id: z.uuid(),
       provider: z.string().min(1),
+      destinationProvider: z.enum(['x', 'youtube', 'linkedin', 'instagram', 'facebook_page']),
       displayName: z.string().min(1),
       status: z.string().min(1),
+      availability: z.enum(['active', 'reauth_required', 'permission_lost', 'remote_missing']),
+      remoteParentAccountId: z.string().nullable(),
+      capabilitySnapshot: z.object({
+        schemaVersion: z.literal(1),
+        contentKinds: z.array(z.enum(['text', 'video', 'single_image', 'carousel', 'link'])),
+        media: z.object({ minImages: z.number().optional(), maxImages: z.number().optional() }),
+      }),
+      capabilitiesCheckedAt: z.iso.datetime().nullable(),
+      capabilityFreshness: z.enum(['fresh', 'stale', 'unknown']),
       updatedAt: z.iso.datetime(),
     }),
   ),

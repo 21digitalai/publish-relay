@@ -20,6 +20,7 @@ import type {
 import { decryptCredential } from '../src/modules/credentials/envelope.js';
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
 import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
+import { markProviderDestinationsUnavailable } from '../src/modules/credentials/provider-connection.repository.js';
 import {
   disconnectProviderAccount,
   listProviderAccounts,
@@ -44,8 +45,10 @@ import {
   LinkedInMemberMismatchError,
 } from '../src/modules/providers/linkedin-oauth.service.js';
 import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
+import { completeMetaOauthConnection } from '../src/modules/providers/meta-oauth.service.js';
 import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
+import { apiV1OpenApiDocument } from '../src/modules/api/openapi.js';
 import {
   ApiKeyAuthorizationError,
   type ApiKeyService,
@@ -68,6 +71,8 @@ const migrations = [
   '0045_meta_destination_foundation.sql',
   '0046_linkedin_connection_expiry.sql',
   '0047_linkedin_member_connections.sql',
+  '0048_reconcile_linkedin_connections.sql',
+  '0049_meta_effective_payload.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -98,6 +103,105 @@ beforeEach(async () => {
     SELECT set_config('app.workspace_id', '${workspaceId}', false);
     INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${workspaceId}', '${userId}', 'owner');
   `);
+});
+
+it('serves bounded Meta destination variants and a live LinkedIn destination through the machine route', async () => {
+  const db = drizzle(database) as unknown as NodePgDatabase;
+  const instagramId = '00000000-0000-4000-8000-000000000601';
+  const facebookId = '00000000-0000-4000-8000-000000000602';
+  const linkedInId = '00000000-0000-4000-8000-000000000603';
+  await database.exec(`
+    INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+      VALUES ('00000000-0000-4000-8000-000000000604', '${workspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+    INSERT INTO provider_connections (id, workspace_id, provider, credential_id, member_urn) VALUES
+      ('00000000-0000-4000-8000-000000000605', '${workspaceId}', 'meta', '00000000-0000-4000-8000-000000000604', null),
+      ('00000000-0000-4000-8000-000000000606', '${workspaceId}', 'linkedin', '00000000-0000-4000-8000-000000000604', 'urn:li:person:mira');
+    INSERT INTO provider_accounts
+      (id, workspace_id, connection_id, provider_account_id, remote_account_id, display_name,
+       destination_provider, remote_parent_account_id, availability, capabilities_checked_at) VALUES
+      ('${instagramId}', '${workspaceId}', '00000000-0000-4000-8000-000000000605',
+       'ig', 'ig', '@mira', 'instagram', 'page-one', 'active', now()),
+      ('${facebookId}', '${workspaceId}', '00000000-0000-4000-8000-000000000605',
+       'page-one', 'page-one', 'Mira Studio', 'facebook_page', null, 'remote_missing', now() - interval '2 days'),
+      ('${linkedInId}', '${workspaceId}', '00000000-0000-4000-8000-000000000606',
+       'member-one', 'member-one', 'Mira LinkedIn', 'linkedin', null, 'active', now());
+  `);
+  const principal = {
+    id: '00000000-0000-4000-8000-000000000607',
+    workspaceId,
+    createdByUserId: userId,
+    workspaceLabel: 'Credential Workspace',
+    prefix: 'pr_test',
+    capabilities: ['destinations:read'],
+    expiresAt: null,
+  };
+  const keys = {
+    authenticate: () => Promise.resolve(principal),
+    requireCapability: () => Promise.resolve(),
+  } as unknown as ApiKeyService;
+  const application = Fastify();
+  registerDestinationRoutes(
+    application,
+    db,
+    keys,
+    new ApiRateLimiter({
+      workspace: 10,
+      key: 10,
+      mutationWorkspace: 10,
+      mutationKey: 10,
+      windowMs: 60_000,
+    }),
+  );
+  const response = await application.inject({
+    method: 'GET',
+    url: '/api/v1/destinations',
+    headers: {
+      authorization: 'Bearer test-key',
+      'x-publish-relay-workspace': workspaceId,
+    },
+  });
+  expect(response.statusCode).toBe(200);
+  const body = response.json<{ data: { items: Record<string, unknown>[] } }>();
+  expect(body.data.items).toHaveLength(3);
+  expect(body.data.items.find((item) => item.id === instagramId)).toMatchObject({
+    provider: 'meta',
+    destinationProvider: 'instagram',
+    availability: 'active',
+    remoteParentAccountId: 'page-one',
+    capabilityFreshness: 'fresh',
+  });
+  expect(body.data.items.find((item) => item.id === facebookId)).toMatchObject({
+    provider: 'meta',
+    destinationProvider: 'facebook_page',
+    availability: 'remote_missing',
+    capabilityFreshness: 'stale',
+  });
+  expect(body.data.items.find((item) => item.id === linkedInId)).toMatchObject({
+    provider: 'linkedin',
+    destinationProvider: 'linkedin',
+    availability: 'active',
+  });
+  expect(JSON.stringify(body)).not.toMatch(/credentialId|connectionId|adapterDefaults|secret/i);
+  for (const availability of ['reauth_required', 'permission_lost', 'remote_missing', 'active']) {
+    await database.exec(
+      `UPDATE provider_accounts SET availability = '${availability}' WHERE id = '${facebookId}'`,
+    );
+    const variant = await application.inject({
+      method: 'GET',
+      url: '/api/v1/destinations',
+      headers: {
+        authorization: 'Bearer test-key',
+        'x-publish-relay-workspace': workspaceId,
+      },
+    });
+    expect(variant.statusCode).toBe(200);
+    const items = variant.json<{ data: { items: Record<string, unknown>[] } }>().data.items;
+    expect(items.find((item) => item.id === facebookId)).toMatchObject({ availability });
+    expect(items.find((item) => item.id === instagramId)).toMatchObject({ availability: 'active' });
+  }
+  const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
+  expect(JSON.stringify(paths['/api/v1/destinations'])).toContain('linkedin');
+  await application.close();
 });
 
 afterEach(async () => database.close());
@@ -639,6 +743,131 @@ describe('credential and OAuth persistence', () => {
     ]);
   });
 
+  it('atomically reconnects Meta destinations, preserves IDs, and revokes rotated credentials', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const metaMasterKey = randomBytes(32);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(metaMasterKey),
+    };
+    const connect = async (
+      state: string,
+      pages: {
+        id: string;
+        name: string;
+        accessToken: string;
+        tasks: string[];
+        instagram?: { id: string; name: string };
+      }[],
+    ) => {
+      const issued = await issueOauthTransaction(db, keys, {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        redirectUri: 'https://relay.test/api/oauth/meta/callback',
+      });
+      const client = {
+        exchangeCode: () =>
+          Promise.resolve({ accessToken: `authority-${state}`, scopes: [] as never[] }),
+        discoverPages: () => Promise.resolve(pages),
+      };
+      return completeMetaOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        state: issued.state,
+        code: 'fixture-code',
+        requestId: state,
+      });
+    };
+    await connect('first', [
+      {
+        id: 'page-1',
+        name: 'Page One',
+        accessToken: 'page-token-1',
+        tasks: ['CREATE_CONTENT'],
+        instagram: { id: 'ig-1', name: 'Instagram One' },
+      },
+      { id: 'page-lost', name: 'Lost Page', accessToken: 'page-token-lost', tasks: [] },
+    ]);
+    const before = await database.query<{ id: string; remote_account_id: string }>(
+      'select id, remote_account_id from provider_accounts order by remote_account_id',
+    );
+    await connect('second', [
+      {
+        id: 'page-1',
+        name: 'Page One Renamed',
+        accessToken: 'page-token-2',
+        tasks: ['CREATE_CONTENT'],
+        instagram: { id: 'ig-1', name: 'Instagram One' },
+      },
+    ]);
+    const after = await database.query<{
+      id: string;
+      remote_account_id: string;
+      availability: string;
+    }>(
+      'select id, remote_account_id, availability from provider_accounts order by remote_account_id',
+    );
+    expect(after.rows.map((row) => ({ id: row.id, remote: row.remote_account_id }))).toEqual(
+      before.rows.map((row) => ({ id: row.id, remote: row.remote_account_id })),
+    );
+    expect(after.rows.find((row) => row.remote_account_id === 'page-lost')?.availability).toBe(
+      'remote_missing',
+    );
+    expect(
+      (await listProviderAccounts(db, workspaceId)).find(
+        (account) => account.displayName === 'Lost Page',
+      ),
+    ).toMatchObject({ availability: 'remote_missing' });
+    await expect(
+      markProviderDestinationsUnavailable(db, {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        availability: 'reauth_required',
+        requestId: 'meta-reauth-required',
+      }),
+    ).resolves.toBe(3);
+    expect(await listProviderAccounts(db, workspaceId)).toHaveLength(3);
+    expect(
+      (await listProviderAccounts(db, workspaceId)).every(
+        (account) => account.availability === 'reauth_required',
+      ),
+    ).toBe(true);
+    await expect(
+      markProviderDestinationsUnavailable(db, {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        availability: 'permission_lost',
+        requestId: 'meta-permission-lost',
+      }),
+    ).resolves.toBe(3);
+    expect(await listProviderAccounts(db, workspaceId)).toHaveLength(3);
+    expect(
+      (await listProviderAccounts(db, workspaceId)).every(
+        (account) => account.availability === 'permission_lost',
+      ),
+    ).toBe(true);
+    const credentials = await database.query<{ active: number; revoked: number }>(
+      `select
+         count(*) filter (where revoked_at is null)::int as active,
+         count(*) filter (where revoked_at is not null)::int as revoked
+       from credentials`,
+    );
+    expect(credentials.rows[0]).toMatchObject({ active: 2, revoked: 3 });
+    const actions = await database.query<{ action: string }>(
+      "select action from audit_events where action like 'provider.destination.%' order by action",
+    );
+    expect(actions.rows.map((row) => row.action)).toEqual(
+      expect.arrayContaining([
+        'provider.destination.credential_rotated',
+        'provider.destination.discovered',
+        'provider.destination.lost',
+      ]),
+    );
+  });
+
   it('denies X connection before provider, OAuth, credential, or idempotency artifacts', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     let providerCalls = 0;
@@ -835,11 +1064,17 @@ describe('credential and OAuth persistence', () => {
     expect(Object.keys(accounts[0] ?? {})).toEqual([
       'id',
       'provider',
+      'destinationProvider',
       'displayName',
       'status',
+      'availability',
+      'remoteParentAccountId',
+      'capabilitiesCheckedAt',
       'adapterDefaults',
       'updatedAt',
       'expiresAt',
+      'capabilitySnapshot',
+      'capabilityFreshness',
     ]);
     const principal = {
       id: '00000000-0000-4000-8000-000000000501',
@@ -907,8 +1142,18 @@ describe('credential and OAuth persistence', () => {
       {
         id: accounts[0]?.id,
         provider: 'x',
+        destinationProvider: 'x',
         displayName: 'Example Editorial (@exampleeditorial)',
         status: 'active',
+        availability: 'active',
+        remoteParentAccountId: null,
+        capabilitySnapshot: {
+          schemaVersion: 1,
+          contentKinds: ['text'],
+          media: { maxImages: 4 },
+        },
+        capabilitiesCheckedAt: null,
+        capabilityFreshness: 'unknown',
         updatedAt: accounts[0]?.updatedAt.toISOString(),
       },
     ]);

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 const migrationsFolder = 'migrations';
 const META_TIMESTAMP = 1790857500000;
 const RECONCILIATION_TIMESTAMP = 1790857500001;
+const META_PAYLOAD_TIMESTAMP = 1790862000000;
 
 async function applyPending(database: PGlite): Promise<void> {
   const migrations = readMigrationFiles({ migrationsFolder });
@@ -29,6 +30,7 @@ async function createPostMetaFixture(database: PGlite): Promise<void> {
     CREATE TABLE public.provider_connections (id uuid primary key, workspace_id uuid not null, provider text not null);
     CREATE UNIQUE INDEX provider_connections_workspace_provider_unique ON public.provider_connections (workspace_id, provider);
     CREATE TABLE public.provider_accounts (connection_id uuid not null, provider_account_id text not null, destination_provider text not null);
+    CREATE TABLE public.publication_jobs (id uuid primary key);
     INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('post-0045', 1790857500000);
     INSERT INTO public.provider_connections VALUES
       ('00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000201', 'x'),
@@ -100,7 +102,10 @@ describe('LinkedIn migration chronology', () => {
     'reconciles a post-0045 %s 0.1.14 database exactly once',
     async (fixture) => {
       const migrations = readMigrationFiles({ migrationsFolder });
-      expect(migrations.at(-1)?.folderMillis).toBe(RECONCILIATION_TIMESTAMP);
+      expect(migrations.at(-1)?.folderMillis).toBe(META_PAYLOAD_TIMESTAMP);
+      expect(
+        migrations.find((item) => item.folderMillis === RECONCILIATION_TIMESTAMP),
+      ).toBeDefined();
       expect(migrations.find((item) => item.folderMillis === META_TIMESTAMP)).toBeDefined();
       const database = new PGlite();
       try {
@@ -127,8 +132,14 @@ describe('LinkedIn migration chronology', () => {
         );
         expect(ledger.rows.map((row) => Number(row.created_at))).toEqual(
           fixture === 'skipped'
-            ? [META_TIMESTAMP, RECONCILIATION_TIMESTAMP]
-            : [1790578817310, 1790580000000, META_TIMESTAMP, RECONCILIATION_TIMESTAMP],
+            ? [META_TIMESTAMP, RECONCILIATION_TIMESTAMP, META_PAYLOAD_TIMESTAMP]
+            : [
+                1790578817310,
+                1790580000000,
+                META_TIMESTAMP,
+                RECONCILIATION_TIMESTAMP,
+                META_PAYLOAD_TIMESTAMP,
+              ],
         );
       } finally {
         await database.close();

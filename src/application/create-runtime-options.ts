@@ -17,6 +17,7 @@ import { MagicLinkService } from '../modules/identity/magic-link.service.js';
 import { XHttpClient } from '../modules/providers/x-http-client.js';
 import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
 import { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
+import { MetaHttpClient, parseMetaPermissions } from '../modules/providers/meta-http-client.js';
 import type { CoreApplicationOptions } from './create-application.js';
 
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
@@ -37,7 +38,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
   if (
     (xCredentials ||
       config.PUBLISH_RELAY_GOOGLE_CLIENT_ID ||
-      config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID) &&
+      config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID ||
+      config.PUBLISH_RELAY_META_APP_ID) &&
     !publicOrigin
   )
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required when OAuth providers are enabled');
@@ -46,6 +48,10 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
     Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET)
   )
     throw new Error('LinkedIn OAuth requires both client ID and secret');
+  if (Boolean(config.PUBLISH_RELAY_META_APP_ID) !== Boolean(config.PUBLISH_RELAY_META_APP_SECRET))
+    throw new Error('Meta OAuth requires both app ID and secret');
+  if (config.PUBLISH_RELAY_META_APP_ID && !config.PUBLISH_RELAY_META_GRAPH_VERSION)
+    throw new Error('Meta OAuth requires a pinned Graph version');
 
   const pool = new pg.Pool({
     connectionString: config.DATABASE_URL,
@@ -99,6 +105,23 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                 clientSecret: config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET,
               }),
               callbackUrl: new URL('/api/oauth/linkedin/callback', publicOrigin).toString(),
+            },
+          }
+        : {}),
+      ...(config.PUBLISH_RELAY_META_APP_ID &&
+      config.PUBLISH_RELAY_META_APP_SECRET &&
+      config.PUBLISH_RELAY_META_GRAPH_VERSION &&
+      publicOrigin
+        ? {
+            metaOauth: {
+              keys: masterKeys,
+              client: new MetaHttpClient({
+                appId: config.PUBLISH_RELAY_META_APP_ID,
+                appSecret: config.PUBLISH_RELAY_META_APP_SECRET,
+                graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+                permissions: parseMetaPermissions(config.PUBLISH_RELAY_META_PERMISSIONS),
+              }),
+              callbackUrl: new URL('/api/oauth/meta/callback', publicOrigin).toString(),
             },
           }
         : {}),

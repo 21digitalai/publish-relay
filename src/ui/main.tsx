@@ -20,10 +20,19 @@ import {
 interface Account {
   id: string;
   provider: string;
+  destinationProvider: string;
   name: string;
   handle: string;
-  health: 'Connected' | 'Needs attention' | 'Reconnect required';
+  health:
+    | 'Connected'
+    | 'Needs attention'
+    | 'Reconnect required'
+    | 'Permission lost'
+    | 'Remote account missing';
   expiresAt?: string | null;
+  availability: string;
+  capabilityFreshness: 'fresh' | 'stale' | 'unknown';
+  capabilitySnapshot: { contentKinds: string[] };
   adapterDefaults: {
     privacyStatus?: 'public' | 'unlisted' | 'private';
     madeForKids?: boolean;
@@ -51,6 +60,26 @@ const YOUTUBE_CATEGORIES: [string, string][] = [
   ['28', 'Science & Technology'],
   ['29', 'Nonprofits & Activism'],
 ];
+
+function destinationLabel(provider: string): string {
+  if (provider === 'instagram') return 'Instagram';
+  if (provider === 'facebook_page') return 'Facebook';
+  return provider.toLowerCase() === 'youtube' ? 'YouTube' : provider.toUpperCase();
+}
+
+function destinationHealth(availability: string, status: string): Account['health'] {
+  if (availability === 'permission_lost') return 'Permission lost';
+  if (availability === 'remote_missing') return 'Remote account missing';
+  if (availability === 'reauth_required' || status !== 'active') return 'Reconnect required';
+  return 'Connected';
+}
+
+function inferredContentKinds(provider: string): string[] {
+  if (provider === 'instagram') return ['single_image', 'carousel'];
+  if (provider === 'facebook_page') return ['link', 'single_image'];
+  if (provider === 'youtube') return ['video'];
+  return ['text'];
+}
 
 function formText(fields: FormData, name: string): string {
   const value = fields.get(name);
@@ -856,7 +885,7 @@ function AccountRow({
   onReconnect: () => void;
   onDefaultsSaved: (account: Account) => void;
 }) {
-  const needsReconnect = account.health === 'Reconnect required';
+  const needsReconnect = account.health !== 'Connected' && account.health !== 'Needs attention';
   const linkedinExpiringSoon = account.health === 'Needs attention';
   const linkedinWarning =
     account.provider === 'LinkedIn'
@@ -895,7 +924,7 @@ function AccountRow({
       </div>
       <div className="account-provider">
         <Mark provider={account.provider} />
-        <span>{account.provider}</span>
+        <span>{destinationLabel(account.destinationProvider)}</span>
       </div>
       <div>
         <span
@@ -907,10 +936,15 @@ function AccountRow({
       </div>
       <div className="account-capabilities">
         <span>
-          {linkedinWarning ??
-            (needsReconnect
-              ? `${account.provider} access needs reconnection before posting.`
-              : 'Connection status is current')}
+          {account.health === 'Needs attention'
+            ? linkedinWarning
+            : account.health === 'Connected'
+              ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · capabilities ${account.capabilityFreshness}`
+              : account.health === 'Permission lost'
+                ? 'Reconnect Meta and restore publishing permissions.'
+                : account.health === 'Remote account missing'
+                  ? 'Reconnect Meta to refresh destinations; history remains available.'
+                  : 'Reconnect this provider account to schedule new work.'}
         </span>
       </div>
       <div className="account-actions">
@@ -1071,9 +1105,13 @@ function AccountsPage() {
             accounts: {
               id: string;
               provider: string;
+              destinationProvider?: string;
               displayName: string;
               status: string;
               expiresAt?: string | null;
+              availability?: string;
+              capabilityFreshness?: 'fresh' | 'stale' | 'unknown';
+              capabilitySnapshot?: { contentKinds: string[] };
               updatedAt: string;
               adapterDefaults: Account['adapterDefaults'];
             }[];
@@ -1093,18 +1131,24 @@ function AccountsPage() {
                     ? 'YouTube'
                     : account.provider.toLowerCase() === 'linkedin'
                       ? 'LinkedIn'
-                      : account.provider,
+                      : account.provider.toLowerCase() === 'meta'
+                        ? 'Meta'
+                        : account.provider,
+              destinationProvider: account.destinationProvider ?? account.provider,
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
               handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
               health:
-                account.status !== 'active' ||
-                (account.expiresAt && new Date(account.expiresAt).getTime() <= Date.now())
-                  ? 'Reconnect required'
-                  : account.provider.toLowerCase() === 'linkedin' &&
-                      linkedInExpiringSoon(account, Date.now())
-                    ? 'Needs attention'
-                    : 'Connected',
+                account.provider.toLowerCase() === 'linkedin' &&
+                account.status === 'active' &&
+                linkedInExpiringSoon(account, Date.now())
+                  ? 'Needs attention'
+                  : destinationHealth(account.availability ?? 'active', account.status),
               ...(account.expiresAt !== undefined ? { expiresAt: account.expiresAt } : {}),
+              availability: account.availability ?? 'active',
+              capabilityFreshness: account.capabilityFreshness ?? 'unknown',
+              capabilitySnapshot: account.capabilitySnapshot ?? {
+                contentKinds: inferredContentKinds(account.destinationProvider ?? account.provider),
+              },
               adapterDefaults: account.adapterDefaults,
             };
           }),
@@ -1294,6 +1338,8 @@ function AccountsPage() {
                 <option>Connected</option>
                 <option>Needs attention</option>
                 <option>Reconnect required</option>
+                <option>Permission lost</option>
+                <option>Remote account missing</option>
               </select>
             </label>
           </div>

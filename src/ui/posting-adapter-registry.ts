@@ -1,4 +1,4 @@
-export type PostingAdapterId = 'x' | 'youtube' | 'linkedin';
+export type PostingAdapterId = 'x' | 'youtube' | 'linkedin' | 'meta';
 
 export interface PostingAdapterIcon {
   readonly viewBox: string;
@@ -61,6 +61,15 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
     },
     enabled: true,
     auth: { kind: 'oauth', startPath: '/api/oauth/linkedin' },
+    configuration: { requiredBeforeConnect: [] },
+  },
+  {
+    id: 'meta',
+    label: 'Meta',
+    description: 'Connect Facebook Pages and linked Instagram Professional destinations.',
+    icon: { viewBox: '0 0 24 24', paths: ['M2 12c2-10 7-10 10 0 3 10 8 10 10 0'] },
+    enabled: true,
+    auth: { kind: 'oauth', startPath: '/api/oauth/meta' },
     configuration: { requiredBeforeConnect: [] },
   },
 ] as const;

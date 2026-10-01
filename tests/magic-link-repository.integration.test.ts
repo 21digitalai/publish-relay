@@ -52,6 +52,11 @@ describe('PostgreSQL magic-link repository', () => {
          redirect_path, delivery_state, correlation_id, expires_at)
         VALUES ('${userId}', 'token-hash', 'email-hash', 'network-hash', 'agent-hash',
                 'login', '/app', 'sent', 'request-1', '2030-01-01T00:00:00Z');
+      CREATE ROLE magic_link_test_web;
+      GRANT USAGE ON SCHEMA public TO magic_link_test_web;
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO magic_link_test_web;
+      SELECT set_config('app.workspace_id', '', false);
+      SET ROLE magic_link_test_web;
     `);
     const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
     const input = {
@@ -69,6 +74,7 @@ describe('PostgreSQL magic-link repository', () => {
       redirectPath: '/app',
     });
     await expect(store.consumeLoginChallenge(input)).resolves.toBeNull();
+    await database.exec('RESET ROLE');
     const rows = await database.query<{ token_hash: string }>('SELECT token_hash FROM sessions');
     expect(rows.rows).toEqual([{ token_hash: 'session-hash' }]);
     const users = await database.query<{ password_hash: string | null }>(

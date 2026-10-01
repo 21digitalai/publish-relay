@@ -93,17 +93,14 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
         const result = await transaction.execute<{
           challenge_id: string;
           user_id: string;
-          workspace_id: string;
-          role: 'owner' | 'admin' | 'editor' | 'viewer';
+          workspace_id: string | null;
           redirect_path: string;
           correlation_id: string;
         }>(sql`
           SELECT challenge.id AS challenge_id, challenge.user_id, users.default_workspace_id AS workspace_id,
-                 memberships.role, challenge.redirect_path, challenge.correlation_id
+                 challenge.redirect_path, challenge.correlation_id
           FROM login_challenges AS challenge
           JOIN users ON users.id = challenge.user_id
-          JOIN memberships ON memberships.user_id = users.id
-            AND memberships.workspace_id = users.default_workspace_id
           WHERE challenge.token_hash = ${input.tokenHash}
             AND challenge.purpose = 'login'
             AND challenge.delivery_state = 'sent'
@@ -113,10 +110,21 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
           FOR UPDATE OF challenge
         `);
         const challenge = result.rows[0];
-        if (!challenge) return null;
+        if (!challenge?.workspace_id) return null;
         await transaction.execute(
           sql`select set_config('app.workspace_id', ${challenge.workspace_id}, true)`,
         );
+        const [membership] = await transaction
+          .select({ role: memberships.role })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.userId, challenge.user_id),
+              eq(memberships.workspaceId, challenge.workspace_id),
+            ),
+          )
+          .limit(1);
+        if (!membership) return null;
         await transaction
           .update(loginChallenges)
           .set({ consumedAt: input.now, updatedAt: input.now })
@@ -159,7 +167,7 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
         return {
           userId: challenge.user_id,
           workspaceId: challenge.workspace_id,
-          role: challenge.role,
+          role: membership.role,
           redirectPath: challenge.redirect_path,
         };
       });

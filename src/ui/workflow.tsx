@@ -706,8 +706,15 @@ function Composer({ onClose }: { onClose: () => void }) {
                 </label>
               ))}
             </fieldset>
-            <label className="field-label">
-              {isYouTube ? 'Video title' : 'Post body'}
+            <label className="field-label composer-body-field">
+              <span className="composer-body-heading">
+                <span>{isYouTube ? 'Video title' : 'Post body'}</span>
+                <small>
+                  {isYouTube
+                    ? `${String(videoTitle.length)}/100`
+                    : `${String(body.length)}/280 per X post`}
+                </small>
+              </span>
               {isYouTube ? (
                 <input
                   className="text-input"
@@ -727,11 +734,6 @@ function Composer({ onClose }: { onClose: () => void }) {
                   placeholder="What should your audience know?"
                 />
               )}
-              <small>
-                {isYouTube
-                  ? `${String(videoTitle.length)}/100`
-                  : `${String(body.length)}/280 per X post`}
-              </small>
             </label>
             {isYouTube && (
               <div className="youtube-composer-options">

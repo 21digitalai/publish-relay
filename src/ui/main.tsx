@@ -1771,7 +1771,7 @@ function SettingsPage() {
               />
             </label>
             <button
-              className="secondary-button"
+              className="primary-button"
               disabled={!newWorkspaceName.trim() || isCreatingWorkspace}
               onClick={() => {
                 run(createWorkspace);

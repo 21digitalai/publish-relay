@@ -1058,6 +1058,29 @@ test('selects and schedules X image media through the canonical composer', async
   expect(submittedMedia).toEqual(['media-1']);
 });
 
+test('uses consistent workspace actions and readable X composer fields', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.goto(await workspacePath(page, 'settings/workspace'));
+  const save = page.getByRole('button', { name: 'Save workspace' });
+  const create = page.getByRole('button', { name: 'Create workspace' });
+  await expect(save).toHaveClass(/primary-button/);
+  await expect(create).toHaveClass(/primary-button/);
+  await expect(save).toHaveCSS('background-color', 'rgb(163, 255, 79)');
+  await expect(create).toHaveCSS('background-color', 'rgb(163, 255, 79)');
+  await page.screenshot({ path: testInfo.outputPath('workspace-actions.png'), fullPage: true });
+
+  await mockConnectedAccounts(page);
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  const body = page.getByPlaceholder('What should your audience know?');
+  await expect(body).toHaveCSS('display', 'block');
+  await expect(page.locator('.composer-body-heading')).toContainText('Post body');
+  await expect(page.locator('.composer-body-heading')).toContainText('0/280 per X post');
+  await page.screenshot({ path: testInfo.outputPath('composer-body.png'), fullPage: true });
+});
+
 test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await establishWorkspaceSession(page);

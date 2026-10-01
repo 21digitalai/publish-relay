@@ -188,6 +188,8 @@ Job detail is a route-backed drawer on desktop and a page on mobile. Sections: s
 - Use searchable comboboxes; account selection is visual.
 - Success/info may use toasts; validation and actionable failures remain inline/persistent.
 - Dialogs trap and restore focus; destructive dialogs focus Cancel by default.
+- Workspace settings Save and Create actions share the brand primary button contract. Settings cards use `surface-1` and the active tab underline uses `brand`; mobile settings actions have at least a 44px tap target.
+- Composer body labels place the live destination-specific counter in a separate muted row above a full-width surface textarea; keyboard focus uses the shared violet outline.
 - Skeletons mirror final geometry. No shell-level full-screen spinner.
 - `WorkflowLoading` in `src/ui/workflow.tsx` is the canonical geometry-matched loading primitive for queue, calendar, and detail surfaces. Motion timing uses the shared `--motion-*` tokens in `src/ui/styles.css`; shimmer and entrance transforms are removed under reduced motion.
 - `LiveRegion` in `src/ui/feedback.tsx` owns polite mutation announcements after server-confirmed state changes across workflow and account surfaces. Visible persistent errors remain separate `role="alert"` content.

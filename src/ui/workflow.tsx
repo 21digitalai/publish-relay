@@ -449,13 +449,15 @@ function normalizeComposerDestination(
 ): ComposerDestination {
   const destinationProvider = input.destinationProvider ?? input.provider;
   const inferredKinds: ComposerContentKind[] =
-    destinationProvider === 'youtube'
-      ? ['video']
-      : destinationProvider === 'instagram'
-        ? ['single_image', 'carousel']
-        : destinationProvider === 'facebook_page'
-          ? ['link', 'single_image']
-          : ['text'];
+    input.provider === 'instagram' && !input.destinationProvider
+      ? ['text']
+      : destinationProvider === 'youtube'
+        ? ['video']
+        : destinationProvider === 'instagram'
+          ? ['single_image', 'carousel']
+          : destinationProvider === 'facebook_page'
+            ? ['link', 'single_image']
+            : ['text'];
   return {
     id: input.id,
     provider: input.provider,
@@ -675,8 +677,22 @@ function Composer({ onClose }: { onClose: () => void }) {
         }>;
       })
       .then(({ data }) => {
-        setAccounts(data.accounts.map(normalizeComposerDestination));
-        setSelectedAccounts([]);
+        const destinations = data.accounts.map(normalizeComposerDestination);
+        setAccounts(destinations);
+        setSelectedAccounts(
+          destinations.some((destination) => destination.provider === 'meta')
+            ? []
+            : destinations
+                .filter(
+                  (destination) =>
+                    destination.status === 'active' &&
+                    destination.availability === 'active' &&
+                    (!destination.expiresAt ||
+                      new Date(destination.expiresAt).getTime() > Date.now()),
+                )
+                .map((destination) => destination.id),
+        );
+        setAccountLoadState('ready');
         setState('ready');
       })
       .catch((reason: unknown) => {
@@ -987,7 +1003,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               </div>
             )}
             <fieldset className="account-picker" inert={hasUncertainPost}>
-              <legend>Publish to</legend>
+              <legend>1. Choose destination</legend>
               {accounts.map((account) => (
                 <label key={account.id}>
                   <input
@@ -1018,6 +1034,28 @@ function Composer({ onClose }: { onClose: () => void }) {
                 </label>
               ))}
             </fieldset>
+            {selected.length > 0 && !isYouTube && (
+              <fieldset className="content-kind-picker" inert={hasUncertainPost}>
+                <legend>2. Choose supported content</legend>
+                {allowedKinds.map((kind) => (
+                  <button
+                    className={contentKind === kind ? 'selected' : ''}
+                    key={kind}
+                    type="button"
+                    onClick={() => {
+                      setContentKind(kind);
+                    }}
+                  >
+                    {kind.replaceAll('_', ' ')}
+                  </button>
+                ))}
+                {allowedKinds.length === 0 && (
+                  <p className="inline-validation" role="alert">
+                    These destinations do not share a supported content shape.
+                  </p>
+                )}
+              </fieldset>
+            )}
             <label className="field-label composer-body-field" inert={hasUncertainPost}>
               <span className="composer-body-heading">
                 <span>{isYouTube ? 'Video title' : 'Post body'}</span>

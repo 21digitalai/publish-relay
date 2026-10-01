@@ -659,6 +659,64 @@ describe('browser workflow PostgreSQL boundary', () => {
     cookie: `publish_relay_session=${workspaceId}.browser-token`,
   };
 
+  it('persists authenticated media and replays the exact uncertain post intent once', async () => {
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=browser-csrf`,
+      'x-csrf-token': 'browser-csrf',
+    };
+    const bytesA = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+    const bytesB = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 2]);
+    const upload = (bytes: Buffer, key: string) =>
+      application.inject({
+        method: 'POST',
+        url: '/api/workflow/media',
+        headers: {
+          ...headers,
+          'content-type': 'image/png',
+          'x-file-name': 'image.png',
+          'idempotency-key': key,
+        },
+        payload: bytes,
+      });
+    const firstMedia = await upload(bytesA, 'uncertain-media-a');
+    const secondMedia = await upload(bytesB, 'uncertain-media-b');
+    expect(firstMedia.statusCode).toBe(201);
+    expect(secondMedia.statusCode).toBe(201);
+    const idA = firstMedia.json<{ data: { id: string } }>().data.id;
+    const idB = secondMedia.json<{ data: { id: string } }>().data.id;
+    expect(idA).not.toBe(idB);
+    const payload = { ...requestPayload('Image A'), mediaIds: [idA] };
+    const request = {
+      method: 'POST' as const,
+      url: '/api/workflow/posts',
+      headers: { ...headers, 'idempotency-key': 'uncertain-post-a' },
+      payload,
+    };
+    const created = await application.inject(request);
+    const replayed = await application.inject(request);
+    expect(created.statusCode).toBe(201);
+    expect(replayed.statusCode).toBe(201);
+    expect(replayed.headers['idempotency-replayed']).toBe('true');
+    expect(replayed.json()).toEqual(created.json());
+    const changedUnderOldKey = await application.inject({
+      ...request,
+      payload: { ...payload, content: { type: 'text', text: 'Image B' }, mediaIds: [idB] },
+    });
+    expect(changedUnderOldKey.statusCode).toBe(409);
+    const persisted = await database.query<{ media_id: string; text: string }>(`
+      SELECT rm.media_id, pr.content->>'text' AS text
+      FROM revision_media rm JOIN post_revisions pr ON pr.id = rm.revision_id
+      WHERE rm.workspace_id = '${workspaceId}'
+    `);
+    expect(persisted.rows).toEqual([{ media_id: idA, text: 'Image A' }]);
+    const counts = await database.query<{ posts: number; mutations: number }>(`
+      SELECT (SELECT count(*)::int FROM posts WHERE workspace_id = '${workspaceId}') AS posts,
+        (SELECT count(*)::int FROM browser_mutation_results WHERE workspace_id = '${workspaceId}' AND operation = 'create-post') AS mutations
+    `);
+    expect(counts.rows[0]).toEqual({ posts: 1, mutations: 1 });
+  });
+
   it('creates once for a browser principal and rejects changed idempotent replays', async () => {
     const request = {
       method: 'POST' as const,

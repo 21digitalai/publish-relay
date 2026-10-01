@@ -136,6 +136,7 @@ Order:
 2. Post body with target-specific capability/character feedback.
 3. Media previews, progress, constraints, removal, and errors.
    The shared media control accepts one MP4 for a single YouTube destination, or up to four X images / one X GIF or MP4 for X-only destinations. It shows attached filenames and removal, validates type/count/size before upload, and uses the existing browser media lifecycle during schedule submission.
+   If scheduling returns an uncertain server/network result, the Composer displays a recovery status, makes the content/destination/media/timing controls inert, and changes the primary action to “Confirm previous request.” The sheet cannot be closed or saved as a draft until the unchanged request resolves, preventing a visually replaced file from being submitted against an older upload receipt.
 4. Now/Schedule segmented control.
 5. Date-time picker with visible timezone.
 6. Per-provider preview and validation.

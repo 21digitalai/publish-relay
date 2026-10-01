@@ -1196,6 +1196,107 @@ test('retries partial X uploads and a rejected post without replaying deleted me
   expect(postCount).toBe(2);
 });
 
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test(`freezes uncertain X media intent before file replacement at ${String(viewport.width)}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await establishWorkspaceSession(page);
+    await page.route('**/api/provider-accounts', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            accounts: [
+              {
+                id: '00000000-0000-4000-8000-000000000201',
+                provider: 'x',
+                displayName: 'Example Editorial',
+                status: 'active',
+                adapterDefaults: {},
+              },
+            ],
+          },
+        }),
+      }),
+    );
+    await page.route('**/api/workflow/jobs?*', (route) =>
+      route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[],"next":null}}' }),
+    );
+    const uploads: { bytes: string; key: string; id: string }[] = [];
+    const posts: { key: string; body: string; mediaIds: string[] }[] = [];
+    await page.route('**/api/workflow/media', (route) => {
+      const id = `media-${String(uploads.length + 1)}`;
+      uploads.push({
+        bytes: route.request().postDataBuffer()?.toString('hex') ?? '',
+        key: route.request().headers()['idempotency-key'] ?? '',
+        id,
+      });
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id } }),
+      });
+    });
+    await page.route('**/api/workflow/posts', (route) => {
+      posts.push({
+        key: route.request().headers()['idempotency-key'] ?? '',
+        body: route.request().postData() ?? '',
+        mediaIds: (route.request().postDataJSON() as { mediaIds: string[] }).mediaIds,
+      });
+      return route.fulfill({
+        status: posts.length === 1 ? 503 : 201,
+        contentType: 'application/json',
+        body: posts.length === 1 ? '{"error":"Uncertain response"}' : '{"data":{"jobs":[{}]}}',
+      });
+    });
+    await page.goto(await workspacePath(page, 'queue'));
+    await page.getByRole('button', { name: 'Create post' }).last().click();
+    await page.getByLabel('Post body').fill('Image A');
+    const input = page.locator('#composer-media-upload');
+    await input.setInputFiles({
+      name: 'image.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('image A'),
+    });
+    await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+    await expect(page.getByRole('alert')).toContainText('Outcome uncertain');
+    await expect(page.getByText('Editing is paused')).toBeVisible();
+    await input.setInputFiles({
+      name: 'image.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('image B'),
+    });
+    await expect(page.getByRole('alert')).toContainText('Confirm the previous request');
+    await expect(page.locator('.composer-media-attachment')).toContainText('image.png');
+    expect(uploads).toHaveLength(1);
+    expect(posts).toHaveLength(1);
+    await page.getByRole('button', { name: 'Confirm previous request' }).click();
+    await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toEqual(posts[0]);
+    expect(uploads[0]?.bytes).toBe(Buffer.from('image A').toString('hex'));
+    await page.getByRole('button', { name: 'Close composer' }).click();
+    await page.getByRole('button', { name: 'Create post' }).last().click();
+    await page.getByLabel('Post body').fill('Image B');
+    await page.locator('#composer-media-upload').setInputFiles({
+      name: 'image.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('image B'),
+    });
+    await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+    await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+    expect(uploads[1]?.bytes).toBe(Buffer.from('image B').toString('hex'));
+    expect(uploads[1]?.id).not.toBe(uploads[0]?.id);
+    expect(uploads[1]?.key).not.toBe(uploads[0]?.key);
+    expect(posts[2]?.mediaIds).toEqual([uploads[1]?.id]);
+    expect(posts[2]?.key).not.toBe(posts[0]?.key);
+  });
+}
+
 test('uses consistent workspace actions and readable X composer fields', async ({
   page,
 }, testInfo) => {
@@ -1341,7 +1442,7 @@ test('retries uncertain YouTube post responses without deleting media', async ({
   await schedule.click();
   await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
   expect(deletedMedia).toHaveLength(0);
-  await schedule.click();
+  await page.getByRole('button', { name: 'Confirm previous request' }).click();
   await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
   const settings = page.getByLabel('YouTube settings');
   await expect(settings).toContainText('Visibilitypublic');

@@ -453,10 +453,20 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [accountLoadAttempt, setAccountLoadAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [hasUncertainPost, setHasUncertainPost] = useState(false);
   const intentKey = useRef(crypto.randomUUID());
   const mediaBatchKey = useRef(crypto.randomUUID());
   const uploadedMediaIds = useRef<string[]>([]);
   const uploadedIntentKey = useRef<string | null>(null);
+  const uploadedFiles = useRef<File[]>([]);
+  const uncertainPost = useRef<{
+    key: string;
+    body: string;
+    form: string;
+    files: File[];
+    scheduledAt: string;
+    count: number;
+  } | null>(null);
   const discardUpload = async (): Promise<boolean> => {
     for (const mediaId of [...uploadedMediaIds.current]) {
       try {
@@ -475,6 +485,12 @@ function Composer({ onClose }: { onClose: () => void }) {
   };
   const closeComposer = async () => {
     if (state === 'saving') return;
+    if (uncertainPost.current) {
+      setError(
+        'The previous schedule request has an uncertain outcome. Retry it unchanged before closing.',
+      );
+      return;
+    }
     if (await discardUpload()) onClose();
     else setError('Uploaded media is still being cleaned up. Try closing again.');
   };
@@ -532,6 +548,18 @@ function Composer({ onClose }: { onClose: () => void }) {
     state !== 'ready' ||
     draftState !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
+  const formSnapshot = JSON.stringify({
+    body,
+    localSchedule,
+    madeForKids,
+    notifySubscribers,
+    privacyStatus,
+    scheduleOption,
+    scheduled,
+    selectedAccounts,
+    videoDescription,
+    videoTitle,
+  });
   useEffect(() => {
     if (!draftId) return;
     void fetch(`/api/workflow/drafts/${draftId}`)
@@ -626,20 +654,34 @@ function Composer({ onClose }: { onClose: () => void }) {
   ]);
   const submit = async () => {
     if (draftState !== 'ready') return;
+    const pending = uncertainPost.current;
+    if (
+      pending &&
+      (pending.form !== formSnapshot ||
+        pending.files.length !== mediaFiles.length ||
+        pending.files.some((file, index) => file !== mediaFiles[index]))
+    ) {
+      setError(
+        'The previous schedule request may have succeeded. Restore the original content and files, then retry it unchanged before making a new post.',
+      );
+      return;
+    }
     setState('saving');
     setError(null);
     const targetTime = scheduled ? scheduledAt : new Date();
     if (!targetTime) return;
     let postRequestStarted = false;
     let postResponseStatus: number | null = null;
+    let requestSnapshot: typeof pending = pending;
     try {
       let mediaIds: string[] = draftMediaIds;
-      if (mediaFiles.length === 0 && !(await discardUpload()))
+      if (!pending && mediaFiles.length === 0 && !(await discardUpload()))
         throw new Error('Previous media cleanup is still pending. Try again.');
-      if (mediaFiles.length > 0) {
+      if (!pending && mediaFiles.length > 0) {
         if (
           uploadedIntentKey.current === mediaBatchKey.current &&
-          uploadedMediaIds.current.length === mediaFiles.length
+          uploadedMediaIds.current.length === mediaFiles.length &&
+          uploadedFiles.current.every((file, index) => file === mediaFiles[index])
         ) {
           mediaIds = [...mediaIds, ...uploadedMediaIds.current];
         } else {
@@ -647,6 +689,7 @@ function Composer({ onClose }: { onClose: () => void }) {
             throw new Error('Previous media cleanup is still pending. Try again.');
           mediaBatchKey.current = crypto.randomUUID();
           uploadedIntentKey.current = mediaBatchKey.current;
+          uploadedFiles.current = [...mediaFiles];
           for (const [index, file] of mediaFiles.entries()) {
             const uploadResponse = await fetch('/api/workflow/media', {
               method: 'POST',
@@ -679,14 +722,8 @@ function Composer({ onClose }: { onClose: () => void }) {
           ? {}
           : { notifySubscribers: notifySubscribers === 'yes' }),
       };
-      postRequestStarted = true;
-      const response = await fetch('/api/workflow/posts', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-csrf-token': cookieValue('publish_relay_csrf'),
-          'idempotency-key': intentKey.current,
-        },
+      requestSnapshot ??= {
+        key: intentKey.current,
         body: JSON.stringify({
           content: isYouTube
             ? { kind: 'video', text: '', providerOptions: { youtube: youtubeOverrides } }
@@ -696,6 +733,20 @@ function Composer({ onClose }: { onClose: () => void }) {
           scheduledAt: targetTime.toISOString(),
           ...(draftId ? { externalDraftId: draftId } : {}),
         }),
+        form: formSnapshot,
+        files: [...mediaFiles],
+        scheduledAt: targetTime.toISOString(),
+        count: selectedAccounts.length,
+      };
+      postRequestStarted = true;
+      const response = await fetch('/api/workflow/posts', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-csrf-token': cookieValue('publish_relay_csrf'),
+          'idempotency-key': requestSnapshot.key,
+        },
+        body: requestSnapshot.body,
       });
       postResponseStatus = response.status;
       const envelope = (await response.json()) as {
@@ -703,23 +754,39 @@ function Composer({ onClose }: { onClose: () => void }) {
         error?: string | null;
       };
       if (!response.ok) throw new Error(envelope.error ?? 'The post could not be scheduled.');
+      uncertainPost.current = null;
+      setHasUncertainPost(false);
       uploadedMediaIds.current = [];
       setReceipt({
-        count: selectedAccounts.length,
-        scheduledAt: targetTime.toISOString(),
+        count: requestSnapshot.count,
+        scheduledAt: requestSnapshot.scheduledAt,
         effectiveProviderSettings: (envelope.data?.jobs ?? []).flatMap((job) =>
           job.effectiveProviderSettings ? [job.effectiveProviderSettings] : [],
         ),
       });
     } catch (reason) {
       // An uncertain post response may have committed. Keep both media and post keys for safe replay.
-      if (!postRequestStarted || (postResponseStatus !== null && postResponseStatus < 500)) {
+      if (
+        postRequestStarted &&
+        (postResponseStatus === null || postResponseStatus < 400 || postResponseStatus >= 500)
+      ) {
+        uncertainPost.current = requestSnapshot;
+        setHasUncertainPost(true);
+      } else {
+        uncertainPost.current = null;
+        setHasUncertainPost(false);
         if (await discardUpload()) {
           uploadedIntentKey.current = null;
+          uploadedFiles.current = [];
           mediaBatchKey.current = crypto.randomUUID();
         }
       }
-      setError(reason instanceof Error ? reason.message : 'The post could not be scheduled.');
+      const detail = reason instanceof Error ? reason.message : 'The post could not be scheduled.';
+      setError(
+        uncertainPost.current
+          ? `${detail} Outcome uncertain; retry the same content and files before editing or closing.`
+          : detail,
+      );
     } finally {
       setState('ready');
     }
@@ -838,7 +905,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 </span>
               </div>
             )}
-            <fieldset className="account-picker">
+            <fieldset className="account-picker" inert={hasUncertainPost}>
               <legend>Publish to</legend>
               {accounts.map((account) => (
                 <label key={account.id}>
@@ -865,7 +932,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 </label>
               ))}
             </fieldset>
-            <label className="field-label composer-body-field">
+            <label className="field-label composer-body-field" inert={hasUncertainPost}>
               <span className="composer-body-heading">
                 <span>{isYouTube ? 'Video title' : 'Post body'}</span>
                 <small>
@@ -895,7 +962,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               )}
             </label>
             {isYouTube && (
-              <div className="youtube-composer-options">
+              <div className="youtube-composer-options" inert={hasUncertainPost}>
                 <label className="field-label">
                   Description
                   <textarea
@@ -949,7 +1016,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 />
               </div>
             )}
-            <div className="media-dropzone">
+            <div className="media-dropzone" inert={hasUncertainPost}>
               <strong>Add media</strong>
               <span>
                 {isYouTube
@@ -976,6 +1043,11 @@ function Composer({ onClose }: { onClose: () => void }) {
                     }
                     multiple={isX}
                     onChange={(event) => {
+                      if (uncertainPost.current) {
+                        event.target.value = '';
+                        setError('Confirm the previous request before replacing its media.');
+                        return;
+                      }
                       const files = Array.from(event.target.files ?? []);
                       event.target.value = '';
                       const allowed = isYouTube
@@ -1050,7 +1122,7 @@ function Composer({ onClose }: { onClose: () => void }) {
             {isYouTube && !youtubeHasMadeForKids && madeForKids === 'default' && (
               <p className="inline-validation">Choose whether this video is made for kids.</p>
             )}
-            <fieldset className="schedule-choice">
+            <fieldset className="schedule-choice" inert={hasUncertainPost}>
               <legend>Publishing time</legend>
               <button
                 className={!scheduled ? 'selected' : ''}
@@ -1070,7 +1142,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               </button>
             </fieldset>
             {scheduled && (
-              <div className="schedule-fields">
+              <div className="schedule-fields" inert={hasUncertainPost}>
                 <label className="field-label">
                   Date
                   <span className="schedule-picker-field">
@@ -1161,7 +1233,7 @@ function Composer({ onClose }: { onClose: () => void }) {
               </p>
             )}
             {scheduled && scheduledAt && collisions.length > 0 && (
-              <div className="schedule-collision-guidance" role="status">
+              <div className="schedule-collision-guidance" role="status" inert={hasUncertainPost}>
                 <strong>
                   {collisions.length}{' '}
                   {collisions.length === 1 ? 'nearby publication' : 'nearby publications'} detected
@@ -1191,6 +1263,12 @@ function Composer({ onClose }: { onClose: () => void }) {
                 Nearby schedule guidance is unavailable. You can still choose a time intentionally.
               </p>
             )}
+            {hasUncertainPost && (
+              <p className="inline-validation" role="status">
+                This request may already be scheduled. Editing is paused until the original request
+                is confirmed by retry.
+              </p>
+            )}
             {state === 'loading' && (
               <p className="inline-validation">Loading connected accounts before scheduling.</p>
             )}
@@ -1211,13 +1289,19 @@ function Composer({ onClose }: { onClose: () => void }) {
               </p>
             )}
             <footer>
-              <button className="secondary-button" onClick={onClose}>
+              <button className="secondary-button" onClick={onClose} disabled={hasUncertainPost}>
                 Save draft
               </button>
-              <button className="primary-button" disabled={invalid} onClick={() => void submit()}>
+              <button
+                className="primary-button"
+                disabled={invalid && !hasUncertainPost}
+                onClick={() => void submit()}
+              >
                 {state === 'saving'
                   ? 'Scheduling…'
-                  : `Schedule ${String(selectedAccounts.length)} posts`}
+                  : hasUncertainPost
+                    ? 'Confirm previous request'
+                    : `Schedule ${String(selectedAccounts.length)} posts`}
               </button>
             </footer>
           </>

@@ -95,7 +95,11 @@ describe('LinkedIn migration chronology', () => {
       const ledger = await database.query<{ count: string }>(
         'SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations',
       );
-      expect(Number(ledger.rows[0]?.count)).toBe(readMigrationFiles({ migrationsFolder }).length);
+      expect(Number(ledger.rows[0]?.count)).toBe(
+        readMigrationFiles({ migrationsFolder }).filter(
+          (item) => item.folderMillis <= INSTAGRAM_TIMESTAMP,
+        ).length,
+      );
     } finally {
       await database.close();
     }
@@ -105,7 +109,7 @@ describe('LinkedIn migration chronology', () => {
     'reconciles a post-0045 %s 0.1.14 database exactly once',
     async (fixture) => {
       const migrations = readMigrationFiles({ migrationsFolder });
-      expect(migrations.at(-1)?.folderMillis).toBe(INSTAGRAM_TIMESTAMP);
+      expect(migrations.find((item) => item.folderMillis === INSTAGRAM_TIMESTAMP)).toBeDefined();
       expect(
         migrations.find((item) => item.folderMillis === RECONCILIATION_TIMESTAMP),
       ).toBeDefined();

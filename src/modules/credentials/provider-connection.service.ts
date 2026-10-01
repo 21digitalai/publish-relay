@@ -25,6 +25,10 @@ export async function connectProvider(
     accessToken: string;
     requestId: string;
     expiresAt?: Date;
+    externalSubjectId?: string;
+    scopes?: readonly string[];
+    accessExpiresAt?: Date;
+    refreshExpiresAt?: Date;
   },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{
@@ -55,6 +59,10 @@ export async function connectProvider(
         accounts,
         requestId: input.requestId,
         ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+        ...(input.externalSubjectId ? { externalSubjectId: input.externalSubjectId } : {}),
+        ...(input.scopes ? { scopes: input.scopes } : {}),
+        ...(input.accessExpiresAt ? { accessExpiresAt: input.accessExpiresAt } : {}),
+        ...(input.refreshExpiresAt ? { refreshExpiresAt: input.refreshExpiresAt } : {}),
       });
       if (connection.replacedCredentialId)
         await revokeCredential(

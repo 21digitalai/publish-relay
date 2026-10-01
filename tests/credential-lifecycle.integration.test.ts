@@ -20,6 +20,10 @@ import type {
 import { decryptCredential } from '../src/modules/credentials/envelope.js';
 import { FakeProviderConnectionAdapter } from '../src/modules/credentials/provider-adapter.js';
 import { connectProvider } from '../src/modules/credentials/provider-connection.service.js';
+import {
+  disconnectProviderSubject,
+  rotateProviderSubjectCredential,
+} from '../src/modules/credentials/provider-subject.service.js';
 import { markProviderDestinationsUnavailable } from '../src/modules/credentials/provider-connection.repository.js';
 import {
   disconnectProviderAccount,
@@ -73,6 +77,7 @@ const migrations = [
   '0047_linkedin_member_connections.sql',
   '0048_reconcile_linkedin_connections.sql',
   '0049_meta_effective_payload.sql',
+  '0051_provider_subject_lifecycle.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -207,6 +212,107 @@ it('serves bounded Meta destination variants and a live LinkedIn destination thr
 afterEach(async () => database.close());
 
 describe('credential and OAuth persistence', () => {
+  it('keeps two subject-keyed connections independent through reconnect', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    const connect = (subject: string, token: string) =>
+      connectProvider(
+        db,
+        keys,
+        new FakeProviderConnectionAdapter([{ providerAccountId: subject, displayName: subject }]),
+        {
+          workspaceId,
+          userId,
+          provider: 'tiktok',
+          externalSubjectId: subject,
+          accessToken: token,
+          requestId: `req-${subject}-${token}`,
+        },
+      );
+    const first = await connect('subject-one', 'first-token');
+    const second = await connect('subject-two', 'second-token');
+    expect(first.connectionId).not.toBe(second.connectionId);
+    const siblingBefore = await database.query<{ credential_id: string }>(
+      "SELECT credential_id FROM provider_connections WHERE external_subject_id = 'subject-two'",
+    );
+    const reconnect = await connect('subject-one', 'replacement-token');
+    expect(reconnect.connectionId).toBe(first.connectionId);
+    const siblingAfter = await database.query<{ credential_id: string; status: string }>(
+      "SELECT credential_id, status FROM provider_connections WHERE external_subject_id = 'subject-two'",
+    );
+    expect(siblingAfter.rows[0]).toEqual({
+      credential_id: siblingBefore.rows[0]?.credential_id,
+      status: 'active',
+    });
+    const accounts = await database.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM provider_accounts WHERE destination_provider = 'tiktok'",
+    );
+    expect(accounts.rows[0]?.count).toBe('2');
+    expect(
+      await rotateProviderSubjectCredential(db, {
+        workspaceId: '00000000-0000-4000-8000-000000000999',
+        provider: 'tiktok',
+        externalSubjectId: 'subject-one',
+        expectedVersion: 1,
+        encrypted: encrypted(8),
+        scopes: [],
+        accessExpiresAt: new Date('2026-11-01T10:00:00Z'),
+        refreshExpiresAt: null,
+        requestId: 'foreign-refresh',
+      }),
+    ).toBe(false);
+    const rotated = await rotateProviderSubjectCredential(db, {
+      workspaceId,
+      provider: 'tiktok',
+      externalSubjectId: 'subject-one',
+      expectedVersion: 1,
+      encrypted: encrypted(9),
+      scopes: ['video.publish'],
+      accessExpiresAt: new Date('2026-11-01T10:00:00Z'),
+      refreshExpiresAt: new Date('2026-12-01T10:00:00Z'),
+      requestId: 'refresh-one',
+    });
+    expect(rotated).toBe(true);
+    expect(
+      await rotateProviderSubjectCredential(db, {
+        workspaceId,
+        provider: 'tiktok',
+        externalSubjectId: 'subject-one',
+        expectedVersion: 1,
+        encrypted: encrypted(10),
+        scopes: [],
+        accessExpiresAt: new Date('2026-11-02T10:00:00Z'),
+        refreshExpiresAt: null,
+        requestId: 'stale-refresh',
+      }),
+    ).toBe(false);
+    const disconnected = await disconnectProviderSubject(db, {
+      workspaceId,
+      userId,
+      provider: 'tiktok',
+      externalSubjectId: 'subject-one',
+      requestId: 'disconnect-one',
+    });
+    expect(disconnected).toBe(true);
+    const states = await database.query<{
+      external_subject_id: string;
+      status: string;
+      revoked_at: Date | null;
+      version: number;
+    }>(`SELECT connection.external_subject_id, connection.status, credential.revoked_at,
+         credential.version FROM provider_connections connection
+         JOIN credentials credential ON credential.id = connection.credential_id
+         WHERE connection.provider = 'tiktok' ORDER BY connection.external_subject_id`);
+    expect(states.rows).toMatchObject([
+      { external_subject_id: 'subject-one', status: 'revoked', version: 2 },
+      { external_subject_id: 'subject-two', status: 'active', revoked_at: null, version: 1 },
+    ]);
+    expect(states.rows[0]?.revoked_at).not.toBeNull();
+  });
+
   it('connects two LinkedIn members and reconnects only the matching identity', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const key = Buffer.alloc(32, 7);

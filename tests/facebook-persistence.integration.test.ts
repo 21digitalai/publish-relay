@@ -41,8 +41,10 @@ const migrations = [
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
   '0045_meta_destination_foundation.sql',
+  '0048_reconcile_linkedin_connections.sql',
   '0049_meta_effective_payload.sql',
   '0050_instagram_staging_artifacts.sql',
+  '0051_provider_subject_lifecycle.sql',
 ] as const;
 
 const workspaceA = '00000000-0000-4000-8000-000000000701';

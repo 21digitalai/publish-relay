@@ -457,6 +457,15 @@ export const providerConnections = pgTable(
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     provider: text('provider').notNull(),
     memberUrn: text('member_urn'),
+    externalSubjectId: text('external_subject_id')
+      .notNull()
+      .default(sql`'legacy:' || gen_random_uuid()::text`),
+    scopes: jsonb('scopes').notNull().default([]),
+    accessExpiresAt: timestamp('access_expires_at', { withTimezone: true }),
+    refreshExpiresAt: timestamp('refresh_expires_at', { withTimezone: true }),
+    lastRefreshedAt: timestamp('last_refreshed_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    lastErrorCode: text('last_error_code'),
     credentialId: uuid('credential_id')
       .notNull()
       .references(() => credentials.id, { onDelete: 'restrict' }),
@@ -467,9 +476,14 @@ export const providerConnections = pgTable(
   (table) => [
     index('provider_connections_workspace_idx').on(table.workspaceId),
     uniqueIndex('provider_connections_workspace_id_unique').on(table.workspaceId, table.id),
+    uniqueIndex('provider_connections_workspace_subject_unique').on(
+      table.workspaceId,
+      table.provider,
+      table.externalSubjectId,
+    ),
     uniqueIndex('provider_connections_workspace_provider_unique')
       .on(table.workspaceId, table.provider)
-      .where(sql`${table.provider} <> 'linkedin'`),
+      .where(sql`${table.provider} NOT IN ('linkedin', 'tiktok')`),
     uniqueIndex('provider_connections_linkedin_member_unique')
       .on(table.workspaceId, table.memberUrn)
       .where(sql`${table.provider} = 'linkedin'`),

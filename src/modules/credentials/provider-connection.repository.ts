@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { and, eq, inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
@@ -86,6 +88,10 @@ export async function replaceProviderConnection(
     accounts: readonly DiscoveredProviderAccount[];
     requestId: string;
     expiresAt?: Date;
+    externalSubjectId?: string;
+    scopes?: readonly string[];
+    accessExpiresAt?: Date;
+    refreshExpiresAt?: Date;
   },
 ): Promise<{
   connectionId: string;
@@ -98,14 +104,26 @@ export async function replaceProviderConnection(
     (input.accounts.length !== 1 || !memberUrn?.startsWith('urn:li:person:'))
   )
     throw new Error('LinkedIn connection must identify exactly one member');
+  if (
+    input.provider === 'tiktok' &&
+    (!input.externalSubjectId ||
+      input.accounts.length !== 1 ||
+      input.accounts[0]?.providerAccountId !== input.externalSubjectId)
+  )
+    throw new Error('TikTok connection must identify exactly one stable provider subject');
+  const subjectId = input.externalSubjectId ?? memberUrn;
   const existing = await database
-    .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
+    .select({
+      id: providerConnections.id,
+      credentialId: providerConnections.credentialId,
+      externalSubjectId: providerConnections.externalSubjectId,
+    })
     .from(providerConnections)
     .where(
       and(
         eq(providerConnections.workspaceId, input.workspaceId),
         eq(providerConnections.provider, input.provider),
-        ...(memberUrn ? [eq(providerConnections.memberUrn, memberUrn)] : []),
+        ...(subjectId ? [eq(providerConnections.externalSubjectId, subjectId)] : []),
       ),
     )
     .limit(1);
@@ -115,8 +133,15 @@ export async function replaceProviderConnection(
         .update(providerConnections)
         .set({
           credentialId: input.credentialId,
+          externalSubjectId: subjectId ?? current.externalSubjectId,
           status: 'active',
           expiresAt: input.expiresAt ?? null,
+          scopes: input.scopes ? [...input.scopes] : [],
+          accessExpiresAt: input.accessExpiresAt ?? null,
+          refreshExpiresAt: input.refreshExpiresAt ?? null,
+          lastRefreshedAt: null,
+          revokedAt: null,
+          lastErrorCode: null,
           updatedAt: new Date(),
         })
         .where(
@@ -132,8 +157,18 @@ export async function replaceProviderConnection(
           workspaceId: input.workspaceId,
           provider: input.provider,
           memberUrn,
+          externalSubjectId:
+            subjectId ??
+            (input.provider === 'meta'
+              ? `legacy:${randomUUID()}`
+              : (input.accounts[0]?.remoteAccountId ??
+                input.accounts[0]?.providerAccountId ??
+                `legacy:${randomUUID()}`)),
           credentialId: input.credentialId,
           expiresAt: input.expiresAt,
+          scopes: input.scopes ? [...input.scopes] : [],
+          accessExpiresAt: input.accessExpiresAt,
+          refreshExpiresAt: input.refreshExpiresAt,
         })
         .returning({ id: providerConnections.id });
   const connection = connectionRows[0];

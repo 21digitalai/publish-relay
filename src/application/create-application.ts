@@ -204,7 +204,8 @@ export function registerCoreApplication(
   const uiPrefix = options.uiPrefix ?? '/';
   const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
     .replace('<body>', `<body data-human-auth-mode="${resolveHumanAuthMode(config)}">`)
-    .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`);
+    .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
+    .replace('href="/favicon.svg"', `href="${uiPrefix === '/' ? '/' : uiPrefix}favicon.svg"`);
 
   application.register(fastifyStatic, {
     root: uiRoot,

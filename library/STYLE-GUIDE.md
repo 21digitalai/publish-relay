@@ -21,6 +21,8 @@ Principles:
 5. Dense, not cramped.
 6. Recovery is first-class and actionable.
 
+The tab icon reuses the header's `.brand-signal` lime ring and violet offset accent. `src/ui/favicon.svg` is its single source; the Core build also copies it to the stable `/favicon.svg` asset path so Hosted pages can link `/core-assets/favicon.svg` without duplicating the mark.
+
 ## Design tokens
 
 ### Color

@@ -75,6 +75,11 @@ describe('application', () => {
     expect(login.statusCode).toBe(200);
     expect(login.body).toBe(register.body);
     expect(login.body).toContain('data-human-auth-mode="magic_link"');
+    expect(login.body).toContain('rel="icon" type="image/svg+xml" href="/core-assets/favicon.svg"');
+    const favicon = await application.inject({ method: 'GET', url: '/core-assets/favicon.svg' });
+    expect(favicon.statusCode).toBe(200);
+    expect(favicon.headers['content-type']).toContain('image/svg+xml');
+    expect(favicon.body).toContain('viewBox="0 0 32 32"');
     expect(
       (await application.inject({ method: 'GET', url: '/core-assets/index.html' })).statusCode,
     ).toBe(200);

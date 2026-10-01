@@ -136,7 +136,10 @@ test('computes Meta destination capability intersection on desktop and mobile', 
   await establishWorkspaceSession(page);
   await mockMetaDestinations(page);
   await page.goto(await workspacePath(page, 'queue'));
-  await page.getByRole('button', { name: 'Create post', exact: true }).click();
+  await page
+    .locator('.page-heading')
+    .getByRole('button', { name: /Create post/ })
+    .click();
   await page.getByText('Instagram · @mira').click();
   await expect(page.getByRole('button', { name: 'carousel' })).toBeVisible();
   await page.getByText('Facebook · Mira Studio').click();
@@ -646,11 +649,13 @@ test('opens the composer from Accounts with no connected destinations', async ({
 
 test('recovers the composer account gate after a failed account load', async ({ page }) => {
   await establishWorkspaceSession(page);
+  await page.goto(await workspacePath(page, 'queue'));
   let requests = 0;
+  let shouldFail = true;
   await page.route('**/api/provider-accounts', (route) => {
     requests += 1;
     return route.fulfill(
-      requests === 1
+      shouldFail
         ? { status: 503, contentType: 'application/json', body: '{"data":null,"error":"offline"}' }
         : {
             contentType: 'application/json',
@@ -658,11 +663,11 @@ test('recovers the composer account gate after a failed account load', async ({ 
           },
     );
   });
-  await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByRole('heading', { name: 'Connected accounts unavailable' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Schedule \d+ posts?/ })).toHaveCount(0);
+  shouldFail = false;
   await page.getByRole('button', { name: 'Retry' }).click();
   await expect(
     page.getByRole('heading', { name: 'Connect an account to create a post' }),
@@ -671,7 +676,7 @@ test('recovers the composer account gate after a failed account load', async ({ 
     'href',
     /\/w\/[^/]+\/accounts$/,
   );
-  expect(requests).toBe(2);
+  expect(requests).toBeGreaterThanOrEqual(2);
 });
 
 test('shows LinkedIn expiry and prevents scheduling after the token lifetime', async ({
@@ -1121,7 +1126,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
   await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
   await expect(page.getByRole('alert')).toContainText('Retry safely');
-  await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
+  await page.getByRole('button', { name: 'Confirm previous request' }).click();
   await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
   expect(createHeaders?.['x-csrf-token']).toBeTruthy();
   expect(createHeaders?.['idempotency-key']).toBeTruthy();

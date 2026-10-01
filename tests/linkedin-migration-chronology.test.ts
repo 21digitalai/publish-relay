@@ -7,14 +7,17 @@ const migrationsFolder = 'migrations';
 const META_TIMESTAMP = 1790857500000;
 const RECONCILIATION_TIMESTAMP = 1790857500001;
 const META_PAYLOAD_TIMESTAMP = 1790862000000;
+const INSTAGRAM_TIMESTAMP = 1790862000001;
 
-async function applyPending(database: PGlite): Promise<void> {
+async function applyPending(database: PGlite, through = META_PAYLOAD_TIMESTAMP): Promise<void> {
   const migrations = readMigrationFiles({ migrationsFolder });
   const ledger = await database.query<{ created_at: string }>(
     'SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1',
   );
   const lastApplied = Number(ledger.rows[0]?.created_at ?? 0);
-  for (const migration of migrations.filter((item) => item.folderMillis > lastApplied)) {
+  for (const migration of migrations.filter(
+    (item) => item.folderMillis > lastApplied && item.folderMillis <= through,
+  )) {
     for (const statement of migration.sql) await database.exec(statement);
     await database.query(
       'INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)',
@@ -88,7 +91,7 @@ describe('LinkedIn migration chronology', () => {
     try {
       await database.exec(`CREATE SCHEMA drizzle;
         CREATE TABLE drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint);`);
-      await applyPending(database);
+      await applyPending(database, INSTAGRAM_TIMESTAMP);
       const ledger = await database.query<{ count: string }>(
         'SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations',
       );
@@ -102,7 +105,7 @@ describe('LinkedIn migration chronology', () => {
     'reconciles a post-0045 %s 0.1.14 database exactly once',
     async (fixture) => {
       const migrations = readMigrationFiles({ migrationsFolder });
-      expect(migrations.at(-1)?.folderMillis).toBe(META_PAYLOAD_TIMESTAMP);
+      expect(migrations.at(-1)?.folderMillis).toBe(INSTAGRAM_TIMESTAMP);
       expect(
         migrations.find((item) => item.folderMillis === RECONCILIATION_TIMESTAMP),
       ).toBeDefined();

@@ -49,6 +49,7 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
+  '0045_meta_destination_foundation.sql',
   '0046_linkedin_connection_expiry.sql',
   '0047_linkedin_member_connections.sql',
   '0048_reconcile_linkedin_connections.sql',

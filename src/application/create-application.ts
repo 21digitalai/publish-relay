@@ -37,6 +37,7 @@ import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.r
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
+import { requestLoggerOptions } from './request-logger.js';
 import type { DelegatedAuthorizationService } from '../modules/delegated-authorization/delegated-authorization.service.js';
 import { registerDelegatedAuthorizationRoutes } from '../modules/delegated-authorization/delegated-authorization.routes.js';
 
@@ -236,7 +237,7 @@ export function createStandaloneApplication(
   options: StandaloneApplicationOptions,
 ): FastifyInstance {
   const application = Fastify({
-    logger: options.config.NODE_ENV !== 'test',
+    logger: options.config.NODE_ENV === 'test' ? false : requestLoggerOptions,
     // The standalone listener is bound to loopback behind the local TLS reverse proxy.
     // Never trust forwarded addresses from a directly connected remote client.
     trustProxy: (address) => address === '127.0.0.1' || address === '::1',

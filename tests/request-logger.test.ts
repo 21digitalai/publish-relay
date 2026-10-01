@@ -1,7 +1,10 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 
-import { requestLoggerOptions } from '../src/application/request-logger.js';
+import {
+  registerRedactedNotFoundHandler,
+  requestLoggerOptions,
+} from '../src/application/request-logger.js';
 
 interface LogRecord {
   msg?: string;
@@ -22,6 +25,7 @@ describe('request logger', () => {
     application.get('/api/auth/magic-link/verify', () => {
       throw new Error('Verification failed');
     });
+    registerRedactedNotFoundHandler(application);
 
     try {
       await application.inject({
@@ -38,6 +42,22 @@ describe('request logger', () => {
         true,
       );
       expect(records.some((record) => typeof record.reqId === 'string')).toBe(true);
+      const missing = await application.inject({
+        method: 'GET',
+        url: '/__logging_canary_20261001?token=SYNTHETIC_REDACTION_PROBE_20261001',
+      });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json()).toEqual({
+        statusCode: 404,
+        error: 'Not Found',
+        message: 'Route GET:/__logging_canary_20261001 not found',
+      });
+      const allRecords = lines.map((line) => JSON.parse(line) as LogRecord);
+      expect(
+        allRecords.every(
+          (record) => !JSON.stringify(record).includes('SYNTHETIC_REDACTION_PROBE_20261001'),
+        ),
+      ).toBe(true);
     } finally {
       await application.close();
     }

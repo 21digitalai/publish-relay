@@ -37,7 +37,7 @@ import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.r
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
-import { requestLoggerOptions } from './request-logger.js';
+import { registerRedactedNotFoundHandler, requestLoggerOptions } from './request-logger.js';
 import type { DelegatedAuthorizationService } from '../modules/delegated-authorization/delegated-authorization.service.js';
 import { registerDelegatedAuthorizationRoutes } from '../modules/delegated-authorization/delegated-authorization.routes.js';
 
@@ -229,6 +229,7 @@ export function registerCoreApplication(
     });
   registerMachineApiRoutes(application, options, actionPolicy);
   registerBrowserRoutes(application, options, actionPolicy, shellHtml);
+  registerRedactedNotFoundHandler(application);
 
   return application;
 }

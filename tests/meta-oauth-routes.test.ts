@@ -65,7 +65,11 @@ function application(authenticated: boolean) {
     auth: new AuthService(store(authenticated)),
     database: {} as NodePgDatabase,
     actionPolicy: allowAllActionPolicy,
-    metaOauth: { keys, client: {} as never, callbackUrl: 'https://relay.test/api/oauth/meta/callback' },
+    metaOauth: {
+      keys,
+      client: {} as never,
+      callbackUrl: 'https://relay.test/api/oauth/meta/callback',
+    },
   });
   applications.push(app);
   return app;

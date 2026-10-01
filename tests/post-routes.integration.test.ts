@@ -662,6 +662,106 @@ describe('browser workflow PostgreSQL boundary', () => {
     cookie: `publish_relay_session=${workspaceId}.browser-token`,
   };
 
+  it('persists independent Meta jobs and rejects unavailable, incompatible, or foreign targets', async () => {
+    const facebookId = '00000000-0000-4000-8000-000000000890';
+    const imageId = '00000000-0000-4000-8000-000000000891';
+    await database.exec("UPDATE provider_connections SET provider = 'x' WHERE provider = 'fake'");
+    await database.exec(
+      await readFile(
+        new URL('../migrations/0045_meta_destination_foundation.sql', import.meta.url),
+        'utf8',
+      ),
+    );
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'meta' WHERE workspace_id = '${workspaceId}';
+      UPDATE provider_accounts SET destination_provider = 'instagram'
+        WHERE id = '${providerAccountId}';
+      INSERT INTO provider_accounts
+        (id, workspace_id, connection_id, provider_account_id, remote_account_id, display_name, destination_provider)
+        VALUES ('${facebookId}', '${workspaceId}', '00000000-0000-4000-8000-000000000806',
+          'page-one', 'page-one', 'Page One', 'facebook_page');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${imageId}', '${workspaceId}', 'meta.jpg', 'meta-image', 'image/jpeg', 10, 'ready');
+    `);
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=meta-csrf`,
+      'x-csrf-token': 'meta-csrf',
+    };
+    const payload = {
+      content: { kind: 'single_image', text: 'Shared caption' },
+      mediaIds: [imageId],
+      providerAccountIds: [providerAccountId, facebookId],
+      scheduledAt: '2026-09-02T10:00:00.000Z',
+    };
+    const create = (key: string, body: typeof payload) =>
+      application.inject({
+        method: 'POST',
+        url: '/api/workflow/posts',
+        headers: { ...headers, 'idempotency-key': key },
+        payload: body,
+      });
+    const created = await create('meta-two-targets', payload);
+    expect(created.statusCode).toBe(201);
+    const jobs = await database.query<{
+      provider_account_id: string;
+      effective_payload: Record<string, unknown>;
+    }>(`SELECT provider_account_id, effective_payload FROM publication_jobs
+      WHERE workspace_id = '${workspaceId}' ORDER BY provider_account_id`);
+    expect(jobs.rows).toHaveLength(2);
+    expect(
+      jobs.rows.find((job) => job.provider_account_id === providerAccountId)?.effective_payload,
+    ).toMatchObject({
+      destinationProvider: 'instagram',
+      caption: 'Shared caption',
+      mediaIds: [imageId],
+    });
+    expect(
+      jobs.rows.find((job) => job.provider_account_id === facebookId)?.effective_payload,
+    ).toMatchObject({
+      destinationProvider: 'facebook_page',
+      message: 'Shared caption',
+      mediaIds: [imageId],
+    });
+    expect(jobs.rows[0]?.effective_payload).not.toEqual(jobs.rows[1]?.effective_payload);
+
+    for (const availability of ['reauth_required', 'permission_lost', 'remote_missing']) {
+      await database.exec(
+        `UPDATE provider_accounts SET availability = '${availability}' WHERE id = '${facebookId}'`,
+      );
+      const response = await create(`meta-${availability}`, payload);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        error: `Destination is unavailable: ${availability}`,
+      });
+    }
+    await database.exec(
+      `UPDATE provider_accounts SET availability = 'active' WHERE id = '${facebookId}'`,
+    );
+    expect(
+      (
+        await create('meta-no-carousel-intersection', {
+          ...payload,
+          content: { kind: 'carousel', text: 'Unsupported together' },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await create('meta-foreign-target', {
+          ...payload,
+          providerAccountIds: [providerAccountId, foreignProviderAccountId],
+        })
+      ).statusCode,
+    ).toBe(400);
+    const unchanged = await database.query<{
+      provider_account_id: string;
+      effective_payload: Record<string, unknown>;
+    }>(`SELECT provider_account_id, effective_payload FROM publication_jobs
+      WHERE workspace_id = '${workspaceId}' ORDER BY provider_account_id`);
+    expect(unchanged.rows).toEqual(jobs.rows);
+  });
+
   it('persists authenticated media and replays the exact uncertain post intent once', async () => {
     const headers = {
       ...browserHeaders,

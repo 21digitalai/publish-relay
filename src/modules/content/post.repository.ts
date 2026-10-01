@@ -85,8 +85,13 @@ async function validateTargetOwnership(
   input: Pick<PostRevisionInput, 'mediaIds' | 'providerAccountIds'> & { workspaceId: string },
 ): Promise<void> {
   const accounts = await database
-    .select({ id: providerAccounts.id })
+    .select({
+      id: providerAccounts.id,
+      disconnectedAt: providerAccounts.disconnectedAt,
+      connectionStatus: providerConnections.status,
+    })
     .from(providerAccounts)
+    .innerJoin(providerConnections, eq(providerConnections.id, providerAccounts.connectionId))
     .where(
       and(
         eq(providerAccounts.workspaceId, input.workspaceId),
@@ -95,6 +100,12 @@ async function validateTargetOwnership(
     );
   if (accounts.length !== input.providerAccountIds.length)
     throw new PostValidationError('One or more provider accounts do not belong to the workspace');
+  if (
+    accounts.some(
+      (account) => account.disconnectedAt !== null || account.connectionStatus === 'disconnected',
+    )
+  )
+    throw new PostValidationError('One or more provider accounts are disconnected');
   if (input.mediaIds.length === 0) return;
   const media = await database.execute<{ id: string }>(sql`
     select id from media_objects

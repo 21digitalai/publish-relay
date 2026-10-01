@@ -1,0 +1,116 @@
+import { z } from 'zod';
+
+import type { DestinationProvider } from '../providers/contract.js';
+
+const accountId = z.uuid();
+const mediaId = z.uuid();
+const version = z.literal(1);
+
+const xContent = z.object({
+  schemaVersion: version,
+  kind: z.enum(['text', 'quote', 'article', 'thread']),
+  text: z.string().optional(),
+  quotedPostId: z.string().optional(),
+  title: z.string().optional(),
+  body: z.string().optional(),
+  parts: z.array(z.unknown()).optional(),
+  mediaIds: z.array(mediaId).max(10).default([]),
+});
+
+const youtubeContent = z.object({
+  schemaVersion: version,
+  kind: z.literal('video'),
+  text: z.string().default(''),
+  mediaId,
+  providerOptions: z.object({ youtube: z.record(z.string(), z.unknown()) }),
+});
+
+const tiktokContent = z.object({
+  schemaVersion: version,
+  kind: z.literal('video'),
+  caption: z.string(),
+  mediaId,
+  options: z.object({
+    privacyLevel: z.enum([
+      'PUBLIC_TO_EVERYONE',
+      'MUTUAL_FOLLOW_FRIENDS',
+      'FOLLOWER_OF_CREATOR',
+      'SELF_ONLY',
+    ]),
+    allowComment: z.boolean(),
+    allowDuet: z.boolean(),
+    allowStitch: z.boolean(),
+    coverTimestampMs: z.number().int().nonnegative().optional(),
+    commercialContent: z.enum(['none', 'own_brand', 'branded', 'both']),
+    aiGenerated: z.boolean(),
+  }),
+  capabilitySnapshotId: accountId,
+  consentReceiptId: accountId,
+});
+
+const metaContent = z.object({
+  schemaVersion: version,
+  kind: z.enum(['single_image', 'carousel', 'link']),
+  text: z.string().optional(),
+  linkUrl: z.url().optional(),
+  mediaIds: z.array(mediaId).max(10).default([]),
+});
+
+const linkedinContent = z.object({
+  schemaVersion: version,
+  kind: z.literal('text'),
+  text: z.string().min(1),
+});
+
+export const publicationTargetSchema = z.discriminatedUnion('provider', [
+  z.object({ provider: z.literal('x'), providerAccountId: accountId, content: xContent }),
+  z.object({
+    provider: z.literal('youtube'),
+    providerAccountId: accountId,
+    content: youtubeContent,
+  }),
+  z.object({ provider: z.literal('tiktok'), providerAccountId: accountId, content: tiktokContent }),
+  z.object({
+    provider: z.literal('instagram'),
+    providerAccountId: accountId,
+    content: metaContent,
+  }),
+  z.object({
+    provider: z.literal('facebook_page'),
+    providerAccountId: accountId,
+    content: metaContent,
+  }),
+  z.object({
+    provider: z.literal('linkedin'),
+    providerAccountId: accountId,
+    content: linkedinContent,
+  }),
+]);
+
+export type PublicationTarget = z.infer<typeof publicationTargetSchema>;
+
+export interface NormalizedPublicationTarget {
+  provider: DestinationProvider | 'tiktok';
+  providerAccountId: string;
+  content: Record<string, unknown>;
+  mediaIds: string[];
+}
+
+export function normalizePublicationTarget(target: PublicationTarget): NormalizedPublicationTarget {
+  const content = target.content;
+  if (target.provider === 'youtube' || target.provider === 'tiktok') {
+    const mediaId = target.content.mediaId;
+    return {
+      provider: target.provider,
+      providerAccountId: target.providerAccountId,
+      content: { ...content, mediaIds: [mediaId] },
+      mediaIds: [mediaId],
+    };
+  }
+  return {
+    provider: target.provider,
+    providerAccountId: target.providerAccountId,
+    content,
+    mediaIds: 'mediaIds' in content ? [...content.mediaIds] : [],
+  };
+}

@@ -1,18 +1,8 @@
 export const PROVIDER_ADAPTER_VERSION = '1.1' as const;
 
 export type ConnectionFamily = 'x' | 'youtube' | 'meta' | 'linkedin';
-export type DestinationProvider = 'x' | 'youtube' | 'instagram' | 'facebook_page' | 'linkedin';
-
-export interface YouTubeVideoOptions {
-  schemaVersion: 1;
-  title: string;
-  description?: string;
-  privacyStatus: 'public' | 'unlisted' | 'private';
-  madeForKids: boolean;
-  notifySubscribers: boolean;
-  tags?: string[];
-  categoryId?: string;
-}
+export type DestinationProvider =
+  'x' | 'youtube' | 'instagram' | 'facebook_page' | 'linkedin' | 'tiktok';
 
 export interface ProviderTechnicalCapabilities {
   readonly providerFamily: string;
@@ -38,7 +28,7 @@ export type PublishContent =
       kind: 'video';
       text: string;
       media: [MediaReference];
-      providerOptions: { youtube: YouTubeVideoOptions };
+      providerOptions: Readonly<Record<string, unknown>>;
     };
 
 export type ProviderErrorCode = 'auth' | 'rate_limit' | 'validation' | 'transient' | 'permanent';

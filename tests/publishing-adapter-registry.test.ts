@@ -34,7 +34,7 @@ describe('publishing adapter registry', () => {
 
   it('routes the production worker cycle through destination-keyed adapters', async () => {
     const calls: string[] = [];
-    await runDestinationDispatchCycle([
+    const failures = await runDestinationDispatchCycle([
       {
         destinationProvider: 'x',
         reconcile: () => {
@@ -60,5 +60,30 @@ describe('publishing adapter registry', () => {
     ]);
 
     expect(calls).toEqual(['x:reconcile', 'x:dispatch', 'youtube:reconcile', 'youtube:dispatch']);
+    expect(failures).toEqual([]);
+  });
+
+  it('isolates a failing destination without skipping the next provider', async () => {
+    const calls: string[] = [];
+    const failures = await runDestinationDispatchCycle([
+      {
+        destinationProvider: 'x',
+        reconcile: () => Promise.reject(new Error('X unavailable')),
+        dispatch: () => Promise.reject(new Error('must not dispatch')),
+      },
+      {
+        destinationProvider: 'youtube',
+        reconcile: () => {
+          calls.push('youtube:reconcile');
+          return Promise.resolve(0);
+        },
+        dispatch: () => {
+          calls.push('youtube:dispatch');
+          return Promise.resolve(1);
+        },
+      },
+    ]);
+    expect(failures).toEqual([{ destinationProvider: 'x', phase: 'reconcile' }]);
+    expect(calls).toEqual(['youtube:reconcile', 'youtube:dispatch']);
   });
 });

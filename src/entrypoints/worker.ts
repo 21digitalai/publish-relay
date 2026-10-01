@@ -209,7 +209,9 @@ while (!shutdownController.signal.aborted) {
     if (authEmail.sent || authEmail.failed)
       process.stdout.write(`${JSON.stringify({ event: 'auth_email_cycle', ...authEmail })}\n`);
   }
-  await runDestinationDispatchCycle(destinationDispatchAdapters);
+  const destinationFailures = await runDestinationDispatchCycle(destinationDispatchAdapters);
+  for (const failure of destinationFailures)
+    process.stderr.write(`${JSON.stringify({ event: 'destination_cycle_failed', ...failure })}\n`);
   const now = new Date();
   const deletedStagingObjects = await reconcileMediaStaging(now);
   if (deletedStagingObjects !== undefined) {

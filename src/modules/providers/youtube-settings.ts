@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-import type { YouTubeVideoOptions } from './contract.js';
+export interface YouTubeVideoOptions {
+  schemaVersion: 1;
+  title: string;
+  description?: string;
+  privacyStatus: 'public' | 'unlisted' | 'private';
+  madeForKids: boolean;
+  notifySubscribers: boolean;
+  tags?: string[];
+  categoryId?: string;
+}
 
 const privacyStatusSchema = z.enum(['public', 'unlisted', 'private']);
 

@@ -12,8 +12,9 @@ import {
 } from '../../database/schema.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
-import { resolveYouTubeSettings } from '../providers/youtube-settings.js';
 import { validateLinkedInTextContent } from '../providers/linkedin-content.js';
+import { publicationSettingsRegistry } from '../providers/publication-settings-registry.js';
+import type { DestinationProvider } from '../providers/contract.js';
 
 export function buildMetaEffectivePayload(
   destinationProvider: string,
@@ -64,6 +65,7 @@ export interface PostRevisionInput {
   content: Record<string, unknown>;
   mediaIds: readonly string[];
   providerAccountIds: readonly string[];
+  selectedDestination?: string;
   scheduledAt: Date;
   actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
 }
@@ -85,11 +87,14 @@ function persistedActor(actor: PostRevisionInput['actor'], userId?: string) {
 
 async function validateTargetOwnership(
   database: NodePgDatabase,
-  input: Pick<PostRevisionInput, 'mediaIds' | 'providerAccountIds'> & { workspaceId: string },
+  input: Pick<PostRevisionInput, 'mediaIds' | 'providerAccountIds' | 'selectedDestination'> & {
+    workspaceId: string;
+  },
 ): Promise<void> {
   const accounts = await database
     .select({
       id: providerAccounts.id,
+      destinationProvider: providerAccounts.destinationProvider,
       disconnectedAt: providerAccounts.disconnectedAt,
       connectionStatus: providerConnections.status,
     })
@@ -103,6 +108,13 @@ async function validateTargetOwnership(
     );
   if (accounts.length !== input.providerAccountIds.length)
     throw new PostValidationError('One or more provider accounts do not belong to the workspace');
+  if (accounts.some((account) => account.destinationProvider === 'tiktok'))
+    throw new PostValidationError('TikTok publishing is not available in this release');
+  if (
+    input.selectedDestination &&
+    accounts.some((account) => account.destinationProvider !== input.selectedDestination)
+  )
+    throw new PostValidationError('Selected provider does not match the connected destination');
   if (
     accounts.some(
       (account) => account.disconnectedAt !== null || account.connectionStatus === 'disconnected',
@@ -148,6 +160,7 @@ async function createRevisionTargets(
   const accountRows = await database
     .select({
       id: providerAccounts.id,
+      destinationProvider: providerAccounts.destinationProvider,
       provider: providerConnections.provider,
       status: providerConnections.status,
       expiresAt: providerConnections.expiresAt,
@@ -240,16 +253,13 @@ async function createRevisionTargets(
         }
         return [accountId, null] as const;
       }
-      if (account.provider !== 'youtube') return [accountId, null] as const;
-      const content = input.content as {
-        kind?: unknown;
-        providerOptions?: { youtube?: unknown };
-      };
-      if (content.kind !== 'video') throw new PostValidationError('YouTube requires video content');
       try {
+        const resolver = publicationSettingsRegistry.find(
+          account.destinationProvider as DestinationProvider,
+        );
         return [
           accountId,
-          resolveYouTubeSettings(account.adapterDefaults, content.providerOptions?.youtube),
+          resolver?.resolve(input.content, account.adapterDefaults) ?? null,
         ] as const;
       } catch (error) {
         throw new PostValidationError(

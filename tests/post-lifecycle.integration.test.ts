@@ -649,6 +649,38 @@ describe('post revision lifecycle', () => {
       }),
     ).rejects.toThrow('Provider account targets must be unique');
   });
+
+  it('rejects a selected provider that disagrees with its connected account', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    await expect(
+      createPost(db, {
+        workspaceId,
+        userId,
+        content: { kind: 'video', schemaVersion: 1 },
+        mediaIds: [],
+        providerAccountIds: [accountOne],
+        selectedDestination: 'youtube',
+        scheduledAt: new Date('2026-09-01T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow('Selected provider does not match');
+  });
+
+  it('does not reinterpret a legacy request as a TikTok publication', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    await database.exec(
+      `UPDATE provider_accounts SET destination_provider = 'tiktok' WHERE id = '${accountOne}'`,
+    );
+    await expect(
+      createPost(db, {
+        workspaceId,
+        userId,
+        content: { kind: 'video', schemaVersion: 1 },
+        mediaIds: [],
+        providerAccountIds: [accountOne],
+        scheduledAt: new Date('2026-09-01T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow('TikTok publishing is not available');
+  });
 });
 
 describe('media lifecycle', () => {

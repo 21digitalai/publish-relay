@@ -361,6 +361,8 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           ],
           requestBody: {
             required: true,
+            description:
+              'Use destination plus versioned provider content for new integrations. The providerAccountIds shape remains supported for existing clients but is deprecated.',
             content: {
               'application/json': { schema: openApiJsonSchema(createPostRequestSchema) },
             },

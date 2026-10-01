@@ -30,7 +30,7 @@ import {
   storeStagedMediaInTransaction,
   validateMediaContentType,
 } from './media.service.js';
-import { createPostRequestSchema } from './post.contract.js';
+import { createPostRequestSchema, normalizeCreatePostRequest } from './post.contract.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import {
   createPostInTransaction,
@@ -60,9 +60,10 @@ const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
 const mediaParamsSchema = z.object({ mediaId: z.uuid() });
 const draftParamsSchema = z.object({ draftId: z.uuid() });
-const browserCreatePostSchema = createPostRequestSchema.extend({
-  externalDraftId: z.uuid().optional(),
-});
+const browserCreatePostSchema = z.intersection(
+  createPostRequestSchema,
+  z.object({ externalDraftId: z.uuid().optional() }),
+);
 const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
@@ -465,9 +466,7 @@ export function registerBrowserWorkflowRoutes(
               userId: identity.userId,
               requestId: request.id,
               idempotencyKey: key,
-              content: body.content,
-              mediaIds: body.mediaIds,
-              providerAccountIds: body.providerAccountIds,
+              ...normalizeCreatePostRequest(body),
               scheduledAt: new Date(body.scheduledAt),
             },
             actionPolicy,
@@ -560,9 +559,7 @@ export function registerBrowserWorkflowRoutes(
               requestId: request.id,
               idempotencyKey: key,
               postId: params.data.postId,
-              content: body.content,
-              mediaIds: body.mediaIds,
-              providerAccountIds: body.providerAccountIds,
+              ...normalizeCreatePostRequest(body),
               scheduledAt: new Date(body.scheduledAt),
             },
             actionPolicy,

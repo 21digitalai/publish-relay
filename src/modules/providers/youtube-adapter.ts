@@ -7,6 +7,7 @@ import {
   type PublishOutcome,
   type StagedPublish,
 } from './contract.js';
+import { resolveYouTubeSettings } from './youtube-settings.js';
 
 const YOUTUBE_TITLE_MAX_LENGTH = 100;
 const YOUTUBE_DESCRIPTION_MAX_LENGTH = 5_000;
@@ -20,7 +21,7 @@ function validateVideoContent(
   if (media.length !== 1 || media[0]?.mimeType !== 'video/mp4') {
     throw new Error('YouTube requires exactly one MP4 video');
   }
-  const options = content.providerOptions.youtube;
+  const options = resolveYouTubeSettings({}, content.providerOptions.youtube);
   if (!options.title.trim() || options.title.length > YOUTUBE_TITLE_MAX_LENGTH) {
     throw new Error('YouTube title must contain 1 to 100 characters');
   }

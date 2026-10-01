@@ -58,6 +58,7 @@ const migrations = [
   '0032_little_stellaris.sql',
   '0034_simple_jamie_braddock.sql',
   '0035_delegated_account_receipt.sql',
+  '0045_meta_destination_foundation.sql',
   '0046_linkedin_connection_expiry.sql',
   '0047_linkedin_member_connections.sql',
   '0048_reconcile_linkedin_connections.sql',
@@ -188,8 +189,8 @@ beforeEach(async () => {
       VALUES ('00000000-0000-4000-8000-000000000805', '${workspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
     INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
       VALUES ('00000000-0000-4000-8000-000000000806', '${workspaceId}', 'fake', '00000000-0000-4000-8000-000000000805');
-    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
-      VALUES ('${providerAccountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000806', 'one', 'One');
+    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, remote_account_id, destination_provider, display_name)
+      VALUES ('${providerAccountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000806', 'one', 'one', 'fake', 'One');
     INSERT INTO api_keys (id, workspace_id, created_by_user_id, label, prefix, secret_hash)
       VALUES ('${apiKeyId}', '${workspaceId}', '${userId}', 'Agent', 'pr_test', 'redacted');
     INSERT INTO workspaces (id, name, slug) VALUES ('${foreignWorkspaceId}', 'Foreign', 'foreign');
@@ -199,8 +200,8 @@ beforeEach(async () => {
       VALUES ('00000000-0000-4000-8000-000000000812', '${foreignWorkspaceId}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
     INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
       VALUES ('00000000-0000-4000-8000-000000000813', '${foreignWorkspaceId}', 'fake', '00000000-0000-4000-8000-000000000812');
-    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, display_name)
-      VALUES ('${foreignProviderAccountId}', '${foreignWorkspaceId}', '00000000-0000-4000-8000-000000000813', 'foreign', 'Foreign');
+    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, remote_account_id, destination_provider, display_name)
+      VALUES ('${foreignProviderAccountId}', '${foreignWorkspaceId}', '00000000-0000-4000-8000-000000000813', 'foreign', 'foreign', 'fake', 'Foreign');
     INSERT INTO posts (id, workspace_id, created_by_user_id)
       VALUES ('${foreignPostId}', '${foreignWorkspaceId}', '${userId}');
     INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
@@ -667,13 +668,6 @@ describe('browser workflow PostgreSQL boundary', () => {
   it('rejects a disconnected Meta destination while its sibling remains schedulable', async () => {
     const facebookId = '00000000-0000-4000-8000-000000000890';
     const imageId = '00000000-0000-4000-8000-000000000891';
-    await database.exec("UPDATE provider_connections SET provider = 'x' WHERE provider = 'fake'");
-    await database.exec(
-      await readFile(
-        new URL('../migrations/0045_meta_destination_foundation.sql', import.meta.url),
-        'utf8',
-      ),
-    );
     await database.exec(`
       UPDATE provider_connections SET provider = 'meta' WHERE workspace_id = '${workspaceId}';
       UPDATE provider_accounts SET destination_provider = 'instagram'
@@ -756,13 +750,6 @@ describe('browser workflow PostgreSQL boundary', () => {
   it('persists independent Meta jobs and rejects unavailable, incompatible, or foreign targets', async () => {
     const facebookId = '00000000-0000-4000-8000-000000000890';
     const imageId = '00000000-0000-4000-8000-000000000891';
-    await database.exec("UPDATE provider_connections SET provider = 'x' WHERE provider = 'fake'");
-    await database.exec(
-      await readFile(
-        new URL('../migrations/0045_meta_destination_foundation.sql', import.meta.url),
-        'utf8',
-      ),
-    );
     await database.exec(`
       UPDATE provider_connections SET provider = 'meta' WHERE workspace_id = '${workspaceId}';
       UPDATE provider_accounts SET destination_provider = 'instagram'
@@ -1421,7 +1408,8 @@ describe('POST /api/v1/posts', () => {
       UPDATE provider_connections SET provider = 'youtube'
       WHERE id = '00000000-0000-4000-8000-000000000806';
       UPDATE provider_accounts
-      SET adapter_defaults = '{"madeForKids":false,"privacyStatus":"unlisted","notifySubscribers":true}'::jsonb
+      SET destination_provider = 'youtube',
+          adapter_defaults = '{"madeForKids":false,"privacyStatus":"unlisted","notifySubscribers":true}'::jsonb
       WHERE id = '${providerAccountId}';
     `);
     const created = await application.inject({
@@ -1466,6 +1454,48 @@ describe('POST /api/v1/posts', () => {
         },
       },
     });
+  });
+
+  it('creates from an explicit X destination and rejects a mismatched provider', async () => {
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'x'
+      WHERE id = '00000000-0000-4000-8000-000000000806';
+      UPDATE provider_accounts SET destination_provider = 'x'
+      WHERE id = '${providerAccountId}';
+    `);
+    const baseRequest = {
+      method: 'POST' as const,
+      url: '/api/v1/posts',
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+        'idempotency-key': 'destination-first-x-1',
+      },
+    };
+    const created = await application.inject({
+      ...baseRequest,
+      payload: {
+        destination: { provider: 'x', providerAccountId },
+        content: { schemaVersion: 1, kind: 'text', text: 'Destination first' },
+        scheduledAt: '2026-09-02T10:00:00.000Z',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const mismatch = await application.inject({
+      ...baseRequest,
+      headers: { ...baseRequest.headers, 'idempotency-key': 'destination-first-mismatch-1' },
+      payload: {
+        destination: { provider: 'youtube', providerAccountId },
+        content: {
+          schemaVersion: 1,
+          kind: 'video',
+          mediaId: foreignMediaId,
+          providerOptions: { youtube: { schemaVersion: 1, title: 'Video' } },
+        },
+        scheduledAt: '2026-09-02T10:00:00.000Z',
+      },
+    });
+    expect(mismatch.statusCode).toBe(400);
   });
 
   it('atomically creates direct resource links and replays an identical mutation', async () => {

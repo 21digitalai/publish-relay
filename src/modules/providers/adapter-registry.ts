@@ -26,6 +26,10 @@ export class PublishingAdapterRegistry<TAdapter extends DestinationAdapter = Pub
     return adapter;
   }
 
+  public find(destinationProvider: DestinationProvider): TAdapter | undefined {
+    return this.adapters.get(destinationProvider);
+  }
+
   public destinations(): readonly DestinationProvider[] {
     return [...this.adapters.keys()];
   }

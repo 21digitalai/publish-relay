@@ -19,7 +19,7 @@ import {
 } from '../policy/action-policy.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
-import { createPostRequestSchema } from './post.contract.js';
+import { createPostRequestSchema, normalizeCreatePostRequest } from './post.contract.js';
 import { PostValidationError } from './post.errors.js';
 import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
 import { createPostInTransaction } from './post.service.js';
@@ -334,9 +334,7 @@ export function registerPostRoutes(
               actor: { type: principal.kind, id: principal.actorId },
               requestId: request.id,
               idempotencyKey,
-              content: body.content,
-              mediaIds: body.mediaIds,
-              providerAccountIds: body.providerAccountIds,
+              ...normalizeCreatePostRequest(body),
               scheduledAt: new Date(body.scheduledAt),
             },
             actionPolicy,

@@ -31,6 +31,35 @@ function bodyText(body: BodyInit | null | undefined): string {
 }
 
 describe('TikTokHttpClient transport', () => {
+  it('requests only identity and publishing scopes and verifies open_id through user info', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        response(
+          ok({ user: { open_id: 'subject-1', display_name: 'Creator', avatar_url: 'private' } }),
+        ),
+      );
+    const api = client(request);
+    const url = new URL(
+      api.authorizationUrl({
+        redirectUri: 'https://relay.test/cb',
+        state: 'state',
+        codeChallenge: 'challenge',
+      }),
+    );
+    expect(url.origin).toBe('https://www.tiktok.com');
+    expect(url.searchParams.get('scope')).toBe('user.info.basic,video.publish');
+    expect(url.searchParams.get('code_challenge')).toBe('challenge');
+    await expect(api.discoverAccount('access-secret')).resolves.toEqual({
+      openId: 'subject-1',
+      displayName: 'Creator',
+    });
+    expect(request.mock.calls[0]?.[0]).toBe(
+      'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name',
+    );
+    expect(request.mock.calls[0]?.[1]?.redirect).toBe('manual');
+  });
+
   it('exchanges and rotates token values without requesting a credentialed redirect', async () => {
     const request = vi
       .fn<typeof fetch>()
@@ -38,7 +67,11 @@ describe('TikTokHttpClient transport', () => {
       .mockResolvedValueOnce(response({ ...token, refresh_token: 'rotated-secret' }));
     const api = client(request);
     await expect(
-      api.exchangeCode({ code: 'code-secret', redirectUri: 'https://relay.test/cb' }),
+      api.exchangeCode({
+        code: 'code-secret',
+        codeVerifier: 'verifier-secret',
+        redirectUri: 'https://relay.test/cb',
+      }),
     ).resolves.toEqual(token);
     await expect(api.refresh('refresh-secret')).resolves.toMatchObject({
       refresh_token: 'rotated-secret',
@@ -48,6 +81,7 @@ describe('TikTokHttpClient transport', () => {
     const refresh = request.mock.calls[1]?.[1];
     expect(exchange?.redirect).toBe('manual');
     expect(bodyText(exchange?.body)).toContain('grant_type=authorization_code');
+    expect(bodyText(exchange?.body)).toContain('code_verifier=verifier-secret');
     expect(bodyText(refresh?.body)).toContain('refresh_token=refresh-secret');
     expect(refresh?.signal).toBeDefined();
   });

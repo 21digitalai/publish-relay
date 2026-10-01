@@ -52,6 +52,9 @@ export function listProviderAccounts(
         adapterDefaults: providerAccounts.adapterDefaults,
         updatedAt: providerAccounts.updatedAt,
         expiresAt: providerConnections.expiresAt,
+        disconnectedAt: providerAccounts.disconnectedAt,
+        accessExpiresAt: providerConnections.accessExpiresAt,
+        refreshExpiresAt: providerConnections.refreshExpiresAt,
       })
       .from(providerAccounts)
       .innerJoin(
@@ -62,11 +65,24 @@ export function listProviderAccounts(
         ),
       )
       .where(
-        and(eq(providerAccounts.workspaceId, workspaceId), isNull(providerAccounts.disconnectedAt)),
+        and(
+          eq(providerAccounts.workspaceId, workspaceId),
+          or(isNull(providerAccounts.disconnectedAt), eq(providerConnections.provider, 'tiktok')),
+        ),
       )
       .orderBy(providerConnections.provider, providerAccounts.displayName);
-    return rows.map((row) => ({
+    return rows.map(({ accessExpiresAt, refreshExpiresAt, disconnectedAt, ...row }) => ({
       ...row,
+      status:
+        disconnectedAt && row.provider === 'tiktok'
+          ? 'disconnected'
+          : row.provider === 'tiktok' && row.status === 'active'
+            ? refreshExpiresAt && refreshExpiresAt.getTime() <= Date.now()
+              ? 'renewal_required'
+              : accessExpiresAt && accessExpiresAt.getTime() <= Date.now()
+                ? 'expired'
+                : 'active'
+            : row.status,
       capabilitySnapshot: destinationCapabilities(row.destinationProvider),
       capabilityFreshness: capabilityFreshness(row.capabilitiesCheckedAt),
     }));

@@ -157,9 +157,36 @@ describe.skipIf(!connectionString)('subject connection lifecycle on PostgreSQL',
       expect(new Set([first.connectionId, sibling.connectionId, foreign.connectionId]).size).toBe(
         3,
       );
+      const reconnectPostId = randomUUID();
+      const reconnectRevisionId = randomUUID();
+      const firstAccount = await pool.query<{ id: string }>(
+        'SELECT id FROM provider_accounts WHERE connection_id = $1',
+        [first.connectionId],
+      );
+      await pool.query(
+        'INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ($1, $2, $3)',
+        [reconnectPostId, workspaceId, userId],
+      );
+      await pool.query(
+        'INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content) VALUES ($1, $2, $3, 1, $4)',
+        [reconnectRevisionId, workspaceId, reconnectPostId, '{}'],
+      );
+      await pool.query(
+        `INSERT INTO publication_jobs
+        (workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state)
+        VALUES ($1, $2, $3, $4, now(), 'scheduled')`,
+        [workspaceId, reconnectPostId, reconnectRevisionId, firstAccount.rows[0]?.id],
+      );
       expect((await connect(workspaceId, 'subject-one', 'replacement')).connectionId).toBe(
         first.connectionId,
       );
+      const retainedJob = await pool.query<{ provider_account_id: string; state: string }>(
+        'SELECT provider_account_id, state FROM publication_jobs WHERE post_id = $1',
+        [reconnectPostId],
+      );
+      expect(retainedJob.rows).toEqual([
+        { provider_account_id: firstAccount.rows[0]?.id, state: 'scheduled' },
+      ]);
 
       const rotate = (workspace: string, expectedVersion: number, marker: number) =>
         rotateProviderSubjectCredential(database, {
@@ -215,6 +242,9 @@ describe.skipIf(!connectionString)('subject connection lifecycle on PostgreSQL',
       await expect(disconnect()).rejects.toThrow('Scheduled publications must be resolved');
       await pool.query(`UPDATE publication_jobs SET state = 'published' WHERE post_id = $1`, [
         postId,
+      ]);
+      await pool.query(`UPDATE publication_jobs SET state = 'published' WHERE post_id = $1`, [
+        reconnectPostId,
       ]);
       expect(await disconnect()).toBe(true);
       const states = await pool.query<{

@@ -50,6 +50,11 @@ import {
 } from '../src/modules/providers/linkedin-oauth.service.js';
 import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
 import { completeMetaOauthConnection } from '../src/modules/providers/meta-oauth.service.js';
+import {
+  beginTikTokOauthConnection,
+  completeTikTokOauthConnection,
+} from '../src/modules/providers/tiktok-oauth.service.js';
+import { getFreshTikTokToken } from '../src/modules/providers/tiktok-credential.service.js';
 import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import { apiV1OpenApiDocument } from '../src/modules/api/openapi.js';
@@ -82,6 +87,12 @@ const migrations = [
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
 let database: PGlite;
+
+function oauthState(url: string): string {
+  const state = new URL(url).searchParams.get('state');
+  if (!state) throw new Error('OAuth state missing from fixture URL');
+  return state;
+}
 
 function encrypted(marker: number): EncryptedCredential {
   const bytes = (value: number) => Buffer.from([value]);
@@ -416,6 +427,166 @@ describe('credential and OAuth persistence', () => {
       { external_subject_id: 'subject-two', status: 'active', revoked_at: null, version: 1 },
     ]);
     expect(states.rows[0]?.revoked_at).not.toBeNull();
+  });
+
+  it('integrates TikTok callback state, verified subjects, reconnect and legacy conflict atomically', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    let subject = 'open-one';
+    let serial = 0;
+    const client = {
+      authorizationUrl: (input: { state: string }) =>
+        `https://www.tiktok.com/v2/auth/authorize/?state=${input.state}`,
+      exchangeCode: () =>
+        Promise.resolve({
+          access_token: `access-${String(++serial)}`,
+          refresh_token: `refresh-${String(serial)}`,
+          open_id: subject,
+          scope: 'user.info.basic,video.publish',
+          token_type: 'Bearer' as const,
+          expires_in: 3600,
+          refresh_expires_in: 86400,
+        }),
+      discoverAccount: () =>
+        Promise.resolve({ openId: subject, displayName: `Creator ${subject}` }),
+      refresh: () =>
+        Promise.resolve({
+          access_token: 'rotated-access',
+          refresh_token: 'rotated-refresh',
+          open_id: 'open-one',
+          scope: 'user.info.basic,video.publish',
+          token_type: 'Bearer' as const,
+          expires_in: 3600,
+          refresh_expires_in: 86400,
+        }),
+    };
+    const begin = () =>
+      beginTikTokOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        callbackUrl: 'https://relay.test/api/oauth/tiktok/callback',
+        requestId: 'start',
+      });
+    const callback = (state: string) =>
+      completeTikTokOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        state,
+        code: `code-${String(serial)}`,
+        requestId: 'callback',
+      });
+    const stateOne = oauthState((await begin()).authorizationUrl);
+    expect(await callback('wrong-state')).toBeNull();
+    const first = await callback(stateOne);
+    expect(first?.accounts).toEqual([
+      { providerAccountId: 'open-one', displayName: 'Creator open-one' },
+    ]);
+    expect(await callback(stateOne)).toBeNull();
+    const expiredState = oauthState((await begin()).authorizationUrl);
+    await database.query('UPDATE oauth_transactions SET expires_at = $1 WHERE state_hash = $2', [
+      new Date('2026-09-01T00:00:00Z'),
+      hashOauthState(expiredState),
+    ]);
+    expect(await callback(expiredState)).toBeNull();
+    subject = 'open-two';
+    const stateTwo = oauthState((await begin()).authorizationUrl);
+    const second = await callback(stateTwo);
+    expect(second?.connectionId).not.toBe(first?.connectionId);
+    expect(
+      (await listProviderAccounts(db, workspaceId)).filter(
+        (account) => account.provider === 'tiktok',
+      ),
+    ).toHaveLength(2);
+    await database.query(
+      "UPDATE provider_connections SET access_expires_at = '2026-09-30T00:00:00Z' WHERE external_subject_id = 'open-one'",
+    );
+    expect(
+      (await listProviderAccounts(db, workspaceId)).find(
+        (account) => account.displayName === 'Creator open-one',
+      )?.status,
+    ).toBe('expired');
+    await database.query(
+      "UPDATE provider_connections SET refresh_expires_at = '2026-09-30T00:00:00Z' WHERE external_subject_id = 'open-one'",
+    );
+    expect(
+      (await listProviderAccounts(db, workspaceId)).find(
+        (account) => account.displayName === 'Creator open-one',
+      )?.status,
+    ).toBe('renewal_required');
+    await database.query(
+      "UPDATE provider_connections SET refresh_expires_at = '2026-12-01T00:00:00Z' WHERE external_subject_id = 'open-one'",
+    );
+    const refreshed = await getFreshTikTokToken(db, keys, client as never, {
+      workspaceId,
+      openId: 'open-one',
+      requestId: 'refresh',
+      now: new Date('2026-10-01T00:00:00Z'),
+    });
+    expect(refreshed.refresh_token).toBe('rotated-refresh');
+    const versions = await database.query<{ external_subject_id: string; version: number }>(
+      "SELECT pc.external_subject_id, c.version FROM provider_connections pc JOIN credentials c ON c.id = pc.credential_id WHERE pc.provider = 'tiktok' ORDER BY pc.external_subject_id",
+    );
+    expect(versions.rows).toEqual([
+      { external_subject_id: 'open-one', version: 2 },
+      { external_subject_id: 'open-two', version: 1 },
+    ]);
+    const beforeReconnect = await database.query<{
+      external_subject_id: string;
+      credential_id: string;
+    }>(
+      "SELECT external_subject_id, credential_id FROM provider_connections WHERE provider = 'tiktok' ORDER BY external_subject_id",
+    );
+    subject = 'open-one';
+    const stateReconnect = oauthState((await begin()).authorizationUrl);
+    expect((await callback(stateReconnect))?.connectionId).toBe(first?.connectionId);
+    const before = await database.query<{ external_subject_id: string; credential_id: string }>(
+      "SELECT external_subject_id, credential_id FROM provider_connections WHERE provider = 'tiktok' ORDER BY external_subject_id",
+    );
+    expect(before.rows).toHaveLength(2);
+    expect(before.rows[0]?.credential_id).not.toBe(beforeReconnect.rows[0]?.credential_id);
+    expect(before.rows[1]?.credential_id).toBe(beforeReconnect.rows[1]?.credential_id);
+    const rotatedToken = await withTenantTransaction(db, { workspaceId }, async (transaction) => {
+      const credential = await getActiveCredential(
+        transaction,
+        workspaceId,
+        before.rows[0]?.credential_id ?? '',
+      );
+      if (!credential) throw new Error('TikTok reconnect credential missing');
+      const plaintext = await decryptCredential(credential, keys);
+      try {
+        return JSON.parse(plaintext.toString('utf8')) as {
+          access_token: string;
+          refresh_token: string;
+        };
+      } finally {
+        plaintext.fill(0);
+      }
+    });
+    expect(rotatedToken).toMatchObject({ access_token: 'access-3', refresh_token: 'refresh-3' });
+    await database.query(
+      "UPDATE provider_connections SET external_subject_id = 'legacy:old-grant' WHERE external_subject_id = 'open-two'",
+    );
+    subject = 'open-two';
+    const stateConflict = oauthState((await begin()).authorizationUrl);
+    await expect(callback(stateConflict)).rejects.toThrow('manual resolution required');
+    const after = await database.query<{ external_subject_id: string; credential_id: string }>(
+      "SELECT external_subject_id, credential_id FROM provider_connections WHERE provider = 'tiktok' ORDER BY external_subject_id",
+    );
+    expect(after.rows).toEqual([
+      { external_subject_id: 'legacy:old-grant', credential_id: before.rows[1]?.credential_id },
+      before.rows[0],
+    ]);
+    await database.query(
+      "UPDATE provider_accounts SET disconnected_at = now() WHERE provider_account_id = 'open-two'",
+    );
+    expect(
+      (await listProviderAccounts(db, workspaceId)).find(
+        (account) => account.displayName === 'Creator open-two',
+      )?.status,
+    ).toBe('disconnected');
   });
 
   it('connects two LinkedIn members and reconnects only the matching identity', async () => {

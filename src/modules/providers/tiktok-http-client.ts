@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const API_ORIGIN = 'https://open.tiktokapis.com';
+const AUTHORIZE_ORIGIN = 'https://www.tiktok.com/v2/auth/authorize/';
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RETRY_AFTER_SECONDS = 86_400;
 
@@ -60,6 +61,9 @@ const envelopeSchema = z.object({
 const oauthErrorSchema = z.object({
   error: z.string().min(1),
   log_id: z.string().optional(),
+});
+const userInfoSchema = z.object({
+  user: z.object({ open_id: z.string().min(1), display_name: z.string().min(1) }),
 });
 
 export type TikTokToken = z.infer<typeof oauthTokenSchema>;
@@ -184,12 +188,45 @@ export class TikTokHttpClient {
     this.now = options.now ?? Date.now;
   }
 
-  public async exchangeCode(input: { code: string; redirectUri: string }): Promise<TikTokToken> {
+  public authorizationUrl(input: {
+    redirectUri: string;
+    state: string;
+    codeChallenge: string;
+  }): string {
+    const url = new URL(AUTHORIZE_ORIGIN);
+    url.search = new URLSearchParams({
+      client_key: this.options.clientKey,
+      response_type: 'code',
+      scope: 'user.info.basic,video.publish',
+      redirect_uri: input.redirectUri,
+      state: input.state,
+      code_challenge: input.codeChallenge,
+      code_challenge_method: 'S256',
+    }).toString();
+    return url.toString();
+  }
+
+  public async exchangeCode(input: {
+    code: string;
+    codeVerifier: string;
+    redirectUri: string;
+  }): Promise<TikTokToken> {
     return this.oauthToken({
       grant_type: 'authorization_code',
       code: input.code,
+      code_verifier: input.codeVerifier,
       redirect_uri: input.redirectUri,
     });
+  }
+
+  public async discoverAccount(
+    accessToken: string,
+  ): Promise<{ openId: string; displayName: string }> {
+    const data = validated(
+      userInfoSchema,
+      await this.get('/v2/user/info/?fields=open_id,display_name', accessToken),
+    );
+    return { openId: data.user.open_id, displayName: data.user.display_name };
   }
 
   public async refresh(refreshToken: string): Promise<TikTokToken> {
@@ -275,6 +312,40 @@ export class TikTokHttpClient {
       oauthTokenSchema,
       await this.call('/v2/oauth/token/', body, undefined, 'oauth'),
     );
+  }
+
+  private async get(path: string, accessToken: string): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await this.request(`${API_ORIGIN}${path}`, {
+        method: 'GET',
+        headers: { accept: 'application/json', authorization: `Bearer ${accessToken}` },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(this.options.timeoutMs ?? REQUEST_TIMEOUT_MS),
+      });
+    } catch {
+      throw new TikTokRequestError(0, 'transient');
+    }
+    if (response.status >= 300 && response.status < 400)
+      throw new TikTokRequestError(response.status, 'permanent');
+    let json: unknown;
+    try {
+      json = parseProviderJson(await response.text());
+    } catch {
+      throw new TikTokRequestError(response.status, classify(response.status));
+    }
+    const envelope = envelopeSchema.safeParse(json);
+    const code = safeProviderField(envelope.success ? envelope.data.error.code : undefined);
+    const logId = safeProviderField(envelope.success ? envelope.data.error.log_id : undefined);
+    if (!response.ok || !envelope.success || envelope.data.error.code !== 'ok')
+      throw new TikTokRequestError(
+        response.status,
+        classify(response.status, code),
+        code,
+        logId,
+        retryAfter(response, this.now()),
+      );
+    return envelope.data.data;
   }
 
   private async call(

@@ -22,6 +22,8 @@ const CAPABILITIES: Partial<Record<DestinationProvider, DestinationCapabilitySna
     contentKinds: ['link', 'single_image'],
     media: { minImages: 0, maxImages: 1 },
   },
+  // C2 may discover accounts, but creator capabilities and posting remain unimplemented.
+  tiktok: { schemaVersion: 1, contentKinds: [], media: {} },
 };
 
 export function destinationCapabilities(provider: string): DestinationCapabilitySnapshot {

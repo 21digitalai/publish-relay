@@ -32,6 +32,7 @@ function normalizeDestination(
     x: ['x'],
     youtube: ['youtube'],
     meta: ['instagram', 'facebook_page'],
+    tiktok: ['tiktok'],
   };
   const allowed = allowedDestinations[connectionFamily];
   if (allowed && !allowed.includes(destinationProvider))

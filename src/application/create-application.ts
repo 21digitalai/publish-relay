@@ -38,6 +38,8 @@ import type { LinkedInHttpClient } from '../modules/providers/linkedin-http-clie
 import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth.routes.js';
 import type { MetaHttpClient } from '../modules/providers/meta-http-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
+import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
+import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
@@ -67,6 +69,11 @@ interface MetaOauthOptions {
   client: MetaHttpClient;
   callbackUrl: string;
 }
+interface TikTokOauthOptions {
+  keys: MasterKeyProvider;
+  client: TikTokHttpClient;
+  callbackUrl: string;
+}
 
 export interface CoreApplicationOptions {
   config: RuntimeConfig;
@@ -81,6 +88,7 @@ export interface CoreApplicationOptions {
   youtubeOauth?: YouTubeOauthOptions;
   linkedinOauth?: LinkedInOauthOptions;
   metaOauth?: MetaOauthOptions;
+  tiktokOauth?: TikTokOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
   magicLinks?: MagicLinkService;
   publicAuthShells?: boolean;
@@ -189,6 +197,7 @@ function registerBrowserRoutes(
     youtubeOauth,
     linkedinOauth,
     metaOauth,
+    tiktokOauth,
     delegatedAuthorization,
   } = options;
   if (database && mediaStorage && config.CURSOR_SIGNING_SECRET)
@@ -222,6 +231,8 @@ function registerBrowserRoutes(
     registerLinkedInOauthRoutes(application, { auth, database, actionPolicy, ...linkedinOauth });
   if (auth && database && metaOauth)
     registerMetaOauthRoutes(application, { auth, database, actionPolicy, ...metaOauth });
+  if (auth && database && tiktokOauth)
+    registerTikTokOauthRoutes(application, { auth, database, actionPolicy, ...tiktokOauth });
   if (auth && delegatedAuthorization)
     registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
 }

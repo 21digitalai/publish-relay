@@ -74,6 +74,38 @@ describe('API v1 contract', () => {
       expect(document).toContain(provider);
   });
 
+  it('documents versioned provider-specific post request branches', () => {
+    const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
+    const post = paths['/api/v1/posts'] as {
+      post: { requestBody: { content: Record<string, { schema: unknown }> } };
+    };
+    const schema = post.post.requestBody.content['application/json']?.schema as {
+      anyOf: [
+        {
+          anyOf: {
+            properties: {
+              destination: { properties: { provider: { const: string } } };
+              content: {
+                properties: { schemaVersion: { const: number } };
+                additionalProperties: boolean;
+              };
+              providerAccountIds: unknown;
+            };
+          }[];
+        },
+      ];
+    };
+    const branches = schema.anyOf[0].anyOf;
+    expect(
+      branches.map((branch) => branch.properties.destination.properties.provider.const),
+    ).toEqual(['x', 'youtube', 'tiktok', 'instagram', 'facebook_page', 'linkedin']);
+    for (const branch of branches) {
+      expect(branch.properties.content.properties.schemaVersion.const).toBe(1);
+      expect(branch.properties.content.additionalProperties).toBe(false);
+      expect(branch.properties.providerAccountIds).toEqual({ not: {} });
+    }
+  });
+
   it('publishes provider-neutral post collection and direct-resource contracts', () => {
     expect(apiV1OpenApiDocument()).toMatchObject({
       paths: {

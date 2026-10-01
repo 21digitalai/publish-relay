@@ -1496,6 +1496,17 @@ describe('POST /api/v1/posts', () => {
       },
     });
     expect(mismatch.statusCode).toBe(400);
+    const malformedMixed = await application.inject({
+      ...baseRequest,
+      headers: { ...baseRequest.headers, 'idempotency-key': 'destination-first-malformed-1' },
+      payload: {
+        destination: { providerAccountId },
+        providerAccountIds: [providerAccountId],
+        content: { kind: 'text', text: 'Must not fall back' },
+        scheduledAt: '2026-09-02T10:00:00.000Z',
+      },
+    });
+    expect(malformedMixed.statusCode).toBe(400);
   });
 
   it('atomically creates direct resource links and replays an identical mutation', async () => {

@@ -29,12 +29,33 @@ describe('destination-first publication contract', () => {
   });
 
   it('rejects a provider/content discriminant mismatch', () => {
-    const request = createPostRequestSchema.parse({
-      destination: { provider: 'x', providerAccountId: accountId },
-      content: { schemaVersion: 1, kind: 'video', mediaId },
+    expect(() =>
+      createPostRequestSchema.parse({
+        destination: { provider: 'x', providerAccountId: accountId },
+        content: { schemaVersion: 1, kind: 'video', mediaId },
+        scheduledAt,
+      }),
+    ).toThrow();
+  });
+
+  it('does not reinterpret a malformed explicit target as legacy', () => {
+    const legacy = {
+      content: { kind: 'text', text: 'Hello' },
+      providerAccountIds: [accountId],
       scheduledAt,
-    });
-    expect(() => normalizeCreatePostRequest(request)).toThrow();
+    };
+    expect(
+      createPostRequestSchema.safeParse({
+        ...legacy,
+        destination: { providerAccountId: accountId },
+      }).success,
+    ).toBe(false);
+    expect(
+      createPostRequestSchema.safeParse({
+        ...legacy,
+        destination: { provider: 'x', providerAccountId: accountId },
+      }).success,
+    ).toBe(false);
   });
 
   it('keeps the legacy shape for existing destinations', () => {

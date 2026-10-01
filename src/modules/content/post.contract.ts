@@ -6,17 +6,33 @@ import {
 } from './publication-target.js';
 
 export const legacyCreatePostRequestSchema = z.object({
+  destination: z.never().optional(),
   content: z.record(z.string(), z.unknown()),
   mediaIds: z.array(z.uuid()).max(10).default([]),
   providerAccountIds: z.array(z.uuid()).min(1).max(50),
   scheduledAt: z.iso.datetime(),
 });
 
-export const destinationCreatePostRequestSchema = z.object({
-  destination: z.object({ provider: z.string(), providerAccountId: z.uuid() }),
-  content: z.record(z.string(), z.unknown()),
-  scheduledAt: z.iso.datetime(),
-});
+const targetOptions = publicationTargetSchema.options;
+// Preserve each option's literal provider/content pairing in the generated request union.
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+function destinationRequestFor<T extends (typeof targetOptions)[number]>(target: T) {
+  return z.object({
+    destination: target.pick({ provider: true, providerAccountId: true }),
+    content: target.shape.content,
+    providerAccountIds: z.never().optional(),
+    scheduledAt: z.iso.datetime(),
+  });
+}
+
+export const destinationCreatePostRequestSchema = z.union([
+  destinationRequestFor(targetOptions[0]),
+  destinationRequestFor(targetOptions[1]),
+  destinationRequestFor(targetOptions[2]),
+  destinationRequestFor(targetOptions[3]),
+  destinationRequestFor(targetOptions[4]),
+  destinationRequestFor(targetOptions[5]),
+]);
 
 export const createPostRequestSchema = z.union([
   destinationCreatePostRequestSchema,

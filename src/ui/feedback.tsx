@@ -62,6 +62,7 @@ function PublicationToastCard({
         <strong>{headline}</strong>
         {toast.account && <span>{toast.account}</span>}
         <a
+          className="publication-toast-action"
           href={toast.href}
           {...(toast.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
           onClick={() => {
@@ -72,6 +73,7 @@ function PublicationToastCard({
         </a>
       </div>
       <button
+        className="publication-toast-dismiss"
         type="button"
         aria-label="Dismiss publication notification"
         onClick={() => {

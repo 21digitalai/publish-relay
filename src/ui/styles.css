@@ -2025,6 +2025,31 @@ textarea:focus-visible {
   grid-template-columns: 1fr 1fr 1.4fr;
   gap: 12px;
 }
+.schedule-picker-field {
+  display: flex;
+  min-width: 0;
+  margin-top: 6px;
+}
+.schedule-picker-field input {
+  min-width: 0;
+  width: 100%;
+}
+.schedule-picker-field input::-webkit-calendar-picker-indicator {
+  display: none;
+}
+.schedule-picker-field button {
+  flex: 0 0 44px;
+  min-height: 44px;
+  border: 1px solid var(--border-strong);
+  border-radius: 0 8px 8px 0;
+  color: var(--text);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.schedule-picker-field button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
 .inline-validation {
   color: var(--danger);
 }
@@ -2360,10 +2385,7 @@ textarea:focus-visible {
     padding: 16px;
   }
   .schedule-fields {
-    grid-template-columns: 1fr 1fr;
-  }
-  .schedule-fields label:last-child {
-    grid-column: 1 / -1;
+    grid-template-columns: 1fr;
   }
   .detail-route {
     margin: -12px;

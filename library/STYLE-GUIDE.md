@@ -135,6 +135,8 @@ Order:
 
 Multi-account submission creates related independent jobs. Never silently drop incompatible targets. Offer 15-minute time suggestions while accepting minute precision. Block past times inline. Success becomes a compact receipt with job count, time, and Queue/Calendar links.
 
+The composer schedule uses separate labeled native Date and Time controls with explicit picker buttons, minute precision, and a visible timezone. At 390px the controls stack. They still resolve through the existing local-time/DST choice and ISO submission contract; no scheduling presets are implied.
+
 ## Queue
 
 Use a dense data list, not cards. Toolbar: search; status/provider/account/workspace/date filters; sort; All, Needs attention, Upcoming, and Published views.

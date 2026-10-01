@@ -251,6 +251,15 @@ function workspacePath(): string {
   return window.location.pathname.split('/').slice(0, 3).join('/');
 }
 
+function openNativePicker(input: HTMLInputElement | null): void {
+  if (!input) return;
+  try {
+    input.showPicker();
+  } catch {
+    input.focus();
+  }
+}
+
 function consumeComposerNavigationIntent(): boolean {
   const key = 'publish-relay-open-composer';
   if (window.sessionStorage.getItem(key) !== 'true') return false;
@@ -387,6 +396,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   });
   const initialSchedule = useMemo(() => new Date(Date.now() + 60 * 60 * 1000), []);
   const [localSchedule, setLocalSchedule] = useState(localDateTimeValue(initialSchedule));
+  const scheduleDateRef = useRef<HTMLInputElement>(null);
+  const scheduleTimeRef = useRef<HTMLInputElement>(null);
   const scheduleOptions = useMemo(() => matchingLocalInstants(localSchedule), [localSchedule]);
   const [scheduleOption, setScheduleOption] = useState(0);
   const scheduledAt = scheduleOptions[scheduleOption];
@@ -397,11 +408,13 @@ function Composer({ onClose }: { onClose: () => void }) {
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const youtubeHasMadeForKids = selected[0]?.adapterDefaults.madeForKids !== undefined;
   const scheduleError =
-    scheduled && scheduleOptions.length === 0
-      ? 'This local time does not exist because the clock changes. Choose another time.'
-      : scheduled && scheduledAt && scheduledAt.getTime() <= Date.now()
-        ? 'Choose a future publishing time.'
-        : null;
+    scheduled && (!localSchedule.split('T')[0] || !localSchedule.split('T')[1])
+      ? 'Choose a date and time.'
+      : scheduled && scheduleOptions.length === 0
+        ? 'This local time does not exist because the clock changes. Choose another time.'
+        : scheduled && scheduledAt && scheduledAt.getTime() <= Date.now()
+          ? 'Choose a future publishing time.'
+          : null;
   const collisions = scheduledAt
     ? scheduledJobs.filter(
         (job) =>
@@ -947,16 +960,59 @@ function Composer({ onClose }: { onClose: () => void }) {
             {scheduled && (
               <div className="schedule-fields">
                 <label className="field-label">
-                  Date and time
-                  <input
-                    className="schedule-date-time text-input"
-                    type="datetime-local"
-                    value={localSchedule}
-                    onChange={(event) => {
-                      setLocalSchedule(event.target.value);
-                      setScheduleOption(0);
-                    }}
-                  />
+                  Date
+                  <span className="schedule-picker-field">
+                    <input
+                      ref={scheduleDateRef}
+                      className="text-input"
+                      type="date"
+                      aria-label="Date"
+                      value={localSchedule.split('T')[0]}
+                      onChange={(event) => {
+                        setLocalSchedule(
+                          `${event.target.value}T${localSchedule.split('T')[1] ?? ''}`,
+                        );
+                        setScheduleOption(0);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Open date picker"
+                      onClick={() => {
+                        openNativePicker(scheduleDateRef.current);
+                      }}
+                    >
+                      <span aria-hidden="true">▦</span>
+                    </button>
+                  </span>
+                </label>
+                <label className="field-label">
+                  Time
+                  <span className="schedule-picker-field">
+                    <input
+                      ref={scheduleTimeRef}
+                      className="text-input"
+                      type="time"
+                      aria-label="Time"
+                      step="60"
+                      value={localSchedule.split('T')[1] ?? ''}
+                      onChange={(event) => {
+                        setLocalSchedule(
+                          `${localSchedule.split('T')[0] ?? ''}T${event.target.value}`,
+                        );
+                        setScheduleOption(0);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Open time picker"
+                      onClick={() => {
+                        openNativePicker(scheduleTimeRef.current);
+                      }}
+                    >
+                      <span aria-hidden="true">◷</span>
+                    </button>
+                  </span>
                 </label>
                 <label className="field-label">
                   Timezone

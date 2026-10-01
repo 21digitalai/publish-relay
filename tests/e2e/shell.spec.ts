@@ -859,15 +859,26 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.screenshot({ path: testInfo.outputPath('queue-populated.png'), fullPage: true });
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  await expect(page.getByLabel('Post body')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('composer.png'), fullPage: true });
-  await expect(page.getByRole('button', { name: 'Choose files' })).toBeDisabled();
+  await expect(page.getByText('Choose files')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
-  const scheduleInput = page.getByLabel('Date and time');
-  await scheduleInput.fill('2026-09-01T09:30');
+  const scheduleDate = page.getByLabel('Date', { exact: true });
+  const scheduleTime = page.getByLabel('Time', { exact: true });
+  await expect(page.getByRole('button', { name: 'Open date picker' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open time picker' })).toBeVisible();
+  if (testInfo.project.name === 'mobile') {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      390,
+    );
+  }
+  await scheduleDate.fill('2026-09-01');
+  await scheduleTime.fill('09:30');
   await expect(page.getByText('1 nearby publication detected')).toBeVisible();
   await page.getByRole('button', { name: 'Use next 15-minute opening' }).click();
-  await expect(scheduleInput).toHaveValue('2026-09-01T10:05');
+  await expect(scheduleDate).toHaveValue('2026-09-01');
+  await expect(scheduleTime).toHaveValue('10:05');
   expect(collisionQueryUrls.some((url) => url.includes('states=scheduled'))).toBe(true);
   expect(collisionQueryUrls.some((url) => url.includes('beforeId='))).toBe(true);
   expect(
@@ -881,10 +892,12 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   ).toEqual(
     new Set(['00000000-0000-4000-8000-000000000201', '00000000-0000-4000-8000-000000000203']),
   );
-  await scheduleInput.fill('2020-01-01T09:00');
+  await scheduleDate.fill('2020-01-01');
+  await scheduleTime.fill('09:00');
   await expect(page.getByRole('alert')).toContainText('future publishing time');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
-  await scheduleInput.fill('2026-09-01T10:05');
+  await scheduleDate.fill('2026-09-01');
+  await scheduleTime.fill('10:05');
   await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
   await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
   await expect(page.getByRole('alert')).toContainText('Retry safely');
@@ -1257,7 +1270,8 @@ test('suppresses workflow motion when reduced motion is requested', async ({ pag
   await expect(page.locator('.sheet-backdrop')).toHaveCSS('animation-name', 'none');
   await expect(page.locator('.composer-sheet')).toHaveCSS('transform', 'none');
   await page.getByLabel('Post body').fill('Reduced motion scheduling receipt.');
-  await page.getByLabel('Date and time').fill('2026-09-01T10:05');
+  await page.getByLabel('Date', { exact: true }).fill('2026-09-01');
+  await page.getByLabel('Time', { exact: true }).fill('10:05');
   await page.getByRole('button', { name: /Schedule \d+ posts?/ }).click();
   const successMark = page.locator('.composer-receipt > span');
   await expect(successMark).toBeVisible();
@@ -1886,10 +1900,11 @@ test.describe('Europe/Sofia DST scheduling', () => {
     const scheduleFold = async (offsetLabel: string) => {
       await page.getByRole('button', { name: 'Create post' }).last().click();
       await page.getByLabel('Post body').fill(`DST choice ${offsetLabel}`);
-      await page.getByLabel('Date and time').fill('2027-03-28T03:30');
+      await page.getByLabel('Date', { exact: true }).fill('2027-03-28');
+      await page.getByLabel('Time', { exact: true }).fill('03:30');
       await expect(page.getByRole('alert')).toContainText('clock changes');
       await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
-      await page.getByLabel('Date and time').fill('2027-10-31T03:30');
+      await page.getByLabel('Date', { exact: true }).fill('2027-10-31');
       await expect(page.getByText('This time occurs twice')).toBeVisible();
       await page.getByRole('radio', { name: offsetLabel, exact: true }).check();
       await page.getByRole('button', { name: 'Schedule 2 posts' }).click();

@@ -72,6 +72,10 @@ async function hasRequiredJobReference(
           or pj.reconciliation_required = true)
       union all
       ${requiredStagingArtifactPredicate(workspaceId, mediaId, now)}
+      union all
+      select 1 from provider_media_grants grant_row
+      where grant_row.workspace_id = ${workspaceId} and grant_row.media_id = ${mediaId}
+        and grant_row.revoked_at is null and grant_row.expires_at > ${now}
     ) as required
   `);
   return result.rows[0]?.required === true;
@@ -88,6 +92,7 @@ export async function evaluateMediaRetention(
       where workspace_id = ${input.workspaceId} and state = 'ready' and retained_at is not null
       order by retained_at, id
       limit ${input.limit ?? 100}
+      for update skip locked
     `);
     let eligible = 0;
     for (const media of candidates.rows) {
@@ -145,6 +150,11 @@ export async function cleanupRetainedMedia(
           and not exists (
             ${requiredStagingArtifactPredicate(input.workspaceId, sql.raw('media.id'), input.now)}
           )
+          and not exists (
+            select 1 from provider_media_grants grant_row
+            where grant_row.workspace_id = media.workspace_id and grant_row.media_id = media.id
+              and grant_row.revoked_at is null and grant_row.expires_at > ${input.now}
+          )
         order by media.cleanup_eligible_at, media.id
         limit ${input.limit ?? 100}
         for update of media skip locked
@@ -201,6 +211,11 @@ export async function deleteUnattachedMedia(
         and not exists (
           select 1 from revision_media rm
           where rm.workspace_id = media.workspace_id and rm.media_id = media.id
+        )
+        and not exists (
+          select 1 from provider_media_grants grant_row
+          where grant_row.workspace_id = media.workspace_id and grant_row.media_id = media.id
+            and grant_row.revoked_at is null and grant_row.expires_at > ${now}
         )
       returning media.storage_key
     `);

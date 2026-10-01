@@ -831,6 +831,44 @@ export const publicationConsents = pgTable(
   ],
 );
 
+export const providerMediaGrants = pgTable(
+  'provider_media_grants',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    accountId: uuid('account_id').notNull(),
+    mediaId: uuid('media_id').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    mediaSha256: text('media_sha256').notNull(),
+    mimeType: text('mime_type').notNull(),
+    byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('provider_media_grants_workspace_id_unique').on(table.workspaceId, table.id),
+    uniqueIndex('provider_media_grants_token_hash_unique').on(table.tokenHash),
+    index('provider_media_grants_media_expiry_idx').on(
+      table.workspaceId,
+      table.mediaId,
+      table.expiresAt,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'provider_media_grants_workspace_account_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.mediaId],
+      foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
+      name: 'provider_media_grants_workspace_media_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
 export const publicationJobs = pgTable(
   'publication_jobs',
   {

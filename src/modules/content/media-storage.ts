@@ -17,6 +17,13 @@ export interface MediaStorage {
     mimeType: string;
   }): Promise<{ storageKey: string }>;
   read(storageKey: string): Promise<Buffer>;
+  openVerifiedRange?(input: {
+    storageKey: string;
+    sha256: string;
+    byteSize: number;
+    start: number;
+    end: number;
+  }): Promise<Readable | null>;
   delete(storageKey: string): Promise<void>;
   stageStream?(input: {
     stream: Readable;

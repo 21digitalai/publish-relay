@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
@@ -133,5 +133,42 @@ export class LocalMediaStorage implements MediaStorage {
 
   public async read(storageKey: string): Promise<Buffer> {
     return readFile(this.pathFor(storageKey));
+  }
+
+  public async openVerifiedRange(input: {
+    storageKey: string;
+    sha256: string;
+    byteSize: number;
+    start: number;
+    end: number;
+  }): Promise<Readable | null> {
+    const path = this.pathFor(input.storageKey);
+    let handle;
+    try {
+      handle = await open(path, 'r');
+      const before = await handle.stat();
+      if (!before.isFile() || before.size !== input.byteSize) {
+        await handle.close();
+        return null;
+      }
+      const hash = createHash('sha256');
+      for await (const chunk of handle.createReadStream({ autoClose: false }))
+        hash.update(chunk as Buffer);
+      const after = await handle.stat();
+      if (
+        before.size !== after.size ||
+        before.mtimeMs !== after.mtimeMs ||
+        before.ctimeMs !== after.ctimeMs ||
+        hash.digest('hex') !== input.sha256
+      ) {
+        await handle.close();
+        return null;
+      }
+      return handle.createReadStream({ start: input.start, end: input.end, autoClose: true });
+    } catch (error) {
+      await handle?.close();
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
   }
 }

@@ -40,6 +40,7 @@ const migrations = [
   '0049_meta_effective_payload.sql',
   '0050_instagram_staging_artifacts.sql',
   '0051_provider_subject_lifecycle.sql',
+  '0054_tiktok_media_grants.sql',
 ] as const;
 
 const workspaceA = '00000000-0000-4000-8000-000000000401';

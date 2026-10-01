@@ -58,6 +58,13 @@ describe('request logger', () => {
           (record) => !JSON.stringify(record).includes('SYNTHETIC_REDACTION_PROBE_20261001'),
         ),
       ).toBe(true);
+      const bearerPath = await application.inject({
+        method: 'GET',
+        url: '/provider-media/tiktok/grant-id/SYNTHETIC_TIKTOK_BEARER/extra',
+      });
+      expect(bearerPath.statusCode).toBe(404);
+      expect(JSON.stringify(bearerPath.json())).not.toContain('SYNTHETIC_TIKTOK_BEARER');
+      expect(lines.join('')).not.toContain('SYNTHETIC_TIKTOK_BEARER');
     } finally {
       await application.close();
     }

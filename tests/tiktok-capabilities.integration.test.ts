@@ -380,7 +380,7 @@ it.each(['fresh', 'upgrade'] as const)(
         if (!previous) throw new Error('Previous migration missing');
         await applyPending(previous.folderMillis);
         const absent = await fresh.query(
-          "SELECT to_regclass('public.publication_consents') AS table_name",
+          "SELECT to_regclass('public.provider_media_grants') AS table_name",
         );
         expect(absent.rows[0]).toEqual({ table_name: null });
       }
@@ -405,6 +405,10 @@ it.each(['fresh', 'upgrade'] as const)(
         (await fresh.query("SELECT to_regclass('public.publication_consents') AS table_name"))
           .rows[0],
       ).toEqual({ table_name: 'publication_consents' });
+      expect(
+        (await fresh.query("SELECT to_regclass('public.provider_media_grants') AS table_name"))
+          .rows[0],
+      ).toEqual({ table_name: 'provider_media_grants' });
     } finally {
       await fresh.close();
     }

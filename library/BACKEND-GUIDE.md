@@ -221,6 +221,12 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 # Agent destination discovery
 
+## TikTok pull-media grant boundary
+
+- `TikTokMediaGrantService` is the sole fixture-safe issuer/resolver/revoker for TikTok PULL_FROM_URL grants. It binds one active TikTok destination and one retained ready MP4 to a random grant ID, a hashed opaque encrypted bearer token, a byte/hash/type snapshot, and a 91-minute expiry. It persists the grant before returning the HTTPS URL; no OAuth, provider init, or posting occurs in this service.
+- `GET/HEAD /provider-media/tiktok/:grant/:token` is a bearer-only downloader boundary. It requires HTTPS, applies tenant-scoped grant resolution under forced RLS, verifies current media facts and stored bytes against the grant snapshot, supports one HTTP byte range, and never redirects. The request logger redacts both path segments, and all responses disable caching. Local storage verifies the whole file by streaming before serving a bounded range, avoiding a 2 GiB in-memory read.
+- Active, unrevoked grants hold media against canonical retention and unattached deletion until their expiry. The later attempt/dispatch slice must bind one grant per attempt, verify the TikTok property before init, retain through nonterminal operation, and revoke only after terminal/cancel plus grace. No second media write path or provider-specific storage owner is introduced.
+
 ## Meta grant revoke reservation
 
 Selected Meta remote-grant revoke reserves the connection with durable `revoking` status before calling Meta. Workspace-row locking serializes that reservation with subject reconnect, local account disconnect, and post creation/revision admission. A `revoking` connection cannot receive new jobs or credentials; active/reconciliation jobs block reservation. The selected credential ID is rechecked at finalization, which atomically disconnects linked accounts and revokes authority/Page credentials. Transient remote failure or remote-success/local-failure leaves `revoking` in place: retry uses the same credential, treats Meta already-invalid grant responses as success, and finishes local cleanup without replacing a newer grant. A completed `revoked` retry is idempotent. The API returns a recovery-oriented pending message rather than silently reopening admission.

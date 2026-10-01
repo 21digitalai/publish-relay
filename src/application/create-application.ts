@@ -42,6 +42,8 @@ import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.j
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
+import { registerTikTokMediaRoutes } from '../modules/providers/tiktok-media.routes.js';
+import { TikTokMediaGrantService } from '../modules/providers/tiktok-media-grant.service.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
@@ -209,12 +211,17 @@ function registerBrowserRoutes(
     tiktokOauth,
     delegatedAuthorization,
   } = options;
-  if (database && mediaStorage && config.CURSOR_SIGNING_SECRET)
+  if (database && mediaStorage && config.CURSOR_SIGNING_SECRET) {
     registerInstagramMediaRoutes(application, {
       database,
       mediaStorage,
       tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
     });
+    registerTikTokMediaRoutes(application, {
+      grants: new TikTokMediaGrantService(database, Buffer.from(config.CURSOR_SIGNING_SECRET)),
+      mediaStorage,
+    });
+  }
   if (auth && database) {
     registerProviderAccountRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {

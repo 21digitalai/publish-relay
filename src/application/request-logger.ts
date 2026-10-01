@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyLoggerOptions } from 'fastify';
 
 function requestPath(url: string): string {
-  return url.split(/[?#]/, 1)[0] ?? '/';
+  const path = url.split(/[?#]/, 1)[0] ?? '/';
+  return path.replace(/^\/provider-media\/tiktok(?:\/.*)?$/, '/provider-media/tiktok/[REDACTED]');
 }
 
 export function registerRedactedNotFoundHandler(application: FastifyInstance): void {

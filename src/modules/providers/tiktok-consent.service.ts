@@ -67,6 +67,12 @@ export class TikTokConsentInvalidError extends Error {
   }
 }
 
+export class TikTokConsentNotFoundError extends Error {
+  public constructor() {
+    super('TikTok publication consent was not found');
+  }
+}
+
 interface ConsentSource extends Record<string, unknown> {
   content: unknown;
   currentRevisionId: string;
@@ -363,4 +369,48 @@ export async function verifyTikTokPublicationConsent(
       throw new TikTokConsentInvalidError();
     return parsed.data;
   });
+}
+
+export async function getTikTokPublicationConsent(
+  database: NodePgDatabase,
+  input: { workspaceId: string; userId: string; receiptId: string },
+): Promise<{
+  id: string;
+  postId: string;
+  revisionId: string;
+  accountId: string;
+  payloadHash: string;
+  consentedAt: string;
+}> {
+  const row = await withTenantTransaction(database, input, async (transaction) => {
+    const result = await transaction.execute<{
+      postId: string;
+      revisionId: string;
+      accountId: string;
+      payloadHash: string;
+      consentedAt: Date;
+    }>(sql`select post_id as "postId", revision_id as "revisionId",
+      account_id as "accountId", payload_hash as "payloadHash",
+      consented_at as "consentedAt" from publication_consents
+      where workspace_id = ${input.workspaceId} and user_id = ${input.userId}
+        and id = ${input.receiptId}`);
+    return result.rows[0];
+  });
+  if (!row) throw new TikTokConsentNotFoundError();
+  await verifyTikTokPublicationConsent(database, {
+    workspaceId: input.workspaceId,
+    postId: row.postId,
+    revisionId: row.revisionId,
+    accountId: row.accountId,
+    receiptId: input.receiptId,
+    actor: { type: 'user', id: input.userId },
+  });
+  return {
+    id: input.receiptId,
+    postId: row.postId,
+    revisionId: row.revisionId,
+    accountId: row.accountId,
+    payloadHash: row.payloadHash,
+    consentedAt: new Date(row.consentedAt).toISOString(),
+  };
 }

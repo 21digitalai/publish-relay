@@ -159,7 +159,6 @@ image, and selecting both shows only single image. The picker displays capabilit
 keeps unavailable destinations visible but disabled. Image upload reuses the canonical hidden file
 control/dropzone lifecycle; validation remains inline on desktop and mobile.
 
-
 ## TikTok Direct Post composer
 
 This extends the canonical Composer for the operator-approved destination-first TikTok video flow; it does not create a separate sheet or change X, YouTube, or Meta behavior. The exact Builder/Oracle acceptance matrix is recorded in Publish Relay ticket #13414 note #61404.

@@ -5,6 +5,7 @@ import pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import {
+  getTikTokPublicationConsent,
   issueTikTokPublicationConsent,
   verifyTikTokPublicationConsent,
 } from '../src/modules/providers/tiktok-consent.service.js';
@@ -130,6 +131,23 @@ describe.skipIf(!connectionString)('TikTok consent on PostgreSQL', () => {
         actor: { type: 'user' as const, id: userId },
       };
       expect((await verifyTikTokPublicationConsent(db, scope)).mediaSha256).toBe('a'.repeat(64));
+      expect(
+        await getTikTokPublicationConsent(db, { workspaceId, userId, receiptId: receipt.id }),
+      ).toMatchObject({ id: receipt.id, postId, revisionId, accountId });
+      await expect(
+        getTikTokPublicationConsent(db, {
+          workspaceId: otherWorkspaceId,
+          userId,
+          receiptId: receipt.id,
+        }),
+      ).rejects.toThrow('not found');
+      await expect(
+        getTikTokPublicationConsent(db, {
+          workspaceId,
+          userId: randomUUID(),
+          receiptId: receipt.id,
+        }),
+      ).rejects.toThrow('not found');
       expect(
         (
           await verifyTikTokPublicationConsent(db, {

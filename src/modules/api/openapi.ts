@@ -8,6 +8,7 @@ import {
   postDetailResponseSchema,
   postMutationResponseSchema,
 } from '../content/post.contract.js';
+import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
 const accountSchema = z.union([
@@ -66,6 +67,16 @@ const tiktokCapabilitySchema = z.object({
   fetchedAt: z.iso.datetime(),
   expiresAt: z.iso.datetime(),
 });
+const tiktokConsentReceiptSchema = z.object({
+  id: z.uuid(),
+  payloadHash: z.string().regex(/^[0-9a-f]{64}$/),
+  consentedAt: z.iso.datetime(),
+});
+const tiktokConsentDetailSchema = tiktokConsentReceiptSchema.extend({
+  postId: z.uuid(),
+  revisionId: z.uuid(),
+  accountId: z.uuid(),
+});
 const mediaMutationSchema = z.object({
   id: z.uuid(),
   mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4']),
@@ -105,6 +116,65 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
     openapi: '3.1.0',
     info: { title: 'Publish Relay API', version: '1.1.0' },
     paths: {
+      '/api/workflow/tiktok-consents': {
+        post: {
+          operationId: 'issueTikTokPublicationConsent',
+          description: 'Authenticated human browser only. Does not schedule or dispatch a post.',
+          security: [{ browserSession: [], csrfToken: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(tiktokConsentRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Immutable exact-revision consent receipt',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(tiktokConsentReceiptSchema)),
+                },
+              },
+            },
+            '400': { description: 'Required explicit consent choice or identifier missing' },
+            '401': { description: 'Human session required' },
+            '403': { description: 'CSRF or membership denied' },
+            '409': {
+              description:
+                'Revision, account, media, or capability state changed; refresh and reconfirm',
+            },
+          },
+        },
+      },
+      '/api/workflow/tiktok-consents/{receiptId}': {
+        get: {
+          operationId: 'readTikTokPublicationConsent',
+          security: [{ browserSession: [] }],
+          parameters: [
+            {
+              name: 'receiptId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description:
+                'Current receipt metadata for the same consenting human; no payload or secrets',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(tiktokConsentDetailSchema)),
+                },
+              },
+            },
+            '401': { description: 'Human session required' },
+            '403': { description: 'Membership denied' },
+            '404': { description: 'Receipt not found for this human and workspace' },
+            '409': { description: 'Receipt invalidated; refresh and reconfirm' },
+          },
+        },
+      },
       '/connect/revoke': {
         post: {
           operationId: 'revokeDelegatedGrant',
@@ -549,6 +619,8 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
     },
     components: {
       securitySchemes: {
+        browserSession: { type: 'apiKey', in: 'cookie', name: 'publish_relay_session' },
+        csrfToken: { type: 'apiKey', in: 'header', name: 'X-CSRF-Token' },
         bearerAuth: { type: 'http', scheme: 'bearer' },
         workspace: { type: 'apiKey', in: 'header', name: 'X-Publish-Relay-Workspace' },
       },

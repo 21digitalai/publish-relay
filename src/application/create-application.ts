@@ -40,6 +40,7 @@ import type { MetaHttpClient } from '../modules/providers/meta-http-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
+import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
 import { registerTikTokMediaRoutes } from '../modules/providers/tiktok-media.routes.js';
@@ -224,6 +225,7 @@ function registerBrowserRoutes(
   }
   if (auth && database) {
     registerProviderAccountRoutes(application, { auth, database });
+    registerTikTokConsentRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {
       auth,
       database,

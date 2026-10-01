@@ -1,16 +1,21 @@
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import cookie from '@fastify/cookie';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  getTikTokPublicationConsent,
   issueTikTokPublicationConsent,
   tiktokConsentRequestSchema,
   verifyTikTokPublicationConsent,
   type TikTokConsentCommand,
 } from '../src/modules/providers/tiktok-consent.service.js';
 import { createPost } from '../src/modules/content/post.service.js';
+import { registerTikTokConsentRoutes } from '../src/modules/providers/tiktok-consent.routes.js';
+import type { AuthService } from '../src/modules/identity/auth.service.js';
 
 const migrationNames = [
   '0000_identity_tenancy',
@@ -127,6 +132,84 @@ beforeEach(async () => {
 afterEach(async () => pg.close());
 
 describe('revision-bound TikTok consent', () => {
+  it('serves the real session/CSRF route against tenant data without machine or identity bypass', async () => {
+    const app = Fastify();
+    await app.register(cookie);
+    const auth = {
+      authenticate: (tenant: string) =>
+        Promise.resolve(tenant === workspaceId ? { workspaceId, userId, role: 'owner' } : null),
+    } as unknown as AuthService;
+    registerTikTokConsentRoutes(app, { auth, database: db });
+    const request = {
+      postId,
+      revisionId,
+      accountId,
+      capabilitySnapshotId: snapshotId,
+      options: command().options,
+      musicUsageConfirmed: true,
+      brandedContentPolicyConfirmed: false,
+    };
+    const url = '/api/workflow/tiktok-consents';
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url,
+          headers: { authorization: 'Bearer machine' },
+          payload: request,
+        })
+      ).statusCode,
+    ).toBe(401);
+    const headers = {
+      cookie: `publish_relay_session=${workspaceId}.token; publish_relay_csrf=csrf`,
+      'x-csrf-token': 'csrf',
+    };
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url,
+          headers: { cookie: headers.cookie },
+          payload: request,
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url,
+          headers,
+          payload: { ...request, userId: machineId },
+        })
+      ).statusCode,
+    ).toBe(400);
+    const response = await app.inject({ method: 'POST', url, headers, payload: request });
+    expect(response.statusCode).toBe(201);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(Buffer.byteLength(response.body)).toBeLessThan(512);
+    const receipt = response.json<{ data: { id: string } }>().data;
+    const readUrl = `${url}/${receipt.id}`;
+    const read = await app.inject({ method: 'GET', url: readUrl, headers });
+    expect(read.statusCode).toBe(200);
+    expect(Buffer.byteLength(read.body)).toBeLessThan(512);
+    expect(read.body).not.toContain(mediaHash);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: readUrl,
+          headers: { authorization: 'Bearer machine' },
+        })
+      ).statusCode,
+    ).toBe(401);
+    await pg.exec(`insert into post_revisions (workspace_id, post_id, revision_number, content)
+      values ('${workspaceId}', '${postId}', 2, '${content()}')`);
+    const stale = await app.inject({ method: 'GET', url: readUrl, headers });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.body).toContain('refresh the destination');
+    await app.close();
+  });
   it('allows only the authenticated human principal to issue consent', async () => {
     for (const type of ['api-key', 'delegated'] as const) {
       await expect(
@@ -237,6 +320,34 @@ describe('revision-bound TikTok consent', () => {
         receiptId: receipt.id,
         actor: { type: 'user', id: userId },
       }),
+    ).rejects.toThrow('invalid');
+  });
+
+  it('reads receipt metadata only for the consenting human in its workspace and rejects revision drift', async () => {
+    const receipt = await issueTikTokPublicationConsent(db, command());
+    const readable = await getTikTokPublicationConsent(db, {
+      workspaceId,
+      userId,
+      receiptId: receipt.id,
+    });
+    expect(readable).toEqual({
+      id: receipt.id,
+      postId,
+      revisionId,
+      accountId,
+      payloadHash: receipt.payloadHash,
+      consentedAt: receipt.consentedAt,
+    });
+    expect(JSON.stringify(readable)).not.toContain(mediaHash);
+    for (const input of [
+      { workspaceId: otherWorkspaceId, userId, receiptId: receipt.id },
+      { workspaceId, userId: machineId, receiptId: receipt.id },
+    ])
+      await expect(getTikTokPublicationConsent(db, input)).rejects.toThrow('not found');
+    await pg.exec(`insert into post_revisions (workspace_id, post_id, revision_number, content)
+      values ('${workspaceId}', '${postId}', 2, '${content()}')`);
+    await expect(
+      getTikTokPublicationConsent(db, { workspaceId, userId, receiptId: receipt.id }),
     ).rejects.toThrow('invalid');
   });
 

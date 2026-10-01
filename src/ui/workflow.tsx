@@ -345,6 +345,10 @@ function Composer({ onClose }: { onClose: () => void }) {
     effectiveProviderSettings: Record<string, unknown>[];
   } | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'saving'>('loading');
+  const [accountLoadState, setAccountLoadState] = useState<'loading' | 'ready' | 'error'>(
+    'loading',
+  );
+  const [accountLoadAttempt, setAccountLoadAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
   const uploadedMediaIds = useRef<string[]>([]);
@@ -443,6 +447,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       });
   }, [draftId]);
   useEffect(() => {
+    setAccountLoadState('loading');
     void fetch('/api/provider-accounts')
       .then(async (response) => {
         if (!response.ok) throw new Error('Connected accounts could not be loaded.');
@@ -462,15 +467,16 @@ function Composer({ onClose }: { onClose: () => void }) {
         const active = data.accounts.filter((account) => account.status === 'active');
         setAccounts(active);
         setSelectedAccounts(active.map((account) => account.id));
+        setAccountLoadState('ready');
         setState('ready');
       })
       .catch((reason: unknown) => {
         setError(
           reason instanceof Error ? reason.message : 'Connected accounts could not be loaded.',
         );
-        setState('ready');
+        setAccountLoadState('error');
       });
-  }, []);
+  }, [accountLoadAttempt]);
   useEffect(() => {
     if (selectedAccounts.length === 0 || scheduledAtMillis === null) {
       setScheduledJobs([]);
@@ -661,6 +667,44 @@ function Composer({ onClose }: { onClose: () => void }) {
               </a>
             </div>
           </div>
+        ) : accountLoadState !== 'ready' || accounts.length === 0 ? (
+          <div className="composer-account-gate" role="status">
+            {accountLoadState === 'loading' ? (
+              <p>Loading connected accounts…</p>
+            ) : accountLoadState === 'error' ? (
+              <>
+                <h3>Connected accounts unavailable</h3>
+                <p role="alert">{error}</p>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setAccountLoadAttempt((attempt) => attempt + 1);
+                  }}
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <>
+                <h3>Connect an account to create a post</h3>
+                <p>Choose a posting destination before composing content for this workspace.</p>
+                <div className="composer-account-gate-actions">
+                  <a className="primary-button" href={`${workspacePath()}/accounts`}>
+                    Add Posting Adapter
+                  </a>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void closeComposer()}
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         ) : (
           <>
             {draftId && (
@@ -677,10 +721,6 @@ function Composer({ onClose }: { onClose: () => void }) {
             )}
             <fieldset className="account-picker">
               <legend>Publish to</legend>
-              {state === 'loading' && <p>Loading connected accounts…</p>}
-              {state !== 'loading' && accounts.length === 0 && (
-                <p>Connect an account before scheduling.</p>
-              )}
               {accounts.map((account) => (
                 <label key={account.id}>
                   <input

@@ -565,8 +565,17 @@ test('opens the composer from Accounts with no connected destinations', async ({
   await page.getByRole('button', { name: 'Create post' }).click();
   await expect(page).toHaveURL(/\/queue$/);
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
-  await expect(page.getByText('Connect an account before scheduling.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Schedule 0 posts' })).toBeDisabled();
+  await expect(
+    page.getByRole('heading', { name: 'Connect an account to create a post' }),
+  ).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Add Posting Adapter' })).toHaveAttribute(
+    'href',
+    /\/w\/[^/]+\/accounts$/,
+  );
+  await expect(page.getByRole('button', { name: /Schedule \d+ posts?/ })).toHaveCount(0);
+  await expect(page.getByLabel('Post body')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Create post' })).toHaveCount(0);
 });
 
 test('uses the mobile navigation drawer', async ({ page }) => {

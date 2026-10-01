@@ -1840,6 +1840,27 @@ textarea:focus-visible {
 .composer-sheet h2 {
   margin: 3px 0 0;
 }
+.composer-account-gate {
+  display: grid;
+  align-content: center;
+  gap: 12px;
+  min-height: 55vh;
+  max-width: 440px;
+  margin: 0 auto;
+}
+.composer-account-gate h3,
+.composer-account-gate p {
+  margin: 0;
+}
+.composer-account-gate p {
+  color: var(--text-muted);
+}
+.composer-account-gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
 .imported-draft-banner {
   display: flex;
   justify-content: space-between;

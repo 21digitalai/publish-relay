@@ -263,7 +263,7 @@ export function registerCoreApplication(
       shellHtml,
       humanAuthMode: resolveHumanAuthMode(config),
     });
-  if (auth && publicAuthShells) registerPublicAuthShellRoutes(application, shellHtml);
+  if (auth && publicAuthShells) registerPublicAuthShellRoutes(application, shellHtml, auth);
   if (options.magicLinks && resolveHumanAuthMode(config) === 'magic_link')
     registerMagicLinkRoutes(application, options.magicLinks, {
       secureCookies: config.NODE_ENV === 'production',

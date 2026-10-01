@@ -305,10 +305,15 @@ export function registerAuthRoutes(
 export function registerPublicAuthShellRoutes(
   application: FastifyInstance,
   shellHtml: string,
+  auth: AuthService,
 ): void {
   const publicShell = (_request: FastifyRequest, reply: FastifyReply) =>
     reply.type('text/html').send(shellHtml);
-  application.get('/login', publicShell);
+  application.get('/login', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (await authenticateRequest(request, auth)) return reply.redirect('/app');
+    return publicShell(request, reply);
+  });
   application.get('/register', publicShell);
   application.get('/forgot-password', publicShell);
 }

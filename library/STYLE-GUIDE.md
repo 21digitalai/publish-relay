@@ -109,6 +109,7 @@ Auth uses a centered 440px panel on the canvas with a restrained violet radial g
 - First run has three steps: confirm/configure the workspace profile and slug created during registration, account connection or explicit skip, then first scheduled post or empty workspace. It must not create a duplicate workspace.
 - OAuth leaves through a labeled secure redirect and returns to a real success/failure receipt.
 - Fastify serves the built SPA from the same deployable. `/login`, `/register`, and `/forgot-password` are public; `/app`, `/onboarding/*`, and `/w/*` require a valid session and redirect unauthenticated users to `/login` before protected data is returned.
+- The `/login` shell redirects an already authenticated visitor to `/app`; signed-out and expired-session visitors retain the normal login shell. The server, not a cookie-presence UI guess, owns this navigation state.
 - Password-mode `/forgot-password` renders an honest unavailable/support state; magic-link mode shares the working email request surface.
 
 ## Connected accounts

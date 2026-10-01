@@ -77,6 +77,15 @@ export async function getFreshTikTokToken(
   client: TikTokHttpClient,
   input: { workspaceId: string; openId: string; requestId: string; now?: Date },
 ): Promise<TikTokToken> {
+  return (await getFreshTikTokTokenWithVersion(database, keys, client, input)).token;
+}
+
+export async function getFreshTikTokTokenWithVersion(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  client: TikTokHttpClient,
+  input: { workspaceId: string; openId: string; requestId: string; now?: Date },
+): Promise<{ token: TikTokToken; credentialVersion: number }> {
   const current = await readSubject(database, keys, input);
   const now = input.now ?? new Date();
   if (current.refreshExpiresAt && current.refreshExpiresAt <= now)
@@ -85,7 +94,7 @@ export async function getFreshTikTokToken(
     current.accessExpiresAt &&
     current.accessExpiresAt.getTime() > now.getTime() + REFRESH_SKEW_MS
   )
-    return current.token;
+    return { token: current.token, credentialVersion: current.credential.version };
 
   const refreshed = await client.refresh(current.token.refresh_token);
   if (refreshed.open_id !== input.openId)
@@ -111,9 +120,9 @@ export async function getFreshTikTokToken(
     refreshExpiresAt: new Date(now.getTime() + refreshed.refresh_expires_in * 1000),
     requestId: input.requestId,
   });
-  if (rotated) return refreshed;
+  if (rotated) return { token: refreshed, credentialVersion: current.credential.version + 1 };
   const winner = await readSubject(database, keys, input);
   if (!winner.accessExpiresAt || winner.accessExpiresAt <= now)
     throw new Error('Concurrent TikTok refresh did not produce a usable token');
-  return winner.token;
+  return { token: winner.token, credentialVersion: winner.credential.version };
 }

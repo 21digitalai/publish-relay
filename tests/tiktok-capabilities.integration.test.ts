@@ -72,7 +72,11 @@ function client(fetcher: typeof fetch) {
   });
 }
 
-function route(clientInstance: TikTokHttpClient, workspace = workspaceId) {
+function route(
+  clientInstance: TikTokHttpClient,
+  workspace = workspaceId,
+  credentialKeys: MasterKeyProvider = keys,
+) {
   const app = Fastify();
   const principal = {
     id: '00000000-0000-4000-8000-000000000901',
@@ -99,7 +103,7 @@ function route(clientInstance: TikTokHttpClient, workspace = workspaceId) {
       windowMs: 60_000,
     }),
     undefined,
-    { keys, client: clientInstance },
+    { keys: credentialKeys, client: clientInstance },
   );
   return app;
 }
@@ -289,6 +293,23 @@ describe('TikTok creator capability snapshots', () => {
   it('fails closed for malformed creator data and provider rate/auth failures', async () => {
     for (const [body, status, expected] of [
       [{ data: { creator_nickname: 'Partial' }, error: { code: 'ok' } }, 200, 502],
+      [{ data: creator('N'.repeat(4096)), error: { code: 'ok' } }, 200, 502],
+      [
+        {
+          data: { ...creator('One'), privacy_level_options: Array(100).fill('SELF_ONLY') },
+          error: { code: 'ok' },
+        },
+        200,
+        502,
+      ],
+      [
+        {
+          data: { ...creator('One'), privacy_level_options: ['SELF_ONLY', 'SELF_ONLY'] },
+          error: { code: 'ok' },
+        },
+        200,
+        502,
+      ],
       [{ error: { code: 'rate_limit_exceeded', log_id: 'safe-log' } }, 429, 429],
       [{ error: { code: 'access_token_invalid', log_id: 'safe-log' } }, 401, 409],
     ] as const) {
@@ -302,6 +323,31 @@ describe('TikTok creator capability snapshots', () => {
       await app.close();
     }
     expect((await pg.query('SELECT id FROM provider_capability_snapshots')).rows).toHaveLength(0);
+  });
+
+  it('rejects rotation between token decryption and version lookup before provider fetch', async () => {
+    let rotated = false;
+    const rotatingKeys: MasterKeyProvider = {
+      currentVersion: () => keys.currentVersion(),
+      getKey: async (version) => {
+        if (!rotated) {
+          rotated = true;
+          await pg.exec(`UPDATE credentials SET version = version + 1 WHERE id =
+            (SELECT credential_id FROM provider_connections WHERE external_subject_id = 'subject-1')`);
+        }
+        return keys.getKey(version);
+      },
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ data: creator('One'), error: { code: 'ok' } }), {
+        status: 200,
+      }),
+    );
+    const app = route(client(fetcher), workspaceId, rotatingKeys);
+    expect((await get(app, accountIds[0])).statusCode).toBe(409);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect((await pg.query('SELECT id FROM provider_capability_snapshots')).rows).toHaveLength(0);
+    await app.close();
   });
 });
 

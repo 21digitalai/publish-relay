@@ -9,7 +9,7 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
-import { getFreshTikTokToken } from './tiktok-credential.service.js';
+import { getFreshTikTokTokenWithVersion } from './tiktok-credential.service.js';
 import type { TikTokHttpClient, TikTokPrivacy } from './tiktok-http-client.js';
 
 const SNAPSHOT_LIFETIME_MS = 15 * 60_000;
@@ -165,16 +165,20 @@ export async function fetchTikTokCapabilitySnapshot(
 ): Promise<TikTokCapabilitySnapshot> {
   const now = input.now ?? new Date();
   const initial = await eligibleAccount(database, input.workspaceId, input.accountId, now);
-  const token = await getFreshTikTokToken(database, keys, client, {
+  const tokenGrant = await getFreshTikTokTokenWithVersion(database, keys, client, {
     workspaceId: input.workspaceId,
     openId: initial.openId,
     requestId: input.requestId,
     now,
   });
   const current = await eligibleAccount(database, input.workspaceId, input.accountId, now);
-  if (current.connectionId !== initial.connectionId || current.openId !== token.open_id)
+  if (
+    current.connectionId !== initial.connectionId ||
+    current.openId !== tokenGrant.token.open_id ||
+    current.credentialVersion !== tokenGrant.credentialVersion
+  )
     throw new TikTokCapabilityUnavailableError();
-  const { creator, logId } = await client.creatorInfoWithLog(token.access_token);
+  const { creator, logId } = await client.creatorInfoWithLog(tokenGrant.token.access_token);
   const fetchedAt = input.now ?? new Date();
   const expiresAt = new Date(fetchedAt.getTime() + SNAPSHOT_LIFETIME_MS);
   return withTenantTransaction(

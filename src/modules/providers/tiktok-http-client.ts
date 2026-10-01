@@ -24,9 +24,13 @@ const privacySchema = z.enum([
 
 const creatorSchema = z.object({
   creator_username: z.string().min(1),
-  creator_nickname: z.string().min(1),
+  creator_nickname: z.string().min(1).max(100),
   creator_avatar_url: z.url(),
-  privacy_level_options: z.array(privacySchema).min(1),
+  privacy_level_options: z
+    .array(privacySchema)
+    .min(1)
+    .max(privacySchema.options.length)
+    .refine((options) => new Set(options).size === options.length),
   comment_disabled: z.boolean(),
   duet_disabled: z.boolean(),
   stitch_disabled: z.boolean(),

@@ -48,10 +48,7 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
     Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET)
   )
     throw new Error('LinkedIn OAuth requires both client ID and secret');
-  if (
-    Boolean(config.PUBLISH_RELAY_META_APP_ID) !==
-    Boolean(config.PUBLISH_RELAY_META_APP_SECRET)
-  )
+  if (Boolean(config.PUBLISH_RELAY_META_APP_ID) !== Boolean(config.PUBLISH_RELAY_META_APP_SECRET))
     throw new Error('Meta OAuth requires both app ID and secret');
   if (config.PUBLISH_RELAY_META_APP_ID && !config.PUBLISH_RELAY_META_GRAPH_VERSION)
     throw new Error('Meta OAuth requires a pinned Graph version');

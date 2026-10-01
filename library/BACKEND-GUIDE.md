@@ -186,3 +186,4 @@ Production releases install production dependencies without building on the host
 
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.
 - Browser Composer uploads remain unattached until post creation succeeds. Its authenticated CSRF-protected media delete endpoint atomically tombstones only tenant-owned ready media with no revision reference, then removes the local object; attached media is never deleted through this abandonment path.
+- Browser image uploads honor provider technical limits: JPEG/PNG/WebP at 5 MiB and GIF at 15 MiB for X. Composer retries rotate media-upload idempotency keys after confirmed cleanup, while an uncertain post response retains uploaded media and the post idempotency key for safe replay.

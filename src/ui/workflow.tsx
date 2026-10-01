@@ -360,6 +360,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [accountLoadAttempt, setAccountLoadAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const intentKey = useRef(crypto.randomUUID());
+  const mediaBatchKey = useRef(crypto.randomUUID());
   const uploadedMediaIds = useRef<string[]>([]);
   const uploadedIntentKey = useRef<string | null>(null);
   const discardUpload = async (): Promise<boolean> => {
@@ -535,20 +536,23 @@ function Composer({ onClose }: { onClose: () => void }) {
     setError(null);
     const targetTime = scheduled ? scheduledAt : new Date();
     if (!targetTime) return;
+    let postRequestStarted = false;
+    let postResponseStatus: number | null = null;
     try {
       let mediaIds: string[] = draftMediaIds;
       if (mediaFiles.length === 0 && !(await discardUpload()))
         throw new Error('Previous media cleanup is still pending. Try again.');
       if (mediaFiles.length > 0) {
         if (
-          uploadedIntentKey.current === intentKey.current &&
+          uploadedIntentKey.current === mediaBatchKey.current &&
           uploadedMediaIds.current.length === mediaFiles.length
         ) {
           mediaIds = [...mediaIds, ...uploadedMediaIds.current];
         } else {
           if (!(await discardUpload()))
             throw new Error('Previous media cleanup is still pending. Try again.');
-          uploadedIntentKey.current = intentKey.current;
+          mediaBatchKey.current = crypto.randomUUID();
+          uploadedIntentKey.current = mediaBatchKey.current;
           for (const [index, file] of mediaFiles.entries()) {
             const uploadResponse = await fetch('/api/workflow/media', {
               method: 'POST',
@@ -556,7 +560,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 'content-type': file.type,
                 'x-file-name': file.name,
                 'x-csrf-token': cookieValue('publish_relay_csrf'),
-                'idempotency-key': `${intentKey.current}-media-${String(index)}`,
+                'idempotency-key': `${mediaBatchKey.current}-media-${String(index)}`,
               },
               body: file,
             });
@@ -581,6 +585,7 @@ function Composer({ onClose }: { onClose: () => void }) {
           ? {}
           : { notifySubscribers: notifySubscribers === 'yes' }),
       };
+      postRequestStarted = true;
       const response = await fetch('/api/workflow/posts', {
         method: 'POST',
         headers: {
@@ -598,6 +603,7 @@ function Composer({ onClose }: { onClose: () => void }) {
           ...(draftId ? { externalDraftId: draftId } : {}),
         }),
       });
+      postResponseStatus = response.status;
       const envelope = (await response.json()) as {
         data?: { jobs?: { effectiveProviderSettings?: Record<string, unknown> | null }[] };
         error?: string | null;
@@ -612,7 +618,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         ),
       });
     } catch (reason) {
-      await discardUpload();
+      // An uncertain post response may have committed. Keep both media and post keys for safe replay.
+      if (!postRequestStarted || (postResponseStatus !== null && postResponseStatus < 500)) {
+        if (await discardUpload()) {
+          uploadedIntentKey.current = null;
+          mediaBatchKey.current = crypto.randomUUID();
+        }
+      }
       setError(reason instanceof Error ? reason.message : 'The post could not be scheduled.');
     } finally {
       setState('ready');
@@ -898,7 +910,13 @@ function Composer({ onClose }: { onClose: () => void }) {
                         files.some(
                           (file) =>
                             file.size >
-                            (file.type === 'video/mp4' ? (isYouTube ? 2048 : 512) : 5) *
+                            (file.type === 'video/mp4'
+                              ? isYouTube
+                                ? 2048
+                                : 512
+                              : file.type === 'image/gif'
+                                ? 15
+                                : 5) *
                               1024 *
                               1024,
                         )

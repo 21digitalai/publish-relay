@@ -578,6 +578,34 @@ test('opens the composer from Accounts with no connected destinations', async ({
   await expect(page.getByRole('dialog', { name: 'Create post' })).toHaveCount(0);
 });
 
+test('recovers the composer account gate after a failed account load', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  let requests = 0;
+  await page.route('**/api/provider-accounts', (route) => {
+    requests += 1;
+    return route.fulfill(
+      requests === 1
+        ? { status: 503, contentType: 'application/json', body: '{"data":null,"error":"offline"}' }
+        : {
+            contentType: 'application/json',
+            body: JSON.stringify({ data: { accounts: [] }, error: null }),
+          },
+    );
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await expect(page.getByRole('heading', { name: 'Connected accounts unavailable' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Schedule \d+ posts?/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByRole('heading', { name: 'Connect an account to create a post' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Add Posting Adapter' })).toHaveAttribute(
+    'href',
+    /\/w\/[^/]+\/accounts$/,
+  );
+  expect(requests).toBe(2);
+});
+
 test('uses the mobile navigation drawer', async ({ page }) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
@@ -1080,6 +1108,92 @@ test('selects and schedules X image media through the canonical composer', async
   expect(submittedMedia).toEqual(['media-1']);
 });
 
+test('retries partial X uploads and a rejected post without replaying deleted media', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000201',
+              provider: 'x',
+              displayName: 'Example Editorial',
+              status: 'active',
+              adapterDefaults: {},
+            },
+          ],
+        },
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[],"next":null}}' }),
+  );
+  const uploadKeys: string[] = [];
+  const deleted: string[] = [];
+  let uploadCount = 0;
+  let postCount = 0;
+  await page.route('**/api/workflow/media', (route) => {
+    uploadCount += 1;
+    uploadKeys.push(route.request().headers()['idempotency-key'] ?? '');
+    if (uploadCount === 2)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: '{"error":"Upload unavailable"}',
+      });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: `media-${String(uploadCount)}` } }),
+    });
+  });
+  await page.route('**/api/workflow/media/*', (route) => {
+    deleted.push(route.request().url());
+    return route.fulfill({ contentType: 'application/json', body: '{"data":{"deleted":true}}' });
+  });
+  await page.route('**/api/workflow/posts', (route) => {
+    postCount += 1;
+    if (postCount === 1)
+      return route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: '{"error":"Post rejected"}',
+      });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]}}',
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByLabel('Post body').fill('Two image retry');
+  await page.locator('#composer-media-upload').setInputFiles(
+    ['one.png', 'two.png'].map((name) => ({
+      name,
+      mimeType: 'image/png',
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+    })),
+  );
+  const schedule = page.getByRole('button', { name: 'Schedule 1 posts' });
+  await schedule.click();
+  await expect(page.getByRole('alert')).toContainText('Upload unavailable');
+  expect(deleted).toHaveLength(1);
+  await schedule.click();
+  await expect(page.getByRole('alert')).toContainText('Post rejected');
+  expect(deleted).toHaveLength(3);
+  await schedule.click();
+  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  expect(uploadKeys).toHaveLength(6);
+  expect(new Set(uploadKeys).size).toBe(6);
+  expect(postCount).toBe(2);
+});
+
 test('uses consistent workspace actions and readable X composer fields', async ({
   page,
 }, testInfo) => {
@@ -1103,7 +1217,7 @@ test('uses consistent workspace actions and readable X composer fields', async (
   await page.screenshot({ path: testInfo.outputPath('composer-body.png'), fullPage: true });
 });
 
-test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', async ({ page }) => {
+test('retries uncertain YouTube post responses without deleting media', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await establishWorkspaceSession(page);
   await page.route('**/api/provider-accounts', (route) =>
@@ -1224,7 +1338,7 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
   const schedule = page.getByRole('button', { name: 'Schedule 1 post' });
   await schedule.click();
   await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
-  await expect.poll(() => deletedMedia.length).toBe(1);
+  expect(deletedMedia).toHaveLength(0);
   await schedule.click();
   await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
   const settings = page.getByLabel('YouTube settings');
@@ -1232,8 +1346,7 @@ test('schedules a YouTube MP4 with safe retry cleanup and friendly settings', as
   await expect(settings).toContainText('Made for kidsNo');
   await expect(settings).toContainText('Notify subscribersYes');
   expect(uploadCount).toBe(1);
-  expect(deletedMedia).toHaveLength(1);
-  expect(deletedMedia[0]).toContain('/api/workflow/media/media-1');
+  expect(deletedMedia).toHaveLength(0);
   await page.getByRole('button', { name: 'Close composer' }).click();
   await page.reload();
   await expect(page.getByText('A finished short')).toBeVisible();

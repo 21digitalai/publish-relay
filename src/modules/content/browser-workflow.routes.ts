@@ -67,7 +67,12 @@ const reschedulePostSchema = z.object({ scheduledAt: z.iso.datetime() });
 const NOW_SCHEDULE_CLOCK_SKEW_MS = 60_000;
 const MAX_SCHEDULE_GUIDANCE_WINDOW_MS = 7 * 24 * 60 * 60_000;
 const BROWSER_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
-const BROWSER_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const BROWSER_IMAGE_MAX_BYTES: Readonly<Record<string, number>> = {
+  'image/jpeg': 5 * 1024 * 1024,
+  'image/png': 5 * 1024 * 1024,
+  'image/webp': 5 * 1024 * 1024,
+  'image/gif': 15 * 1024 * 1024,
+};
 const BROWSER_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 const BROWSER_VIDEO_LIMITS = { maxDurationMs: 60 * 60 * 1000, maxWidth: 8192, maxHeight: 8192 };
 
@@ -200,7 +205,7 @@ export function registerBrowserWorkflowRoutes(
       if (!application.hasContentTypeParser(contentType))
         application.addContentTypeParser(
           contentType,
-          { parseAs: 'buffer', bodyLimit: BROWSER_IMAGE_MAX_BYTES },
+          { parseAs: 'buffer', bodyLimit: BROWSER_IMAGE_MAX_BYTES[contentType] ?? 0 },
           (_request, body, done) => {
             done(null, body);
           },
@@ -250,7 +255,7 @@ export function registerBrowserWorkflowRoutes(
                   requestId: request.id,
                   idempotencyKey: key,
                   bytes,
-                  maxBytes: BROWSER_IMAGE_MAX_BYTES,
+                  maxBytes: BROWSER_IMAGE_MAX_BYTES[contentType] ?? 0,
                 },
                 actionPolicy,
               );

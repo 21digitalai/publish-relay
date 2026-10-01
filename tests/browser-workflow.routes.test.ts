@@ -625,6 +625,37 @@ describe('browser workflow MP4 ingest', () => {
     await application.close();
   });
 
+  it('admits GIF bytes above the still-image limit using the X adapter limit', async () => {
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, {
+      auth: {} as AuthService,
+      database: {} as never,
+      mediaStorage: storage,
+    });
+    const bytes = Buffer.alloc(10 * 1024 * 1024);
+    bytes.write('GIF89a');
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/media',
+      headers: {
+        'content-type': 'image/gif',
+        'x-file-name': 'animation.gif',
+        'idempotency-key': 'browser-gif',
+        'x-csrf-token': 'csrf',
+        cookie: 'publish_relay_csrf=csrf',
+      },
+      payload: bytes,
+    });
+    expect(response.statusCode).toBe(201);
+    expect(storeMediaInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      storage,
+      expect.objectContaining({ maxBytes: 15 * 1024 * 1024 }),
+      expect.anything(),
+    );
+    await application.close();
+  });
+
   it('rejects missing sessions and CSRF before staging bytes', async () => {
     authorizeRequest.mockResolvedValueOnce(null);
     expect((await upload()).statusCode).toBe(401);

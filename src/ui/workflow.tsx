@@ -316,6 +316,14 @@ function Status({ state }: { state: JobState }) {
   );
 }
 
+function CalendarPublishedMark() {
+  return (
+    <span className="calendar-published-mark">
+      <span aria-hidden="true">✓</span> Published
+    </span>
+  );
+}
+
 function Composer({ onClose }: { onClose: () => void }) {
   const draftId = /\/drafts\/([^/]+)$/.exec(window.location.pathname)?.[1] ?? null;
   const [accounts, setAccounts] = useState<
@@ -1652,9 +1660,15 @@ function MonthCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
             >
               <time dateTime={date.toISOString()}>{date.getDate()}</time>
               {dayJobs.slice(0, 3).map((job) => (
-                <a className={`calendar-job ${job.state}`} href={jobPath(job)} key={job.id}>
+                <a
+                  className={`calendar-job ${job.state}`}
+                  href={jobPath(job)}
+                  key={job.id}
+                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
+                >
                   <strong>{formatTime(job.scheduledAt).split(', ').at(-1)}</strong>
                   {job.account}
+                  {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               ))}
               {dayJobs.length > 3 && (
@@ -1708,6 +1722,7 @@ function TimeCalendar({ dayOnly, jobs, anchor }: { dayOnly: boolean; jobs: Job[]
                   >
                     <strong>{job.account}</strong>
                     <span>{job.text}</span>
+                    {job.state === 'published' && <CalendarPublishedMark />}
                   </a>
                 );
               })}
@@ -1761,6 +1776,7 @@ function TimelineCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
                   aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
                 >
                   {job.text}
+                  {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               );
             })}

@@ -1703,6 +1703,20 @@ textarea:focus-visible {
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
+.calendar-job.published,
+.calendar-block.published,
+.timeline-job.published {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, var(--surface-2));
+}
+.calendar-published-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 700;
+}
 .time-header,
 .time-grid {
   display: grid;
@@ -1810,6 +1824,9 @@ textarea:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.timeline-job .calendar-published-mark {
+  margin-left: 6px;
 }
 .sheet-backdrop {
   position: fixed;
@@ -2373,6 +2390,23 @@ textarea:focus-visible {
   }
   .calendar-job.failed {
     background: var(--danger);
+  }
+  .calendar-job.published {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: color-mix(in srgb, var(--success) 24%, var(--surface-2));
+  }
+  .calendar-job.published .calendar-published-mark {
+    display: block;
+    color: transparent;
+    font-size: 0;
+    line-height: 16px;
+    text-align: center;
+  }
+  .calendar-job.published .calendar-published-mark span {
+    color: var(--success);
+    font-size: 12px;
   }
   .time-calendar {
     overflow-x: auto;

@@ -598,7 +598,9 @@ test('recovers the composer account gate after a failed account load', async ({ 
   await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Schedule \d+ posts?/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Retry' }).click();
-  await expect(page.getByRole('heading', { name: 'Connect an account to create a post' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Connect an account to create a post' }),
+  ).toBeVisible();
   await expect(page.getByRole('link', { name: 'Add Posting Adapter' })).toHaveAttribute(
     'href',
     /\/w\/[^/]+\/accounts$/,
@@ -1621,6 +1623,48 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Calendar offline');
   await page.screenshot({ path: testInfo.outputPath('calendar-error.png'), fullPage: true });
+});
+
+test('shows published jobs as success across calendar modes after reload', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: 'published-job',
+              state: 'published',
+              scheduledAt: '2026-09-01T09:15:00+03:00',
+              contentPreview: 'Published update',
+              providerAccount: {
+                displayName: 'Example Editorial',
+                handle: 'exampleeditorial',
+                provider: 'x',
+              },
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(await workspacePath(page, 'calendar?mode=Month&date=2026-09-01'));
+  for (const [mode, selector] of [
+    ['Month', '.calendar-job.published'],
+    ['Week', '.calendar-block.published'],
+    ['Day', '.calendar-block.published'],
+    ['Timeline', '.timeline-job.published'],
+  ] as const) {
+    await page.getByRole('button', { name: mode, exact: true }).click();
+    const published = page.locator(selector);
+    await expect(published).toHaveCount(1);
+    await expect(published).toHaveAttribute('aria-label', /Example Editorial, Published/);
+    await expect(published.locator('.calendar-published-mark')).toContainText('Published');
+  }
+  await page.reload();
+  await expect(page.locator('.timeline-job.published')).toHaveCount(1);
 });
 
 test('navigates calendar months across month-end and leap-year boundaries', async ({ page }) => {

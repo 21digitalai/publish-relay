@@ -155,6 +155,8 @@ State vocabulary:
 
 ## Calendar
 
+Published jobs use the shared success token plus a visible check/Published marker in Month, Week, Day, and Timeline. Compact mobile month cells retain the check and accessible Published link name. Fresh calendar loads derive this state from the workspace-scoped job DTO, not a transient toast.
+
 Ship Month, Week, Day, and Timeline/hour modes. Preserve date and filters between modes. Header includes Today, navigation, date label, view switcher, timezone, and filters.
 
 - Month shows up to three jobs then `+N more`; failures sort first within a day.

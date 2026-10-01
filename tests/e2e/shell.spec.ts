@@ -1217,6 +1217,17 @@ test('selects and schedules X image media through the canonical composer', async
     .setInputFiles({ name: 'notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from('pdf') });
   await expect(page.getByRole('alert')).toContainText('supported image');
   await expect(page.locator('.composer-media-attachment')).toHaveCount(0);
+  await page.locator('#composer-media-upload').focus();
+  const keyboardChooser = page.waitForEvent('filechooser');
+  await page.keyboard.press('Space');
+  await (
+    await keyboardChooser
+  ).setFiles({
+    name: 'keyboard.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]),
+  });
+  await expect(page.locator('.composer-media-attachment')).toContainText('keyboard.png');
   const fileChooser = page.waitForEvent('filechooser');
   await page.getByText('Choose files').click();
   await (

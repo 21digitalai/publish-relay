@@ -134,6 +134,7 @@ Group by provider and show each connected account independently. Rows include pr
 After active-workspace account loading, the composer shows a focused account gate when no active destination exists. The gate links to that workspace's Accounts route and hides all post controls; loading and fetch-error states remain distinct, with an inline Retry for errors.
 
 An external-draft cockpit link opens the canonical Composer sheet directly. A compact imported-draft status banner names the friendly source label and attached-media count without exposing actor IDs, client IDs, internal storage fields, or raw provenance. All destination, content, timing, validation, success, and failure states remain owned by the existing Composer; there is no separate imported-draft editor.
+The same attachment list identifies each imported item's media type, size, and verified video duration when available. Its `Remove from post` action changes only this Composer selection; it never deletes the source draft or retained media. An incompatible or metadata-missing TikTok item remains visibly invalid with a remove/replace path, and choosing a new MP4 replaces active imported selection without erasing the source draft.
 
 The composer is a 640px right sheet on desktop, full-screen on mobile, and may expand to 880px for preview.
 Its X, Escape, and backdrop-only dismissal all use the same cleanup-aware close path; inside-sheet clicks do not dismiss, saving prevents dismissal, and focus returns to the Create post trigger.

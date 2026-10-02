@@ -1,8 +1,181 @@
 import { expect, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+
+import type { ImportedDraftMedia } from '../../src/ui/tiktok-composer.js';
 
 const TIKTOK_ONE = '00000000-0000-4000-8000-000000000301';
 const TIKTOK_TWO = '00000000-0000-4000-8000-000000000302';
 const X_ACCOUNT = '00000000-0000-4000-8000-000000000303';
+const IMPORTED_DRAFT = '00000000-0000-4000-8000-000000000304';
+const IMPORTED_IMAGE = '00000000-0000-4000-8000-000000000305';
+const IMPORTED_VIDEO = '00000000-0000-4000-8000-000000000306';
+
+test('imported TikTok media is identified, removable, and replaceable on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
+  const registration = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Relay Owner',
+      email: `tiktok-import-${suffix}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: `TikTok import ${suffix}`,
+    },
+  });
+  expect(registration.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: TIKTOK_ONE,
+              provider: 'tiktok',
+              displayName: 'TikTok One',
+              status: 'active',
+              availability: 'active',
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/provider-accounts/*/tiktok-capabilities', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: '00000000-0000-4000-8000-000000000399',
+          accountId: TIKTOK_ONE,
+          nickname: 'Fresh Creator',
+          privacyOptions: ['SELF_ONLY'],
+          commentDisabled: false,
+          duetDisabled: false,
+          stitchDisabled: false,
+          maxVideoDurationSeconds: 60,
+          fetchedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 900000).toISOString(),
+        },
+        error: null,
+      }),
+    }),
+  );
+  let media: ImportedDraftMedia[] = [
+    {
+      id: IMPORTED_IMAGE,
+      mimeType: 'image/jpeg',
+      byteSize: 1000,
+      durationMs: null,
+      ready: true,
+      previewUrl: `/api/workflow/media/${IMPORTED_IMAGE}`,
+    },
+    {
+      id: IMPORTED_VIDEO,
+      mimeType: 'video/mp4',
+      byteSize: 3500,
+      durationMs: 1000,
+      ready: true,
+      previewUrl: `/api/workflow/media/${IMPORTED_VIDEO}`,
+    },
+  ];
+  await page.route(`**/api/workflow/drafts/${IMPORTED_DRAFT}`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: IMPORTED_DRAFT,
+          label: 'Imported campaign',
+          mediaIds: media.map((item) => item.id),
+          media,
+          postId: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  const video = readFileSync(new URL('../fixtures/tiktok-preview.mp4', import.meta.url));
+  await page.route(`**/api/workflow/media/${IMPORTED_VIDEO}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'video/mp4', body: video }),
+  );
+  await page.route('**/api/workflow/jobs?**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[],"next":null},"error":null}',
+    }),
+  );
+  await page.goto(`/w/${workspace.data.slug}/drafts/${IMPORTED_DRAFT}`);
+  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await expect(page.getByText('This draft has multiple media items')).toBeVisible();
+  await expect(page.getByText('Imported image 1')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath('imported-mixed.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Remove from post' }).first().click();
+  await expect(page.getByText('Imported image 1')).toHaveCount(0);
+  await expect(page.getByText('Imported MP4 video', { exact: true })).toBeVisible();
+  await expect(page.locator('video[aria-label="Preview Imported MP4 video"]')).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .locator('video[aria-label="Preview Imported MP4 video"]')
+        .evaluate((element) => (element as HTMLVideoElement).readyState),
+    )
+    .toBeGreaterThanOrEqual(1);
+  await expect(page.getByText('1 seconds', { exact: false }).first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('imported-video.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Remove from post' }).click();
+  await expect(page.getByText('No video selected', { exact: true })).toBeVisible();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'replacement.mp4',
+    mimeType: 'video/mp4',
+    buffer: video,
+  });
+  await expect(page.locator('video[aria-label="Preview replacement.mp4"]')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('imported-replaced.png'), fullPage: true });
+
+  media = [
+    {
+      id: IMPORTED_IMAGE,
+      mimeType: 'image/jpeg',
+      byteSize: 1000,
+      durationMs: null,
+      ready: true,
+      previewUrl: `/api/workflow/media/${IMPORTED_IMAGE}`,
+    },
+  ];
+  await page.reload();
+  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await expect(page.getByText('not an MP4 video')).toBeVisible();
+  await expect(page.getByText('Imported MP4 video', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('imported-image-only.png'), fullPage: true });
+
+  media = [
+    {
+      id: IMPORTED_VIDEO,
+      mimeType: 'video/mp4',
+      byteSize: null,
+      durationMs: null,
+      ready: true,
+      previewUrl: null,
+    },
+  ];
+  await page.reload();
+  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await expect(page.getByText('no verified duration or preview')).toBeVisible();
+  await expect(page.getByText('Imported MP4 video', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Remove from post' })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('imported-metadata-missing.png'),
+    fullPage: true,
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(
+    false,
+  );
+});
 
 test('TikTok uses one explicit account, fresh options, and an unavailable final action', async ({
   page,

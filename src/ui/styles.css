@@ -996,7 +996,8 @@ textarea:focus-visible {
 .defaults-select-menu button.selected {
   background: var(--surface-2);
 }
-.youtube-defaults .defaults-toggle {
+.youtube-defaults .defaults-toggle,
+.x-long-post-setting .defaults-toggle {
   display: flex;
   align-items: center;
   min-height: 40px;
@@ -1028,6 +1029,29 @@ textarea:focus-visible {
 .youtube-defaults .field-error {
   grid-column: 1 / -1;
   color: var(--danger);
+}
+.x-long-post-setting {
+  grid-column: 1 / -1;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+.x-long-post-setting small {
+  color: var(--muted);
+}
+.x-long-post-setting .field-error {
+  color: var(--danger);
+}
+.x-long-post-toggle {
+  text-align: left;
+}
+.x-long-post-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .account-identity {
   display: flex;

@@ -10,6 +10,7 @@ vi.mock('../src/modules/credentials/provider-account.service.js', () => ({
   disconnectProviderAccount: vi.fn(),
   listProviderAccounts: vi.fn(() => Promise.resolve([])),
   updateYouTubeAccountDefaults: vi.fn(() => Promise.resolve('updated')),
+  updateXLongPostDeclaration: vi.fn(() => Promise.resolve('updated')),
 }));
 vi.mock('../src/modules/providers/tiktok-capabilities.service.js', () => ({
   fetchTikTokCapabilitySnapshot: vi.fn(),
@@ -20,6 +21,7 @@ import { authorizeRequest } from '../src/modules/identity/auth.routes.js';
 import {
   listProviderAccounts,
   updateYouTubeAccountDefaults,
+  updateXLongPostDeclaration,
 } from '../src/modules/credentials/provider-account.service.js';
 import { registerProviderAccountRoutes } from '../src/modules/credentials/provider-account.routes.js';
 import { fetchTikTokCapabilitySnapshot } from '../src/modules/providers/tiktok-capabilities.service.js';
@@ -59,6 +61,7 @@ describe('provider account routes', () => {
         capabilitiesCheckedAt: new Date('2026-09-01T00:00:00Z'),
         capabilityFreshness: 'fresh',
         adapterDefaults: { madeForKids: false },
+        xLongPosts: null,
         updatedAt: new Date('2026-09-01T00:00:00Z'),
       },
     ]);
@@ -74,6 +77,64 @@ describe('provider account routes', () => {
     expect(response.body).toContain('adapterDefaults');
     expect(response.body).not.toContain('credentialId');
     expect(response.body).not.toContain('connectionId');
+  });
+
+  it('requires owner permission, CSRF, and a strict boolean for X declaration', async () => {
+    const app = await application();
+    const url = `/api/provider-accounts/${accountId}/x-long-posts`;
+    vi.mocked(authorizeRequest).mockResolvedValueOnce(null);
+    expect(
+      (await app.inject({ method: 'PATCH', url, payload: { allowed: true } })).statusCode,
+    ).toBe(401);
+    expect(
+      (await app.inject({ method: 'PATCH', url, payload: { allowed: true } })).statusCode,
+    ).toBe(403);
+    const headers = { cookie: 'publish_relay_csrf=token', 'x-csrf-token': 'token' };
+    expect(
+      (await app.inject({ method: 'PATCH', url, headers, payload: { allowed: 'true' } }))
+        .statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: 'PATCH',
+          url,
+          headers,
+          payload: { allowed: true, verified: true },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(updateXLongPostDeclaration).not.toHaveBeenCalled();
+    const accepted = await app.inject({
+      method: 'PATCH',
+      url,
+      headers,
+      payload: { allowed: true },
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json<{ data: { xLongPosts: unknown } }>().data.xLongPosts).toEqual({
+      allowed: true,
+      source: 'self_declared',
+      verified: false,
+    });
+    expect(updateXLongPostDeclaration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: identity.workspaceId,
+        userId: identity.userId,
+        accountId,
+        allowed: true,
+      }),
+    );
+    expect(authorizeRequest).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'workspace:manage',
+    );
+    vi.mocked(updateXLongPostDeclaration).mockResolvedValueOnce('missing');
+    expect(
+      (await app.inject({ method: 'PATCH', url, headers, payload: { allowed: false } })).statusCode,
+    ).toBe(404);
   });
 
   it('requires management authorization and CSRF for strict YouTube defaults', async () => {

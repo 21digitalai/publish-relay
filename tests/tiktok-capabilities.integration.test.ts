@@ -376,7 +376,10 @@ it.each(['fresh', 'upgrade'] as const)(
         }
       }
       if (mode === 'upgrade') {
-        const previous = journal.at(-2);
+        const mediaGrantMigration = journal.find((item) => item.folderMillis === 1790892000000);
+        const previous = mediaGrantMigration
+          ? journal.filter((item) => item.folderMillis < mediaGrantMigration.folderMillis).at(-1)
+          : undefined;
         if (!previous) throw new Error('Previous migration missing');
         await applyPending(previous.folderMillis);
         const absent = await fresh.query(
@@ -409,6 +412,14 @@ it.each(['fresh', 'upgrade'] as const)(
         (await fresh.query("SELECT to_regclass('public.provider_media_grants') AS table_name"))
           .rows[0],
       ).toEqual({ table_name: 'provider_media_grants' });
+      expect(
+        (
+          await fresh.query<{ column_default: string; is_nullable: string }>(
+            `SELECT column_default, is_nullable FROM information_schema.columns
+         WHERE table_name = 'provider_accounts' AND column_name = 'x_long_posts_allowed'`,
+          )
+        ).rows,
+      ).toEqual([{ column_default: 'false', is_nullable: 'NO' }]);
     } finally {
       await fresh.close();
     }

@@ -2,6 +2,8 @@
 
 ## Accepted foundation
 
+- X long-post capability is a per-destination owner self-declaration, not provider verification: `provider_accounts.x_long_posts_allowed` defaults false and remains on the stable account row across reconnect. The tenant-scoped account summary exposes only `xLongPosts: { allowed, source: 'self_declared', verified: false }` for X (null otherwise). CSRF-protected `PATCH /api/provider-accounts/:accountId/x-long-posts` accepts only `{ allowed: boolean }` under `workspace:manage`, rejects non-X or disconnected accounts, and records actor/time through `audit_events`. This setting does not yet relax Composer or API length validation.
+
 - Generic external clients create tenant-scoped imported drafts through `POST /api/v1/drafts` and inspect them through the principal-scoped detail route. Creation uses the canonical idempotency ledger and a separate actor/externalId replay identity. Draft media must already be ready and owned by the workspace. The authenticated cockpit reads the same draft under tenant RLS and atomically links it to exactly one canonical post during composer submission; no parallel scheduling or media lifecycle exists.
 
 - Node.js 24 + strict TypeScript modular monolith using Fastify.

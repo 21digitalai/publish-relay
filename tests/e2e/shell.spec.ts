@@ -684,6 +684,79 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
   await page.screenshot({ path: testInfo.outputPath('accounts-disconnect.png'), fullPage: true });
 });
 
+test('self-declares X long posts per account with persistence and recovery', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  const accountId = '00000000-0000-4000-8000-000000000204';
+  let allowed = false;
+  let shouldFail = false;
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: accountId,
+              provider: 'x',
+              destinationProvider: 'x',
+              displayName: 'Example Editorial (@example)',
+              status: 'active',
+              availability: 'active',
+              updatedAt: '2026-10-02T00:00:00Z',
+              adapterDefaults: {},
+              xLongPosts: { allowed, source: 'self_declared', verified: false },
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/provider-accounts/*/x-long-posts', async (route) => {
+    expect(route.request().method()).toBe('PATCH');
+    expect(route.request().headers()['x-csrf-token']).toBeTruthy();
+    if (shouldFail) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Setting unavailable' }),
+      });
+      return;
+    }
+    allowed = (route.request().postDataJSON() as { allowed: boolean }).allowed;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { xLongPosts: { allowed, source: 'self_declared', verified: false } },
+        error: null,
+      }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'accounts'));
+  const toggle = page.getByRole('switch', {
+    name: 'Allow longer X posts for this account (self-declared)',
+  });
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByText('X may reject longer posts')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('x-long-post-off.png'), fullPage: true });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await page.reload();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await page.screenshot({ path: testInfo.outputPath('x-long-post-on.png'), fullPage: true });
+  shouldFail = true;
+  await toggle.click();
+  await expect(page.getByRole('alert')).toContainText('Setting unavailable');
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  shouldFail = false;
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await page.reload();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+});
+
 test('edits YouTube destination defaults through the account row', async ({ page }) => {
   await establishWorkspaceSession(page);
   let savedBody: unknown;

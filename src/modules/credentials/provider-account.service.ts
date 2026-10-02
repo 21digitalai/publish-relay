@@ -30,6 +30,7 @@ export interface ProviderAccountSummary {
   capabilitiesCheckedAt: Date | null;
   capabilityFreshness: 'fresh' | 'stale' | 'unknown';
   adapterDefaults: unknown;
+  xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
   updatedAt: Date;
   expiresAt?: Date | null;
 }
@@ -50,6 +51,7 @@ export function listProviderAccounts(
         remoteParentAccountId: providerAccounts.remoteParentAccountId,
         capabilitiesCheckedAt: providerAccounts.capabilitiesCheckedAt,
         adapterDefaults: providerAccounts.adapterDefaults,
+        xLongPostsAllowed: providerAccounts.xLongPostsAllowed,
         updatedAt: providerAccounts.updatedAt,
         expiresAt: providerConnections.expiresAt,
         disconnectedAt: providerAccounts.disconnectedAt,
@@ -71,22 +73,99 @@ export function listProviderAccounts(
         ),
       )
       .orderBy(providerConnections.provider, providerAccounts.displayName);
-    return rows.map(({ accessExpiresAt, refreshExpiresAt, disconnectedAt, ...row }) => ({
-      ...row,
-      status:
-        disconnectedAt && row.provider === 'tiktok'
-          ? 'disconnected'
-          : row.provider === 'tiktok' && row.status === 'active'
-            ? refreshExpiresAt && refreshExpiresAt.getTime() <= Date.now()
-              ? 'renewal_required'
-              : accessExpiresAt && accessExpiresAt.getTime() <= Date.now()
-                ? 'expired'
-                : 'active'
-            : row.status,
-      capabilitySnapshot: destinationCapabilities(row.destinationProvider),
-      capabilityFreshness: capabilityFreshness(row.capabilitiesCheckedAt),
-    }));
+    return rows.map(
+      ({ accessExpiresAt, refreshExpiresAt, disconnectedAt, xLongPostsAllowed, ...row }) => ({
+        ...row,
+        xLongPosts:
+          row.destinationProvider === 'x'
+            ? {
+                allowed: xLongPostsAllowed,
+                source: 'self_declared' as const,
+                verified: false as const,
+              }
+            : null,
+        status:
+          disconnectedAt && row.provider === 'tiktok'
+            ? 'disconnected'
+            : row.provider === 'tiktok' && row.status === 'active'
+              ? refreshExpiresAt && refreshExpiresAt.getTime() <= Date.now()
+                ? 'renewal_required'
+                : accessExpiresAt && accessExpiresAt.getTime() <= Date.now()
+                  ? 'expired'
+                  : 'active'
+              : row.status,
+        capabilitySnapshot: destinationCapabilities(row.destinationProvider),
+        capabilityFreshness: capabilityFreshness(row.capabilitiesCheckedAt),
+      }),
+    );
   });
+}
+
+export async function updateXLongPostDeclaration(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    userId: string;
+    accountId: string;
+    requestId: string;
+    allowed: boolean;
+  },
+): Promise<'updated' | 'missing'> {
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId, userId: input.userId },
+    async (transaction) => {
+      const rows = await transaction
+        .select({ id: providerAccounts.id, allowed: providerAccounts.xLongPostsAllowed })
+        .from(providerAccounts)
+        .innerJoin(
+          providerConnections,
+          and(
+            eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+            eq(providerConnections.id, providerAccounts.connectionId),
+          ),
+        )
+        .where(
+          and(
+            eq(providerAccounts.workspaceId, input.workspaceId),
+            eq(providerAccounts.id, input.accountId),
+            eq(providerAccounts.destinationProvider, 'x'),
+            eq(providerConnections.provider, 'x'),
+            eq(providerConnections.status, 'active'),
+            isNull(providerAccounts.disconnectedAt),
+          ),
+        )
+        .for('update')
+        .limit(1);
+      if (!rows[0]) return 'missing';
+      if (rows[0].allowed === input.allowed) return 'updated';
+      await transaction
+        .update(providerAccounts)
+        .set({ xLongPostsAllowed: input.allowed, updatedAt: new Date() })
+        .where(
+          and(
+            eq(providerAccounts.workspaceId, input.workspaceId),
+            eq(providerAccounts.id, input.accountId),
+          ),
+        );
+      await transaction.insert(auditEvents).values({
+        workspaceId: input.workspaceId,
+        actorType: 'user',
+        actorId: input.userId,
+        action: 'provider_account.x_long_posts_declaration_updated',
+        targetType: 'provider_account',
+        targetId: input.accountId,
+        requestId: input.requestId,
+        metadata: {
+          provider: 'x',
+          allowed: input.allowed,
+          source: 'self_declared',
+          verified: false,
+        },
+      });
+      return 'updated';
+    },
+  );
 }
 
 export async function updateYouTubeAccountDefaults(

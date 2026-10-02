@@ -17,9 +17,11 @@ import {
   disconnectProviderAccount,
   listProviderAccounts,
   updateYouTubeAccountDefaults,
+  updateXLongPostDeclaration,
 } from './provider-account.service.js';
 
 const accountParamsSchema = z.object({ accountId: z.uuid() });
+const xLongPostDeclarationSchema = z.strictObject({ allowed: z.boolean() });
 
 export function registerProviderAccountRoutes(
   application: FastifyInstance,
@@ -101,6 +103,37 @@ export function registerProviderAccountRoutes(
         error: 'This Meta grant is being revoked; retry the grant revoke first',
       });
     return { data: { disconnected: true }, error: null };
+  });
+
+  application.patch('/api/provider-accounts/:accountId/x-long-posts', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (
+      !verifyCsrfToken(
+        request.cookies[CSRF_COOKIE],
+        request.headers['x-csrf-token'] as string | undefined,
+      )
+    )
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const params = accountParamsSchema.safeParse(request.params);
+    const declaration = xLongPostDeclarationSchema.safeParse(request.body);
+    if (!params.success || !declaration.success)
+      return reply.code(400).send({ data: null, error: 'Invalid X long-post declaration' });
+    const result = await updateXLongPostDeclaration(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      userId: identity.userId,
+      accountId: params.data.accountId,
+      requestId: request.id,
+      allowed: declaration.data.allowed,
+    });
+    if (result === 'missing')
+      return reply.code(404).send({ data: null, error: 'X account was not found' });
+    return {
+      data: {
+        xLongPosts: { allowed: declaration.data.allowed, source: 'self_declared', verified: false },
+      },
+      error: null,
+    };
   });
 
   application.patch(

@@ -29,6 +29,7 @@ import {
   disconnectProviderAccount,
   listProviderAccounts,
   updateYouTubeAccountDefaults,
+  updateXLongPostDeclaration,
 } from '../src/modules/credentials/provider-account.service.js';
 import {
   cleanupExpiredOauthTransactions,
@@ -83,6 +84,7 @@ const migrations = [
   '0048_reconcile_linkedin_connections.sql',
   '0049_meta_effective_payload.sql',
   '0051_provider_subject_lifecycle.sql',
+  '0055_x_long_post_declaration.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -1467,6 +1469,7 @@ describe('credential and OAuth persistence', () => {
       'adapterDefaults',
       'updatedAt',
       'expiresAt',
+      'xLongPosts',
       'capabilitySnapshot',
       'capabilityFreshness',
     ]);
@@ -1562,6 +1565,66 @@ describe('credential and OAuth persistence', () => {
     ).toBe(429);
     await application.close();
     const accountId = accounts[0]?.id ?? '';
+    expect(
+      await updateXLongPostDeclaration(db, {
+        workspaceId,
+        userId,
+        accountId: foreignAccountId,
+        requestId: 'req-foreign',
+        allowed: true,
+      }),
+    ).toBe('missing');
+    expect(
+      (
+        await database.query<{ x_long_posts_allowed: boolean }>(
+          `select x_long_posts_allowed from provider_accounts where id = '${foreignAccountId}'`,
+        )
+      ).rows[0]?.x_long_posts_allowed,
+    ).toBe(false);
+    expect(accounts[0]?.xLongPosts).toEqual({
+      allowed: false,
+      source: 'self_declared',
+      verified: false,
+    });
+    expect(
+      await updateXLongPostDeclaration(db, {
+        workspaceId,
+        userId,
+        accountId,
+        requestId: 'req-long-post-enable',
+        allowed: true,
+      }),
+    ).toBe('updated');
+    expect((await listProviderAccounts(db, workspaceId))[0]?.xLongPosts).toEqual({
+      allowed: true,
+      source: 'self_declared',
+      verified: false,
+    });
+    const declarationAudit = await database.query<{
+      actor_id: string;
+      metadata: { allowed: boolean };
+    }>(
+      `select actor_id, metadata from audit_events where action = 'provider_account.x_long_posts_declaration_updated'`,
+    );
+    expect(declarationAudit.rows).toMatchObject([
+      { actor_id: userId, metadata: { allowed: true } },
+    ]);
+    expect(
+      await updateXLongPostDeclaration(db, {
+        workspaceId,
+        userId,
+        accountId,
+        requestId: 'req-long-post-repeat',
+        allowed: true,
+      }),
+    ).toBe('updated');
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `select count(*)::int as count from audit_events where action = 'provider_account.x_long_posts_declaration_updated'`,
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
     await database.exec(`
       INSERT INTO posts (id, workspace_id, created_by_user_id)
       VALUES ('00000000-0000-4000-8000-000000000201', '${workspaceId}', '${userId}');
@@ -1636,6 +1699,7 @@ describe('credential and OAuth persistence', () => {
       id: accountId,
       displayName: 'Example Editorial reconnected',
       status: 'active',
+      xLongPosts: { allowed: true, source: 'self_declared', verified: false },
     });
     const historyAfterReconnect = await database.query<{ count: number }>(
       'select count(*)::int as count from publication_jobs',
@@ -1671,7 +1735,17 @@ describe('credential and OAuth persistence', () => {
     expect((await listProviderAccounts(db, workspaceId))[0]).toMatchObject({
       id: accountId,
       adapterDefaults: { privacyStatus: 'public', madeForKids: false, notifySubscribers: true },
+      xLongPosts: null,
     });
+    expect(
+      await updateXLongPostDeclaration(db, {
+        workspaceId,
+        userId,
+        accountId,
+        requestId: 'req-non-x',
+        allowed: true,
+      }),
+    ).toBe('missing');
     expect(
       (
         await database.query<{ count: number }>(

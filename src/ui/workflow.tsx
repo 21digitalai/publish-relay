@@ -425,6 +425,7 @@ interface ComposerDestination {
   capabilityFreshness: 'fresh' | 'stale' | 'unknown';
   capabilitySnapshot: { contentKinds: ComposerContentKind[] };
   adapterDefaults: { madeForKids?: boolean };
+  xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
 }
 
 function sharedContentKinds(destinations: readonly ComposerDestination[]): ComposerContentKind[] {
@@ -472,6 +473,10 @@ function normalizeComposerDestination(
     capabilityFreshness: input.capabilityFreshness ?? 'unknown',
     capabilitySnapshot: input.capabilitySnapshot ?? { contentKinds: inferredKinds },
     adapterDefaults: input.adapterDefaults ?? {},
+    xLongPosts:
+      destinationProvider === 'x'
+        ? (input.xLongPosts ?? { allowed: false, source: 'self_declared', verified: false })
+        : null,
   };
 }
 

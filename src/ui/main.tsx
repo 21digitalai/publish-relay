@@ -41,6 +41,7 @@ interface Account {
     tags?: string[];
     categoryId?: string;
   };
+  xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
 }
 
 const YOUTUBE_CATEGORIES: [string, string][] = [
@@ -906,6 +907,9 @@ function AccountRow({
         )
       : null;
   const [savingDefaults, setSavingDefaults] = useState(false);
+  const [savingXLongPosts, setSavingXLongPosts] = useState(false);
+  const [xLongPostsError, setXLongPostsError] = useState<string | null>(null);
+  const [xLongPostsAnnouncement, setXLongPostsAnnouncement] = useState<string | null>(null);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [defaultsAnnouncement, setDefaultsAnnouncement] = useState<string | null>(null);
   const [privacyStatus, setPrivacyStatus] = useState(
@@ -983,6 +987,61 @@ function AccountRow({
           </button>
         )}
       </div>
+      {account.provider === 'X' && account.xLongPosts && (
+        <div className="x-long-post-setting">
+          <button
+            type="button"
+            className="defaults-toggle x-long-post-toggle"
+            role="switch"
+            aria-checked={account.xLongPosts.allowed}
+            aria-label="Allow longer X posts for this account (self-declared)"
+            disabled={savingXLongPosts || needsReconnect}
+            onClick={() => {
+              const allowed = !account.xLongPosts?.allowed;
+              setSavingXLongPosts(true);
+              setXLongPostsError(null);
+              setXLongPostsAnnouncement(null);
+              void fetch(`/api/provider-accounts/${account.id}/x-long-posts`, {
+                method: 'PATCH',
+                headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+                body: JSON.stringify({ allowed }),
+              })
+                .then(async (response) => {
+                  const result = (await response.json()) as {
+                    data: { xLongPosts: Account['xLongPosts'] } | null;
+                    error: string | null;
+                  };
+                  if (!response.ok || !result.data?.xLongPosts)
+                    throw new Error(result.error ?? 'X account setting could not be saved');
+                  onDefaultsSaved({ ...account, xLongPosts: result.data.xLongPosts });
+                  setXLongPostsAnnouncement(`Long-post setting saved for ${account.name}.`);
+                })
+                .catch((error: unknown) => {
+                  setXLongPostsError(
+                    error instanceof Error ? error.message : 'X account setting could not be saved',
+                  );
+                })
+                .finally(() => {
+                  setSavingXLongPosts(false);
+                });
+            }}
+          >
+            <span className="toggle-track" aria-hidden="true">
+              <span />
+            </span>
+            Allow longer X posts for this account (self-declared)
+          </button>
+          <small>
+            X may reject longer posts even when this is on. This does not verify Premium access.
+          </small>
+          {xLongPostsError && (
+            <span className="field-error" role="alert">
+              {xLongPostsError}
+            </span>
+          )}
+          <LiveRegion message={xLongPostsAnnouncement} />
+        </div>
+      )}
       {account.provider === 'YouTube' && (
         <form
           className="youtube-defaults"
@@ -1136,6 +1195,7 @@ function AccountsPage() {
               capabilitySnapshot?: { contentKinds: string[] };
               updatedAt: string;
               adapterDefaults: Account['adapterDefaults'];
+              xLongPosts?: Account['xLongPosts'];
             }[];
           };
         }>;
@@ -1172,6 +1232,14 @@ function AccountsPage() {
                 contentKinds: inferredContentKinds(account.destinationProvider ?? account.provider),
               },
               adapterDefaults: account.adapterDefaults,
+              xLongPosts:
+                account.destinationProvider === 'x'
+                  ? (account.xLongPosts ?? {
+                      allowed: false,
+                      source: 'self_declared',
+                      verified: false,
+                    })
+                  : null,
             };
           }),
         );

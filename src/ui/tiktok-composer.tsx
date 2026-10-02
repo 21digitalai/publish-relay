@@ -328,6 +328,7 @@ export function TikTokComposerForm({
         <legend>Commercial content</legend>
         <label className="tiktok-choice">
           <input
+            className="tiktok-commercial-toggle"
             type="checkbox"
             checked={commercialEnabled}
             onChange={(event) => {
@@ -346,6 +347,7 @@ export function TikTokComposerForm({
             <p>Does this video promote yourself, a brand, product, or service?</p>
             <label className="tiktok-choice">
               <input
+                className="tiktok-own-brand-toggle"
                 type="checkbox"
                 checked={ownBrand}
                 onChange={(event) => {
@@ -356,6 +358,7 @@ export function TikTokComposerForm({
             </label>
             <label className="tiktok-choice">
               <input
+                className="tiktok-branded-content-toggle"
                 type="checkbox"
                 checked={branded}
                 disabled={brandedUnavailable && !branded}

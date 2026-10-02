@@ -114,6 +114,9 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
   await expect(page.getByText('Imported image 1')).toBeVisible();
   await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath('imported-mixed.png'), fullPage: true });
+  await page.locator('.tiktok-video-preview').screenshot({
+    path: testInfo.outputPath('imported-mixed-detail.png'),
+  });
   await page.getByRole('button', { name: 'Remove from post' }).first().click();
   await expect(page.getByText('Imported image 1')).toHaveCount(0);
   await expect(page.getByText('Imported MP4 video', { exact: true })).toBeVisible();
@@ -127,6 +130,9 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
     .toBeGreaterThanOrEqual(1);
   await expect(page.getByText('1 seconds', { exact: false }).first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('imported-video.png'), fullPage: true });
+  await page.locator('.tiktok-video-preview').screenshot({
+    path: testInfo.outputPath('imported-video-detail.png'),
+  });
   await page.getByRole('button', { name: 'Remove from post' }).click();
   await expect(page.getByText('No video selected', { exact: true })).toBeVisible();
   await page.locator('#composer-media-upload').setInputFiles({
@@ -152,6 +158,9 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
   await expect(page.getByText('not an MP4 video')).toBeVisible();
   await expect(page.getByText('Imported MP4 video', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('imported-image-only.png'), fullPage: true });
+  await page.locator('.tiktok-video-preview').screenshot({
+    path: testInfo.outputPath('imported-image-only-detail.png'),
+  });
 
   media = [
     {
@@ -171,6 +180,9 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
   await page.screenshot({
     path: testInfo.outputPath('imported-metadata-missing.png'),
     fullPage: true,
+  });
+  await page.locator('.tiktok-video-preview').screenshot({
+    path: testInfo.outputPath('imported-metadata-missing-detail.png'),
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(
     false,

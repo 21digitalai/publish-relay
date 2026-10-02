@@ -64,6 +64,7 @@ const migrations = [
   '0048_reconcile_linkedin_connections.sql',
   '0049_meta_effective_payload.sql',
   '0051_provider_subject_lifecycle.sql',
+  '0055_x_long_post_declaration.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';
@@ -1797,6 +1798,65 @@ describe('CLI and direct HTTP parity', () => {
     authorization: 'Bearer pr_test.secret',
     'x-publish-relay-workspace': workspaceId,
   };
+
+  it('shares account-scoped X length admission across API, browser, and CLI', async () => {
+    await database.exec(
+      `UPDATE provider_accounts SET destination_provider = 'x' WHERE id = '${providerAccountId}'`,
+    );
+    const payload = requestPayload('x'.repeat(281));
+    const apiHeaders = { ...headers, 'idempotency-key': 'x-length-api-rejected' };
+    const browserHeaders = {
+      cookie: `publish_relay_session=${workspaceId}.browser-token; publish_relay_csrf=browser-csrf`,
+      'x-csrf-token': 'browser-csrf',
+      'idempotency-key': 'x-length-browser-rejected',
+    };
+    const rejectedApi = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: apiHeaders,
+      payload,
+    });
+    const rejectedBrowser = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: browserHeaders,
+      payload,
+    });
+    expect(rejectedApi.statusCode).toBe(400);
+    expect(rejectedBrowser.statusCode).toBe(400);
+    await database.exec(
+      `UPDATE provider_accounts SET x_long_posts_allowed = true WHERE id = '${providerAccountId}'`,
+    );
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-x-length-'));
+    temporaryDirectories.push(directory);
+    const bodyFile = join(directory, 'body.json');
+    await writeFile(bodyFile, JSON.stringify(payload));
+    const acceptedApi = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: { ...apiHeaders, 'idempotency-key': 'x-length-api-accepted' },
+      payload,
+    });
+    const acceptedBrowser = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: { ...browserHeaders, 'idempotency-key': 'x-length-browser-accepted' },
+      payload,
+    });
+    const acceptedCli = await runCli([
+      'posts',
+      'create',
+      '--require-workspace',
+      workspaceId,
+      '--idempotency-key',
+      'x-length-cli-accepted',
+      '--body-file',
+      bodyFile,
+    ]);
+    expect(acceptedApi.statusCode).toBe(201);
+    expect(acceptedBrowser.statusCode).toBe(201);
+    expect(acceptedCli.code).toBe(0);
+  });
 
   it('returns the same stable create envelope, including idempotent replay', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'publish-relay-cli-parity-'));

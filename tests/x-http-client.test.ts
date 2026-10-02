@@ -36,6 +36,7 @@ describe('X OAuth 1.0a HTTP client', () => {
   });
 
   it('maps native text, media, and quote payloads exactly', async () => {
+    const longText = 'L'.repeat(281);
     const request = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: 'post-1' } }))
@@ -47,7 +48,7 @@ describe('X OAuth 1.0a HTTP client', () => {
     }).bindCredential(credential);
     await expect(
       client.createPost({
-        text: 'Exact text',
+        text: longText,
         mediaIds: ['media-1'],
         quoteTweetId: 'quote-1',
         idempotencyKey: 'caller-owned-key',
@@ -56,7 +57,7 @@ describe('X OAuth 1.0a HTTP client', () => {
     const requestBody = request.mock.calls[0]?.[1]?.body;
     expect(typeof requestBody).toBe('string');
     expect(JSON.parse(requestBody as string)).toEqual({
-      text: 'Exact text',
+      text: longText,
       media: { media_ids: ['media-1'] },
       quote_tweet_id: 'quote-1',
     });

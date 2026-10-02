@@ -57,11 +57,14 @@ const migrations = [
   '0050_instagram_staging_artifacts.sql',
   '0051_provider_subject_lifecycle.sql',
   '0054_tiktok_media_grants.sql',
+  '0055_x_long_post_declaration.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';
 const accountOne = '00000000-0000-4000-8000-000000000203';
 const accountTwo = '00000000-0000-4000-8000-000000000204';
+const declaredXAccount = '00000000-0000-4000-8000-000000000230';
+const standardXAccount = '00000000-0000-4000-8000-000000000231';
 let database: PGlite;
 
 class FakeMediaStorage implements MediaStorage {
@@ -125,6 +128,9 @@ beforeEach(async () => {
     INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name) VALUES
       ('${accountOne}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'one', 'fake', 'one', 'One'),
       ('${accountTwo}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'two', 'fake', 'two', 'Two');
+    INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name, x_long_posts_allowed) VALUES
+      ('${declaredXAccount}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'x-one', 'x', 'x-one', 'Declared X', true),
+      ('${standardXAccount}', '${workspaceId}', '00000000-0000-4000-8000-000000000206', 'x-two', 'x', 'x-two', 'Standard X', false);
   `);
 });
 
@@ -357,6 +363,59 @@ describe('media retention lifecycle', () => {
 });
 
 describe('post revision lifecycle', () => {
+  it('applies each selected X account declaration on create and edit without constraining other providers', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const base = {
+      workspaceId,
+      userId,
+      content: { kind: 'text', text: 'x'.repeat(281) },
+      mediaIds: [],
+      scheduledAt: new Date('2026-09-01T10:00:00Z'),
+    };
+    await expect(
+      createPost(db, { ...base, providerAccountIds: [standardXAccount] }),
+    ).rejects.toThrow(/limit is 280/);
+    await expect(
+      createPost(db, { ...base, providerAccountIds: [declaredXAccount, standardXAccount] }),
+    ).rejects.toThrow(/limit is 280/);
+    const created = await createPost(db, {
+      ...base,
+      providerAccountIds: [declaredXAccount, accountOne],
+    });
+    await expect(
+      createPost(db, {
+        ...base,
+        content: { kind: 'text', text: 'x'.repeat(25_001) },
+        providerAccountIds: [declaredXAccount],
+      }),
+    ).rejects.toThrow(/limit is 25000/);
+    const maximum = await createPost(db, {
+      ...base,
+      content: { kind: 'text', text: 'x'.repeat(25_000) },
+      providerAccountIds: [declaredXAccount],
+    });
+    expect(maximum.jobIds).toHaveLength(1);
+    await expect(
+      editPost(db, {
+        ...base,
+        postId: created.postId,
+        providerAccountIds: [standardXAccount],
+      }),
+    ).rejects.toThrow(/limit is 280/);
+    await expect(
+      editPost(db, {
+        ...base,
+        postId: created.postId,
+        content: { kind: 'thread', posts: ['first', 'x'.repeat(281)] },
+        providerAccountIds: [declaredXAccount],
+      }),
+    ).resolves.toMatchObject({ postId: created.postId });
+    const revisions = await database.query<{ count: number }>(
+      'select count(*)::int as count from post_revisions',
+    );
+    expect(revisions.rows[0]?.count).toBe(3);
+  });
+
   it('evaluates policy exactly once and leaves no post artifacts when denied', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     let evaluations = 0;

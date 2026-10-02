@@ -1,0 +1,31 @@
+import { parseTweet } from 'twitter-text';
+
+export const X_STANDARD_POST_LIMIT = 280;
+export const X_DECLARED_LONG_POST_LIMIT = 25_000;
+
+function xPostTexts(content: Record<string, unknown>): string[] {
+  const kind = content.kind ?? content.type;
+  if (kind !== 'thread') return typeof content.text === 'string' ? [content.text] : [];
+  if (!Array.isArray(content.posts) || content.posts.length < 2)
+    throw new Error('X thread requires at least two parts');
+  return content.posts.map((part: unknown) => {
+    if (typeof part === 'string') return part;
+    if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string')
+      return part.text;
+    throw new Error('X thread contains an invalid part');
+  });
+}
+
+export function validateXPostLength(
+  content: Record<string, unknown>,
+  declaredLongPosts: boolean,
+): void {
+  const limit = declaredLongPosts ? X_DECLARED_LONG_POST_LIMIT : X_STANDARD_POST_LIMIT;
+  for (const text of xPostTexts(content)) {
+    const length = parseTweet(text).weightedLength;
+    if (length > limit)
+      throw new Error(
+        `X post text is ${String(length)} weighted characters; selected account limit is ${String(limit)}`,
+      );
+  }
+}

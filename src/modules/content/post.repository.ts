@@ -16,6 +16,7 @@ import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.
 import { validateLinkedInTextContent } from '../providers/linkedin-content.js';
 import { publicationSettingsRegistry } from '../providers/publication-settings-registry.js';
 import type { DestinationProvider } from '../providers/contract.js';
+import { validateXPostLength } from '../providers/x-text-length.js';
 
 export function buildMetaEffectivePayload(
   destinationProvider: string,
@@ -88,7 +89,10 @@ function persistedActor(actor: PostRevisionInput['actor'], userId?: string) {
 
 async function validateTargetOwnership(
   database: NodePgDatabase,
-  input: Pick<PostRevisionInput, 'mediaIds' | 'providerAccountIds' | 'selectedDestination'> & {
+  input: Pick<
+    PostRevisionInput,
+    'content' | 'mediaIds' | 'providerAccountIds' | 'selectedDestination'
+  > & {
     workspaceId: string;
   },
 ): Promise<void> {
@@ -104,6 +108,7 @@ async function validateTargetOwnership(
       destinationProvider: providerAccounts.destinationProvider,
       disconnectedAt: providerAccounts.disconnectedAt,
       connectionStatus: providerConnections.status,
+      xLongPostsAllowed: providerAccounts.xLongPostsAllowed,
     })
     .from(providerAccounts)
     .innerJoin(providerConnections, eq(providerConnections.id, providerAccounts.connectionId))
@@ -132,6 +137,14 @@ async function validateTargetOwnership(
     )
   )
     throw new PostValidationError('One or more provider accounts are disconnected');
+  for (const account of accounts) {
+    if (account.destinationProvider !== 'x') continue;
+    try {
+      validateXPostLength(input.content, account.xLongPostsAllowed);
+    } catch (error) {
+      throw new PostValidationError(error instanceof Error ? error.message : 'Invalid X post text');
+    }
+  }
   if (input.mediaIds.length === 0) return;
   const media = await database.execute<{ id: string }>(sql`
     select id from media_objects

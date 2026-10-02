@@ -1858,6 +1858,84 @@ describe('CLI and direct HTTP parity', () => {
     expect(acceptedCli.code).toBe(0);
   });
 
+  it('admits destination-first X threads consistently at the account limit', async () => {
+    await database.exec(
+      `UPDATE provider_accounts SET destination_provider = 'x' WHERE id = '${providerAccountId}'`,
+    );
+    const payload = {
+      destination: { provider: 'x', providerAccountId },
+      content: { schemaVersion: 1, kind: 'thread', posts: ['Opening', 'x'.repeat(281)] },
+      scheduledAt: '2026-09-02T10:00:00.000Z',
+    };
+    const browserHeaders = {
+      cookie: `publish_relay_session=${workspaceId}.browser-token; publish_relay_csrf=browser-csrf`,
+      'x-csrf-token': 'browser-csrf',
+    };
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-x-thread-'));
+    temporaryDirectories.push(directory);
+    const bodyFile = join(directory, 'body.json');
+    await writeFile(bodyFile, JSON.stringify(payload));
+    const createApi = (key: string, body = payload) =>
+      application.inject({
+        method: 'POST',
+        url: '/api/v1/posts',
+        headers: { ...headers, 'idempotency-key': key },
+        payload: body,
+      });
+    const createBrowser = (key: string, body = payload) =>
+      application.inject({
+        method: 'POST',
+        url: '/api/workflow/posts',
+        headers: { ...browserHeaders, 'idempotency-key': key },
+        payload: body,
+      });
+    const createCli = (key: string) =>
+      runCli([
+        'posts',
+        'create',
+        '--require-workspace',
+        workspaceId,
+        '--idempotency-key',
+        key,
+        '--body-file',
+        bodyFile,
+      ]);
+    const standard = {
+      ...payload,
+      content: { ...payload.content, posts: ['Opening', 'x'.repeat(280)] },
+    };
+    await writeFile(bodyFile, JSON.stringify(standard));
+    expect((await createApi('x-thread-api-280', standard)).statusCode).toBe(201);
+    expect((await createBrowser('x-thread-browser-280', standard)).statusCode).toBe(201);
+    expect((await createCli('x-thread-cli-280')).code).toBe(0);
+    await writeFile(bodyFile, JSON.stringify(payload));
+    expect((await createApi('x-thread-api-standard')).statusCode).toBe(400);
+    expect((await createBrowser('x-thread-browser-standard')).statusCode).toBe(400);
+    expect((await createCli('x-thread-cli-standard')).code).not.toBe(0);
+    await database.exec(
+      `UPDATE provider_accounts SET x_long_posts_allowed = true WHERE id = '${providerAccountId}'`,
+    );
+    expect((await createApi('x-thread-api-declared')).statusCode).toBe(201);
+    expect((await createBrowser('x-thread-browser-declared')).statusCode).toBe(201);
+    expect((await createCli('x-thread-cli-declared')).code).toBe(0);
+    const maximum = {
+      ...payload,
+      content: { ...payload.content, posts: ['Opening', 'x'.repeat(25_000)] },
+    };
+    await writeFile(bodyFile, JSON.stringify(maximum));
+    expect((await createApi('x-thread-api-25k', maximum)).statusCode).toBe(201);
+    expect((await createBrowser('x-thread-browser-25k', maximum)).statusCode).toBe(201);
+    expect((await createCli('x-thread-cli-25k')).code).toBe(0);
+    const overLimit = {
+      ...payload,
+      content: { ...payload.content, posts: ['Opening', 'x'.repeat(25_001)] },
+    };
+    await writeFile(bodyFile, JSON.stringify(overLimit));
+    expect((await createApi('x-thread-api-over', overLimit)).statusCode).toBe(400);
+    expect((await createBrowser('x-thread-browser-over', overLimit)).statusCode).toBe(400);
+    expect((await createCli('x-thread-cli-over')).code).not.toBe(0);
+  });
+
   it('returns the same stable create envelope, including idempotent replay', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'publish-relay-cli-parity-'));
     temporaryDirectories.push(directory);

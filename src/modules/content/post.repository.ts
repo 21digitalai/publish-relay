@@ -95,6 +95,7 @@ async function validateTargetOwnership(
   > & {
     workspaceId: string;
   },
+  validateXText = true,
 ): Promise<void> {
   // Serialize admission with grant revoke reservation and subject reconnect.
   await database
@@ -138,7 +139,7 @@ async function validateTargetOwnership(
   )
     throw new PostValidationError('One or more provider accounts are disconnected');
   for (const account of accounts) {
-    if (account.destinationProvider !== 'x') continue;
+    if (account.destinationProvider !== 'x' || !validateXText) continue;
     try {
       validateXPostLength(input.content, account.xLongPostsAllowed);
     } catch (error) {
@@ -359,7 +360,7 @@ export async function createPostIntent(
   return { postId: post.id, ...targets };
 }
 
-export async function revisePostIntent(
+async function revisePostIntentInternal(
   database: NodePgDatabase,
   input: PostRevisionInput & {
     workspaceId: string;
@@ -368,9 +369,10 @@ export async function revisePostIntent(
     now: Date;
     expectedSupersededJobCount?: number;
   },
+  validateXText: boolean,
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
   const actor = persistedActor(input.actor, input.userId);
-  await validateTargetOwnership(database, input);
+  await validateTargetOwnership(database, input, validateXText);
   const existing = await database
     .select({ revisionNumber: postRevisions.revisionNumber })
     .from(postRevisions)
@@ -410,6 +412,13 @@ export async function revisePostIntent(
     ...targets,
     supersededJobIds: superseded.map((job) => job.id),
   };
+}
+
+export function revisePostIntent(
+  database: NodePgDatabase,
+  input: Parameters<typeof revisePostIntentInternal>[1],
+): ReturnType<typeof revisePostIntentInternal> {
+  return revisePostIntentInternal(database, input, true);
 }
 
 export async function reschedulePostIntent(
@@ -460,11 +469,17 @@ export async function reschedulePostIntent(
       ),
     )
     .orderBy(asc(revisionMedia.position));
-  return revisePostIntent(database, {
-    ...input,
-    content: revision.content as Record<string, unknown>,
-    mediaIds: media.map((item) => item.id),
-    providerAccountIds: jobs.map((job) => job.providerAccountId),
-    expectedSupersededJobCount: jobs.length,
-  });
+  // Schedule-only changes copy an already-admitted revision. A later declaration
+  // change must not retroactively reject its text, but ownership still applies.
+  return revisePostIntentInternal(
+    database,
+    {
+      ...input,
+      content: revision.content as Record<string, unknown>,
+      mediaIds: media.map((item) => item.id),
+      providerAccountIds: jobs.map((job) => job.providerAccountId),
+      expectedSupersededJobCount: jobs.length,
+    },
+    false,
+  );
 }

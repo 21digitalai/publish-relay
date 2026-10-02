@@ -622,6 +622,44 @@ describe('post revision lifecycle', () => {
     });
   });
 
+  it('keeps an already-admitted long X post schedulable after the account declaration is withdrawn', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const content = { kind: 'text', text: 'x'.repeat(281) };
+    const created = await createPost(db, {
+      workspaceId,
+      userId,
+      content,
+      mediaIds: [],
+      providerAccountIds: [declaredXAccount],
+      scheduledAt: new Date('2026-09-01T10:00:00.000Z'),
+    });
+    await database.exec(
+      `UPDATE provider_accounts SET x_long_posts_allowed = false WHERE id = '${declaredXAccount}'`,
+    );
+    await expect(
+      editPost(db, {
+        workspaceId,
+        userId,
+        postId: created.postId,
+        content,
+        mediaIds: [],
+        providerAccountIds: [declaredXAccount],
+        scheduledAt: new Date('2026-09-02T11:30:00.000Z'),
+      }),
+    ).rejects.toThrow(/limit is 280/);
+    const moved = await reschedulePost(db, {
+      workspaceId,
+      postId: created.postId,
+      scheduledAt: new Date('2026-09-02T11:30:00.000Z'),
+      now: new Date('2026-09-01T09:00:00.000Z'),
+    });
+    expect(moved.supersededJobIds).toEqual(created.jobIds);
+    const revisions = await database.query<{ content: Record<string, unknown> }>(
+      `SELECT content FROM post_revisions WHERE post_id = '${created.postId}' ORDER BY revision_number`,
+    );
+    expect(revisions.rows.map((revision) => revision.content)).toEqual([content, content]);
+  });
+
   it('serializes schedule editing against a concurrent scheduler claim', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const dueAt = new Date('2026-09-01T10:00:00.000Z');

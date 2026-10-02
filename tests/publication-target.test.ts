@@ -38,6 +38,19 @@ describe('destination-first publication contract', () => {
     ).toThrow();
   });
 
+  it('preserves X thread posts through destination-first normalization', () => {
+    const posts = ['Opening', { text: 'Closing', mediaIds: [] }];
+    const request = createPostRequestSchema.parse({
+      destination: { provider: 'x', providerAccountId: accountId },
+      content: { schemaVersion: 1, kind: 'thread', posts },
+      scheduledAt,
+    });
+    expect(normalizeCreatePostRequest(request).content).toMatchObject({
+      kind: 'thread',
+      posts,
+    });
+  });
+
   it('does not reinterpret a malformed explicit target as legacy', () => {
     const legacy = {
       content: { kind: 'text', text: 'Hello' },

@@ -18,6 +18,9 @@ const xContent = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   parts: z.array(z.unknown()).optional(),
+  posts: z
+    .array(z.union([z.string(), z.object({ text: z.string(), mediaIds: z.array(mediaId) })]))
+    .optional(),
   mediaIds: z.array(mediaId).max(10).default([]),
 });
 

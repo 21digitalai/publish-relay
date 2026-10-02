@@ -52,16 +52,21 @@ function retryAfter(response: Response): number | undefined {
   return Math.max(0, Math.ceil(reset - Date.now() / 1000));
 }
 
-async function toApiError(response: Response): Promise<XApiError> {
-  const body = (await response.json().catch(() => null)) as {
-    detail?: string;
-    title?: string;
-    errors?: { message?: string }[];
-  } | null;
+function toApiError(response: Response): XApiError {
   const retryAfterSeconds = retryAfter(response);
+  const message =
+    response.status === 400 || response.status === 422
+      ? 'X rejected this request. Check the post content and connected account.'
+      : response.status === 401 || response.status === 403
+        ? 'X authorization failed. Reconnect the account if access has changed.'
+        : response.status === 429
+          ? 'X rate limit reached. Retry after the provider limit resets.'
+          : response.status >= 500
+            ? 'X is temporarily unavailable.'
+            : 'X request failed.';
   return {
     status: response.status,
-    message: body?.detail ?? body?.errors?.[0]?.message ?? body?.title ?? 'X request failed',
+    message,
     ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
   };
 }
@@ -322,7 +327,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     } catch (cause) {
       throw new XRequestError(503, 'X media upload request failed', { cause });
     }
-    if (!response.ok) throw await mediaRequestError(response);
+    if (!response.ok) throw mediaRequestError(response);
     return expectsJson ? ((await response.json()) as XMediaResponse) : {};
   }
 
@@ -333,7 +338,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     } catch (cause) {
       throw new XRequestError(503, 'X media status request failed', { cause });
     }
-    if (!response.ok) throw await mediaRequestError(response);
+    if (!response.ok) throw mediaRequestError(response);
     return (await response.json()) as XMediaResponse;
   }
 
@@ -361,7 +366,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     }
     if (allowNotFound && response.status === 404) return {} as T;
     if (!response.ok) {
-      const error = await toApiError(response);
+      const error = toApiError(response);
       throw new XRequestError(error.status, error.message, {
         ...(error.retryAfterSeconds === undefined
           ? {}
@@ -389,7 +394,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
       throw new XRequestError(503, 'X OAuth request failed', { cause });
     }
     if (!response.ok) {
-      const error = await toApiError(response);
+      const error = toApiError(response);
       throw new XRequestError(error.status, error.message);
     }
     return new URLSearchParams(await response.text());
@@ -448,8 +453,8 @@ function mediaState(response: XMediaResponse): { state: 'succeeded' | 'pending' 
   return { state: 'pending' };
 }
 
-async function mediaRequestError(response: Response): Promise<XRequestError> {
-  const error = await toApiError(response);
+function mediaRequestError(response: Response): XRequestError {
+  const error = toApiError(response);
   return new XRequestError(error.status, error.message, {
     ...(error.retryAfterSeconds === undefined
       ? {}

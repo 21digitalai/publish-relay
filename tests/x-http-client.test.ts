@@ -63,6 +63,37 @@ describe('X OAuth 1.0a HTTP client', () => {
     });
   });
 
+  it.each([400, 422, 429, 503])(
+    'does not expose X response text for HTTP %i while retaining status and retry timing',
+    async (status) => {
+      const secret = 'sensitive-provider-detail-sentinel';
+      const request = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          response(
+            { detail: secret, title: secret, errors: [{ message: secret }] },
+            status,
+            status === 429 ? { 'retry-after': '12' } : undefined,
+          ),
+        );
+      const client = new XHttpClient({
+        consumerKey: 'consumer',
+        consumerSecret: 'secret',
+        fetch: request,
+      }).bindCredential(credential);
+
+      const error = await client
+        .createPost({ text: 'A post', mediaIds: [], idempotencyKey: `failure-${String(status)}` })
+        .catch((cause: unknown) => cause);
+      expect(error).toMatchObject({
+        status,
+        ...(status === 429 ? { retryAfterSeconds: 12 } : {}),
+      });
+      expect(String(error)).not.toContain(secret);
+      expect(String(error)).toContain('X ');
+    },
+  );
+
   it('uses native X reply linkage without attaching root media to the reply', async () => {
     const request = vi
       .fn<typeof fetch>()

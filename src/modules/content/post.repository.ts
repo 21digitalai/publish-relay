@@ -141,7 +141,7 @@ async function validateTargetOwnership(
   for (const account of accounts) {
     if (account.destinationProvider !== 'x' || !validateXText) continue;
     try {
-      validateXPostLength(input.content, account.xLongPostsAllowed);
+      validateXPostLength(input.content, account.xLongPostsAllowed, input.mediaIds);
     } catch (error) {
       throw new PostValidationError(error instanceof Error ? error.message : 'Invalid X post text');
     }

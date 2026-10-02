@@ -1864,7 +1864,7 @@ describe('CLI and direct HTTP parity', () => {
     );
     const payload = {
       destination: { provider: 'x', providerAccountId },
-      content: { schemaVersion: 1, kind: 'thread', posts: ['Opening', 'x'.repeat(281)] },
+      content: { schemaVersion: 1, kind: 'thread', posts: ['Opening', 'x'.repeat(272)] },
       scheduledAt: '2026-09-02T10:00:00.000Z',
     };
     const browserHeaders = {
@@ -1902,7 +1902,7 @@ describe('CLI and direct HTTP parity', () => {
       ]);
     const standard = {
       ...payload,
-      content: { ...payload.content, posts: ['Opening', 'x'.repeat(280)] },
+      content: { ...payload.content, posts: ['Opening', 'x'.repeat(271)] },
     };
     await writeFile(bodyFile, JSON.stringify(standard));
     expect((await createApi('x-thread-api-280', standard)).statusCode).toBe(201);
@@ -1920,7 +1920,7 @@ describe('CLI and direct HTTP parity', () => {
     expect((await createCli('x-thread-cli-declared')).code).toBe(0);
     const maximum = {
       ...payload,
-      content: { ...payload.content, posts: ['Opening', 'x'.repeat(25_000)] },
+      content: { ...payload.content, posts: ['Opening', 'x'.repeat(24_991)] },
     };
     await writeFile(bodyFile, JSON.stringify(maximum));
     expect((await createApi('x-thread-api-25k', maximum)).statusCode).toBe(201);
@@ -1928,7 +1928,7 @@ describe('CLI and direct HTTP parity', () => {
     expect((await createCli('x-thread-cli-25k')).code).toBe(0);
     const overLimit = {
       ...payload,
-      content: { ...payload.content, posts: ['Opening', 'x'.repeat(25_001)] },
+      content: { ...payload.content, posts: ['Opening', 'x'.repeat(24_992)] },
     };
     await writeFile(bodyFile, JSON.stringify(overLimit));
     expect((await createApi('x-thread-api-over', overLimit)).statusCode).toBe(400);

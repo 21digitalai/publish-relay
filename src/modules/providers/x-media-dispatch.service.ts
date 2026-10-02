@@ -29,6 +29,7 @@ import {
 import { X_MAX_MEDIA_PER_POST, XProviderAdapter, type XClient } from './x-adapter.js';
 import type { PublishOutcome } from './contract.js';
 import { XHttpClient, type XHttpClientOptions } from './x-http-client.js';
+import { composeXThreadText } from './x-text-length.js';
 import {
   publishXThread,
   XThreadOutcomeUnknown,
@@ -132,7 +133,7 @@ export function normalizeStoredXContent(content: StoredXContent): {
     }
     const posts = content.posts.map(normalizeStoredThreadPart).filter(Boolean);
     if (posts.length === 0) throw new Error('Stored X thread content is empty');
-    return { kind: 'text', text: posts.join('\n\n') };
+    return { kind: 'text', text: composeXThreadText(posts) };
   }
   const text = typeof content.text === 'string' ? content.text : '';
   if (kind === 'quote') {

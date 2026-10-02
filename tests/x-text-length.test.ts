@@ -49,6 +49,7 @@ describe('X weighted post length', () => {
           ],
         },
         false,
+        ['media-1'],
       );
     }).toThrow(/limit is 280/);
     expect(() => {
@@ -61,6 +62,7 @@ describe('X weighted post length', () => {
           ],
         },
         true,
+        ['media-1'],
       );
     }).not.toThrow();
     expect(() => {
@@ -69,5 +71,36 @@ describe('X weighted post length', () => {
         true,
       );
     }).toThrow(/consistent shape/);
+  });
+
+  it('validates exact joined dispatch text at both account ceilings', () => {
+    for (const declared of [false, true]) {
+      const limit = declared ? 25_000 : 280;
+      const secondLength = limit - 'Opening\n\n'.length;
+      expect(() => {
+        validateXPostLength(
+          { kind: 'thread', posts: ['Opening', 'x'.repeat(secondLength)] },
+          declared,
+        );
+      }).not.toThrow();
+      expect(() => {
+        validateXPostLength(
+          { kind: 'thread', posts: ['Opening', 'x'.repeat(secondLength + 1)] },
+          declared,
+        );
+      }).toThrow(new RegExp(`limit is ${String(limit)}`));
+      expect(() => {
+        validateXPostLength(
+          {
+            kind: 'thread',
+            posts: [
+              { text: 'Opening', mediaIds: [] },
+              { text: 'x'.repeat(secondLength + 1), mediaIds: [] },
+            ],
+          },
+          declared,
+        );
+      }).toThrow(new RegExp(`limit is ${String(limit)}`));
+    }
   });
 });

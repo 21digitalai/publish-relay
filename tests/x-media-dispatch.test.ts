@@ -253,48 +253,52 @@ describe('X media dispatch composition', () => {
     );
   });
 
-  it('dispatches an accepted string-only thread as one joined text post', async () => {
-    vi.mocked(claimDueJobs).mockResolvedValue([
-      {
-        id: 'job-string-thread',
-        workspaceId: 'workspace-1',
-        revisionId: 'revision-string-thread',
-        providerAccountId: 'account-1',
-        state: 'leased',
-        attemptNumber: 1,
-        leaseOwner: 'worker-1',
-        leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
-      },
-    ]);
-    databaseTransaction.orderBy.mockResolvedValueOnce([
-      {
-        credentialId: 'credential-1',
-        accountId: 'x-account-1',
-        content: { kind: 'thread', posts: ['Opening', 'Closing'] } as never,
-        mediaId: '',
-        mimeType: '',
-      },
-    ]);
-    vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
-    vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
-    const createPost = vi.fn().mockResolvedValue({ id: 'post-1', username: 'exampleeditorial' });
+  it.each([280, 25_000])(
+    'dispatches an admitted %i-weight string thread unchanged',
+    async (limit) => {
+      const secondPart = 'x'.repeat(limit - 'Opening\n\n'.length);
+      vi.mocked(claimDueJobs).mockResolvedValue([
+        {
+          id: 'job-string-thread',
+          workspaceId: 'workspace-1',
+          revisionId: 'revision-string-thread',
+          providerAccountId: 'account-1',
+          state: 'leased',
+          attemptNumber: 1,
+          leaseOwner: 'worker-1',
+          leaseExpiresAt: new Date('2026-09-01T00:01:00Z'),
+        },
+      ]);
+      databaseTransaction.orderBy.mockResolvedValueOnce([
+        {
+          credentialId: 'credential-1',
+          accountId: 'x-account-1',
+          content: { kind: 'thread', posts: ['Opening', secondPart] } as never,
+          mediaId: '',
+          mimeType: '',
+        },
+      ]);
+      vi.mocked(getActiveCredential).mockResolvedValue({ id: 'credential-1' } as never);
+      vi.mocked(decryptCredential).mockResolvedValue(Buffer.from('{}'));
+      const createPost = vi.fn().mockResolvedValue({ id: 'post-1', username: 'exampleeditorial' });
 
-    await expect(
-      dispatchDueXMedia({
-        database: {} as never,
-        keys: {} as never,
-        source: {} as XMediaSource,
-        createClient: vi.fn(() => ({ createPost }) as unknown as XMediaUploadClient),
-        workerId: 'worker-1',
-        leaseMs: 30_000,
-      }),
-    ).resolves.toBe(1);
+      await expect(
+        dispatchDueXMedia({
+          database: {} as never,
+          keys: {} as never,
+          source: {} as XMediaSource,
+          createClient: vi.fn(() => ({ createPost }) as unknown as XMediaUploadClient),
+          workerId: 'worker-1',
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBe(1);
 
-    expect(createPost).toHaveBeenCalledOnce();
-    expect(createPost).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Opening\n\nClosing' }),
-    );
-  });
+      expect(createPost).toHaveBeenCalledOnce();
+      expect(createPost).toHaveBeenCalledWith(
+        expect.objectContaining({ text: `Opening\n\n${secondPart}` }),
+      );
+    },
+  );
 
   it('dispatches only the explicitly claimed canary job with exact text and staged media', async () => {
     vi.mocked(claimExactDueJob).mockResolvedValue({

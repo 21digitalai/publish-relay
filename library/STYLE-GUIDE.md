@@ -139,6 +139,7 @@ An external-draft cockpit link opens the canonical Composer sheet directly. A co
 The same attachment list identifies each imported item's media type, size, and verified video duration when available. Its `Remove from post` action changes only this Composer selection; it never deletes the source draft or retained media. An incompatible or metadata-missing TikTok item remains visibly invalid with a remove/replace path, and choosing a new MP4 replaces active imported selection without erasing the source draft.
 
 The composer is a 640px right sheet on desktop, full-screen on mobile, and may expand to 880px for preview.
+For selected X destinations, the shared Composer body counter uses the server's `twitter-text` weighted rule. X-only selection shows 25,000 only when every selected X account self-declared long posts; otherwise it shows 280. A mixed-provider selection retains the tighter safe constraint. The textarea does not apply UTF-16 `maxLength` to X content; inline validation blocks over-limit submission and the hint states that self-declared access is unverified and X may reject longer posts.
 Its X, Escape, and backdrop-only dismissal all use the same cleanup-aware close path; inside-sheet clicks do not dismiss, saving prevents dismissal, and focus returns to the Create post trigger.
 
 Order:

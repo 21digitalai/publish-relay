@@ -3,6 +3,10 @@ import twitterText from 'twitter-text';
 export const X_STANDARD_POST_LIMIT = 280;
 export const X_DECLARED_LONG_POST_LIMIT = 25_000;
 
+export function weightedXPostLength(text: string): number {
+  return twitterText.parseTweet(text).weightedLength;
+}
+
 export function composeXThreadText(parts: readonly string[]): string {
   return parts
     .map((part) => part.trim())
@@ -34,7 +38,7 @@ export function validateXPostLength(
 ): void {
   const limit = declaredLongPosts ? X_DECLARED_LONG_POST_LIMIT : X_STANDARD_POST_LIMIT;
   for (const text of xPostTexts(content, mediaIds)) {
-    const length = twitterText.parseTweet(text).weightedLength;
+    const length = weightedXPostLength(text);
     if (length > limit)
       throw new Error(
         `X post text is ${String(length)} weighted characters; selected account limit is ${String(limit)}`,

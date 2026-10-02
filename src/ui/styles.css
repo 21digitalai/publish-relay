@@ -2336,6 +2336,14 @@ textarea:focus-visible {
 .inline-validation {
   color: var(--danger);
 }
+.composer-body-hint,
+.composer-body-validation {
+  display: block;
+  margin-top: 6px;
+}
+.field-label .composer-body-validation {
+  color: var(--danger);
+}
 .composer-sheet > footer {
   margin-top: 24px;
   justify-content: flex-end;

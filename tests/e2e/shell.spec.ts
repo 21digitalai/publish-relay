@@ -1861,8 +1861,75 @@ test('uses consistent workspace actions and readable X composer fields', async (
   const body = page.getByPlaceholder('What should your audience know?');
   await expect(body).toHaveCSS('display', 'block');
   await expect(page.locator('.composer-body-heading')).toContainText('Post body');
-  await expect(page.locator('.composer-body-heading')).toContainText('0/280 per X post');
+  await expect(page.locator('.composer-body-heading')).toContainText(
+    '0/280 weighted characters per X post',
+  );
   await page.screenshot({ path: testInfo.outputPath('composer-body.png'), fullPage: true });
+});
+
+test('uses the selected X account weighted limit on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000221',
+              provider: 'x',
+              displayName: 'Long account',
+              status: 'active',
+              availability: 'active',
+              adapterDefaults: {},
+              xLongPosts: { allowed: true, source: 'self_declared', verified: false },
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000222',
+              provider: 'x',
+              displayName: 'Standard account',
+              status: 'active',
+              availability: 'active',
+              adapterDefaults: {},
+              xLongPosts: { allowed: false, source: 'self_declared', verified: false },
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  for (const [label, width, height] of [
+    ['desktop', 1440, 900],
+    ['mobile', 390, 844],
+  ] as const) {
+    await page.setViewportSize({ width, height });
+    await page.goto(await workspacePath(page, 'queue'));
+    await page.getByRole('button', { name: 'Create post' }).last().click();
+    const body = page.getByPlaceholder('What should your audience know?');
+    const heading = page.locator('.composer-body-heading');
+    const submit = page.getByRole('button', { name: 'Schedule 2 posts' });
+    await body.fill('a'.repeat(281));
+    await expect(heading).toContainText('281/280 weighted characters');
+    await expect(submit).toBeDisabled();
+    await expect(page.getByRole('alert')).toContainText('280 weighted-character limit');
+    await page.screenshot({ path: testInfo.outputPath(`x-mixed-${label}.png`), fullPage: true });
+    await page.getByLabel('Standard account').uncheck();
+    await expect(heading).toContainText('281/25000 weighted characters');
+    await expect(page.getByText('Long-post access is self-declared, not verified.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+    await body.fill('a'.repeat(25_000));
+    await expect(heading).toContainText('25000/25000 weighted characters');
+    await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+    await body.fill('a'.repeat(25_001));
+    await expect(heading).toContainText('25001/25000 weighted characters');
+    await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeDisabled();
+    await body.fill('Ж'.repeat(125) + '😀'.repeat(16));
+    await expect(heading).toContainText('157/25000 weighted characters');
+    await page.screenshot({ path: testInfo.outputPath(`x-long-${label}.png`), fullPage: true });
+  }
 });
 
 test('retries uncertain YouTube post responses without deleting media', async ({ page }) => {

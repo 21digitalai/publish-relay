@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import {
+  weightedXPostLength,
+  X_DECLARED_LONG_POST_LIMIT,
+  X_STANDARD_POST_LIMIT,
+} from '../modules/providers/x-text-length.js';
 import { Rail } from './main.js';
 import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
@@ -585,10 +590,20 @@ function Composer({ onClose }: { onClose: () => void }) {
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const isTikTok = selected.length === 1 && selected[0]?.destinationProvider === 'tiktok';
   const isX = selected.length > 0 && selected.every((account) => account.provider === 'x');
+  const selectedX = selected.filter((account) => account.provider === 'x');
+  const includesX = selectedX.length > 0;
+  const xLimit =
+    isX && selectedX.every((account) => account.xLongPosts?.allowed === true)
+      ? X_DECLARED_LONG_POST_LIMIT
+      : X_STANDARD_POST_LIMIT;
+  const xWeightedLength = includesX ? weightedXPostLength(body) : 0;
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const isLinkedInOnly =
     selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
   const textLimit = isLinkedInOnly ? 3000 : 280;
+  const bodyTooLong = includesX
+    ? xWeightedLength > xLimit || (!isX && body.length > textLimit)
+    : body.length > textLimit;
   const linkedinExpiresBeforeDispatch = selected.some(
     (account) =>
       account.provider === 'linkedin' &&
@@ -620,7 +635,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       ? mediaFiles.length !== 1 ||
         !videoTitle.trim() ||
         (!youtubeHasMadeForKids && madeForKids === 'default')
-      : !body.trim() || body.length > textLimit) ||
+      : !body.trim() || bodyTooLong) ||
     (includesYouTube && !isYouTube) ||
     (mediaFiles.length > 0 && !isYouTube && !isX && !includesMeta) ||
     (includesMeta && !allowedKinds.includes(contentKind)) ||
@@ -1108,9 +1123,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                   <small>
                     {isYouTube
                       ? `${String(videoTitle.length)}/100`
-                      : includesMeta
-                        ? `${String(body.length)}/280 characters`
-                        : `${String(body.length)}/280 per X post`}
+                      : includesX
+                        ? `${String(xWeightedLength)}/${String(xLimit)} weighted characters per X post`
+                        : `${String(body.length)}/${String(textLimit)} characters`}
                   </small>
                 </span>
                 {isYouTube ? (
@@ -1125,7 +1140,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 ) : (
                   <textarea
                     className="composer-body"
-                    maxLength={textLimit}
+                    maxLength={includesX ? undefined : textLimit}
                     value={body}
                     onChange={(event) => {
                       setBody(event.target.value);
@@ -1133,13 +1148,24 @@ function Composer({ onClose }: { onClose: () => void }) {
                     placeholder="What should your audience know?"
                   />
                 )}
-                <small>
+                <small className="composer-body-hint">
                   {isYouTube
                     ? `${String(videoTitle.length)}/100`
-                    : includesMeta
-                      ? 'Shared caption or message for each destination'
-                      : `${String(body.length)}/280 per X post`}
+                    : includesX
+                      ? selectedX.some((account) => account.xLongPosts?.allowed)
+                        ? 'Long-post access is self-declared, not verified. X may reject longer posts.'
+                        : 'X uses weighted characters; undeclared accounts allow 280.'
+                      : includesMeta
+                        ? 'Shared caption or message for each destination'
+                        : `${String(body.length)}/${String(textLimit)} characters`}
                 </small>
+                {includesX && bodyTooLong && (
+                  <small className="composer-body-validation inline-validation" role="alert">
+                    {isX
+                      ? `X post exceeds the ${String(xLimit)} weighted-character limit for the selected accounts.`
+                      : 'Post exceeds a selected destination limit.'}
+                  </small>
+                )}
               </label>
             )}
             {includesMeta && contentKind === 'link' && (

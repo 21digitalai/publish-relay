@@ -19,6 +19,13 @@ export interface ExternalDraftRecord {
   postId: string | null;
   mediaIds: string[];
   createdAt: Date;
+  media?: {
+    id: string;
+    mimeType: string | null;
+    byteSize: number | null;
+    durationMs: number | null;
+    state: string | null;
+  }[];
 }
 
 export class ExternalDraftMediaUnavailableError extends Error {}
@@ -113,8 +120,21 @@ export async function getExternalDraftForWorkspace(
   const workspace = workspaceRows[0];
   if (!workspace) return null;
   const media = await database
-    .select({ id: externalDraftMedia.mediaId })
+    .select({
+      id: externalDraftMedia.mediaId,
+      mimeType: mediaObjects.mimeType,
+      byteSize: mediaObjects.byteSize,
+      durationMs: mediaObjects.durationMs,
+      state: mediaObjects.state,
+    })
     .from(externalDraftMedia)
+    .leftJoin(
+      mediaObjects,
+      and(
+        eq(mediaObjects.workspaceId, externalDraftMedia.workspaceId),
+        eq(mediaObjects.id, externalDraftMedia.mediaId),
+      ),
+    )
     .where(
       and(
         eq(externalDraftMedia.workspaceId, input.workspaceId),
@@ -122,7 +142,12 @@ export async function getExternalDraftForWorkspace(
       ),
     )
     .orderBy(asc(externalDraftMedia.position));
-  return { ...draft, workspaceSlug: workspace.slug, mediaIds: media.map((item) => item.id) };
+  return {
+    ...draft,
+    workspaceSlug: workspace.slug,
+    mediaIds: media.map((item) => item.id),
+    media,
+  };
 }
 
 export async function insertExternalDraft(

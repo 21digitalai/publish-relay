@@ -4,6 +4,7 @@ import { Rail } from './main.js';
 import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
+import { TikTokComposerForm, type ImportedDraftMedia } from './tiktok-composer.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
 type JobState =
@@ -437,6 +438,7 @@ function sharedContentKinds(destinations: readonly ComposerDestination[]): Compo
 }
 
 function destinationName(destination: ComposerDestination): string {
+  if (destination.destinationProvider === 'tiktok') return `TikTok · ${destination.displayName}`;
   if (destination.destinationProvider === 'instagram')
     return `Instagram · ${destination.displayName}`;
   if (destination.destinationProvider === 'facebook_page')
@@ -453,11 +455,13 @@ function normalizeComposerDestination(
       ? ['text']
       : destinationProvider === 'youtube'
         ? ['video']
-        : destinationProvider === 'instagram'
-          ? ['single_image', 'carousel']
-          : destinationProvider === 'facebook_page'
-            ? ['link', 'single_image']
-            : ['text'];
+        : destinationProvider === 'tiktok'
+          ? []
+          : destinationProvider === 'instagram'
+            ? ['single_image', 'carousel']
+            : destinationProvider === 'facebook_page'
+              ? ['link', 'single_image']
+              : ['text'];
   return {
     id: input.id,
     provider: input.provider,
@@ -484,7 +488,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [contentKind, setContentKind] = useState<ComposerContentKind>('text');
   const [linkUrl, setLinkUrl] = useState('');
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
-  const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
+  const [importedMedia, setImportedMedia] = useState<ImportedDraftMedia[]>([]);
+  const draftMediaIds = importedMedia.map((item) => item.id);
   const [draftState, setDraftState] = useState<'loading' | 'ready' | 'error'>(
     draftId ? 'loading' : 'ready',
   );
@@ -573,6 +578,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const includesMeta = selected.some((account) => account.provider === 'meta');
   const allowedKindKey = allowedKinds.join(',');
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
+  const isTikTok = selected.length === 1 && selected[0]?.destinationProvider === 'tiktok';
   const isX = selected.length > 0 && selected.every((account) => account.provider === 'x');
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const isLinkedInOnly =
@@ -604,6 +610,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       )
     : [];
   const invalid =
+    isTikTok ||
     (isYouTube
       ? mediaFiles.length !== 1 ||
         !videoTitle.trim() ||
@@ -648,16 +655,33 @@ function Composer({ onClose }: { onClose: () => void }) {
     void fetch(`/api/workflow/drafts/${draftId}`)
       .then(async (response) => {
         const envelope = (await response.json()) as {
-          data?: { label: string | null; mediaIds: string[]; postId: string | null };
+          data?: {
+            label: string | null;
+            mediaIds: string[];
+            media?: ImportedDraftMedia[];
+            postId: string | null;
+          };
           error?: string | null;
         };
         if (!response.ok || !envelope.data)
           throw new Error(envelope.error ?? 'Draft could not be loaded.');
-        if (envelope.data.postId) throw new Error('This draft has already been scheduled.');
-        if (envelope.data.mediaIds.length === 0)
-          throw new Error('This draft has no attached media.');
-        setDraftLabel(envelope.data.label);
-        setDraftMediaIds(envelope.data.mediaIds);
+        const draft = envelope.data;
+        if (draft.postId) throw new Error('This draft has already been scheduled.');
+        if (draft.mediaIds.length === 0) throw new Error('This draft has no attached media.');
+        setDraftLabel(draft.label);
+        setImportedMedia(
+          draft.mediaIds.map(
+            (id) =>
+              draft.media?.find((item) => item.id === id) ?? {
+                id,
+                mimeType: null,
+                byteSize: null,
+                durationMs: null,
+                ready: false,
+                previewUrl: null,
+              },
+          ),
+        );
         setDraftState('ready');
       })
       .catch((reason: unknown) => {
@@ -687,6 +711,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                   (destination) =>
                     destination.status === 'active' &&
                     destination.availability === 'active' &&
+                    destination.destinationProvider !== 'tiktok' &&
                     (!destination.expiresAt ||
                       new Date(destination.expiresAt).getTime() > Date.now()),
                 )
@@ -896,7 +921,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       }}
     >
       <section
-        className="composer-sheet"
+        className={`composer-sheet${isTikTok ? ' composer-sheet-tiktok' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="composer-title"
@@ -997,7 +1022,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                   {draftState === 'loading'
                     ? 'Loading attached media…'
                     : draftState === 'ready'
-                      ? `${String(draftMediaIds.length)} attached media item${draftMediaIds.length === 1 ? '' : 's'} ready`
+                      ? `${String(draftMediaIds.length)} attached media item${draftMediaIds.length === 1 ? '' : 's'} selected`
                       : 'Imported media unavailable'}
                 </span>
               </div>
@@ -1016,7 +1041,16 @@ function Composer({ onClose }: { onClose: () => void }) {
                       setSelectedAccounts((current) =>
                         current.includes(account.id)
                           ? current.filter((id) => id !== account.id)
-                          : [...current, account.id],
+                          : account.destinationProvider === 'tiktok'
+                            ? [account.id]
+                            : [
+                                ...current.filter(
+                                  (id) =>
+                                    accounts.find((item) => item.id === id)?.destinationProvider !==
+                                    'tiktok',
+                                ),
+                                account.id,
+                              ],
                       );
                     }}
                   />
@@ -1027,14 +1061,20 @@ function Composer({ onClose }: { onClose: () => void }) {
                     <strong>{destinationName(account)}</strong>
                     <small>
                       {account.availability === 'active'
-                        ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · ${account.capabilityFreshness}`
+                        ? account.destinationProvider === 'tiktok'
+                          ? 'Video · options checked after selection'
+                          : `${account.capabilitySnapshot.contentKinds.join(' · ')} · ${account.capabilityFreshness}`
                         : `${account.availability.replaceAll('_', ' ')} · reconnect to schedule`}
                     </small>
                   </span>
+                  {account.destinationProvider === 'tiktok' &&
+                    account.availability !== 'active' && (
+                      <a href={`${workspacePath()}/accounts`}>Reconnect</a>
+                    )}
                 </label>
               ))}
             </fieldset>
-            {selected.length > 0 && !isYouTube && (
+            {selected.length > 0 && !isYouTube && !isTikTok && (
               <fieldset className="content-kind-picker" inert={hasUncertainPost}>
                 <legend>2. Choose supported content</legend>
                 {allowedKinds.map((kind) => (
@@ -1056,45 +1096,47 @@ function Composer({ onClose }: { onClose: () => void }) {
                 )}
               </fieldset>
             )}
-            <label className="field-label composer-body-field" inert={hasUncertainPost}>
-              <span className="composer-body-heading">
-                <span>{isYouTube ? 'Video title' : 'Post body'}</span>
+            {!isTikTok && (
+              <label className="field-label composer-body-field" inert={hasUncertainPost}>
+                <span className="composer-body-heading">
+                  <span>{isYouTube ? 'Video title' : 'Post body'}</span>
+                  <small>
+                    {isYouTube
+                      ? `${String(videoTitle.length)}/100`
+                      : includesMeta
+                        ? `${String(body.length)}/280 characters`
+                        : `${String(body.length)}/280 per X post`}
+                  </small>
+                </span>
+                {isYouTube ? (
+                  <input
+                    className="text-input"
+                    maxLength={100}
+                    value={videoTitle}
+                    onChange={(event) => {
+                      setVideoTitle(event.target.value);
+                    }}
+                  />
+                ) : (
+                  <textarea
+                    className="composer-body"
+                    maxLength={textLimit}
+                    value={body}
+                    onChange={(event) => {
+                      setBody(event.target.value);
+                    }}
+                    placeholder="What should your audience know?"
+                  />
+                )}
                 <small>
                   {isYouTube
                     ? `${String(videoTitle.length)}/100`
                     : includesMeta
-                      ? `${String(body.length)}/280 characters`
+                      ? 'Shared caption or message for each destination'
                       : `${String(body.length)}/280 per X post`}
                 </small>
-              </span>
-              {isYouTube ? (
-                <input
-                  className="text-input"
-                  maxLength={100}
-                  value={videoTitle}
-                  onChange={(event) => {
-                    setVideoTitle(event.target.value);
-                  }}
-                />
-              ) : (
-                <textarea
-                  className="composer-body"
-                  maxLength={textLimit}
-                  value={body}
-                  onChange={(event) => {
-                    setBody(event.target.value);
-                  }}
-                  placeholder="What should your audience know?"
-                />
-              )}
-              <small>
-                {isYouTube
-                  ? `${String(videoTitle.length)}/100`
-                  : includesMeta
-                    ? 'Shared caption or message for each destination'
-                    : `${String(body.length)}/280 per X post`}
-              </small>
-            </label>
+              </label>
+            )}
             {includesMeta && contentKind === 'link' && (
               <label className="field-label">
                 HTTPS link
@@ -1166,17 +1208,19 @@ function Composer({ onClose }: { onClose: () => void }) {
             <div className="media-dropzone" inert={hasUncertainPost}>
               <strong>Add media</strong>
               <span>
-                {isYouTube
-                  ? mediaFiles[0]
-                    ? mediaFiles[0].name
-                    : 'Choose exactly one MP4 video'
-                  : includesMeta && contentKind !== 'link'
-                    ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
-                    : isX
-                      ? 'Up to four images, or one GIF or MP4 video'
-                      : 'Select only X accounts or one YouTube channel to add media'}
+                {isTikTok
+                  ? (mediaFiles[0]?.name ?? 'Choose exactly one MP4 video')
+                  : isYouTube
+                    ? mediaFiles[0]
+                      ? mediaFiles[0].name
+                      : 'Choose exactly one MP4 video'
+                    : includesMeta && contentKind !== 'link'
+                      ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
+                      : isX
+                        ? 'Up to four images, or one GIF or MP4 video'
+                        : 'Select an account to add media'}
               </span>
-              {(isYouTube || isX || (includesMeta && contentKind !== 'link')) && (
+              {(isTikTok || isYouTube || isX || (includesMeta && contentKind !== 'link')) && (
                 <>
                   <label className="secondary-button" htmlFor="composer-media-upload">
                     Choose files
@@ -1186,7 +1230,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     className="sr-only"
                     type="file"
                     accept={
-                      isYouTube
+                      isTikTok || isYouTube
                         ? 'video/mp4'
                         : includesMeta
                           ? 'image/jpeg,image/png,image/webp,image/gif'
@@ -1201,16 +1245,17 @@ function Composer({ onClose }: { onClose: () => void }) {
                       }
                       const files = Array.from(event.target.files ?? []);
                       event.target.value = '';
-                      const allowed = isYouTube
-                        ? ['video/mp4']
-                        : includesMeta
-                          ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-                          : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
+                      const allowed =
+                        isTikTok || isYouTube
+                          ? ['video/mp4']
+                          : includesMeta
+                            ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+                            : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
                       if (files.some((file) => !allowed.includes(file.type))) {
                         setError('Choose a supported image, GIF, or MP4 file.');
                         return;
                       }
-                      if (isYouTube && files.length !== 1) {
+                      if ((isTikTok || isYouTube) && files.length !== 1) {
                         setError('Choose exactly one MP4 video.');
                         return;
                       }
@@ -1234,7 +1279,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                           (file) =>
                             file.size >
                             (file.type === 'video/mp4'
-                              ? isYouTube
+                              ? isYouTube || isTikTok
                                 ? 2048
                                 : 512
                               : file.type === 'image/gif'
@@ -1248,6 +1293,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                         return;
                       }
                       setError(null);
+                      if (isTikTok) {
+                        setImportedMedia([]);
+                      }
                       setMediaFiles(files);
                     }}
                   />
@@ -1270,7 +1318,51 @@ function Composer({ onClose }: { onClose: () => void }) {
                   </button>
                 </div>
               ))}
+              {importedMedia.map((item, index) => (
+                <div className="composer-media-attachment" key={item.id}>
+                  <span>
+                    Imported{' '}
+                    {item.mimeType === 'video/mp4'
+                      ? 'MP4 video'
+                      : item.mimeType?.startsWith('image/')
+                        ? 'image'
+                        : 'media'}{' '}
+                    {index + 1}
+                    {item.byteSize !== null
+                      ? item.byteSize < 1024 * 1024
+                        ? ` · ${String(Math.ceil(item.byteSize / 1024))} KB`
+                        : ` · ${String(Math.ceil(item.byteSize / 1024 / 1024))} MB`
+                      : ''}
+                    {item.durationMs !== null
+                      ? ` · ${String(Math.ceil(item.durationMs / 1000))} seconds`
+                      : ''}
+                  </span>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setImportedMedia((current) =>
+                        current.filter((media) => media.id !== item.id),
+                      );
+                    }}
+                  >
+                    Remove from post
+                  </button>
+                </div>
+              ))}
             </div>
+            {isTikTok && (
+              <TikTokComposerForm
+                key={selected[0]?.id}
+                accountId={selected[0]?.id ?? ''}
+                caption={body}
+                onCaptionChange={setBody}
+                video={mediaFiles[0] ?? null}
+                importedMedia={importedMedia}
+                scheduled={scheduled}
+                scheduledAt={scheduledAt}
+              />
+            )}
             {includesYouTube && !isYouTube && (
               <p className="inline-validation" role="alert">
                 YouTube videos must target exactly one YouTube channel.
@@ -1435,7 +1527,7 @@ function Composer({ onClose }: { onClose: () => void }) {
             {state === 'loading' && (
               <p className="inline-validation">Loading connected accounts before scheduling.</p>
             )}
-            {state === 'ready' && !isYouTube && !body.trim() && (
+            {state === 'ready' && !isYouTube && !isTikTok && !body.trim() && (
               <p className="inline-validation">Add post text before scheduling.</p>
             )}
             {state === 'ready' && body.trim() && selectedAccounts.length === 0 && (
@@ -1461,14 +1553,16 @@ function Composer({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 className="primary-button"
-                disabled={state === 'saving' || (invalid && !hasUncertainPost)}
+                disabled={isTikTok || state === 'saving' || (invalid && !hasUncertainPost)}
                 onClick={() => void submit()}
               >
-                {state === 'saving'
-                  ? 'Scheduling…'
-                  : hasUncertainPost
-                    ? 'Confirm previous request'
-                    : `Schedule ${String(selectedAccounts.length)} posts`}
+                {isTikTok
+                  ? 'TikTok scheduling unavailable'
+                  : state === 'saving'
+                    ? 'Scheduling…'
+                    : hasUncertainPost
+                      ? 'Confirm previous request'
+                      : `Schedule ${String(selectedAccounts.length)} posts`}
               </button>
             </footer>
           </>

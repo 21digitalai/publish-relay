@@ -950,7 +950,22 @@ describe('browser workflow PostgreSQL boundary', () => {
     });
     expect(hydrated.statusCode).toBe(200);
     expect(hydrated.json()).toEqual({
-      data: { id: draftId, label: 'Approved clip', mediaIds: [mediaId], postId: null },
+      data: {
+        id: draftId,
+        label: 'Approved clip',
+        mediaIds: [mediaId],
+        media: [
+          {
+            id: mediaId,
+            mimeType: 'image/jpeg',
+            byteSize: 10,
+            durationMs: null,
+            ready: true,
+            previewUrl: `/api/workflow/media/${mediaId}`,
+          },
+        ],
+        postId: null,
+      },
       error: null,
     });
 

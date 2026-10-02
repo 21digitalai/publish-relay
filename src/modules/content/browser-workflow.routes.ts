@@ -425,7 +425,21 @@ export function registerBrowserWorkflowRoutes(
     });
     if (!draft) return reply.code(404).send({ data: null, error: 'Draft was not found' });
     return reply.send({
-      data: { id: draft.id, label: draft.label, mediaIds: draft.mediaIds, postId: draft.postId },
+      data: {
+        id: draft.id,
+        label: draft.label,
+        mediaIds: draft.mediaIds,
+        postId: draft.postId,
+        media:
+          draft.media?.map((item) => ({
+            id: item.id,
+            mimeType: item.mimeType,
+            byteSize: item.byteSize,
+            durationMs: item.durationMs,
+            ready: item.state === 'ready',
+            previewUrl: item.state === 'ready' ? `/api/workflow/media/${item.id}` : null,
+          })) ?? [],
+      },
       error: null,
     });
   });

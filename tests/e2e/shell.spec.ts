@@ -472,7 +472,7 @@ test('hydrates an imported draft in the canonical composer on desktop and mobile
   await page.goto(path);
   await expect(page.getByRole('heading', { name: 'Create post' })).toBeVisible();
   await expect(page.getByText('Approved launch clip')).toBeVisible();
-  await expect(page.getByText('1 attached media item ready')).toBeVisible();
+  await expect(page.getByText('1 attached media item selected')).toBeVisible();
   await expect(page.locator('.composer-sheet')).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath('external-draft-desktop.png'),
@@ -522,7 +522,7 @@ test('keeps imported-draft scheduling disabled until hydration succeeds and afte
   const schedule = page.getByRole('button', { name: 'Schedule 2 posts' });
   await expect(schedule).toBeDisabled();
   releaseDraft?.();
-  await expect(page.getByText('1 attached media item ready')).toBeVisible();
+  await expect(page.getByText('1 attached media item selected')).toBeVisible();
   await expect(schedule).toBeEnabled();
 
   let postRequests = 0;

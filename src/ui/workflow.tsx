@@ -4,7 +4,7 @@ import { Rail } from './main.js';
 import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
-import { TikTokComposerForm } from './tiktok-composer.js';
+import { TikTokComposerForm, type ImportedDraftMedia } from './tiktok-composer.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
 type JobState =
@@ -488,7 +488,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [contentKind, setContentKind] = useState<ComposerContentKind>('text');
   const [linkUrl, setLinkUrl] = useState('');
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
-  const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
+  const [importedMedia, setImportedMedia] = useState<ImportedDraftMedia[]>([]);
+  const draftMediaIds = importedMedia.map((item) => item.id);
   const [draftState, setDraftState] = useState<'loading' | 'ready' | 'error'>(
     draftId ? 'loading' : 'ready',
   );
@@ -654,16 +655,33 @@ function Composer({ onClose }: { onClose: () => void }) {
     void fetch(`/api/workflow/drafts/${draftId}`)
       .then(async (response) => {
         const envelope = (await response.json()) as {
-          data?: { label: string | null; mediaIds: string[]; postId: string | null };
+          data?: {
+            label: string | null;
+            mediaIds: string[];
+            media?: ImportedDraftMedia[];
+            postId: string | null;
+          };
           error?: string | null;
         };
         if (!response.ok || !envelope.data)
           throw new Error(envelope.error ?? 'Draft could not be loaded.');
-        if (envelope.data.postId) throw new Error('This draft has already been scheduled.');
-        if (envelope.data.mediaIds.length === 0)
-          throw new Error('This draft has no attached media.');
-        setDraftLabel(envelope.data.label);
-        setDraftMediaIds(envelope.data.mediaIds);
+        const draft = envelope.data;
+        if (draft.postId) throw new Error('This draft has already been scheduled.');
+        if (draft.mediaIds.length === 0) throw new Error('This draft has no attached media.');
+        setDraftLabel(draft.label);
+        setImportedMedia(
+          draft.mediaIds.map(
+            (id) =>
+              draft.media?.find((item) => item.id === id) ?? {
+                id,
+                mimeType: null,
+                byteSize: null,
+                durationMs: null,
+                ready: false,
+                previewUrl: null,
+              },
+          ),
+        );
         setDraftState('ready');
       })
       .catch((reason: unknown) => {
@@ -1004,7 +1022,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                   {draftState === 'loading'
                     ? 'Loading attached media…'
                     : draftState === 'ready'
-                      ? `${String(draftMediaIds.length)} attached media item${draftMediaIds.length === 1 ? '' : 's'} ready`
+                      ? `${String(draftMediaIds.length)} attached media item${draftMediaIds.length === 1 ? '' : 's'} selected`
                       : 'Imported media unavailable'}
                 </span>
               </div>
@@ -1275,6 +1293,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                         return;
                       }
                       setError(null);
+                      if (isTikTok) {
+                        setImportedMedia([]);
+                      }
                       setMediaFiles(files);
                     }}
                   />
@@ -1297,6 +1318,36 @@ function Composer({ onClose }: { onClose: () => void }) {
                   </button>
                 </div>
               ))}
+              {importedMedia.map((item, index) => (
+                <div className="composer-media-attachment" key={item.id}>
+                  <span>
+                    Imported{' '}
+                    {item.mimeType === 'video/mp4'
+                      ? 'MP4 video'
+                      : item.mimeType?.startsWith('image/')
+                        ? 'image'
+                        : 'media'}{' '}
+                    {index + 1}
+                    {item.byteSize !== null
+                      ? ` · ${String(Math.ceil(item.byteSize / 1024 / 1024))} MB`
+                      : ''}
+                    {item.durationMs !== null
+                      ? ` · ${String(Math.ceil(item.durationMs / 1000))} seconds`
+                      : ''}
+                  </span>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setImportedMedia((current) =>
+                        current.filter((media) => media.id !== item.id),
+                      );
+                    }}
+                  >
+                    Remove from post
+                  </button>
+                </div>
+              ))}
             </div>
             {isTikTok && (
               <TikTokComposerForm
@@ -1305,7 +1356,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 caption={body}
                 onCaptionChange={setBody}
                 video={mediaFiles[0] ?? null}
-                draftMediaCount={draftMediaIds.length}
+                importedMedia={importedMedia}
                 scheduled={scheduled}
                 scheduledAt={scheduledAt}
               />

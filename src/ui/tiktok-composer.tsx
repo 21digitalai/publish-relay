@@ -21,12 +21,21 @@ const PRIVACY_LABELS: Record<string, string> = {
   SELF_ONLY: 'Only me',
 };
 
+export interface ImportedDraftMedia {
+  id: string;
+  mimeType: string | null;
+  byteSize: number | null;
+  durationMs: number | null;
+  ready: boolean;
+  previewUrl: string | null;
+}
+
 export function TikTokComposerForm({
   accountId,
   caption,
   onCaptionChange,
   video,
-  draftMediaCount,
+  importedMedia,
   scheduled,
   scheduledAt,
 }: {
@@ -34,7 +43,7 @@ export function TikTokComposerForm({
   caption: string;
   onCaptionChange: (value: string) => void;
   video: File | null;
-  draftMediaCount: number;
+  importedMedia: ImportedDraftMedia[];
   scheduled: boolean;
   scheduledAt: Date | undefined;
 }) {
@@ -121,11 +130,25 @@ export function TikTokComposerForm({
       (stitch && capability.stitchDisabled)),
   );
   const branded = commercial === 'branded' || commercial === 'both';
+  const importedVideo = !video && importedMedia.length === 1 ? importedMedia[0] : null;
+  const importedVideoReady = Boolean(
+    importedVideo?.ready &&
+    importedVideo.mimeType === 'video/mp4' &&
+    importedVideo.durationMs !== null &&
+    importedVideo.previewUrl,
+  );
+  const effectiveDuration = video
+    ? duration
+    : importedVideoReady && importedVideo && importedVideo.durationMs !== null
+      ? importedVideo.durationMs / 1000
+      : null;
   const videoTooLong = Boolean(
-    duration !== null && capability && duration > capability.maxVideoDurationSeconds,
+    effectiveDuration !== null &&
+    capability &&
+    effectiveDuration > capability.maxVideoDurationSeconds,
   );
   const videoLabel =
-    video?.name ?? (draftMediaCount ? 'Imported video (preview unavailable)' : 'No video selected');
+    video?.name ?? (importedVideoReady ? 'Imported MP4 video' : 'No video selected');
 
   return (
     <div className="tiktok-composer-options">
@@ -171,12 +194,12 @@ export function TikTokComposerForm({
       <div className="tiktok-video-preview">
         <strong>{videoLabel}</strong>
         <p>MP4 · maximum 2 GB Core upload size; account duration limit shown below.</p>
-        {previewUrl ? (
+        {previewUrl || importedVideoReady ? (
           <video
             controls
             playsInline
             preload="metadata"
-            src={previewUrl}
+            src={previewUrl ?? importedVideo?.previewUrl ?? undefined}
             onLoadedMetadata={(event) => {
               setDuration(event.currentTarget.duration);
             }}
@@ -188,14 +211,14 @@ export function TikTokComposerForm({
         ) : (
           <p>
             Preview unavailable
-            {draftMediaCount ? ' for imported media' : ' until a video is selected'}.
+            {' until a valid video is selected'}.
           </p>
         )}
         {capability && (
           <p>
-            {duration === null
+            {effectiveDuration === null
               ? 'Duration not available'
-              : `${String(Math.ceil(duration))} seconds`}{' '}
+              : `${String(Math.ceil(effectiveDuration))} seconds`}{' '}
             · Maximum {capability.maxVideoDurationSeconds} seconds for this account
           </p>
         )}
@@ -210,10 +233,22 @@ export function TikTokComposerForm({
             scheduling.
           </p>
         )}
-        {draftMediaCount > 1 && (
+        {importedMedia.length > 1 && (
           <p className="inline-validation" role="alert">
-            This draft has multiple media items; TikTok accepts one video. Remove the extra media
-            before scheduling.
+            This draft has multiple media items; TikTok accepts one video. Remove extra items below
+            or choose a replacement MP4.
+          </p>
+        )}
+        {importedVideo && !importedVideoReady && (
+          <p className="inline-validation" role="alert">
+            {!importedVideo.mimeType
+              ? 'The imported media type is unavailable.'
+              : importedVideo.mimeType !== 'video/mp4'
+                ? 'The imported item is not an MP4 video.'
+                : !importedVideo.ready
+                  ? 'The imported video is no longer available.'
+                  : 'The imported video has no verified duration or preview.'}{' '}
+            Remove it below or choose a replacement MP4.
           </p>
         )}
       </div>
@@ -342,7 +377,7 @@ export function TikTokComposerForm({
         <p>Account: {capability?.nickname ?? 'Waiting for current account options'}</p>
         <p>
           Video: {videoLabel}
-          {duration !== null ? ` · ${String(Math.ceil(duration))} seconds` : ''}
+          {effectiveDuration !== null ? ` · ${String(Math.ceil(effectiveDuration))} seconds` : ''}
         </p>
         <p>Caption: {caption || 'Not entered'}</p>
         <p>Visibility: {privacy ? (PRIVACY_LABELS[privacy] ?? privacy) : 'Not chosen'}</p>

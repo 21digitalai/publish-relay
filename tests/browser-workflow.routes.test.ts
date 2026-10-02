@@ -137,6 +137,16 @@ describe('browser workflow read contract', () => {
       id: draftId,
       label: 'Approved clip',
       mediaIds: ['00000000-0000-4000-8000-000000000821'],
+      media: [
+        {
+          id: '00000000-0000-4000-8000-000000000821',
+          mimeType: 'video/mp4',
+          byteSize: 1048576,
+          durationMs: 12000,
+          state: 'ready',
+          storageKey: 'must-not-leak',
+        },
+      ],
       postId: null,
       sourceActorId: 'must-not-leak',
     });
@@ -160,6 +170,16 @@ describe('browser workflow read contract', () => {
         id: draftId,
         label: 'Approved clip',
         mediaIds: ['00000000-0000-4000-8000-000000000821'],
+        media: [
+          {
+            id: '00000000-0000-4000-8000-000000000821',
+            mimeType: 'video/mp4',
+            byteSize: 1048576,
+            durationMs: 12000,
+            ready: true,
+            previewUrl: '/api/workflow/media/00000000-0000-4000-8000-000000000821',
+          },
+        ],
         postId: null,
       },
       error: null,

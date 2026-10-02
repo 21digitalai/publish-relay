@@ -1487,7 +1487,7 @@ test('dismisses the composer safely and restores its Create post trigger', async
   const dialog = page.getByRole('dialog', { name: 'Create post' });
 
   await trigger.click();
-  await dialog.getByText('Add media').click();
+  await dialog.getByText('Add media', { exact: true }).click();
   await expect(dialog).toBeVisible();
   if (testInfo.project.name === 'desktop') {
     await page.locator('.sheet-backdrop').click({ position: { x: 5, y: 5 } });

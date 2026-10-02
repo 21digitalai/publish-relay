@@ -1329,7 +1329,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                         : 'media'}{' '}
                     {index + 1}
                     {item.byteSize !== null
-                      ? ` · ${String(Math.ceil(item.byteSize / 1024 / 1024))} MB`
+                      ? item.byteSize < 1024 * 1024
+                        ? ` · ${String(Math.ceil(item.byteSize / 1024))} KB`
+                        : ` · ${String(Math.ceil(item.byteSize / 1024 / 1024))} MB`
                       : ''}
                     {item.durationMs !== null
                       ? ` · ${String(Math.ceil(item.durationMs / 1000))} seconds`

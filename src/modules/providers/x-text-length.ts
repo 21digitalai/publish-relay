@@ -8,6 +8,9 @@ function xPostTexts(content: Record<string, unknown>): string[] {
   if (kind !== 'thread') return typeof content.text === 'string' ? [content.text] : [];
   if (!Array.isArray(content.posts) || content.posts.length < 2)
     throw new Error('X thread requires at least two parts');
+  const hasObjectPart = content.posts.some((part: unknown) => typeof part !== 'string');
+  if (hasObjectPart && content.posts.some((part: unknown) => typeof part === 'string'))
+    throw new Error('X thread parts must use one consistent shape');
   return content.posts.map((part: unknown) => {
     if (typeof part === 'string') return part;
     if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string')

@@ -41,15 +41,33 @@ describe('X weighted post length', () => {
   it('validates every thread part, including object parts', () => {
     expect(() => {
       validateXPostLength(
-        { kind: 'thread', posts: ['First', { text: 'x'.repeat(281), mediaIds: [] }] },
+        {
+          kind: 'thread',
+          posts: [
+            { text: 'First', mediaIds: [] },
+            { text: 'x'.repeat(281), mediaIds: [] },
+          ],
+        },
         false,
       );
     }).toThrow(/limit is 280/);
     expect(() => {
       validateXPostLength(
-        { kind: 'thread', posts: ['First', { text: 'x'.repeat(281), mediaIds: [] }] },
+        {
+          kind: 'thread',
+          posts: [
+            { text: 'First', mediaIds: [] },
+            { text: 'x'.repeat(281), mediaIds: [] },
+          ],
+        },
         true,
       );
     }).not.toThrow();
+    expect(() => {
+      validateXPostLength(
+        { kind: 'thread', posts: ['First', { text: 'Second', mediaIds: [] }] },
+        true,
+      );
+    }).toThrow(/consistent shape/);
   });
 });

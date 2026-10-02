@@ -38,17 +38,33 @@ describe('destination-first publication contract', () => {
     ).toThrow();
   });
 
-  it('preserves X thread posts through destination-first normalization', () => {
-    const posts = ['Opening', { text: 'Closing', mediaIds: [] }];
-    const request = createPostRequestSchema.parse({
-      destination: { provider: 'x', providerAccountId: accountId },
-      content: { schemaVersion: 1, kind: 'thread', posts },
-      scheduledAt,
-    });
-    expect(normalizeCreatePostRequest(request).content).toMatchObject({
-      kind: 'thread',
-      posts,
-    });
+  it('preserves dispatchable X thread shapes and rejects mixed parts at admission', () => {
+    const destination = { provider: 'x', providerAccountId: accountId };
+    for (const posts of [
+      ['Opening', 'Closing'],
+      [
+        { text: 'Opening', mediaIds: [] },
+        { text: 'Closing', mediaIds: [] },
+      ],
+    ]) {
+      const request = createPostRequestSchema.parse({
+        destination,
+        content: { schemaVersion: 1, kind: 'thread', posts },
+        scheduledAt,
+      });
+      expect(normalizeCreatePostRequest(request).content).toMatchObject({ kind: 'thread', posts });
+    }
+    expect(
+      createPostRequestSchema.safeParse({
+        destination,
+        content: {
+          schemaVersion: 1,
+          kind: 'thread',
+          posts: ['Opening', { text: 'Closing', mediaIds: [] }],
+        },
+        scheduledAt,
+      }).success,
+    ).toBe(false);
   });
 
   it('does not reinterpret a malformed explicit target as legacy', () => {

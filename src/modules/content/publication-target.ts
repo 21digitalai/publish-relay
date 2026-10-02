@@ -20,6 +20,10 @@ const xContent = z.object({
   parts: z.array(z.unknown()).optional(),
   posts: z
     .array(z.union([z.string(), z.object({ text: z.string(), mediaIds: z.array(mediaId) })]))
+    .refine(
+      (posts) => posts.every((part) => typeof part === typeof posts[0]),
+      'X thread parts must use one consistent shape',
+    )
     .optional(),
   mediaIds: z.array(mediaId).max(10).default([]),
 });

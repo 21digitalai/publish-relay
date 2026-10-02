@@ -45,9 +45,11 @@ function parseCredential(value: string): XUserCredential {
 }
 
 function retryAfter(response: Response): number | undefined {
-  const seconds = Number(response.headers.get('retry-after'));
+  const retryAfterHeader = response.headers.get('retry-after');
+  const seconds = retryAfterHeader === null ? NaN : Number(retryAfterHeader);
   if (Number.isFinite(seconds) && seconds >= 0) return seconds;
-  const reset = Number(response.headers.get('x-rate-limit-reset'));
+  const resetHeader = response.headers.get('x-rate-limit-reset');
+  const reset = resetHeader === null ? NaN : Number(resetHeader);
   if (!Number.isFinite(reset)) return undefined;
   return Math.max(0, Math.ceil(reset - Date.now() / 1000));
 }

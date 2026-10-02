@@ -1,10 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
+import { eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 import { getBrowserJobDetail } from '../src/modules/content/post-read.repository.js';
+import { XHttpClient } from '../src/modules/providers/x-http-client.js';
+import { dispatchDueXJobs } from '../src/modules/providers/x-media-dispatch.service.js';
+import { encryptCredential } from '../src/modules/credentials/envelope.js';
+import { credentials } from '../src/database/schema.js';
 
 import {
   claimDueJobs,
@@ -81,6 +86,93 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('scheduler repository', () => {
+  it.each([
+    { status: 400, state: 'failed', code: 'validation', retrySeconds: null },
+    { status: 422, state: 'failed', code: 'validation', retrySeconds: null },
+    { status: 429, state: 'retry_wait', code: 'rate_limit', retrySeconds: 45 },
+    { status: 503, state: 'retry_wait', code: 'transient', retrySeconds: 30 },
+  ])(
+    'dispatches real X HTTP $status into a safe durable browser attempt',
+    async ({ status, state, code, retrySeconds }) => {
+      const now = new Date('2026-08-31T16:00:00Z');
+      const sentinel = 'private-provider-body-sentinel';
+      const keys = {
+        currentVersion: () => 'v1',
+        getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+      };
+      const encrypted = await encryptCredential(
+        Buffer.from(
+          JSON.stringify({
+            accessToken: 'token',
+            accessTokenSecret: 'secret',
+          }),
+        ),
+        keys,
+      );
+      await db
+        .update(credentials)
+        .set(encrypted)
+        .where(eq(credentials.id, '00000000-0000-4000-8000-000000000303'));
+      const fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ detail: sentinel, title: sentinel, errors: [{ message: sentinel }] }),
+            {
+              status,
+              ...(status === 429 ? { headers: { 'Retry-After': '45' } } : {}),
+            },
+          ),
+        );
+      const dispatched = await dispatchDueXJobs(
+        {
+          database: db,
+          keys,
+          source: { load: () => Promise.reject(new Error('Text-only job must not load media')) },
+          createClient: (credential) =>
+            new XHttpClient({
+              consumerKey: 'consumer',
+              consumerSecret: 'secret',
+              fetch,
+            }).bindCredential(credential),
+          workerId: 'publisher',
+          leaseMs: 30_000,
+        },
+        now,
+      );
+      expect(dispatched).toBe(1);
+      const stored = await database.query<{
+        state: string;
+        outcome: string;
+        redacted_error: string;
+        retry_at: Date | null;
+      }>(`SELECT job.state, attempt.outcome, attempt.redacted_error, attempt.retry_at
+      FROM publication_jobs job JOIN publication_attempts attempt ON attempt.job_id = job.id
+      WHERE job.id = '${jobId}'`);
+      expect(stored.rows[0]).toMatchObject({ state, outcome: code });
+      expect(stored.rows[0]?.redacted_error).toBe(
+        status === 400 || status === 422
+          ? 'X rejected this request. Check the post content and connected account.'
+          : status === 429
+            ? 'X rate limit reached. Retry after the provider limit resets.'
+            : 'X is temporarily unavailable.',
+      );
+      expect(stored.rows[0]?.retry_at ?? null).toEqual(
+        retrySeconds === null ? null : expect.any(Date),
+      );
+      if (retrySeconds !== null) {
+        const retryAt = stored.rows[0]?.retry_at;
+        if (!retryAt) throw new Error('Expected stored retry timestamp');
+        expect(new Date(retryAt).toISOString()).toBe(
+          new Date(now.getTime() + retrySeconds * 1000).toISOString(),
+        );
+      }
+      const detail = await getBrowserJobDetail(db, workspaceId, jobId);
+      expect(detail?.state).toBe(state);
+      expect(detail?.attempts[0]?.error).toBe(stored.rows[0]?.redacted_error);
+      expect(JSON.stringify({ stored: stored.rows, detail })).not.toContain(sentinel);
+    },
+  );
+
   it('atomically claims a due job only once until its lease expires', async () => {
     const now = new Date('2026-08-31T16:00:00Z');
     const [first, second] = await Promise.all([

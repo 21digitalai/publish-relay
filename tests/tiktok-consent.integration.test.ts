@@ -125,7 +125,7 @@ beforeEach(async () => {
       comment_disabled, duet_disabled, stitch_disabled, max_video_duration_seconds,
       fetched_at, expires_at)
       values ('${snapshotId}', '${workspaceId}', '${accountId}', '${connectionId}',
-      'subject-one', 1, 'One', '["SELF_ONLY", "PUBLIC_TO_EVERYONE"]',
+      'subject-one', 1, 'One', '["SELF_ONLY", "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS"]',
       false, true, true, 120, now() - interval '1 minute', now() + interval '14 minutes');
   `);
 });
@@ -466,6 +466,39 @@ describe('revision-bound TikTok consent', () => {
       issueTikTokPublicationConsent(db, {
         ...branded,
         brandedContentPolicyConfirmed: false,
+      }),
+    ).rejects.toThrow('invalid');
+    const friendsRevisionId = '00000000-0000-4000-8000-000000000304';
+    const friends = {
+      ...branded,
+      revisionId: friendsRevisionId,
+      options: { ...branded.options, privacyLevel: 'MUTUAL_FOLLOW_FRIENDS' as const },
+    };
+    await pg.exec(`insert into post_revisions (id, workspace_id, post_id, revision_number, content)
+      values ('${friendsRevisionId}', '${workspaceId}', '${postId}', 3, '${content(friends)}');
+      insert into revision_media (workspace_id, revision_id, media_id, position)
+      values ('${workspaceId}', '${friendsRevisionId}', '${mediaId}', 0);`);
+    const friendsReceipt = await issueTikTokPublicationConsent(db, friends);
+    expect(
+      (
+        await verifyTikTokPublicationConsent(db, {
+          workspaceId,
+          postId,
+          revisionId: friendsRevisionId,
+          accountId,
+          receiptId: friendsReceipt.id,
+          actor: { type: 'user', id: userId },
+        })
+      ).options.privacyLevel,
+    ).toBe('MUTUAL_FOLLOW_FRIENDS');
+    await expect(
+      verifyTikTokPublicationConsent(db, {
+        workspaceId,
+        postId,
+        revisionId: brandedRevisionId,
+        accountId,
+        receiptId: receipt.id,
+        actor: { type: 'user', id: userId },
       }),
     ).rejects.toThrow('invalid');
   });

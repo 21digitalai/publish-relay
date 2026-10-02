@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  brandedVisibilityAllowed,
+  commercialContentFlags,
+  TIKTOK_CAPTION_MAX_LENGTH,
+  type TikTokCommercialContent,
+} from './tiktok-publication-options.js';
 
 const API_ORIGIN = 'https://open.tiktokapis.com';
 const AUTHORIZE_ORIGIN = 'https://www.tiktok.com/v2/auth/authorize/';
@@ -103,8 +109,7 @@ export interface TikTokDirectPost {
   disableComment: boolean;
   disableDuet: boolean;
   disableStitch: boolean;
-  brandContent: boolean;
-  brandOrganic: boolean;
+  commercialContent: TikTokCommercialContent;
   isAiGenerated: boolean;
   videoUrl: string;
   coverTimestampMs?: number;
@@ -279,6 +284,11 @@ export class TikTokHttpClient {
     accessToken: string,
     input: TikTokDirectPost,
   ): Promise<{ publishId: string }> {
+    if (input.title.length > TIKTOK_CAPTION_MAX_LENGTH)
+      throw new Error('TikTok caption exceeds 2200 characters');
+    const { brandContent, brandOrganic } = commercialContentFlags(input.commercialContent);
+    if (brandContent && !brandedVisibilityAllowed(input.privacyLevel))
+      throw new Error('TikTok branded content requires public or friends visibility');
     const mediaUrl = new URL(input.videoUrl);
     if (mediaUrl.protocol !== 'https:' || mediaUrl.username || mediaUrl.password || mediaUrl.hash)
       throw new Error('TikTok pull URL must be HTTPS without credentials or fragment');
@@ -293,8 +303,8 @@ export class TikTokHttpClient {
             disable_comment: input.disableComment,
             disable_duet: input.disableDuet,
             disable_stitch: input.disableStitch,
-            brand_content_toggle: input.brandContent,
-            brand_organic_toggle: input.brandOrganic,
+            brand_content_toggle: brandContent,
+            brand_organic_toggle: brandOrganic,
             is_aigc: input.isAiGenerated,
             ...(input.coverTimestampMs === undefined
               ? {}

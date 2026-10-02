@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import type { DestinationProvider } from '../providers/contract.js';
+import {
+  TIKTOK_CAPTION_MAX_LENGTH,
+  tiktokCommercialContentSchema,
+} from '../providers/tiktok-publication-options.js';
 
 const accountId = z.uuid();
 const mediaId = z.uuid();
@@ -28,7 +32,7 @@ const youtubeContent = z.object({
 const tiktokContent = z.object({
   schemaVersion: version,
   kind: z.literal('video'),
-  caption: z.string(),
+  caption: z.string().max(TIKTOK_CAPTION_MAX_LENGTH),
   mediaId,
   options: z.object({
     privacyLevel: z.enum([
@@ -41,7 +45,7 @@ const tiktokContent = z.object({
     allowDuet: z.boolean(),
     allowStitch: z.boolean(),
     coverTimestampMs: z.number().int().nonnegative().optional(),
-    commercialContent: z.enum(['none', 'own_brand', 'branded', 'both']),
+    commercialContent: tiktokCommercialContentSchema,
     aiGenerated: z.boolean(),
   }),
   capabilitySnapshotId: accountId,

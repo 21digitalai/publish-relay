@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 
 import { DefaultsSelect } from './defaults-select.js';
+import {
+  brandedVisibilityAllowed,
+  commercialContentFromFlags,
+  TIKTOK_CAPTION_MAX_LENGTH,
+} from '../modules/providers/tiktok-publication-options.js';
 
 interface CapabilitySnapshot {
   id: string;
@@ -56,7 +61,9 @@ export function TikTokComposerForm({
   const [comment, setComment] = useState(false);
   const [duet, setDuet] = useState(false);
   const [stitch, setStitch] = useState(false);
-  const [commercial, setCommercial] = useState<'none' | 'own_brand' | 'branded' | 'both'>('none');
+  const [commercialEnabled, setCommercialEnabled] = useState(false);
+  const [ownBrand, setOwnBrand] = useState(false);
+  const [branded, setBranded] = useState(false);
   const [musicConfirmed, setMusicConfirmed] = useState(false);
   const [brandedConfirmed, setBrandedConfirmed] = useState(false);
   const [aiGenerated, setAiGenerated] = useState<'yes' | 'no' | ''>('');
@@ -129,7 +136,12 @@ export function TikTokComposerForm({
       (duet && capability.duetDisabled) ||
       (stitch && capability.stitchDisabled)),
   );
-  const branded = commercial === 'branded' || commercial === 'both';
+  const commercial = commercialEnabled ? commercialContentFromFlags(ownBrand, branded) : 'none';
+  const brandedVisibilityConflict = branded && privacy !== '' && !brandedVisibilityAllowed(privacy);
+  const brandedUnavailable = Boolean(
+    capability && !capability.privacyOptions.some(brandedVisibilityAllowed),
+  );
+  const captionTooLong = caption.length > TIKTOK_CAPTION_MAX_LENGTH;
   const importedVideo = !video && importedMedia.length === 1 ? importedMedia[0] : null;
   const importedVideoReady = Boolean(
     importedVideo?.ready &&
@@ -188,9 +200,17 @@ export function TikTokComposerForm({
             onCaptionChange(event.target.value);
           }}
           placeholder="Describe this video"
+          maxLength={TIKTOK_CAPTION_MAX_LENGTH}
         />
-        <small>TikTok's current caption limit is not yet available in this form.</small>
+        <small>
+          {caption.length} / {TIKTOK_CAPTION_MAX_LENGTH} characters
+        </small>
       </label>
+      {captionTooLong && (
+        <p className="inline-validation" role="alert">
+          TikTok captions cannot exceed 2200 characters.
+        </p>
+      )}
       <div className="tiktok-video-preview">
         <strong>{videoLabel}</strong>
         <p>MP4 · maximum 2 GB Core upload size; account duration limit shown below.</p>
@@ -306,24 +326,68 @@ export function TikTokComposerForm({
       </fieldset>
       <fieldset className="tiktok-options-group">
         <legend>Commercial content</legend>
-        <DefaultsSelect
-          label="Commercial content"
-          name="tiktok-commercial"
-          value={commercial}
-          options={[
-            ['none', 'No commercial content'],
-            ['own_brand', 'Own brand'],
-            ['branded', 'Branded content'],
-            ['both', 'Both'],
-          ]}
-          onChange={(value) => {
-            setCommercial(value as typeof commercial);
-          }}
-        />
-        {branded && privacy !== 'PUBLIC_TO_EVERYONE' && (
+        <label className="tiktok-choice">
+          <input
+            type="checkbox"
+            checked={commercialEnabled}
+            onChange={(event) => {
+              setCommercialEnabled(event.target.checked);
+              if (!event.target.checked) {
+                setOwnBrand(false);
+                setBranded(false);
+                setBrandedConfirmed(false);
+              }
+            }}
+          />
+          Commercial content
+        </label>
+        {commercialEnabled && (
+          <>
+            <p>Does this video promote yourself, a brand, product, or service?</p>
+            <label className="tiktok-choice">
+              <input
+                type="checkbox"
+                checked={ownBrand}
+                onChange={(event) => {
+                  setOwnBrand(event.target.checked);
+                }}
+              />
+              Your brand · promotes you or your business
+            </label>
+            <label className="tiktok-choice">
+              <input
+                type="checkbox"
+                checked={branded}
+                disabled={brandedUnavailable && !branded}
+                onChange={(event) => {
+                  setBranded(event.target.checked);
+                  if (!event.target.checked) setBrandedConfirmed(false);
+                }}
+              />
+              Branded content · promotes another brand or third party
+            </label>
+            {commercial === 'none' && (
+              <p className="inline-validation" role="alert">
+                Choose Your brand, Branded content, or both.
+              </p>
+            )}
+            {brandedUnavailable && (
+              <p className="inline-validation" role="alert">
+                Branded content is unavailable while this account offers only private visibility.
+              </p>
+            )}
+            {commercial !== 'none' && (
+              <p>
+                Your video will be labeled as {branded ? 'Paid partnership' : 'Promotional content'}
+                .
+              </p>
+            )}
+          </>
+        )}
+        {brandedVisibilityConflict && (
           <p className="inline-validation" role="alert">
-            Branded content requires public visibility. Choose Everyone; visibility will not change
-            automatically.
+            Branded content cannot use private visibility. Choose an available Everyone or Friends
+            option; we will not change visibility automatically.
           </p>
         )}
         <label className="tiktok-choice">
@@ -334,7 +398,7 @@ export function TikTokComposerForm({
               setMusicConfirmed(event.target.checked);
             }}
           />
-          I confirm music usage for this video
+          I confirm Music Usage Confirmation
         </label>
         {branded && (
           <label className="tiktok-choice">
@@ -345,11 +409,31 @@ export function TikTokComposerForm({
                 setBrandedConfirmed(event.target.checked);
               }}
             />
-            I confirm the branded content policy for this video
+            I confirm Branded Content Policy
           </label>
         )}
-        <p className="inline-validation">
-          Provider-approved declaration terms are not yet wired; confirmation is unavailable.
+        <p>
+          By posting, you agree to TikTok's{' '}
+          {branded && (
+            <>
+              <a
+                href="https://www.tiktok.com/legal/page/global/bc-policy/en"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Branded Content Policy
+              </a>{' '}
+              and{' '}
+            </>
+          )}
+          <a
+            href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Music Usage Confirmation
+          </a>
+          .
         </p>
       </fieldset>
       <fieldset className="tiktok-options-group">
@@ -387,8 +471,12 @@ export function TikTokComposerForm({
             'Off'}
         </p>
         <p>
-          Commercial: {commercial.replaceAll('_', ' ')} · AI-generated:{' '}
-          {aiGenerated || 'Not answered'}
+          Commercial:{' '}
+          {commercialEnabled
+            ? `${ownBrand ? 'Your brand' : ''}${ownBrand && branded ? ' + ' : ''}${branded ? 'Branded content' : ''}` ||
+              'Choose disclosure'
+            : 'Off'}{' '}
+          · AI-generated: {aiGenerated || 'Not answered'}
         </p>
         <p>
           Declarations: music {musicConfirmed ? 'checked' : 'unchecked'}

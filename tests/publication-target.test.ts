@@ -95,4 +95,47 @@ describe('destination-first publication contract', () => {
     });
     expect(normalizeCreatePostRequest(request).selectedDestination).toBe('tiktok');
   });
+
+  it('enforces the TikTok caption boundary at the API contract', () => {
+    const target = {
+      provider: 'tiktok' as const,
+      providerAccountId: accountId,
+      content: {
+        schemaVersion: 1 as const,
+        kind: 'video' as const,
+        caption: 'x'.repeat(2200),
+        mediaId,
+        options: {
+          privacyLevel: 'SELF_ONLY' as const,
+          allowComment: false,
+          allowDuet: false,
+          allowStitch: false,
+          commercialContent: 'none' as const,
+          aiGenerated: false,
+        },
+        capabilitySnapshotId: accountId,
+        consentReceiptId: mediaId,
+      },
+    };
+    expect(
+      createPostRequestSchema.safeParse({
+        destination: {
+          provider: target.provider,
+          providerAccountId: target.providerAccountId,
+        },
+        content: target.content,
+        scheduledAt,
+      }).success,
+    ).toBe(true);
+    expect(
+      createPostRequestSchema.safeParse({
+        destination: {
+          provider: target.provider,
+          providerAccountId: target.providerAccountId,
+        },
+        content: { ...target.content, caption: 'x'.repeat(2201) },
+        scheduledAt,
+      }).success,
+    ).toBe(false);
+  });
 });

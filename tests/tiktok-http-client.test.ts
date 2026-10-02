@@ -126,8 +126,7 @@ describe('TikTokHttpClient transport', () => {
         disableComment: false,
         disableDuet: true,
         disableStitch: true,
-        brandContent: false,
-        brandOrganic: false,
+        commercialContent: 'none',
         isAiGenerated: false,
         videoUrl: 'https://media.test/video',
       }),
@@ -167,8 +166,7 @@ describe('TikTokHttpClient transport', () => {
         disableComment: true,
         disableDuet: true,
         disableStitch: true,
-        brandContent: false,
-        brandOrganic: false,
+        commercialContent: 'none',
         isAiGenerated: false,
         videoUrl: 'https://media.test/video',
       }),
@@ -180,13 +178,71 @@ describe('TikTokHttpClient transport', () => {
         disableComment: true,
         disableDuet: true,
         disableStitch: true,
-        brandContent: false,
-        brandOrganic: false,
+        commercialContent: 'none',
         isAiGenerated: false,
         videoUrl: 'http://media.test/video',
       }),
     ).rejects.toThrow('HTTPS');
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('maps each per-video commercial choice to the exact Direct Post flags', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(response(ok({ publish_id: 'publish-1' }))));
+    const api = client(request);
+    for (const [commercialContent, brandOrganic, brandContent] of [
+      ['none', false, false],
+      ['own_brand', true, false],
+      ['branded', false, true],
+      ['both', true, true],
+    ] as const) {
+      await api.initDirectPost('token', {
+        title: 'caption',
+        privacyLevel: 'MUTUAL_FOLLOW_FRIENDS',
+        disableComment: false,
+        disableDuet: true,
+        disableStitch: true,
+        commercialContent,
+        isAiGenerated: true,
+        videoUrl: 'https://media.test/video',
+      });
+      const body = JSON.parse(bodyText(request.mock.lastCall?.[1]?.body)) as {
+        post_info: Record<string, unknown>;
+      };
+      expect(body.post_info).toMatchObject({
+        title: 'caption',
+        privacy_level: 'MUTUAL_FOLLOW_FRIENDS',
+        brand_organic_toggle: brandOrganic,
+        brand_content_toggle: brandContent,
+        is_aigc: true,
+      });
+    }
+    await expect(
+      api.initDirectPost('token', {
+        title: 'caption',
+        privacyLevel: 'SELF_ONLY',
+        disableComment: true,
+        disableDuet: true,
+        disableStitch: true,
+        commercialContent: 'branded',
+        isAiGenerated: false,
+        videoUrl: 'https://media.test/video',
+      }),
+    ).rejects.toThrow('public or friends');
+    await expect(
+      api.initDirectPost('token', {
+        title: 'x'.repeat(2201),
+        privacyLevel: 'SELF_ONLY',
+        disableComment: true,
+        disableDuet: true,
+        disableStitch: true,
+        commercialContent: 'none',
+        isAiGenerated: false,
+        videoUrl: 'https://media.test/video',
+      }),
+    ).rejects.toThrow('2200');
+    expect(request).toHaveBeenCalledTimes(4);
   });
 
   it('classifies provider errors, rate limit and redirects without leaking body or secrets', async () => {
@@ -237,8 +293,7 @@ describe('TikTokHttpClient transport', () => {
       disableComment: true,
       disableDuet: true,
       disableStitch: true,
-      brandContent: false,
-      brandOrganic: false,
+      commercialContent: 'none' as const,
       isAiGenerated: false,
       videoUrl: 'https://media.test/video',
     };

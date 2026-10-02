@@ -248,7 +248,9 @@ test('TikTok uses one explicit account, fresh options, and an unavailable final 
           id: '00000000-0000-4000-8000-000000000399',
           accountId,
           nickname: accountId === TIKTOK_ONE ? 'Fresh Creator One' : 'Fresh Creator Two',
-          privacyOptions: changedOptions ? ['SELF_ONLY'] : ['PUBLIC_TO_EVERYONE', 'SELF_ONLY'],
+          privacyOptions: changedOptions
+            ? ['SELF_ONLY']
+            : ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
           commentDisabled: false,
           duetDisabled: true,
           stitchDisabled: true,
@@ -275,6 +277,9 @@ test('TikTok uses one explicit account, fresh options, and an unavailable final 
   await expect(page.getByLabel('Stitch')).toBeDisabled();
   await expect(page.getByRole('radio', { name: 'Yes' })).not.toBeChecked();
   await expect(page.getByRole('radio', { name: 'No' })).not.toBeChecked();
+  await expect(
+    page.getByRole('checkbox', { name: 'Commercial content', exact: true }),
+  ).not.toBeChecked();
   await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
   await page.getByRole('button', { name: 'Visibility' }).click();
   await page.getByRole('option', { name: 'Everyone' }).click();
@@ -286,8 +291,31 @@ test('TikTok uses one explicit account, fresh options, and an unavailable final 
   await expect(page.locator('video[aria-label="Preview draft.mp4"]')).toBeVisible();
   await page.getByRole('textbox', { name: 'Caption' }).fill('A deliberate caption');
   await page.getByRole('radio', { name: 'Yes' }).check();
+  await expect(page.getByText('20 / 2200 characters')).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Commercial content', exact: true }).check();
+  await expect(page.getByText('Choose Your brand, Branded content, or both.')).toBeVisible();
+  await page.getByRole('checkbox', { name: /Your brand/ }).check();
+  await expect(page.getByText('Promotional content')).toBeVisible();
+  await page.getByRole('checkbox', { name: /Branded content ·/ }).check();
+  await expect(page.getByText('Paid partnership')).toBeVisible();
+  await page.getByRole('button', { name: 'Visibility' }).click();
+  await page.getByRole('option', { name: 'Only me' }).click();
+  await expect(page.getByText('Branded content cannot use private visibility.')).toBeVisible();
+  await page.getByRole('button', { name: 'Visibility' }).click();
+  await page.getByRole('option', { name: 'Friends' }).click();
+  await expect(page.getByText('Branded content cannot use private visibility.')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Music Usage Confirmation' })).toHaveAttribute(
+    'href',
+    'https://www.tiktok.com/legal/page/global/music-usage-confirmation/en',
+  );
+  await expect(page.getByRole('link', { name: 'Branded Content Policy' })).toHaveAttribute(
+    'href',
+    'https://www.tiktok.com/legal/page/global/bc-policy/en',
+  );
+  await page.getByRole('checkbox', { name: /Music Usage Confirmation/ }).check();
+  await page.getByRole('checkbox', { name: /Branded Content Policy/ }).check();
   await expect(page.getByRole('region', { name: 'Review TikTok publication' })).toContainText(
-    'A deliberate caption',
+    'Your brand + Branded content',
   );
   await page.screenshot({
     path: testInfo.outputPath('tiktok-composer-populated.png'),
@@ -302,6 +330,11 @@ test('TikTok uses one explicit account, fresh options, and an unavailable final 
   changedOptions = true;
   await page.getByRole('button', { name: 'Refresh TikTok options' }).click();
   await expect(page.getByText('This visibility is no longer available')).toBeVisible();
+  await expect(
+    page.getByText(
+      'Branded content is unavailable while this account offers only private visibility.',
+    ),
+  ).toBeVisible();
   await second.check();
   await expect(first).not.toBeChecked();
   await expect(page.getByText('Posting as')).toContainText('Fresh Creator Two');

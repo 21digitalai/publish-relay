@@ -5,6 +5,11 @@ import { z } from 'zod';
 
 import { auditEvents } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import {
+  brandedVisibilityAllowed,
+  TIKTOK_CAPTION_MAX_LENGTH,
+  tiktokCommercialContentSchema,
+} from './tiktok-publication-options.js';
 
 const privacySchema = z.enum([
   'PUBLIC_TO_EVERYONE',
@@ -18,13 +23,13 @@ const optionsSchema = z.strictObject({
   allowDuet: z.boolean(),
   allowStitch: z.boolean(),
   coverTimestampMs: z.number().int().nonnegative().optional(),
-  commercialContent: z.enum(['none', 'own_brand', 'branded', 'both']),
+  commercialContent: tiktokCommercialContentSchema,
   aiGenerated: z.boolean(),
 });
 const revisionContentSchema = z.object({
   schemaVersion: z.literal(1),
   kind: z.literal('video'),
-  caption: z.string(),
+  caption: z.string().max(TIKTOK_CAPTION_MAX_LENGTH),
   mediaId: z.uuid(),
   options: optionsSchema,
 });
@@ -56,7 +61,7 @@ const receiptPayloadSchema = tiktokConsentCommandSchema
     mediaId: z.uuid(),
     mediaSha256: z.string().regex(/^[0-9a-f]{64}$/),
     credentialVersion: z.number().int().positive(),
-    caption: z.string(),
+    caption: z.string().max(TIKTOK_CAPTION_MAX_LENGTH),
     musicUsageConfirmed: z.literal(true),
     declarationVersion: z.literal(1),
   });
@@ -220,7 +225,7 @@ function validateSource(
     input.options.commercialContent === 'branded' || input.options.commercialContent === 'both';
   if (
     branded &&
-    (input.options.privacyLevel !== 'PUBLIC_TO_EVERYONE' || !input.brandedContentPolicyConfirmed)
+    (!brandedVisibilityAllowed(input.options.privacyLevel) || !input.brandedContentPolicyConfirmed)
   )
     throw new TikTokConsentInvalidError();
   if (!branded && input.brandedContentPolicyConfirmed) throw new TikTokConsentInvalidError();

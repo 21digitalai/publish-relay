@@ -445,6 +445,7 @@ function OnboardingPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const workspaceLoadErrorReported = useRef(false);
   useEffect(() => {
     void fetch('/api/workspaces/current')
       .then(async (response) => {
@@ -460,7 +461,10 @@ function OnboardingPage() {
         setIsWorkspaceLoading(false);
       })
       .catch(() => {
-        setWorkspaceError('Could not load the workspace');
+        if (!workspaceLoadErrorReported.current) {
+          workspaceLoadErrorReported.current = true;
+          showAnalyticsError(setWorkspaceError, 'Could not load the workspace', 'auth', 'network');
+        }
         setIsWorkspaceLoading(false);
       });
   }, []);
@@ -614,7 +618,12 @@ function OnboardingPage() {
                       error: string | null;
                     };
                     if (!response.ok) {
-                      setWorkspaceError(result.error ?? 'Could not update the workspace');
+                      showAnalyticsError(
+                        setWorkspaceError,
+                        result.error ?? 'Could not update the workspace',
+                        'auth',
+                        'validation',
+                      );
                       setIsSaving(false);
                       return;
                     }
@@ -669,6 +678,7 @@ export function Rail({
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceQuery, setWorkspaceQuery] = useState('');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const workspaceListErrorReported = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [activeWorkspaceIndex, setActiveWorkspaceIndex] = useState(0);
@@ -694,7 +704,15 @@ export function Rail({
         setWorkspaces(result.data.workspaces);
       })
       .catch(() => {
-        setWorkspaceError('Workspaces could not be loaded');
+        if (!workspaceListErrorReported.current) {
+          workspaceListErrorReported.current = true;
+          showAnalyticsError(
+            setWorkspaceError,
+            'Workspaces could not be loaded',
+            'auth',
+            'network',
+          );
+        }
       });
   }, []);
   useEffect(() => {
@@ -729,7 +747,7 @@ export function Rail({
         window.location.href = `/w/${workspace.slug}/accounts`;
       })
       .catch(() => {
-        setWorkspaceError('Workspace could not be opened');
+        showAnalyticsError(setWorkspaceError, 'Workspace could not be opened', 'auth', 'unknown');
       });
   };
   const workspaceHref = (destination: string) =>
@@ -1736,6 +1754,7 @@ function SettingsPage() {
   const [grants, setGrants] = useState<DelegatedGrant[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [message, setMessage] = useState<string | null>(null);
+  const settingsLoadErrorReported = useRef(false);
   const [secret, setSecret] = useState<string | null>(null);
   const [preset, setPreset] = useState<keyof typeof KEY_PRESETS>('Publish');
   const [capabilities, setCapabilities] = useState<string[]>([...KEY_PRESETS.Publish]);
@@ -1791,7 +1810,15 @@ function SettingsPage() {
         setLoadState('ready');
       })
       .catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : 'Settings could not be loaded');
+        if (!settingsLoadErrorReported.current) {
+          settingsLoadErrorReported.current = true;
+          showAnalyticsError(
+            setMessage,
+            error instanceof Error ? error.message : 'Settings could not be loaded',
+            'auth',
+            'network',
+          );
+        }
         setLoadState('error');
       });
   }, [isAutomation, isIntegrations]);
@@ -1898,8 +1925,11 @@ function SettingsPage() {
         await loadApiKeys();
       } catch {
         setKeyListRefreshFailed(true);
-        setMessage(
+        showAnalyticsError(
+          setMessage,
           'API key created. Its secret is safe below, but the key list could not refresh.',
+          'auth',
+          'network',
         );
       }
     } finally {
@@ -1908,7 +1938,12 @@ function SettingsPage() {
   };
   const run = (action: () => Promise<void>) => {
     void action().catch((error: unknown) => {
-      setMessage(error instanceof Error ? error.message : 'Settings action failed');
+      showAnalyticsError(
+        setMessage,
+        error instanceof Error ? error.message : 'Settings action failed',
+        'auth',
+        'unknown',
+      );
     });
   };
   return (

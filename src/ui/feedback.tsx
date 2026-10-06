@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { emitAnalyticsAction } from './analytics-events.js';
+
 export function LiveRegion({ message }: { message: string | null }) {
   return (
     <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -94,6 +96,13 @@ export function PublicationToastStack({
   onDismiss: (id: string) => void;
 }) {
   const latest = toasts[0];
+  const reportedFailure = useRef<string | null>(null);
+  useEffect(() => {
+    if (latest?.state === 'failed' && reportedFailure.current !== latest.id) {
+      reportedFailure.current = latest.id;
+      emitAnalyticsAction('user_error_shown', { area: 'publishing', category: 'provider' });
+    }
+  }, [latest?.id, latest?.state]);
   return (
     <>
       <LiveRegion

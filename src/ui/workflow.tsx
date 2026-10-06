@@ -2313,6 +2313,20 @@ export function JobDetailPage() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isMutating, setIsMutating] = useState(false);
   const [mutationAnnouncement, setMutationAnnouncement] = useState<string | null>(null);
+  const reportedFailedJob = useRef<string | null>(null);
+  useEffect(() => {
+    if (job?.state === 'failed' && reportedFailedJob.current !== job.id) {
+      reportedFailedJob.current = job.id;
+      emitAnalyticsAction('user_error_shown', { area: 'publishing', category: 'provider' });
+    }
+  }, [job?.id, job?.state]);
+  const invalidEditTime = isEditingSchedule && matchingLocalInstants(editSchedule).length === 0;
+  const previousInvalidEditTime = useRef(false);
+  useEffect(() => {
+    if (invalidEditTime && !previousInvalidEditTime.current)
+      emitAnalyticsAction('user_error_shown', { area: 'scheduling', category: 'validation' });
+    previousInvalidEditTime.current = invalidEditTime;
+  }, [invalidEditTime]);
   useEffect(() => {
     const controller = new AbortController();
     void fetch(`/api/workflow/jobs/${encodeURIComponent(jobId)}`, { signal: controller.signal })

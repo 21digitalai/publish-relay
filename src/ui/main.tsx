@@ -225,6 +225,10 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     setIsSubmitting(false);
                   }
                 } catch (submissionError) {
+                  emitAnalyticsAction('user_error_shown', {
+                    area: 'auth',
+                    category: 'unknown',
+                  });
                   setError(
                     submissionError instanceof Error
                       ? submissionError.message
@@ -1305,6 +1309,10 @@ function AccountsPage() {
   const connectAdapter = (adapter: PostingAdapterConfig, accountId?: string) => {
     setActionError(null);
     void beginAdapterConnection(adapter, accountId).catch((error: unknown) => {
+      emitAnalyticsAction('user_error_shown', {
+        area: 'connection',
+        category: 'unknown',
+      });
       setActionError(
         error instanceof Error ? error.message : `Could not start ${adapter.label} connection`,
       );
@@ -1792,6 +1800,7 @@ function SettingsPage() {
       if (!response.ok || !result.data)
         throw new Error(result.error ?? 'Workspace could not be created');
       const createdWorkspace = result.data;
+      emitAnalyticsAction('workspace_created');
       setWorkspaces((current) => [...current, createdWorkspace]);
       setNewWorkspaceName('');
       setMessage('Workspace created');

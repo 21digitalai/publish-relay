@@ -909,6 +909,10 @@ function Composer({ onClose }: { onClose: () => void }) {
       });
     } catch (reason) {
       // An uncertain post response may have committed. Keep both media and post keys for safe replay.
+      emitAnalyticsAction('user_error_shown', {
+        area: 'scheduling',
+        category: 'unknown',
+      });
       if (
         postRequestStarted &&
         (postResponseStatus === null || postResponseStatus < 400 || postResponseStatus >= 500)

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
 import {
   brandedVisibilityAllowed,
@@ -70,9 +71,13 @@ export function TikTokComposerForm({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [previewError, setPreviewError] = useState(false);
+  const loadErrorReported = useRef<string | null>(null);
+  const previewErrorReported = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
+    const requestKey = `${accountId}:${String(refresh)}`;
+    if (loadErrorReported.current !== requestKey) loadErrorReported.current = null;
     setLoadState('loading');
     setLoadError(null);
     setCapability(null);
@@ -93,7 +98,12 @@ export function TikTokComposerForm({
       })
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return;
-        setLoadError(reason instanceof Error ? reason.message : 'TikTok options are unavailable.');
+        const message =
+          reason instanceof Error ? reason.message : 'TikTok options are unavailable.';
+        if (loadErrorReported.current !== requestKey) {
+          loadErrorReported.current = requestKey;
+          showAnalyticsError(setLoadError, message, 'composer', 'provider');
+        } else setLoadError(message);
         setLoadState('error');
       });
     return () => {
@@ -102,6 +112,7 @@ export function TikTokComposerForm({
   }, [accountId, refresh]);
 
   useEffect(() => {
+    previewErrorReported.current = false;
     if (!video) {
       setPreviewUrl(null);
       setDuration(null);
@@ -161,6 +172,31 @@ export function TikTokComposerForm({
   );
   const videoLabel =
     video?.name ?? (importedVideoReady ? 'Imported MP4 video' : 'No video selected');
+
+  const visibleValidation = {
+    expired,
+    captionTooLong,
+    videoTooLong,
+    multipleMedia: importedMedia.length > 1,
+    invalidImportedMedia: Boolean(importedVideo && !importedVideoReady),
+    privacyMissing,
+    interactionConflict,
+    commercialChoiceMissing: commercialEnabled && commercial === 'none',
+    brandedUnavailable,
+    brandedVisibilityConflict,
+  };
+  const previousValidation = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    for (const [name, visible] of Object.entries(visibleValidation)) {
+      if (visible && !previousValidation.current[name]) {
+        emitAnalyticsAction('user_error_shown', {
+          area: 'composer',
+          category: name === 'expired' || name === 'brandedUnavailable' ? 'provider' : 'validation',
+        });
+      }
+    }
+    previousValidation.current = visibleValidation;
+  });
 
   return (
     <div className="tiktok-composer-options">
@@ -224,6 +260,13 @@ export function TikTokComposerForm({
               setDuration(event.currentTarget.duration);
             }}
             onError={() => {
+              if (!previewErrorReported.current) {
+                previewErrorReported.current = true;
+                emitAnalyticsAction('user_error_shown', {
+                  area: 'composer',
+                  category: 'validation',
+                });
+              }
               setPreviewError(true);
             }}
             aria-label={`Preview ${videoLabel}`}

@@ -540,10 +540,13 @@ function OnboardingPage() {
                 onSelect={(adapter) => {
                   setWorkspaceError(null);
                   void beginAdapterConnection(adapter).catch((error: unknown) => {
-                    setWorkspaceError(
+                    showAnalyticsError(
+                      setWorkspaceError,
                       error instanceof Error
                         ? error.message
                         : `Could not start ${adapter.label} connection`,
+                      'connection',
+                      'provider',
                     );
                   });
                 }}
@@ -1184,6 +1187,13 @@ function AccountRow({
 function AccountsPage() {
   const oauthMismatch =
     new URLSearchParams(window.location.search).get('oauth') === 'linkedin-member-mismatch';
+  const oauthMismatchReported = useRef(false);
+  useEffect(() => {
+    if (oauthMismatch && !oauthMismatchReported.current) {
+      oauthMismatchReported.current = true;
+      emitAnalyticsAction('user_error_shown', { area: 'connection', category: 'provider' });
+    }
+  }, [oauthMismatch]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [adapterPickerOpen, setAdapterPickerOpen] = useState(false);
   const adapterDialogRef = useRef<HTMLElement>(null);

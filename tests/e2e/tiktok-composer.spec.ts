@@ -13,6 +13,14 @@ const IMPORTED_VIDEO = '00000000-0000-4000-8000-000000000306';
 test('imported TikTok media is identified, removable, and replaceable on desktop and mobile', async ({
   page,
 }, testInfo) => {
+  await page.addInitScript(() => {
+    const scope = window as typeof window & { __relayErrorHooks: unknown[] };
+    scope.__relayErrorHooks = [];
+    window.addEventListener('publish-relay-analytics', (event) => {
+      const detail = (event as CustomEvent<{ type: string }>).detail;
+      if (detail.type === 'user_error_shown') scope.__relayErrorHooks.push(detail);
+    });
+  });
   const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
   const registration = await page.request.post('/api/auth/register', {
     data: {
@@ -121,6 +129,22 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
   await expect(page.getByText('Imported image 1')).toHaveCount(0);
   await expect(page.getByText('Imported MP4 video', { exact: true })).toBeVisible();
   await expect(page.locator('video[aria-label="Preview Imported MP4 video"]')).toBeVisible();
+  const hooksBeforePreviewError = await page.evaluate(
+    () => (window as typeof window & { __relayErrorHooks: unknown[] }).__relayErrorHooks.length,
+  );
+  await page.locator('video[aria-label="Preview Imported MP4 video"]').evaluate((element) => {
+    element.dispatchEvent(new Event('error'));
+    element.dispatchEvent(new Event('error'));
+  });
+  await expect(page.getByText('This video preview or metadata could not be loaded')).toBeVisible();
+  const hooksAfterPreviewError = await page.evaluate(
+    () => (window as typeof window & { __relayErrorHooks: unknown[] }).__relayErrorHooks,
+  );
+  expect(hooksAfterPreviewError).toHaveLength(hooksBeforePreviewError + 1);
+  expect(hooksAfterPreviewError.at(-1)).toEqual({
+    type: 'user_error_shown',
+    properties: { area: 'composer', category: 'validation' },
+  });
   await expect
     .poll(() =>
       page
@@ -352,6 +376,14 @@ test('TikTok uses one explicit account, fresh options, and an unavailable final 
 test('TikTok creator failure and expiry remain visible and recoverable without posting', async ({
   page,
 }) => {
+  await page.addInitScript(() => {
+    const scope = window as typeof window & { __relayErrorHooks: unknown[] };
+    scope.__relayErrorHooks = [];
+    window.addEventListener('publish-relay-analytics', (event) => {
+      const detail = (event as CustomEvent<{ type: string }>).detail;
+      if (detail.type === 'user_error_shown') scope.__relayErrorHooks.push(detail);
+    });
+  });
   const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
   const registration = await page.request.post('/api/auth/register', {
     data: {
@@ -421,10 +453,25 @@ test('TikTok creator failure and expiry remain visible and recoverable without p
   await page.keyboard.press('Space');
   await expect(account).toBeChecked();
   await expect(page.getByRole('alert')).toContainText('TikTok options could not be refreshed');
+  const hooksAfterFailure = await page.evaluate(
+    () => (window as typeof window & { __relayErrorHooks: unknown[] }).__relayErrorHooks,
+  );
+  expect(hooksAfterFailure).toContainEqual({
+    type: 'user_error_shown',
+    properties: { area: 'composer', category: 'provider' },
+  });
   await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
   failed = false;
   await page.getByRole('button', { name: 'Refresh TikTok options' }).click();
   await expect(page.getByText('TikTok options expired')).toBeVisible();
+  const hooksAfterExpiry = await page.evaluate(
+    () => (window as typeof window & { __relayErrorHooks: unknown[] }).__relayErrorHooks,
+  );
+  expect(hooksAfterExpiry).toHaveLength(hooksAfterFailure.length + 2);
+  expect(hooksAfterExpiry.at(-1)).toEqual({
+    type: 'user_error_shown',
+    properties: { area: 'composer', category: 'provider' },
+  });
   await expect(page.getByRole('button', { name: 'Visibility' })).toContainText('Choose visibility');
   await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
 });

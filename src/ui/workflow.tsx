@@ -672,6 +672,25 @@ function Composer({ onClose }: { onClose: () => void }) {
     state !== 'ready' ||
     draftState !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
+  const validationAlerts = {
+    unsupportedShape: selected.length > 0 && !isYouTube && !isTikTok && allowedKinds.length === 0,
+    bodyTooLong: includesX && bodyTooLong,
+    mixedYouTube: includesYouTube && !isYouTube,
+    linkedInExpiry: linkedinExpiresBeforeDispatch,
+    scheduleError: Boolean(scheduleError),
+  };
+  const previousValidationAlerts = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    for (const [name, visible] of Object.entries(validationAlerts)) {
+      if (visible && !previousValidationAlerts.current[name]) {
+        emitAnalyticsAction('user_error_shown', {
+          area: name === 'scheduleError' ? 'scheduling' : 'composer',
+          category: name === 'linkedInExpiry' ? 'provider' : 'validation',
+        });
+      }
+    }
+    previousValidationAlerts.current = validationAlerts;
+  });
   const formSnapshot = JSON.stringify({
     body,
     contentKind,

@@ -1047,6 +1047,7 @@ test('recovers the composer account gate after a failed account load', async ({ 
 test('shows LinkedIn expiry and prevents scheduling after the token lifetime', async ({
   page,
 }, testInfo) => {
+  await watchErrorHooks(page);
   await establishWorkspaceSession(page);
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
   await page.route('**/api/provider-accounts', (route) =>
@@ -1103,6 +1104,11 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
   );
   await page.getByRole('button', { name: 'Reconnect Member One' }).click();
   await expect(page.getByText('Reconnect is temporarily unavailable')).toBeVisible();
+  expect(
+    (await errorHooks(page)).filter((event) => event.properties.area === 'connection'),
+  ).toEqual([
+    { type: 'user_error_shown', properties: { area: 'connection', category: 'provider' } },
+  ]);
   if (testInfo.project.name === 'mobile')
     await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: 'Create post' }).click();
@@ -1115,6 +1121,9 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
       'LinkedIn access expires before this post. Reconnect the account or choose an earlier time.',
     ),
   ).toBeVisible();
+  expect((await errorHooks(page)).filter((event) => event.properties.area === 'composer')).toEqual([
+    { type: 'user_error_shown', properties: { area: 'composer', category: 'provider' } },
+  ]);
   await expect(page.getByRole('button', { name: /Schedule 1 post/ })).toBeDisabled();
   await expect(page.locator('.composer-body')).toHaveAttribute('maxlength', '3000');
   await expect(page.getByText('Choose files')).toHaveCount(0);
@@ -1172,6 +1181,21 @@ test('LinkedIn reconnect sends selected account and explains member mismatch', a
     page.getByRole('alert').filter({ hasText: 'A different LinkedIn member signed in' }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
+});
+
+test('LinkedIn health failure emits one anonymous connection error', async ({ page }) => {
+  await watchErrorHooks(page);
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({ status: 503, body: '{"data":null,"error":"private detail"}' }),
+  );
+  await page.goto(await workspacePath(page, 'queue'));
+  await expect(page.getByText('LinkedIn connection health could not be loaded.')).toBeVisible();
+  expect(
+    (await errorHooks(page)).filter((event) => event.properties.area === 'connection'),
+  ).toEqual([
+    { type: 'user_error_shown', properties: { area: 'connection', category: 'network' } },
+  ]);
 });
 
 test('uses the mobile navigation drawer', async ({ page }) => {

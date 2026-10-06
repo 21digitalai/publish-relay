@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { showAnalyticsError } from './analytics-events.js';
 import { linkedInExpiryWarning, type LinkedInAccount } from './linkedin-expiry.js';
 import { beginAdapterConnection } from './posting-adapter-connection.js';
 import { getPostingAdapter } from './posting-adapter-registry.js';
@@ -9,6 +10,7 @@ export function LinkedInExpiryNotice() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const healthErrorReported = useRef(false);
   useEffect(() => {
     let active = true;
     void fetch('/api/provider-accounts')
@@ -22,7 +24,15 @@ export function LinkedInExpiryNotice() {
         if (active) setAccounts(data.accounts.filter((account) => account.provider === 'linkedin'));
       })
       .catch(() => {
-        if (active) setError('LinkedIn connection health could not be loaded.');
+        if (active && !healthErrorReported.current) {
+          healthErrorReported.current = true;
+          showAnalyticsError(
+            setError,
+            'LinkedIn connection health could not be loaded.',
+            'connection',
+            'network',
+          );
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -52,10 +62,13 @@ export function LinkedInExpiryNotice() {
               setConnecting(account.id);
               setError(null);
               void beginAdapterConnection(adapter).catch((connectionError: unknown) => {
-                setError(
+                showAnalyticsError(
+                  setError,
                   connectionError instanceof Error
                     ? connectionError.message
                     : 'LinkedIn reconnect could not start.',
+                  'connection',
+                  'provider',
                 );
                 setConnecting(null);
               });

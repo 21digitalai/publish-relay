@@ -6,6 +6,9 @@ export type AnalyticsAction =
   | 'composer_opened'
   | 'user_error_shown';
 
+export type AnalyticsErrorArea = 'auth' | 'connection' | 'composer' | 'scheduling' | 'publishing';
+export type AnalyticsErrorCategory = 'validation' | 'network' | 'provider' | 'unknown';
+
 export function emitAnalyticsAction(
   type: AnalyticsAction,
   properties: { provider?: string; area?: string; category?: string } = {},
@@ -15,4 +18,15 @@ export function emitAnalyticsAction(
       detail: { type, properties },
     }),
   );
+}
+
+// Call at the visible error transition, never during render or state updater replay.
+export function showAnalyticsError(
+  setMessage: (message: string) => void,
+  message: string,
+  area: AnalyticsErrorArea,
+  category: AnalyticsErrorCategory,
+): void {
+  emitAnalyticsAction('user_error_shown', { area, category });
+  setMessage(message);
 }

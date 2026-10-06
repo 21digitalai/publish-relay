@@ -1,6 +1,28 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+interface ErrorHook {
+  type: string;
+  properties: { area: string; category: string };
+}
+
+async function watchErrorHooks(page: Page) {
+  await page.addInitScript(() => {
+    const scope = window as typeof window & { __relayErrorHooks: ErrorHook[] };
+    scope.__relayErrorHooks = [];
+    window.addEventListener('publish-relay-analytics', (event) => {
+      const detail = (event as CustomEvent<ErrorHook>).detail;
+      if (detail.type === 'user_error_shown') scope.__relayErrorHooks.push(detail);
+    });
+  });
+}
+
+async function errorHooks(page: Page): Promise<ErrorHook[]> {
+  return page.evaluate(
+    () => (window as typeof window & { __relayErrorHooks: ErrorHook[] }).__relayErrorHooks,
+  );
+}
+
 async function establishWorkspaceSession(page: Page) {
   const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
   const response = await page.request.post('/api/auth/register', {
@@ -420,6 +442,7 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
 test('renders the login surface and reports an inline authentication error', async ({
   page,
 }, testInfo) => {
+  await watchErrorHooks(page);
   await page.route('**/api/auth/login', (route) =>
     route.fulfill({
       status: 401,
@@ -433,6 +456,9 @@ test('renders the login surface and reports an inline authentication error', asy
   await page.getByLabel('Password').fill('incorrect-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+  expect(await errorHooks(page)).toEqual([
+    { type: 'user_error_shown', properties: { area: 'auth', category: 'unknown' } },
+  ]);
   await page.screenshot({ path: testInfo.outputPath('auth-error.png'), fullPage: true });
 });
 
@@ -1100,6 +1126,7 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
 });
 
 test('LinkedIn reconnect sends selected account and explains member mismatch', async ({ page }) => {
+  await watchErrorHooks(page);
   await establishWorkspaceSession(page);
   const accountId = '00000000-0000-4000-8000-000000000299';
   await page.route('**/api/provider-accounts', (route) =>
@@ -1134,6 +1161,11 @@ test('LinkedIn reconnect sends selected account and explains member mismatch', a
   await page.goto(await workspacePath(page, 'accounts'));
   await page.getByRole('button', { name: 'Reconnect' }).click();
   await expect(page.getByText('Reconnect unavailable')).toBeVisible();
+  expect(
+    (await errorHooks(page)).filter((event) => event.properties.area === 'connection'),
+  ).toEqual([
+    { type: 'user_error_shown', properties: { area: 'connection', category: 'unknown' } },
+  ]);
   expect(reconnectBody).toEqual({ accountId });
   await page.goto('/app?oauth=linkedin-member-mismatch');
   await expect(
@@ -1253,6 +1285,7 @@ test('keeps the current session valid after a hidden invalid workspace switch', 
 test('renders queue, composer, calendar modes, and safe job recovery', async ({
   page,
 }, testInfo) => {
+  await watchErrorHooks(page);
   await page.clock.setFixedTime(new Date('2026-09-01T05:00:00.000Z'));
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
@@ -1503,6 +1536,11 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.screenshot({ path: testInfo.outputPath('job-retry-confirm.png'), fullPage: true });
   await page.getByRole('button', { name: 'Retry safely' }).click();
   await expect(page.getByText('Retry service unavailable', { exact: true })).toBeVisible();
+  expect(
+    (await errorHooks(page)).filter((event) => event.properties.area === 'publishing'),
+  ).toEqual([
+    { type: 'user_error_shown', properties: { area: 'publishing', category: 'unknown' } },
+  ]);
   await expect(page.getByRole('status')).toContainText('Retry failed: Retry service unavailable');
   await page.getByRole('button', { name: 'Retry now' }).click();
   await page.getByRole('button', { name: 'Retry safely' }).click();
@@ -1520,6 +1558,11 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.screenshot({ path: testInfo.outputPath('job-cancel-confirm.png'), fullPage: true });
   await page.getByRole('button', { name: 'Cancel job', exact: true }).last().click();
   await expect(page.getByText('Cancel service unavailable', { exact: true })).toBeVisible();
+  expect(
+    (await errorHooks(page)).filter((event) => event.properties.area === 'publishing'),
+  ).toEqual([
+    { type: 'user_error_shown', properties: { area: 'publishing', category: 'unknown' } },
+  ]);
   await expect(page.getByRole('status')).toContainText(
     'Cancellation failed: Cancel service unavailable',
   );
@@ -1845,6 +1888,7 @@ for (const viewport of [
 test('uses consistent workspace actions and readable X composer fields', async ({
   page,
 }, testInfo) => {
+  await watchErrorHooks(page);
   await establishWorkspaceSession(page);
   await page.goto(await workspacePath(page, 'settings/workspace'));
   const save = page.getByRole('button', { name: 'Save workspace' });
@@ -1858,6 +1902,20 @@ test('uses consistent workspace actions and readable X composer fields', async (
   await mockConnectedAccounts(page);
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByRole('checkbox', { name: /Instagram · Avery Studio/ }).uncheck();
+  await page
+    .getByRole('dialog', { name: 'Create post' })
+    .getByText('Add media', { exact: true })
+    .click();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'unsupported.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('invalid'),
+  });
+  await expect(page.getByRole('alert')).toContainText('Choose a supported image');
+  expect((await errorHooks(page)).filter((event) => event.properties.area === 'composer')).toEqual([
+    { type: 'user_error_shown', properties: { area: 'composer', category: 'validation' } },
+  ]);
   const body = page.getByPlaceholder('What should your audience know?');
   await expect(body).toHaveCSS('display', 'block');
   await expect(page.locator('.composer-body-heading')).toContainText('Post body');
@@ -2766,6 +2824,7 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
 });
 
 test('edits a scheduled job through the canonical browser revision route', async ({ page }) => {
+  await watchErrorHooks(page);
   await establishWorkspaceSession(page);
   let revisionPayload: Record<string, unknown> | null = null;
   const revisionKeys: string[] = [];
@@ -2809,6 +2868,11 @@ test('edits a scheduled job through the canonical browser revision route', async
   await page.getByLabel('Date and time').fill('2027-09-02T10:15');
   await page.getByRole('button', { name: 'Update schedule' }).click();
   await expect(page.getByRole('alert')).toContainText('Revision response interrupted');
+  expect(
+    (await errorHooks(page)).filter((event) => event.properties.area === 'scheduling'),
+  ).toEqual([
+    { type: 'user_error_shown', properties: { area: 'scheduling', category: 'unknown' } },
+  ]);
   await page.getByRole('button', { name: 'Update schedule' }).click();
   await expect(page.getByRole('dialog', { name: 'Edit publishing time' })).toBeHidden();
   expect(revisionKeys).toHaveLength(2);

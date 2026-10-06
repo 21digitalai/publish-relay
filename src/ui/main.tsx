@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
-import { emitAnalyticsAction } from './analytics-events.js';
+import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
@@ -225,14 +225,13 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     setIsSubmitting(false);
                   }
                 } catch (submissionError) {
-                  emitAnalyticsAction('user_error_shown', {
-                    area: 'auth',
-                    category: 'unknown',
-                  });
-                  setError(
+                  showAnalyticsError(
+                    setError,
                     submissionError instanceof Error
                       ? submissionError.message
                       : 'Authentication failed',
+                    'auth',
+                    'unknown',
                   );
                   setIsSubmitting(false);
                 }
@@ -346,7 +345,12 @@ function ConsentPage() {
         setRequest(result.data);
       })
       .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : 'Connection request is invalid');
+        showAnalyticsError(
+          setError,
+          reason instanceof Error ? reason.message : 'Connection request is invalid',
+          'connection',
+          'validation',
+        );
       });
   }, []);
   const approve = async () => {
@@ -370,7 +374,12 @@ function ConsentPage() {
       if (!response.ok || !result.data) throw new Error('Connection approval failed');
       window.location.href = result.data.authorizationRedirect;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Connection approval failed');
+      showAnalyticsError(
+        setError,
+        reason instanceof Error ? reason.message : 'Connection approval failed',
+        'connection',
+        'unknown',
+      );
       setIsApproving(false);
     }
   };
@@ -1024,8 +1033,11 @@ function AccountRow({
                   setXLongPostsAnnouncement(`Long-post setting saved for ${account.name}.`);
                 })
                 .catch((error: unknown) => {
-                  setXLongPostsError(
+                  showAnalyticsError(
+                    setXLongPostsError,
                     error instanceof Error ? error.message : 'X account setting could not be saved',
+                    'connection',
+                    'unknown',
                   );
                 })
                 .finally(() => {
@@ -1082,8 +1094,11 @@ function AccountRow({
                 setDefaultsAnnouncement(`Publishing defaults saved for ${account.name}.`);
               })
               .catch((error: unknown) => {
-                setDefaultsError(
+                showAnalyticsError(
+                  setDefaultsError,
                   error instanceof Error ? error.message : 'Defaults could not be saved',
+                  'connection',
+                  'unknown',
                 );
               })
               .finally(() => {
@@ -1253,7 +1268,12 @@ function AccountsPage() {
         setLoadState('ready');
       })
       .catch((error: unknown) => {
-        setActionError(error instanceof Error ? error.message : 'Accounts could not be loaded');
+        showAnalyticsError(
+          setActionError,
+          error instanceof Error ? error.message : 'Accounts could not be loaded',
+          'connection',
+          'network',
+        );
         setLoadState('error');
       });
   }, []);
@@ -1309,12 +1329,11 @@ function AccountsPage() {
   const connectAdapter = (adapter: PostingAdapterConfig, accountId?: string) => {
     setActionError(null);
     void beginAdapterConnection(adapter, accountId).catch((error: unknown) => {
-      emitAnalyticsAction('user_error_shown', {
-        area: 'connection',
-        category: 'unknown',
-      });
-      setActionError(
+      showAnalyticsError(
+        setActionError,
         error instanceof Error ? error.message : `Could not start ${adapter.label} connection`,
+        'connection',
+        'unknown',
       );
     });
   };
@@ -1499,8 +1518,11 @@ function AccountsPage() {
                           const adapter = getPostingAdapter(account.provider);
                           if (adapter) connectAdapter(adapter, account.id);
                           else
-                            setActionError(
+                            showAnalyticsError(
+                              setActionError,
                               `No connection flow is available for ${account.provider}`,
+                              'connection',
+                              'validation',
                             );
                         }}
                         onDefaultsSaved={(updated) => {
@@ -1640,8 +1662,11 @@ function AccountsPage() {
                     })
                     .catch((error: unknown) => {
                       setDisconnecting(null);
-                      setActionError(
+                      showAnalyticsError(
+                        setActionError,
                         error instanceof Error ? error.message : 'Could not disconnect account',
+                        'connection',
+                        'unknown',
                       );
                     });
                 }}

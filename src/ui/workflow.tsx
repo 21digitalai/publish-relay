@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { emitAnalyticsAction } from './analytics-events.js';
+import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 
 import {
   weightedXPostLength,
@@ -117,6 +117,7 @@ function useVisiblePublicationJobs(errorMessage: string) {
     const controller = new AbortController();
     let previous: Map<string, JobState> | null = null;
     let busy = false;
+    let loadFailureShown = false;
     const refresh = async () => {
       if (document.hidden || busy) return;
       busy = true;
@@ -137,6 +138,7 @@ function useVisiblePublicationJobs(errorMessage: string) {
         previous = new Map(current.map((job) => [job.id, job.state]));
         setJobs(current);
         setLoadError(null);
+        loadFailureShown = false;
         for (const job of changed.slice(0, 3)) {
           let externalUrl: string | null | undefined;
           if (job.state === 'published') {
@@ -165,7 +167,15 @@ function useVisiblePublicationJobs(errorMessage: string) {
         }
       } catch (error) {
         if (controller.signal.aborted) return;
-        if (previous === null) setLoadError(error instanceof Error ? error.message : errorMessage);
+        if (previous === null && !loadFailureShown) {
+          showAnalyticsError(
+            setLoadError,
+            error instanceof Error ? error.message : errorMessage,
+            'publishing',
+            'network',
+          );
+          loadFailureShown = true;
+        }
       } finally {
         busy = false;
       }
@@ -557,13 +567,22 @@ function Composer({ onClose }: { onClose: () => void }) {
   const closeComposer = async () => {
     if (state === 'saving') return;
     if (uncertainPost.current) {
-      setError(
+      showAnalyticsError(
+        setError,
         'The previous schedule request has an uncertain outcome. Retry it unchanged before closing.',
+        'scheduling',
+        'validation',
       );
       return;
     }
     if (await discardUpload()) onClose();
-    else setError('Uploaded media is still being cleaned up. Try closing again.');
+    else
+      showAnalyticsError(
+        setError,
+        'Uploaded media is still being cleaned up. Try closing again.',
+        'composer',
+        'unknown',
+      );
   };
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -707,7 +726,12 @@ function Composer({ onClose }: { onClose: () => void }) {
       })
       .catch((reason: unknown) => {
         setDraftState('error');
-        setError(reason instanceof Error ? reason.message : 'Draft could not be loaded.');
+        showAnalyticsError(
+          setError,
+          reason instanceof Error ? reason.message : 'Draft could not be loaded.',
+          'composer',
+          'network',
+        );
       });
   }, [draftId]);
   useEffect(() => {
@@ -742,8 +766,11 @@ function Composer({ onClose }: { onClose: () => void }) {
         setState('ready');
       })
       .catch((reason: unknown) => {
-        setError(
+        showAnalyticsError(
+          setError,
           reason instanceof Error ? reason.message : 'Connected accounts could not be loaded.',
+          'composer',
+          'network',
         );
         setAccountLoadState('error');
       });
@@ -798,8 +825,11 @@ function Composer({ onClose }: { onClose: () => void }) {
         pending.files.length !== mediaFiles.length ||
         pending.files.some((file, index) => file !== mediaFiles[index]))
     ) {
-      setError(
+      showAnalyticsError(
+        setError,
         'The previous schedule request may have succeeded. Restore the original content and files, then retry it unchanged before making a new post.',
+        'scheduling',
+        'validation',
       );
       return;
     }
@@ -909,10 +939,6 @@ function Composer({ onClose }: { onClose: () => void }) {
       });
     } catch (reason) {
       // An uncertain post response may have committed. Keep both media and post keys for safe replay.
-      emitAnalyticsAction('user_error_shown', {
-        area: 'scheduling',
-        category: 'unknown',
-      });
       if (
         postRequestStarted &&
         (postResponseStatus === null || postResponseStatus < 400 || postResponseStatus >= 500)
@@ -929,10 +955,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         }
       }
       const detail = reason instanceof Error ? reason.message : 'The post could not be scheduled.';
-      setError(
+      showAnalyticsError(
+        setError,
         uncertainPost.current
           ? `${detail} Outcome uncertain; retry the same content and files before editing or closing.`
           : detail,
+        'scheduling',
+        'unknown',
       );
     } finally {
       setState('ready');
@@ -1276,7 +1305,12 @@ function Composer({ onClose }: { onClose: () => void }) {
                     onChange={(event) => {
                       if (uncertainPost.current) {
                         event.target.value = '';
-                        setError('Confirm the previous request before replacing its media.');
+                        showAnalyticsError(
+                          setError,
+                          'Confirm the previous request before replacing its media.',
+                          'composer',
+                          'validation',
+                        );
                         return;
                       }
                       const files = Array.from(event.target.files ?? []);
@@ -1288,15 +1322,30 @@ function Composer({ onClose }: { onClose: () => void }) {
                             ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
                             : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
                       if (files.some((file) => !allowed.includes(file.type))) {
-                        setError('Choose a supported image, GIF, or MP4 file.');
+                        showAnalyticsError(
+                          setError,
+                          'Choose a supported image, GIF, or MP4 file.',
+                          'composer',
+                          'validation',
+                        );
                         return;
                       }
                       if ((isTikTok || isYouTube) && files.length !== 1) {
-                        setError('Choose exactly one MP4 video.');
+                        showAnalyticsError(
+                          setError,
+                          'Choose exactly one MP4 video.',
+                          'composer',
+                          'validation',
+                        );
                         return;
                       }
                       if (includesMeta && files.length > (contentKind === 'carousel' ? 10 : 1)) {
-                        setError('Choose only the number of images supported by this destination.');
+                        showAnalyticsError(
+                          setError,
+                          'Choose only the number of images supported by this destination.',
+                          'composer',
+                          'validation',
+                        );
                         return;
                       }
                       if (
@@ -1307,7 +1356,12 @@ function Composer({ onClose }: { onClose: () => void }) {
                               (file) => file.type === 'video/mp4' || file.type === 'image/gif',
                             )))
                       ) {
-                        setError('X accepts up to four images, or one GIF or MP4 video.');
+                        showAnalyticsError(
+                          setError,
+                          'X accepts up to four images, or one GIF or MP4 video.',
+                          'composer',
+                          'validation',
+                        );
                         return;
                       }
                       if (
@@ -1325,7 +1379,12 @@ function Composer({ onClose }: { onClose: () => void }) {
                               1024,
                         )
                       ) {
-                        setError('One or more files exceed the destination size limit.');
+                        showAnalyticsError(
+                          setError,
+                          'One or more files exceed the destination size limit.',
+                          'composer',
+                          'validation',
+                        );
                         return;
                       }
                       setError(null);
@@ -2250,7 +2309,12 @@ export function JobDetailPage() {
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
-        setLoadError(error instanceof Error ? error.message : 'Could not load publication job');
+        showAnalyticsError(
+          setLoadError,
+          error instanceof Error ? error.message : 'Could not load publication job',
+          'publishing',
+          'network',
+        );
       });
     return () => {
       controller.abort();
@@ -2553,7 +2617,7 @@ export function JobDetailPage() {
                         error instanceof Error
                           ? error.message
                           : 'Could not update the publishing time';
-                      setMutationError(message);
+                      showAnalyticsError(setMutationError, message, 'scheduling', 'unknown');
                       setMutationAnnouncement(`Reschedule failed: ${message}`);
                     })
                     .finally(() => {
@@ -2633,7 +2697,7 @@ export function JobDetailPage() {
                     .catch((error: unknown) => {
                       const message =
                         error instanceof Error ? error.message : `Could not ${action} this job`;
-                      setMutationError(message);
+                      showAnalyticsError(setMutationError, message, 'publishing', 'unknown');
                       setMutationAnnouncement(
                         `${action === 'cancel' ? 'Cancellation' : 'Retry'} failed: ${message}`,
                       );

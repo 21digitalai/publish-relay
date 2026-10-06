@@ -103,6 +103,7 @@ Queue filter menus use the shared `FilterSelect` listbox primitive in `src/ui/wo
 Auth uses a centered 440px panel on the canvas with a restrained violet radial glow. No marketing carousel.
 
 - In `magic_link` mode, `/login`, `/register`, and `/forgot-password` render the same email-only `AuthPage`: one submit requests a one-time link, and the receipt says to check email without revealing account existence. No name, workspace-name, password, or separate registration control appears. The development URL is visible only when explicitly supplied by the non-production API response.
+- `src/ui/analytics-events.ts` is Core's optional, privacy-minimal browser action hook for embedding hosts. It dispatches typed `publish-relay-analytics` CustomEvents for accepted magic-link requests, explicit provider-connect attempts, and composer opens; Core never stores or transmits analytics. Host compositions may listen and validate the event independently. Never put emails, content, account identifiers, provider payloads, or raw errors into its properties.
 - In `password` mode, login retains email/password, reveal toggle, forgot-password link, submit, and registration link; registration retains display name, email, password, and first workspace name. Submission atomically creates the user, first workspace, owner membership, and browser session.
 - Errors are inline; server errors also receive a form summary.
 - Loading preserves button dimensions and uses action-specific labels.

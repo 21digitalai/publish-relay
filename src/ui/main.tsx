@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client';
 
 import './styles.css';
+import { emitAnalyticsAction } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
@@ -205,6 +206,8 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
                     error: string | null;
                   };
                   if (!response.ok) throw new Error(result.error ?? 'Authentication failed');
+                  if (!isRegister && !usesPasswordLogin)
+                    emitAnalyticsAction('magic_link_requested');
                   if (isRegister) {
                     sessionStorage.setItem('publish-relay-workspace-name', workspaceName);
                     window.location.href = '/onboarding/workspace';

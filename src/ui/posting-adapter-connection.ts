@@ -1,4 +1,5 @@
 import type { PostingAdapterConfig } from './posting-adapter-registry.js';
+import { emitAnalyticsAction } from './analytics-events.js';
 
 export function getCsrfToken(): string {
   const entry = document.cookie
@@ -11,6 +12,7 @@ export async function beginAdapterConnection(
   adapter: PostingAdapterConfig,
   accountId?: string,
 ): Promise<void> {
+  emitAnalyticsAction('provider_connect_attempted', { provider: adapter.id });
   const response = await fetch(adapter.auth.startPath, {
     method: 'POST',
     headers: { 'x-csrf-token': getCsrfToken(), 'content-type': 'application/json' },

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { emitAnalyticsAction } from './analytics-events.js';
 
 import {
   weightedXPostLength,
@@ -1619,6 +1620,7 @@ export function WorkspaceLayout({
     composerTrigger.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setComposerOpen(true);
+    emitAnalyticsAction('composer_opened');
   };
   const closeComposer = () => {
     setComposerOpen(false);

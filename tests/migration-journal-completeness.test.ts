@@ -9,7 +9,7 @@ describe('Core migration journal', () => {
       .sort();
     const journal = JSON.parse(
       await readFile(new URL('../migrations/meta/_journal.json', import.meta.url), 'utf8'),
-    ) as { entries: Array<{ tag: string }> };
+    ) as { entries: { tag: string }[] };
     expect(journal.entries.map((entry) => entry.tag).sort()).toEqual(migrations);
   });
 });

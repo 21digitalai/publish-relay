@@ -119,13 +119,29 @@ export function registerMetaOauthRoutes(
       );
     } catch (error) {
       if (error instanceof MetaFamilyCallbackError) {
+        if (error.cause instanceof MetaRequestError)
+          request.log.warn(
+            {
+              provider: 'meta',
+              family: error.family,
+              status: error.cause.status,
+              ...error.cause.diagnostic,
+            },
+            'Meta OAuth provider validation failed',
+          );
         const suffix =
           error.cause instanceof ProviderDestinationConflictError ? 'conflict' : 'service-error';
         return reply.redirect(`/app?oauth=meta-${error.family}-${suffix}`);
       }
       if (error instanceof ProviderDestinationConflictError)
         return reply.redirect('/app?oauth=meta-conflict');
-      if (error instanceof MetaRequestError) return reply.redirect('/app?oauth=meta-service-error');
+      if (error instanceof MetaRequestError) {
+        request.log.warn(
+          { provider: 'meta', status: error.status, ...error.diagnostic },
+          'Meta OAuth provider validation failed',
+        );
+        return reply.redirect('/app?oauth=meta-service-error');
+      }
       throw error;
     }
     return result

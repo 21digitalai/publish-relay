@@ -55,12 +55,20 @@ describe('MetaHttpClient', () => {
     }
   });
 
-  it('keeps debug_token 400 details and input tokens out of errors', async () => {
-    const request = vi
-      .fn<typeof globalThis.fetch>()
-      .mockResolvedValue(
-        response({ error: { code: 100, error_subcode: 33, message: 'private graph detail' } }, 400),
-      );
+  it('uses GET with app bearer auth and keeps debug_token 400 diagnostics allowlisted', async () => {
+    const request = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      response(
+        {
+          error: {
+            code: 100,
+            error_subcode: 33,
+            message: 'private graph detail',
+            fbtrace_id: 'trace-123',
+          },
+        },
+        400,
+      ),
+    );
     const client = new MetaHttpClient({
       appId: 'app',
       appSecret: 'secret',
@@ -76,12 +84,35 @@ describe('MetaHttpClient', () => {
     const target = request.mock.calls[0]?.[0];
     expect(target).toBeInstanceOf(URL);
     if (!(target instanceof URL)) throw new Error('Expected Graph URL');
-    expect(target.href).toBe('https://graph.facebook.com/v23.0/debug_token');
+    expect(target.origin + target.pathname).toBe('https://graph.facebook.com/v23.0/debug_token');
+    expect(target.searchParams.get('input_token')).toBe('private-input-token');
+    expect(target.searchParams.has('access_token')).toBe(false);
     const requestOptions = request.mock.calls[0]?.[1];
-    expect(requestOptions?.method).toBe('POST');
-    expect(requestOptions?.body).toBeInstanceOf(URLSearchParams);
-    expect(error).toMatchObject({ status: 400, kind: 'permanent' });
+    expect(requestOptions?.method).toBe('GET');
+    expect(requestOptions?.headers).toMatchObject({ authorization: 'Bearer app|secret' });
+    expect(requestOptions?.body).toBeUndefined();
+    expect(error).toMatchObject({
+      status: 400,
+      kind: 'permanent',
+      diagnostic: { endpoint: 'debug_token', code: 100, subcode: 33, traceId: 'trace-123' },
+    });
     expect(String(error)).not.toMatch(/private|graph detail|100|33|token|secret/);
+    expect(JSON.stringify((error as MetaRequestError).diagnostic)).not.toMatch(/private|secret/);
+  });
+
+  it('rejects a normal invalid debug_token response without treating it as a transport error', async () => {
+    const client = new MetaHttpClient({
+      appId: 'app',
+      appSecret: 'secret',
+      graphVersion: 'v23.0',
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(response({ data: { is_valid: false } })),
+    });
+    await expect(
+      client.validateCredential(
+        { access_token: 'invalid' },
+        META_FAMILY_PERMISSIONS.facebook_pages,
+      ),
+    ).rejects.toMatchObject({ status: 401, kind: 'auth' });
   });
 
   it('accepts a sanitized successful family-specific debug_token envelope', async () => {

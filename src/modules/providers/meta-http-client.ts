@@ -44,8 +44,8 @@ const tokenSchema = z.object({
 const debugSchema = z.object({
   data: z.object({
     is_valid: z.boolean(),
-    app_id: z.string().min(1),
-    user_id: z.string().min(1),
+    app_id: z.string().min(1).optional(),
+    user_id: z.string().min(1).optional(),
     expires_at: z.number().int().nonnegative().optional(),
     scopes: z.array(z.string()).default([]),
   }),
@@ -82,6 +82,12 @@ export class MetaRequestError extends Error {
     public readonly status: number,
     public readonly kind: MetaRequestErrorKind,
     public readonly retryAfterSeconds?: number,
+    public readonly diagnostic?: {
+      endpoint: 'debug_token';
+      code?: number;
+      subcode?: number;
+      traceId?: string;
+    },
   ) {
     super(`Meta request failed (${kind}, HTTP ${String(status)})`);
   }
@@ -124,6 +130,32 @@ function classify(status: number): MetaRequestErrorKind {
   if (status === 429) return 'rate_limit';
   if (status >= 500) return 'transient';
   return 'permanent';
+}
+
+function debugTokenDiagnostic(response: Response, body: unknown): MetaRequestError['diagnostic'] {
+  const error = z
+    .object({
+      error: z.object({
+        code: z.number().int().nonnegative().optional(),
+        error_subcode: z.number().int().nonnegative().optional(),
+        fbtrace_id: z.string().optional(),
+      }),
+    })
+    .safeParse(body);
+  const candidate =
+    response.headers.get('x-fb-trace-id') ??
+    (error.success ? error.data.error.fbtrace_id : undefined);
+  const traceId = candidate && /^[A-Za-z0-9_-]{1,128}$/.test(candidate) ? candidate : undefined;
+  return {
+    endpoint: 'debug_token',
+    ...(error.success && error.data.error.code !== undefined
+      ? { code: error.data.error.code }
+      : {}),
+    ...(error.success && error.data.error.error_subcode !== undefined
+      ? { subcode: error.data.error.error_subcode }
+      : {}),
+    ...(traceId ? { traceId } : {}),
+  };
 }
 
 export class MetaHttpClient {
@@ -180,16 +212,17 @@ export class MetaHttpClient {
     token: z.infer<typeof tokenSchema>,
     permissions: readonly MetaPermission[],
   ): Promise<MetaCredential> {
-    const response = await this.request(this.url('/debug_token'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-      body: new URLSearchParams({
-        input_token: token.access_token,
-        access_token: `${this.options.appId}|${this.options.appSecret}`,
-      }),
+    const url = this.url('/debug_token');
+    url.searchParams.set('input_token', token.access_token);
+    const response = await this.request(url, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${this.options.appId}|${this.options.appSecret}`,
+        accept: 'application/json',
+      },
     });
-    const debug = debugSchema.parse(await this.responseJson(response));
-    if (!debug.data.is_valid || debug.data.app_id !== this.options.appId)
+    const debug = debugSchema.parse(await this.responseJson(response, 'debug_token'));
+    if (!debug.data.is_valid || debug.data.app_id !== this.options.appId || !debug.data.user_id)
       throw new MetaRequestError(401, 'auth');
     const missing = permissions.filter((permission) => !debug.data.scopes.includes(permission));
     if (missing.length > 0) throw new MetaRequestError(403, 'permission');
@@ -278,13 +311,14 @@ export class MetaHttpClient {
     return tokenSchema.parse(await this.responseJson(response));
   }
 
-  private async responseJson(response: Response): Promise<unknown> {
+  private async responseJson(response: Response, endpoint?: 'debug_token'): Promise<unknown> {
     const body = (await response.json().catch(() => null)) as unknown;
     if (!response.ok)
       throw new MetaRequestError(
         response.status,
         classify(response.status),
         parseRetryAfter(response),
+        endpoint ? debugTokenDiagnostic(response, body) : undefined,
       );
     return body;
   }

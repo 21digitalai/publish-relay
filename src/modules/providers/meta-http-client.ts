@@ -35,15 +35,6 @@ export function parseMetaFamilyPermissions(
   return parsed;
 }
 
-export function parseMetaPermissions(value?: string): MetaPermission[] {
-  if (!value) return [...META_PERMISSIONS];
-  const permission = z.enum(META_PERMISSIONS);
-  const parsed = [...new Set(value.split(',').map((item) => permission.parse(item.trim())))];
-  const missing = META_PERMISSIONS.filter((item) => !parsed.includes(item));
-  if (missing.length > 0) throw new Error('Meta permission configuration is incomplete');
-  return parsed;
-}
-
 const tokenSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.string().optional(),
@@ -115,7 +106,6 @@ export interface MetaHttpClientOptions {
   appId: string;
   appSecret: string;
   graphVersion: string;
-  permissions?: readonly MetaPermission[];
   fetch?: typeof fetch;
   now?: () => number;
 }
@@ -139,7 +129,6 @@ function classify(status: number): MetaRequestErrorKind {
 export class MetaHttpClient {
   private readonly request: typeof fetch;
   private readonly now: () => number;
-  private readonly permissions: readonly MetaPermission[];
   private readonly graphOrigin = 'https://graph.facebook.com';
   private readonly authorizationOrigin = 'https://www.facebook.com';
 
@@ -149,20 +138,19 @@ export class MetaHttpClient {
       throw new Error('Meta Graph API version must be pinned (for example v23.0)');
     this.request = options.fetch ?? fetch;
     this.now = options.now ?? Date.now;
-    this.permissions = options.permissions ?? META_PERMISSIONS;
   }
 
   public authorizationUrl(input: {
     redirectUri: string;
     state: string;
-    permissions?: readonly MetaPermission[];
+    permissions: readonly MetaPermission[];
   }): string {
     const url = new URL(`${this.authorizationOrigin}/${this.options.graphVersion}/dialog/oauth`);
     url.search = new URLSearchParams({
       client_id: this.options.appId,
       redirect_uri: input.redirectUri,
       response_type: 'code',
-      scope: (input.permissions ?? this.permissions).join(','),
+      scope: input.permissions.join(','),
       state: input.state,
     }).toString();
     return url.toString();
@@ -171,7 +159,7 @@ export class MetaHttpClient {
   public async exchangeCode(input: {
     code: string;
     redirectUri: string;
-    permissions?: readonly MetaPermission[];
+    permissions: readonly MetaPermission[];
   }): Promise<MetaCredential> {
     const shortToken = await this.tokenRequest('/oauth/access_token', {
       client_id: this.options.appId,
@@ -190,7 +178,7 @@ export class MetaHttpClient {
 
   public async validateCredential(
     token: z.infer<typeof tokenSchema>,
-    permissions: readonly MetaPermission[] = this.permissions,
+    permissions: readonly MetaPermission[],
   ): Promise<MetaCredential> {
     const response = await this.request(this.url('/debug_token'), {
       method: 'POST',

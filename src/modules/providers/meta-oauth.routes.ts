@@ -8,10 +8,11 @@ import { authenticateRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-policy.js';
-import type { MetaHttpClient } from './meta-http-client.js';
+import type { MetaHttpClient, MetaPermission } from './meta-http-client.js';
 import { MetaRequestError } from './meta-http-client.js';
 import {
   MetaConnectionHasActiveJobsError,
+  MetaFamilyCallbackError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
   failMetaOauthConnection,
@@ -42,33 +43,48 @@ export function registerMetaOauthRoutes(
     client: MetaHttpClient;
     callbackUrl: string;
     actionPolicy: ActionPolicy;
+    familyPermissions?: Partial<Record<'facebook_pages' | 'instagram', readonly MetaPermission[]>>;
   },
 ): void {
-  application.post('/api/oauth/meta', async (request, reply) => {
-    const identity = await authenticateRequest(request, dependencies.auth);
-    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    if (!hasValidCsrf(request))
-      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
-    try {
-      const result = await beginMetaOauthConnection(
-        dependencies.database,
-        dependencies.keys,
-        dependencies.client,
-        {
-          workspaceId: identity.workspaceId,
-          userId: identity.userId,
-          callbackUrl: dependencies.callbackUrl,
-          requestId: request.id,
-        },
-        dependencies.actionPolicy,
-      );
-      return { data: result, error: null };
-    } catch (error) {
-      if (error instanceof ActionPolicyDeniedError)
-        return reply.code(403).send({ data: null, error: error.message, code: error.code });
-      throw error;
-    }
-  });
+  application.post('/api/oauth/meta', async (_request, reply) =>
+    reply.code(410).send({ data: null, error: 'Choose Facebook Pages or Instagram separately' }),
+  );
+
+  for (const family of ['facebook-pages', 'instagram'] as const)
+    application.post(`/api/oauth/meta/${family}`, async (request, reply) => {
+      const identity = await authenticateRequest(request, dependencies.auth);
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (!hasValidCsrf(request))
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const grantFamily = family === 'facebook-pages' ? 'facebook_pages' : 'instagram';
+      const permissions = dependencies.familyPermissions?.[grantFamily];
+      if (!permissions)
+        return reply.code(503).send({
+          data: null,
+          error: `${family === 'facebook-pages' ? 'Facebook Pages' : 'Instagram'} connection is not ready. No authorization was started.`,
+        });
+      try {
+        const result = await beginMetaOauthConnection(
+          dependencies.database,
+          dependencies.keys,
+          dependencies.client,
+          {
+            workspaceId: identity.workspaceId,
+            userId: identity.userId,
+            callbackUrl: dependencies.callbackUrl,
+            requestId: request.id,
+            family: grantFamily,
+            permissions,
+          },
+          dependencies.actionPolicy,
+        );
+        return { data: result, error: null };
+      } catch (error) {
+        if (error instanceof ActionPolicyDeniedError)
+          return reply.code(403).send({ data: null, error: error.message, code: error.code });
+        throw error;
+      }
+    });
 
   application.get('/api/oauth/meta/callback', async (request, reply) => {
     const identity = await authenticateRequest(request, dependencies.auth);
@@ -81,7 +97,9 @@ export function registerMetaOauthRoutes(
         state: failure.data.state,
         requestId: request.id,
       });
-      return reply.redirect(consumed ? '/app?oauth=meta-denied' : '/app?oauth=meta-expired');
+      return reply.redirect(
+        consumed ? `/app?oauth=meta-${consumed}-denied` : '/app?oauth=meta-expired',
+      );
     }
     const query = successCallbackSchema.safeParse(request.query);
     if (!query.success) return reply.redirect('/app?oauth=meta-expired');
@@ -97,15 +115,21 @@ export function registerMetaOauthRoutes(
           ...query.data,
           requestId: request.id,
         },
+        dependencies.familyPermissions ?? {},
       );
     } catch (error) {
+      if (error instanceof MetaFamilyCallbackError) {
+        const suffix =
+          error.cause instanceof ProviderDestinationConflictError ? 'conflict' : 'service-error';
+        return reply.redirect(`/app?oauth=meta-${error.family}-${suffix}`);
+      }
       if (error instanceof ProviderDestinationConflictError)
         return reply.redirect('/app?oauth=meta-conflict');
       if (error instanceof MetaRequestError) return reply.redirect('/app?oauth=meta-service-error');
       throw error;
     }
     return result
-      ? reply.redirect('/app?oauth=meta-connected')
+      ? reply.redirect(`/app?oauth=meta-${result.family}-connected`)
       : reply.redirect('/app?oauth=meta-expired');
   });
 
@@ -138,7 +162,7 @@ export function registerMetaOauthRoutes(
       throw error;
     }
     return revoked
-      ? { data: { revoked: true }, error: null }
+      ? { data: { ended: true }, error: null }
       : reply.code(404).send({ data: null, error: 'Meta connection was not found' });
   });
 }

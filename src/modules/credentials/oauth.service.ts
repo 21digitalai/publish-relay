@@ -68,7 +68,13 @@ export function hashOauthState(state: string): string {
 export async function consumeOauthCallback(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
-  input: { workspaceId: string; state: string; userId?: string; provider?: string; now?: Date },
+  input: {
+    workspaceId: string;
+    state: string;
+    userId?: string;
+    provider?: string | readonly string[];
+    now?: Date;
+  },
 ): Promise<{
   userId: string;
   provider: string;

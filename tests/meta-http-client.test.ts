@@ -6,7 +6,6 @@ import {
   MetaHttpClient,
   MetaRequestError,
   parseMetaFamilyPermissions,
-  parseMetaPermissions,
 } from '../src/modules/providers/meta-http-client.js';
 
 function response(body: unknown, status = 200, headers?: Record<string, string>): Response {
@@ -116,24 +115,22 @@ describe('MetaHttpClient', () => {
       ),
     ).rejects.toMatchObject({ status: 403, kind: 'permission' });
   });
-  it('accepts only a complete approved configurable permission set', () => {
-    expect(parseMetaPermissions(META_PERMISSIONS.join(','))).toEqual(META_PERMISSIONS);
-    expect(() => parseMetaPermissions('pages_show_list')).toThrow('incomplete');
-    expect(() => parseMetaPermissions(`${META_PERMISSIONS.join(',')},unknown`)).toThrow();
-  });
-  it('pins version, callback, state, and the approved Page-linked permission set', () => {
+  it('pins version, callback, state, and the selected Page-only permission set', () => {
     const client = new MetaHttpClient({ appId: 'app', appSecret: 'secret', graphVersion: 'v23.0' });
     const url = new URL(
       client.authorizationUrl({
         redirectUri: 'https://relay.test/api/oauth/meta/callback',
         state: 's',
+        permissions: META_FAMILY_PERMISSIONS.facebook_pages,
       }),
     );
     expect(url.origin).toBe('https://www.facebook.com');
     expect(url.pathname).toBe('/v23.0/dialog/oauth');
     expect(url.searchParams.get('redirect_uri')).toBe('https://relay.test/api/oauth/meta/callback');
     expect(url.searchParams.get('state')).toBe('s');
-    expect(url.searchParams.get('scope')?.split(',')).toEqual(META_PERMISSIONS);
+    expect(url.searchParams.get('scope')?.split(',')).toEqual(
+      META_FAMILY_PERMISSIONS.facebook_pages,
+    );
     expect(
       () => new MetaHttpClient({ appId: 'a', appSecret: 's', graphVersion: 'latest' }),
     ).toThrow('pinned');
@@ -151,7 +148,7 @@ describe('MetaHttpClient', () => {
             app_id: 'app',
             user_id: 'meta-user-one',
             expires_at: 2_000_000_000,
-            scopes: META_PERMISSIONS,
+            scopes: META_FAMILY_PERMISSIONS.facebook_pages,
           },
         }),
       );
@@ -166,11 +163,12 @@ describe('MetaHttpClient', () => {
       client.exchangeCode({
         code: 'code',
         redirectUri: 'https://relay.test/api/oauth/meta/callback',
+        permissions: META_FAMILY_PERMISSIONS.facebook_pages,
       }),
     ).resolves.toMatchObject({
       accessToken: 'long',
       userId: 'meta-user-one',
-      scopes: META_PERMISSIONS,
+      scopes: META_FAMILY_PERMISSIONS.facebook_pages,
     });
     expect(request).toHaveBeenCalledTimes(3);
     const firstTarget = request.mock.calls[0]?.[0];
@@ -200,7 +198,7 @@ describe('MetaHttpClient', () => {
       ),
     });
     const error = await client
-      .validateCredential({ access_token: 'token' })
+      .validateCredential({ access_token: 'token' }, META_FAMILY_PERMISSIONS.facebook_pages)
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(MetaRequestError);
     expect((error as MetaRequestError).kind).toBe('permission');

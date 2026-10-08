@@ -36,7 +36,7 @@ import type { YouTubeHttpClient } from '../modules/providers/youtube-http-client
 import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.routes.js';
 import type { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
 import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth.routes.js';
-import type { MetaHttpClient } from '../modules/providers/meta-http-client.js';
+import type { MetaHttpClient, MetaPermission } from '../modules/providers/meta-http-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
@@ -71,6 +71,7 @@ interface MetaOauthOptions {
   keys: MasterKeyProvider;
   client: MetaHttpClient;
   callbackUrl: string;
+  familyPermissions?: Partial<Record<'facebook_pages' | 'instagram', readonly MetaPermission[]>>;
 }
 interface TikTokOauthOptions {
   keys: MasterKeyProvider;

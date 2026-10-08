@@ -54,7 +54,7 @@ interface RevokeHarness {
   audits: Record<string, unknown>[];
 }
 
-function createRevokeHarness(): RevokeHarness {
+function createRevokeHarness(grantFamily: string | null = null): RevokeHarness {
   const updates: Record<string, unknown>[] = [];
   const audits: Record<string, unknown>[] = [];
   let selected = 0;
@@ -67,7 +67,7 @@ function createRevokeHarness(): RevokeHarness {
             limit: () =>
               Promise.resolve(
                 ++selected % 2 === 1
-                  ? [{ id: 'connection', credentialId: 'authority', status }]
+                  ? [{ id: 'connection', credentialId: 'authority', status, grantFamily }]
                   : [],
               ),
           }),
@@ -126,6 +126,8 @@ describe('Meta OAuth service', () => {
         userId: 'u1',
         callbackUrl: 'https://relay.test/api/oauth/meta/callback',
         requestId: 'r1',
+        family: 'facebook_pages',
+        permissions: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
       }),
     ).rejects.toThrow('denied');
     expect(issueOauthTransaction).not.toHaveBeenCalled();
@@ -148,7 +150,7 @@ describe('Meta OAuth service', () => {
       workspaceId: 'w1',
       state: 'state',
       userId: 'u1',
-      provider: 'meta',
+      provider: ['meta', 'meta:facebook_pages', 'meta:instagram'],
     });
     expect(client.exchangeCode).not.toHaveBeenCalled();
   });
@@ -173,6 +175,31 @@ describe('Meta OAuth service', () => {
     await expect(revokeRemoteMetaGrant(client as never, 'token')).rejects.toMatchObject({
       kind: 'transient',
     });
+  });
+
+  it('disconnects one split family locally without revoking the app-level Meta permission', async () => {
+    const harness = createRevokeHarness('facebook_pages');
+    const { withTenantTransaction } = await import('../src/database/tenant-transaction.js');
+    vi.mocked(withTenantTransaction).mockImplementation(async (_database, _tenant, work) =>
+      work(harness.transaction as never),
+    );
+    const client = { revoke: vi.fn() };
+    await expect(
+      revokeMetaConnection({} as never, {} as never, client as never, {
+        workspaceId: 'workspace',
+        userId: 'user',
+        accountId: 'account',
+        requestId: 'request',
+      }),
+    ).resolves.toBe(true);
+    expect(client.revoke).not.toHaveBeenCalled();
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ availability: 'reauth_required' }),
+        expect.objectContaining({ status: 'revoked' }),
+      ]),
+    );
+    expect(revokeCredential).toHaveBeenCalledTimes(2);
   });
 
   it.each(['auth', 'permission'] as const)(

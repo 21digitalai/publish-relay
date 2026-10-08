@@ -1,4 +1,4 @@
-export type PostingAdapterId = 'x' | 'youtube' | 'linkedin' | 'meta';
+export type PostingAdapterId = 'x' | 'youtube' | 'linkedin' | 'facebook_page' | 'instagram';
 
 export interface PostingAdapterIcon {
   readonly viewBox: string;
@@ -64,12 +64,21 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
     configuration: { requiredBeforeConnect: [] },
   },
   {
-    id: 'meta',
-    label: 'Meta',
-    description: 'Connect Facebook Pages and linked Instagram Professional destinations.',
+    id: 'facebook_page',
+    label: 'Facebook Pages',
+    description: 'Connect a Facebook Page without requesting Instagram access.',
     icon: { viewBox: '0 0 24 24', paths: ['M2 12c2-10 7-10 10 0 3 10 8 10 10 0'] },
     enabled: true,
-    auth: { kind: 'oauth', startPath: '/api/oauth/meta' },
+    auth: { kind: 'oauth', startPath: '/api/oauth/meta/facebook-pages' },
+    configuration: { requiredBeforeConnect: [] },
+  },
+  {
+    id: 'instagram',
+    label: 'Instagram',
+    description: 'Connect an Instagram Professional account separately from Facebook Pages.',
+    icon: { viewBox: '0 0 24 24', paths: ['M2 12c2-10 7-10 10 0 3 10 8 10 10 0'] },
+    enabled: true,
+    auth: { kind: 'oauth', startPath: '/api/oauth/meta/instagram' },
     configuration: { requiredBeforeConnect: [] },
   },
 ] as const;
@@ -85,7 +94,11 @@ export function getEnabledPostingAdapters(
   );
 }
 
-export function getPostingAdapter(provider: string): PostingAdapterConfig | undefined {
-  const normalized = provider.toLowerCase();
+export function getPostingAdapter(
+  provider: string,
+  destinationProvider?: string,
+): PostingAdapterConfig | undefined {
+  const normalized =
+    provider.toLowerCase() === 'meta' ? destinationProvider?.toLowerCase() : provider.toLowerCase();
   return POSTING_ADAPTERS.find((adapter) => adapter.id === normalized);
 }

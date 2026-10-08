@@ -51,6 +51,7 @@ import {
 } from '../src/modules/providers/linkedin-oauth.service.js';
 import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
 import { completeMetaOauthConnection } from '../src/modules/providers/meta-oauth.service.js';
+import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 import {
   beginTikTokOauthConnection,
   completeTikTokOauthConnection,
@@ -85,6 +86,7 @@ const migrations = [
   '0049_meta_effective_payload.sql',
   '0051_provider_subject_lifecycle.sql',
   '0055_x_long_post_declaration.sql',
+  '0056_meta_grant_family.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -1141,6 +1143,7 @@ describe('credential and OAuth persistence', () => {
     };
     const connect = async (
       state: string,
+      family: 'facebook_pages' | 'instagram',
       pages: {
         id: string;
         name: string;
@@ -1152,7 +1155,7 @@ describe('credential and OAuth persistence', () => {
       const issued = await issueOauthTransaction(db, keys, {
         workspaceId,
         userId,
-        provider: 'meta',
+        provider: `meta:${family}`,
         redirectUri: 'https://relay.test/api/oauth/meta/callback',
       });
       const client = {
@@ -1160,19 +1163,41 @@ describe('credential and OAuth persistence', () => {
           Promise.resolve({
             accessToken: `authority-${state}`,
             userId: 'meta-user',
-            scopes: [] as never[],
+            scopes:
+              family === 'facebook_pages'
+                ? ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts']
+                : [
+                    'pages_show_list',
+                    'pages_read_engagement',
+                    'instagram_basic',
+                    'instagram_content_publish',
+                  ],
           }),
         discoverPages: () => Promise.resolve(pages),
       };
-      return completeMetaOauthConnection(db, keys, client as never, {
-        workspaceId,
-        userId,
-        state: issued.state,
-        code: 'fixture-code',
-        requestId: state,
-      });
+      return completeMetaOauthConnection(
+        db,
+        keys,
+        client as never,
+        {
+          workspaceId,
+          userId,
+          state: issued.state,
+          code: 'fixture-code',
+          requestId: state,
+        },
+        {
+          facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+          instagram: [
+            'pages_show_list',
+            'pages_read_engagement',
+            'instagram_basic',
+            'instagram_content_publish',
+          ],
+        },
+      );
     };
-    const first = await connect('first', [
+    const first = await connect('first', 'facebook_pages', [
       {
         id: 'page-1',
         name: 'Page One',
@@ -1185,7 +1210,7 @@ describe('credential and OAuth persistence', () => {
     const before = await database.query<{ id: string; remote_account_id: string }>(
       'select id, remote_account_id from provider_accounts order by remote_account_id',
     );
-    await connect('second', [
+    await connect('second', 'facebook_pages', [
       {
         id: 'page-1',
         name: 'Page One Renamed',
@@ -1212,6 +1237,15 @@ describe('credential and OAuth persistence', () => {
         (account) => account.displayName === 'Lost Page',
       ),
     ).toMatchObject({ availability: 'remote_missing' });
+    await connect('instagram-first', 'instagram', [
+      {
+        id: 'page-1',
+        name: 'Page One',
+        accessToken: 'ig-page-token',
+        tasks: [],
+        instagram: { id: 'ig-1', name: 'Instagram One' },
+      },
+    ]);
     await expect(
       markProviderDestinationsUnavailable(db, {
         workspaceId,
@@ -1221,12 +1255,17 @@ describe('credential and OAuth persistence', () => {
         availability: 'reauth_required',
         requestId: 'meta-reauth-required',
       }),
-    ).resolves.toBe(3);
+    ).resolves.toBe(2);
     expect(await listProviderAccounts(db, workspaceId)).toHaveLength(3);
     expect(
-      (await listProviderAccounts(db, workspaceId)).every(
-        (account) => account.availability === 'reauth_required',
-      ),
+      (await listProviderAccounts(db, workspaceId)).find(
+        (account) => account.destinationProvider === 'instagram',
+      )?.availability,
+    ).toBe('active');
+    expect(
+      (await listProviderAccounts(db, workspaceId))
+        .filter((account) => account.destinationProvider === 'facebook_page')
+        .every((account) => account.availability === 'reauth_required'),
     ).toBe(true);
     await expect(
       markProviderDestinationsUnavailable(db, {
@@ -1237,12 +1276,12 @@ describe('credential and OAuth persistence', () => {
         availability: 'permission_lost',
         requestId: 'meta-permission-lost',
       }),
-    ).resolves.toBe(3);
+    ).resolves.toBe(2);
     expect(await listProviderAccounts(db, workspaceId)).toHaveLength(3);
     expect(
-      (await listProviderAccounts(db, workspaceId)).every(
-        (account) => account.availability === 'permission_lost',
-      ),
+      (await listProviderAccounts(db, workspaceId))
+        .filter((account) => account.destinationProvider === 'facebook_page')
+        .every((account) => account.availability === 'permission_lost'),
     ).toBe(true);
     const credentials = await database.query<{ active: number; revoked: number }>(
       `select
@@ -1250,7 +1289,7 @@ describe('credential and OAuth persistence', () => {
          count(*) filter (where revoked_at is not null)::int as revoked
        from credentials`,
     );
-    expect(credentials.rows[0]).toMatchObject({ active: 2, revoked: 3 });
+    expect(credentials.rows[0]).toMatchObject({ active: 4, revoked: 3 });
     const actions = await database.query<{ action: string }>(
       "select action from audit_events where action like 'provider.destination.%' order by action",
     );
@@ -1261,6 +1300,182 @@ describe('credential and OAuth persistence', () => {
         'provider.destination.lost',
       ]),
     );
+  });
+
+  it('re-homes only matching legacy Meta destinations after explicit family consent without changing job IDs', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    await connectProvider(
+      db,
+      keys,
+      new FakeProviderConnectionAdapter([
+        { providerAccountId: 'page-1', destinationProvider: 'facebook_page', displayName: 'Page' },
+        { providerAccountId: 'ig-1', destinationProvider: 'instagram', displayName: 'Instagram' },
+      ]),
+      {
+        workspaceId,
+        userId,
+        provider: 'meta',
+        externalSubjectId: 'meta-user',
+        accessToken: 'legacy-authority',
+        requestId: 'legacy',
+      },
+    );
+    const before = await database.query<{ id: string; destination_provider: string }>(
+      'select id, destination_provider from provider_accounts order by destination_provider',
+    );
+    const pageId = before.rows.find((row) => row.destination_provider === 'facebook_page')?.id;
+    await database.exec(`
+      UPDATE provider_connections SET status = 'disconnected' WHERE provider = 'meta' AND grant_family IS NULL;
+      UPDATE provider_accounts SET availability = 'reauth_required' WHERE destination_provider IN ('facebook_page', 'instagram');
+    `);
+    await database.query('INSERT INTO posts (workspace_id, created_by_user_id) VALUES ($1, $2)', [
+      workspaceId,
+      userId,
+    ]);
+    const post = await database.query<{ id: string }>('SELECT id FROM posts LIMIT 1');
+    const revision = await database.query<{ id: string }>(
+      `INSERT INTO post_revisions (workspace_id, post_id, revision_number, content)
+       VALUES ($1, $2, 1, '{}') RETURNING id`,
+      [workspaceId, post.rows[0]?.id],
+    );
+    const job = await database.query<{ id: string }>(
+      `INSERT INTO publication_jobs (workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state)
+       VALUES ($1, $2, $3, $4, now(), 'scheduled') RETURNING id`,
+      [workspaceId, post.rows[0]?.id, revision.rows[0]?.id, pageId],
+    );
+    const connectFamily = async (family: 'facebook_pages' | 'instagram') => {
+      const issued = await issueOauthTransaction(db, keys, {
+        workspaceId,
+        userId,
+        provider: `meta:${family}`,
+        redirectUri: 'https://relay.test/api/oauth/meta/callback',
+      });
+      return completeMetaOauthConnection(
+        db,
+        keys,
+        {
+          exchangeCode: () =>
+            Promise.resolve({ accessToken: 'new-authority', userId: 'meta-user', scopes: [] }),
+          discoverPages: () =>
+            Promise.resolve([
+              {
+                id: 'page-1',
+                name: 'Page',
+                accessToken: 'page-token',
+                tasks: ['CREATE_CONTENT'],
+                instagram: { id: 'ig-1', name: 'Instagram' },
+              },
+            ]),
+        } as never,
+        {
+          workspaceId,
+          userId,
+          state: issued.state,
+          code: 'fixture-code',
+          requestId: family,
+        },
+        {
+          facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+          instagram: [
+            'pages_show_list',
+            'pages_read_engagement',
+            'instagram_basic',
+            'instagram_content_publish',
+          ],
+        },
+      );
+    };
+    await connectFamily('instagram');
+    await connectFamily('facebook_pages');
+    const after = await database.query<{
+      id: string;
+      destination_provider: string;
+      grant_family: string;
+    }>(
+      `select account.id, account.destination_provider, connection.grant_family
+       from provider_accounts account join provider_connections connection on connection.id = account.connection_id
+       order by account.destination_provider`,
+    );
+    expect(
+      after.rows.map((row) => ({ id: row.id, destination: row.destination_provider })),
+    ).toEqual(before.rows.map((row) => ({ id: row.id, destination: row.destination_provider })));
+    expect(after.rows.map((row) => row.grant_family)).toEqual(['facebook_pages', 'instagram']);
+    const jobs = await database.query<{ id: string; provider_account_id: string }>(
+      'select id, provider_account_id from publication_jobs',
+    );
+    expect(jobs.rows[0]).toMatchObject({ id: job.rows[0]?.id, provider_account_id: pageId });
+  });
+
+  it('consumes Meta state and leaves no connection after a sanitized debug_token 400', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 9)),
+    };
+    const issued = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'meta:facebook_pages',
+      redirectUri: 'https://relay.test/api/oauth/meta/callback',
+    });
+    const input = {
+      workspaceId,
+      userId,
+      state: issued.state,
+      code: 'fixture-code',
+      requestId: 'debug-400',
+    };
+    const client = {
+      exchangeCode: () => Promise.reject(new MetaRequestError(400, 'permanent')),
+      discoverPages: () => Promise.reject(new Error('Discovery must not run')),
+    };
+    const permissions = {
+      facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'] as const,
+    };
+    await expect(
+      completeMetaOauthConnection(db, keys, client as never, input, permissions),
+    ).rejects.toThrow('Meta connection did not complete');
+    await expect(
+      completeMetaOauthConnection(db, keys, client as never, input, permissions),
+    ).resolves.toBeNull();
+    const count = await database.query<{ count: number }>(
+      `select count(*)::int as count from provider_connections where provider = 'meta'`,
+    );
+    expect(count.rows[0]?.count).toBe(0);
+  });
+
+  it('does not consume another provider state presented to the Meta callback', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 11)),
+    };
+    const issued = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'linkedin',
+      redirectUri: 'https://relay.test/api/oauth/linkedin/callback',
+    });
+    const input = {
+      workspaceId,
+      userId,
+      state: issued.state,
+      code: 'fixture-code',
+      requestId: 'wrong-family',
+    };
+    await expect(completeMetaOauthConnection(db, keys, {} as never, input)).resolves.toBeNull();
+    await expect(
+      consumeOauthCallback(db, keys, {
+        workspaceId,
+        userId,
+        state: issued.state,
+        provider: 'linkedin',
+      }),
+    ).resolves.toMatchObject({ provider: 'linkedin' });
   });
 
   it('denies X connection before provider, OAuth, credential, or idempotency artifacts', async () => {
@@ -1460,6 +1675,7 @@ describe('credential and OAuth persistence', () => {
     expect(Object.keys(accounts[0] ?? {})).toEqual([
       'id',
       'provider',
+      'grantFamily',
       'destinationProvider',
       'displayName',
       'status',

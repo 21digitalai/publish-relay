@@ -1201,6 +1201,31 @@ test('OAuth callback failures show safe guidance on desktop and mobile', async (
   await expect(page.getByRole('button', { name: 'Add Posting Adapter' })).toBeVisible();
 });
 
+test('Meta picker offers two consent families and never starts the combined route', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  const starts: string[] = [];
+  await page.route('**/api/oauth/meta/**', (route) => {
+    starts.push(new URL(route.request().url()).pathname);
+    return route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'This family is not configured yet' }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'accounts'));
+  await page.getByRole('button', { name: 'Add Posting Adapter' }).click();
+  await expect(page.getByRole('button', { name: /^Facebook Pages / })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Instagram / })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Meta$/ })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Facebook Pages / }).click();
+  await expect(page.getByRole('alert')).toContainText('This family is not configured yet');
+  await page.getByRole('button', { name: 'Add Posting Adapter' }).click();
+  await page.getByRole('button', { name: /^Instagram / }).click();
+  expect(starts).toEqual(['/api/oauth/meta/facebook-pages', '/api/oauth/meta/instagram']);
+});
+
 test('LinkedIn health failure emits one anonymous connection error', async ({ page }) => {
   await watchErrorHooks(page);
   await establishWorkspaceSession(page);

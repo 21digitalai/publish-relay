@@ -15,7 +15,8 @@ describe('posting adapter registry', () => {
       'x',
       'youtube',
       'linkedin',
-      'meta',
+      'facebook_page',
+      'instagram',
     ]);
     expect(new Set(POSTING_ADAPTERS.map((adapter) => adapter.id)).size).toBe(
       POSTING_ADAPTERS.length,
@@ -32,7 +33,11 @@ describe('posting adapter registry', () => {
     const adapters = POSTING_ADAPTERS.map((adapter) =>
       adapter.id === 'youtube' ? { ...adapter, enabled: false } : adapter,
     );
-    expect(getEnabledPostingAdapters(adapters).map((adapter) => adapter.id)).toEqual(['x', 'meta']);
+    expect(getEnabledPostingAdapters(adapters).map((adapter) => adapter.id)).toEqual([
+      'x',
+      'facebook_page',
+      'instagram',
+    ]);
     const markup = renderToStaticMarkup(
       createElement(PostingAdapterList, { adapters, onSelect: () => undefined }),
     );
@@ -42,7 +47,13 @@ describe('posting adapter registry', () => {
 
   it('resolves account reconnect behavior from the same registry', () => {
     expect(getPostingAdapter('YouTube')?.auth.startPath).toBe('/api/oauth/youtube');
-    expect(getPostingAdapter('Meta')?.auth.startPath).toBe('/api/oauth/meta');
+    expect(getPostingAdapter('Meta', 'facebook_page')?.auth.startPath).toBe(
+      '/api/oauth/meta/facebook-pages',
+    );
+    expect(getPostingAdapter('Meta', 'instagram')?.auth.startPath).toBe(
+      '/api/oauth/meta/instagram',
+    );
+    expect(getPostingAdapter('Meta')).toBeUndefined();
     expect(getPostingAdapter('unknown')).toBeUndefined();
   });
 });

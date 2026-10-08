@@ -106,6 +106,20 @@ export async function completeLinkedInConnection(
   );
 }
 
+export async function failLinkedInConnection(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  input: { workspaceId: string; userId: string; state: string },
+): Promise<boolean> {
+  const transaction = await consumeOauthCallback(database, keys, {
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    state: input.state,
+    provider: 'linkedin',
+  });
+  return transaction !== null;
+}
+
 export class LinkedInMemberMismatchError extends Error {
   constructor() {
     super(

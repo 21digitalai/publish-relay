@@ -1203,15 +1203,35 @@ function AccountRow({
 }
 
 function AccountsPage() {
-  const oauthMismatch =
-    new URLSearchParams(window.location.search).get('oauth') === 'linkedin-member-mismatch';
-  const oauthMismatchReported = useRef(false);
+  const oauthResult = new URLSearchParams(window.location.search).get('oauth');
+  const oauthErrorMessages: Record<string, string> = {
+    'linkedin-member-mismatch':
+      'A different LinkedIn member signed in. The selected account was not changed. Switch LinkedIn accounts and retry Reconnect.',
+    'linkedin-permission-unavailable':
+      'No LinkedIn account was connected. This app does not currently have access to the OpenID Connect permission needed for sign-in. Ask the app owner to enable it before trying again.',
+    'linkedin-denied':
+      'No LinkedIn account was connected. LinkedIn did not grant the requested permissions. Check this app’s access with the app owner, then start a new connection.',
+    'linkedin-expired':
+      'No LinkedIn account was connected. This connection attempt expired or was already used. Start a new connection from Accounts.',
+    'linkedin-service-error':
+      'No LinkedIn account was connected. We could not finish checking the connection. Start a new connection to retry; if it fails again, contact support.',
+    'meta-denied':
+      'No Meta account was connected. Authorization was not completed. Start a new connection if you want to try again.',
+    'meta-expired':
+      'No Meta account was connected. This connection attempt expired or was already used. Start a new connection from Accounts.',
+    'meta-service-error':
+      'No Meta account was connected. We could not finish checking the connection. Start a new connection to retry; if it fails again, contact support.',
+    'meta-conflict':
+      'No Meta account was connected. This destination is already linked to another connection. Contact support to resolve the conflict.',
+  };
+  const oauthError = oauthResult ? oauthErrorMessages[oauthResult] : undefined;
+  const oauthErrorReported = useRef(false);
   useEffect(() => {
-    if (oauthMismatch && !oauthMismatchReported.current) {
-      oauthMismatchReported.current = true;
+    if (oauthError && !oauthErrorReported.current) {
+      oauthErrorReported.current = true;
       emitAnalyticsAction('user_error_shown', { area: 'connection', category: 'provider' });
     }
-  }, [oauthMismatch]);
+  }, [oauthError]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [adapterPickerOpen, setAdapterPickerOpen] = useState(false);
   const adapterDialogRef = useRef<HTMLElement>(null);
@@ -1455,10 +1475,9 @@ function AccountsPage() {
               <p>{actionError}</p>
             </div>
           )}
-          {oauthMismatch && (
+          {oauthError && (
             <div className="accounts-error" role="alert">
-              A different LinkedIn member signed in. The selected account was not changed. Switch
-              LinkedIn accounts and retry Reconnect.
+              {oauthError}
             </div>
           )}
           <div className="account-toolbar">

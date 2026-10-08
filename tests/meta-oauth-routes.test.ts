@@ -18,6 +18,7 @@ import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
 import { ProviderDestinationConflictError } from '../src/modules/credentials/provider-connection.repository.js';
 import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
 import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
+import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 import {
   MetaConnectionHasActiveJobsError,
   beginMetaOauthConnection,
@@ -155,7 +156,7 @@ describe('Meta OAuth routes', () => {
     });
   });
 
-  it('reports overlapping Meta destinations as a callback conflict', async () => {
+  it('reports overlapping Meta destinations as a safe callback result', async () => {
     const app = application(true);
     vi.mocked(completeMetaOauthConnection).mockRejectedValue(
       new ProviderDestinationConflictError(),
@@ -165,11 +166,8 @@ describe('Meta OAuth routes', () => {
       url: '/api/oauth/meta/callback?state=state&code=code',
       headers: { cookie: session },
     });
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({
-      data: null,
-      error: 'Provider destination belongs to another connection; manual resolution required',
-    });
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe('/app?oauth=meta-conflict');
   });
 
   it('consumes provider-error state and never reflects provider error details', async () => {
@@ -180,7 +178,8 @@ describe('Meta OAuth routes', () => {
       url: '/api/oauth/meta/callback?state=state&error=access_denied&error_description=token-secret',
       headers: { cookie: session },
     });
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe('/app?oauth=meta-denied');
     expect(response.body).not.toContain('token-secret');
     expect(failMetaOauthConnection).toHaveBeenCalledOnce();
     const failureInput = vi.mocked(failMetaOauthConnection).mock.calls[0]?.[2];
@@ -190,5 +189,27 @@ describe('Meta OAuth routes', () => {
       state: 'state',
     });
     expect(typeof failureInput?.requestId).toBe('string');
+  });
+
+  it('shows expired state and sanitized service failure without leaking callback secrets', async () => {
+    const app = application(true);
+    vi.mocked(completeMetaOauthConnection).mockResolvedValue(null);
+    const expired = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=secret-state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(expired.headers.location).toBe('/app?oauth=meta-expired');
+    vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+      new MetaRequestError(400, 'permanent'),
+    );
+    const failed = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=secret-state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(failed.statusCode).toBe(302);
+    expect(failed.headers.location).toBe('/app?oauth=meta-service-error');
+    expect(failed.body).not.toMatch(/secret-state|secret-code/);
   });
 });

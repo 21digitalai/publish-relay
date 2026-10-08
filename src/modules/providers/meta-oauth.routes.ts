@@ -9,6 +9,7 @@ import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-policy.js';
 import type { MetaHttpClient } from './meta-http-client.js';
+import { MetaRequestError } from './meta-http-client.js';
 import {
   MetaConnectionHasActiveJobsError,
   beginMetaOauthConnection,
@@ -74,17 +75,16 @@ export function registerMetaOauthRoutes(
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     const failure = failureCallbackSchema.safeParse(request.query);
     if (failure.success) {
-      await failMetaOauthConnection(dependencies.database, dependencies.keys, {
+      const consumed = await failMetaOauthConnection(dependencies.database, dependencies.keys, {
         workspaceId: identity.workspaceId,
         userId: identity.userId,
         state: failure.data.state,
         requestId: request.id,
       });
-      return reply.code(400).send({ data: null, error: 'Meta authorization was not completed' });
+      return reply.redirect(consumed ? '/app?oauth=meta-denied' : '/app?oauth=meta-expired');
     }
     const query = successCallbackSchema.safeParse(request.query);
-    if (!query.success)
-      return reply.code(400).send({ data: null, error: 'Invalid Meta OAuth callback' });
+    if (!query.success) return reply.redirect('/app?oauth=meta-expired');
     let result;
     try {
       result = await completeMetaOauthConnection(
@@ -100,12 +100,13 @@ export function registerMetaOauthRoutes(
       );
     } catch (error) {
       if (error instanceof ProviderDestinationConflictError)
-        return reply.code(409).send({ data: null, error: error.message });
+        return reply.redirect('/app?oauth=meta-conflict');
+      if (error instanceof MetaRequestError) return reply.redirect('/app?oauth=meta-service-error');
       throw error;
     }
     return result
       ? reply.redirect('/app?oauth=meta-connected')
-      : reply.code(400).send({ data: null, error: 'Meta OAuth transaction is invalid or expired' });
+      : reply.redirect('/app?oauth=meta-expired');
   });
 
   application.post('/api/oauth/meta/revoke', async (request, reply) => {

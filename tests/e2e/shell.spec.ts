@@ -1183,6 +1183,24 @@ test('LinkedIn reconnect sends selected account and explains member mismatch', a
   await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
 });
 
+test('OAuth callback failures show safe guidance on desktop and mobile', async ({ page }) => {
+  await watchErrorHooks(page);
+  await establishWorkspaceSession(page);
+  await page.goto('/app?oauth=linkedin-permission-unavailable');
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'OpenID Connect permission' }),
+  ).toBeVisible();
+  expect(await errorHooks(page)).toEqual([
+    { type: 'user_error_shown', properties: { area: 'connection', category: 'provider' } },
+  ]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/app?oauth=meta-service-error&code=secret-code&state=secret-state');
+  const alert = page.getByRole('alert').filter({ hasText: 'No Meta account was connected' });
+  await expect(alert).toBeVisible();
+  await expect(alert).not.toContainText(/secret-code|secret-state/);
+  await expect(page.getByRole('button', { name: 'Add Posting Adapter' })).toBeVisible();
+});
+
 test('LinkedIn health failure emits one anonymous connection error', async ({ page }) => {
   await watchErrorHooks(page);
   await establishWorkspaceSession(page);

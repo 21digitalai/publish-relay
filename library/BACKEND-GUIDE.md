@@ -189,6 +189,7 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
   paginates allowlisted Page/linked-Instagram discovery fields, and emits only finite redacted
   failures plus bounded retry timing. Provider error bodies, codes, tokens, and signed URLs never
   enter API responses, logs, audit metadata, or plaintext persistence.
+- The Meta transport exposes candidate per-family scope allowlists and requires an explicit exact permission configuration before either split grant may be enabled. Facebook Page discovery does not request Instagram fields; Instagram discovery may read the Page-linked Instagram identity but must not persist a Facebook publishing destination from that path. The `/debug_token` request remains a form-encoded POST pending provider/runtime confirmation: sanitized success and HTTP 400 fixtures verify the boundary, but a 400 alone does not identify bad credentials, missing permission, or request-shape incompatibility. Do not use this transport slice as proof of live split-grant readiness.
 - A Meta connection retains encrypted long-lived rediscovery authority only at connection level.
   Each managed Page receives a newly encrypted Page credential referenced by both its
   `facebook_page` destination and any linked `instagram` destination. Reconnect creates the new

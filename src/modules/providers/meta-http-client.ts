@@ -10,6 +10,31 @@ export const META_PERMISSIONS = [
 
 export type MetaPermission = (typeof META_PERMISSIONS)[number];
 
+export type MetaGrantFamily = 'facebook_pages' | 'instagram';
+
+export const META_FAMILY_PERMISSIONS: Record<MetaGrantFamily, readonly MetaPermission[]> = {
+  facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+  instagram: [
+    'pages_show_list',
+    'pages_read_engagement',
+    'instagram_basic',
+    'instagram_content_publish',
+  ],
+};
+
+export function parseMetaFamilyPermissions(
+  family: MetaGrantFamily,
+  value: string | undefined,
+): MetaPermission[] {
+  if (!value) throw new Error(`Meta ${family} permissions must be explicitly verified`);
+  const permission = z.enum(META_PERMISSIONS);
+  const parsed = [...new Set(value.split(',').map((item) => permission.parse(item.trim())))];
+  const expected = META_FAMILY_PERMISSIONS[family];
+  if (parsed.length !== expected.length || expected.some((item) => !parsed.includes(item)))
+    throw new Error(`Meta ${family} permissions do not match the family allowlist`);
+  return parsed;
+}
+
 export function parseMetaPermissions(value?: string): MetaPermission[] {
   if (!value) return [...META_PERMISSIONS];
   const permission = z.enum(META_PERMISSIONS);
@@ -127,19 +152,27 @@ export class MetaHttpClient {
     this.permissions = options.permissions ?? META_PERMISSIONS;
   }
 
-  public authorizationUrl(input: { redirectUri: string; state: string }): string {
+  public authorizationUrl(input: {
+    redirectUri: string;
+    state: string;
+    permissions?: readonly MetaPermission[];
+  }): string {
     const url = new URL(`${this.authorizationOrigin}/${this.options.graphVersion}/dialog/oauth`);
     url.search = new URLSearchParams({
       client_id: this.options.appId,
       redirect_uri: input.redirectUri,
       response_type: 'code',
-      scope: this.permissions.join(','),
+      scope: (input.permissions ?? this.permissions).join(','),
       state: input.state,
     }).toString();
     return url.toString();
   }
 
-  public async exchangeCode(input: { code: string; redirectUri: string }): Promise<MetaCredential> {
+  public async exchangeCode(input: {
+    code: string;
+    redirectUri: string;
+    permissions?: readonly MetaPermission[];
+  }): Promise<MetaCredential> {
     const shortToken = await this.tokenRequest('/oauth/access_token', {
       client_id: this.options.appId,
       client_secret: this.options.appSecret,
@@ -152,10 +185,13 @@ export class MetaHttpClient {
       client_secret: this.options.appSecret,
       fb_exchange_token: shortToken.access_token,
     });
-    return this.validateCredential(longToken);
+    return this.validateCredential(longToken, input.permissions);
   }
 
-  public async validateCredential(token: z.infer<typeof tokenSchema>): Promise<MetaCredential> {
+  public async validateCredential(
+    token: z.infer<typeof tokenSchema>,
+    permissions: readonly MetaPermission[] = this.permissions,
+  ): Promise<MetaCredential> {
     const response = await this.request(this.url('/debug_token'), {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
@@ -167,9 +203,7 @@ export class MetaHttpClient {
     const debug = debugSchema.parse(await this.responseJson(response));
     if (!debug.data.is_valid || debug.data.app_id !== this.options.appId)
       throw new MetaRequestError(401, 'auth');
-    const missing = this.permissions.filter(
-      (permission) => !debug.data.scopes.includes(permission),
-    );
+    const missing = permissions.filter((permission) => !debug.data.scopes.includes(permission));
     if (missing.length > 0) throw new MetaRequestError(403, 'permission');
     const expiresAtSeconds = debug.data.expires_at;
     if (expiresAtSeconds && expiresAtSeconds * 1000 <= this.now())
@@ -182,18 +216,23 @@ export class MetaHttpClient {
         : token.expires_in
           ? { expiresAt: new Date(this.now() + token.expires_in * 1000).toISOString() }
           : {}),
-      scopes: [...this.permissions],
+      scopes: [...permissions],
     };
   }
 
-  public async discoverPages(accessToken: string): Promise<MetaDiscoveredPage[]> {
+  public async discoverPages(
+    accessToken: string,
+    family?: MetaGrantFamily,
+  ): Promise<MetaDiscoveredPage[]> {
     const pages: MetaDiscoveredPage[] = [];
     let after: string | undefined;
     for (let pageNumber = 0; pageNumber < MAX_DISCOVERY_PAGES; pageNumber += 1) {
       const url = this.url('/me/accounts');
       url.searchParams.set(
         'fields',
-        'id,name,tasks,access_token,instagram_business_account{id,name,username}',
+        family === 'facebook_pages'
+          ? 'id,name,tasks,access_token'
+          : 'id,name,tasks,access_token,instagram_business_account{id,name,username}',
       );
       url.searchParams.set('limit', '100');
       if (after) url.searchParams.set('after', after);

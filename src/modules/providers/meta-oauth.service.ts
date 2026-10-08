@@ -33,6 +33,8 @@ import {
   MetaRequestError,
   type MetaCredential,
   type MetaDiscoveredPage,
+  type MetaGrantFamily,
+  type MetaPermission,
 } from './meta-http-client.js';
 import type { MetaHttpClient } from './meta-http-client.js';
 
@@ -46,6 +48,23 @@ interface MetaConnectInput {
   requestId: string;
 }
 
+function familyFromTransaction(provider: string): MetaGrantFamily | null {
+  if (provider === 'meta:facebook_pages') return 'facebook_pages';
+  if (provider === 'meta:instagram') return 'instagram';
+  return null;
+}
+
+const META_CALLBACK_PROVIDERS = ['meta', 'meta:facebook_pages', 'meta:instagram'] as const;
+
+export class MetaFamilyCallbackError extends Error {
+  constructor(
+    public readonly family: MetaGrantFamily,
+    cause: unknown,
+  ) {
+    super('Meta connection did not complete', { cause });
+  }
+}
+
 function serializeCredential(value: object): Buffer {
   return Buffer.from(JSON.stringify(value));
 }
@@ -54,6 +73,7 @@ async function recordMetaOauthAudit(
   database: NodePgDatabase,
   input: { workspaceId: string; userId: string; requestId: string },
   action: 'meta.oauth.started' | 'meta.oauth.failed',
+  family?: MetaGrantFamily,
 ): Promise<void> {
   await withTenantTransaction(
     database,
@@ -67,7 +87,7 @@ async function recordMetaOauthAudit(
         targetType: 'user',
         targetId: input.userId,
         requestId: input.requestId,
-        metadata: { provider: 'meta' },
+        metadata: { provider: 'meta', ...(family ? { family } : {}) },
       }),
   );
 }
@@ -76,7 +96,14 @@ export async function beginMetaOauthConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   client: MetaHttpClient,
-  input: { workspaceId: string; userId: string; callbackUrl: string; requestId: string },
+  input: {
+    workspaceId: string;
+    userId: string;
+    callbackUrl: string;
+    requestId: string;
+    family: MetaGrantFamily;
+    permissions: readonly MetaPermission[];
+  },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ authorizationUrl: string; expiresAt: Date }> {
   await withTenantTransaction(database, input, (transaction) =>
@@ -90,14 +117,15 @@ export async function beginMetaOauthConnection(
   const transaction = await issueOauthTransaction(database, keys, {
     workspaceId: input.workspaceId,
     userId: input.userId,
-    provider: 'meta',
+    provider: `meta:${input.family}`,
     redirectUri: input.callbackUrl,
   });
-  await recordMetaOauthAudit(database, input, 'meta.oauth.started');
+  await recordMetaOauthAudit(database, input, 'meta.oauth.started', input.family);
   return {
     authorizationUrl: client.authorizationUrl({
       redirectUri: input.callbackUrl,
       state: transaction.state,
+      permissions: input.permissions,
     }),
     expiresAt: transaction.expiresAt,
   };
@@ -109,9 +137,11 @@ async function persistMetaDiscovery(
   input: MetaConnectInput,
   credential: MetaCredential,
   pages: readonly MetaDiscoveredPage[],
+  family: MetaGrantFamily,
 ) {
   const authorityBytes = serializeCredential(credential);
-  const pageBytes = pages.map((page) =>
+  const selectedPages = family === 'instagram' ? pages.filter((page) => page.instagram) : pages;
+  const pageBytes = selectedPages.map((page) =>
     serializeCredential({ accessToken: page.accessToken, pageId: page.id }),
   );
   try {
@@ -135,25 +165,30 @@ async function persistMetaDiscovery(
           ),
         );
         const now = new Date();
-        const accounts = pages.flatMap((page, index) => {
+        const accounts = selectedPages.flatMap((page, index) => {
           const credentialId = pageCredentials[index]?.id;
           if (!credentialId) throw new Error('Meta Page credential write returned no record');
-          const availability = page.tasks.includes(REQUIRED_PAGE_TASK)
-            ? ('active' as const)
-            : ('permission_lost' as const);
+          const availability =
+            family === 'instagram' || page.tasks.includes(REQUIRED_PAGE_TASK)
+              ? ('active' as const)
+              : ('permission_lost' as const);
           const capabilitySnapshot = { tasks: [...page.tasks].sort() };
           return [
-            {
-              providerAccountId: page.id,
-              destinationProvider: 'facebook_page' as const,
-              remoteAccountId: page.id,
-              displayName: page.name,
-              credentialId,
-              availability,
-              capabilitySnapshot,
-              capabilitiesCheckedAt: now,
-            },
-            ...(page.instagram
+            ...(family === 'facebook_pages'
+              ? [
+                  {
+                    providerAccountId: page.id,
+                    destinationProvider: 'facebook_page' as const,
+                    remoteAccountId: page.id,
+                    displayName: page.name,
+                    credentialId,
+                    availability,
+                    capabilitySnapshot,
+                    capabilitiesCheckedAt: now,
+                  },
+                ]
+              : []),
+            ...(family === 'instagram' && page.instagram
               ? [
                   {
                     providerAccountId: page.instagram.id,
@@ -174,7 +209,9 @@ async function persistMetaDiscovery(
           workspaceId: input.workspaceId,
           userId: input.userId,
           provider: 'meta',
+          grantFamily: family,
           externalSubjectId: credential.userId,
+          scopes: credential.scopes,
           credentialId: authority.id,
           accounts,
           requestId: input.requestId,
@@ -194,8 +231,9 @@ async function persistMetaDiscovery(
           targetId: connection.connectionId,
           requestId: input.requestId,
           metadata: {
-            pageCount: pages.length,
-            instagramCount: pages.filter((page) => page.instagram).length,
+            pageCount: family === 'facebook_pages' ? accounts.length : 0,
+            instagramCount: family === 'instagram' ? accounts.length : 0,
+            family,
             unavailableCount: accounts.filter((account) => account.availability !== 'active')
               .length,
           },
@@ -222,25 +260,35 @@ export async function completeMetaOauthConnection(
   keys: MasterKeyProvider,
   client: MetaHttpClient,
   input: MetaConnectInput,
+  familyPermissions: Partial<Record<MetaGrantFamily, readonly MetaPermission[]>> = {},
 ) {
   const transaction = await consumeOauthCallback(database, keys, {
     workspaceId: input.workspaceId,
     state: input.state,
     userId: input.userId,
-    provider: 'meta',
+    provider: META_CALLBACK_PROVIDERS,
   });
   if (!transaction) return null;
+  const family = familyFromTransaction(transaction.provider);
+  if (!family) return null;
+  const permissions = familyPermissions[family];
+  if (!permissions)
+    throw new MetaFamilyCallbackError(family, new Error('Meta consent is not configured'));
   try {
     const credential = await client.exchangeCode({
       code: input.code,
       redirectUri: transaction.redirectUri,
+      permissions,
     });
-    const pages = await client.discoverPages(credential.accessToken);
-    return await persistMetaDiscovery(database, keys, input, credential, pages);
+    const pages = await client.discoverPages(credential.accessToken, family);
+    return {
+      family,
+      ...(await persistMetaDiscovery(database, keys, input, credential, pages, family)),
+    };
   } catch (error) {
-    await recordMetaOauthAudit(database, input, 'meta.oauth.failed');
+    await recordMetaOauthAudit(database, input, 'meta.oauth.failed', family);
     // A callback failure has no verified existing connection to mark unavailable.
-    throw error;
+    throw new MetaFamilyCallbackError(family, error);
   }
 }
 
@@ -248,15 +296,16 @@ export async function failMetaOauthConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   input: { workspaceId: string; userId: string; state: string; requestId: string },
-): Promise<boolean> {
+): Promise<MetaGrantFamily | null> {
   const transaction = await consumeOauthCallback(database, keys, {
     workspaceId: input.workspaceId,
     state: input.state,
     userId: input.userId,
-    provider: 'meta',
+    provider: META_CALLBACK_PROVIDERS,
   });
-  if (transaction) await recordMetaOauthAudit(database, input, 'meta.oauth.failed');
-  return transaction !== null;
+  const family = transaction ? familyFromTransaction(transaction.provider) : null;
+  if (family) await recordMetaOauthAudit(database, input, 'meta.oauth.failed', family);
+  return family;
 }
 
 export async function revokeRemoteMetaGrant(
@@ -337,6 +386,7 @@ interface MetaRevokeConnection {
   id: string;
   credentialId: string;
   status: string;
+  grantFamily: string | null;
 }
 
 async function finalizeMetaGrantRevoke(
@@ -400,11 +450,14 @@ async function finalizeMetaGrantRevoke(
       workspaceId: input.workspaceId,
       actorType: 'user',
       actorId: input.userId,
-      action: 'meta.connection.revoked',
+      action: connection.grantFamily ? 'meta.connection.disconnected' : 'meta.connection.revoked',
       targetType: 'provider_connection',
       targetId: connection.id,
       requestId: input.requestId,
-      metadata: { destinationCount: accountRows.length },
+      metadata: {
+        destinationCount: accountRows.length,
+        ...(connection.grantFamily ? { family: connection.grantFamily } : {}),
+      },
     });
   });
 }
@@ -427,6 +480,7 @@ export async function revokeMetaConnection(
           id: providerConnections.id,
           credentialId: providerConnections.credentialId,
           status: providerConnections.status,
+          grantFamily: providerConnections.grantFamily,
         })
         .from(providerAccounts)
         .innerJoin(providerConnections, eq(providerAccounts.connectionId, providerConnections.id))
@@ -459,6 +513,10 @@ export async function revokeMetaConnection(
   if (connection.status === 'revoked') return true;
   if (connection.status !== 'active' && connection.status !== 'revoking')
     throw new Error('Meta connection is not active');
+  if (connection.grantFamily) {
+    await finalizeMetaGrantRevoke(database, input, connection);
+    return true;
+  }
   try {
     const credential = await withTenantTransaction(
       database,

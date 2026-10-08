@@ -122,6 +122,8 @@ Group by provider and show each connected account independently. Rows include pr
 
 `src/ui/posting-adapter-registry.ts` is the single source of truth for adapters exposed by the connected-accounts picker. The Accounts page renders one **Add Posting Adapter** entry and iterates enabled registry entries for provider label, icon, description, OAuth start path, and pre-connect configuration requirements. Adding or disabling an adapter must not require picker markup changes. Provider-specific reconnect actions resolve through the same registry.
 
+Facebook Pages and Instagram are separate picker entries and reconnect paths even though their accounts still share the Meta connection-family label. Each entry starts only its own consent family; the old combined Meta start returns an unavailable result. A split family disconnect is explicitly local and affects only that family's destinations, never remote app-level permission while another family may exist. Accounts shows the selected destination label and family-specific callback guidance without exposing consent state or provider errors.
+
 - Multiple accounts per provider are normal.
 - Each provider group has Connect another.
 - Search name/handle; filter provider, health, and workspace access.

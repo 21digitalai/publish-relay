@@ -21,6 +21,7 @@ import {
 interface Account {
   id: string;
   provider: string;
+  grantFamily?: 'facebook_pages' | 'instagram' | null;
   destinationProvider: string;
   name: string;
   handle: string;
@@ -1020,7 +1021,7 @@ function AccountRow({
               onRevokeGrant(account);
             }}
           >
-            Revoke Meta connection
+            {account.grantFamily ? 'Disconnect Meta grant' : 'Revoke Meta connection'}
           </button>
         )}
       </div>
@@ -1217,12 +1218,24 @@ function AccountsPage() {
       'No LinkedIn account was connected. We could not finish checking the connection. Start a new connection to retry; if it fails again, contact support.',
     'meta-denied':
       'No Meta account was connected. Authorization was not completed. Start a new connection if you want to try again.',
+    'meta-facebook_pages-denied':
+      'No Facebook Page was connected. Authorization was not completed. Start a new Facebook Pages connection to try again.',
+    'meta-instagram-denied':
+      'No Instagram account was connected. Authorization was not completed. Start a new Instagram connection to try again.',
     'meta-expired':
       'No Meta account was connected. This connection attempt expired or was already used. Start a new connection from Accounts.',
     'meta-service-error':
       'No Meta account was connected. We could not finish checking the connection. Start a new connection to retry; if it fails again, contact support.',
+    'meta-facebook_pages-service-error':
+      'No Facebook Page was connected. We could not finish checking the connection. Start a new Facebook Pages connection to retry; if it fails again, contact support.',
+    'meta-instagram-service-error':
+      'No Instagram account was connected. We could not finish checking the connection. Start a new Instagram connection to retry; if it fails again, contact support.',
     'meta-conflict':
       'No Meta account was connected. This destination is already linked to another connection. Contact support to resolve the conflict.',
+    'meta-facebook_pages-conflict':
+      'No Facebook Page was connected. This destination is linked to another connection. Contact support to resolve the conflict.',
+    'meta-instagram-conflict':
+      'No Instagram account was connected. This destination is linked to another connection. Contact support to resolve the conflict.',
   };
   const oauthError = oauthResult ? oauthErrorMessages[oauthResult] : undefined;
   const oauthErrorReported = useRef(false);
@@ -1257,6 +1270,7 @@ function AccountsPage() {
               id: string;
               provider: string;
               destinationProvider?: string;
+              grantFamily?: 'facebook_pages' | 'instagram' | null;
               displayName: string;
               status: string;
               expiresAt?: string | null;
@@ -1287,6 +1301,7 @@ function AccountsPage() {
                         ? 'Meta'
                         : account.provider,
               destinationProvider: account.destinationProvider ?? account.provider,
+              ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
               handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
               health:
@@ -1562,7 +1577,10 @@ function AccountsPage() {
                           setDisconnecting({ account: selected, remote: true });
                         }}
                         onReconnect={() => {
-                          const adapter = getPostingAdapter(account.provider);
+                          const adapter = getPostingAdapter(
+                            account.provider,
+                            account.destinationProvider,
+                          );
                           if (adapter) connectAdapter(adapter, account.id);
                           else
                             showAnalyticsError(
@@ -1655,12 +1673,20 @@ function AccountsPage() {
           >
             <span className="danger-icon">!</span>
             <h2 id="disconnect-title">
-              {disconnecting.remote ? 'Revoke Meta connection for' : 'Disconnect'}{' '}
+              {disconnecting.remote
+                ? disconnecting.account.grantFamily
+                  ? 'Disconnect Meta grant for'
+                  : 'Revoke Meta connection for'
+                : 'Disconnect'}{' '}
               {disconnecting.account.name}?
             </h2>
             <p>
               {disconnecting.remote ? (
-                'This revokes the Meta grant for every Page and Instagram destination connected by this login. Scheduled jobs for those destinations must be cancelled first.'
+                disconnecting.account.grantFamily ? (
+                  'This locally disconnects only this Facebook Pages or Instagram grant and its destinations. The other Meta grant stays connected. Scheduled jobs for this grant must be cancelled first; this does not revoke the app-level Meta permission.'
+                ) : (
+                  'This revokes the legacy Meta grant for every Page and Instagram destination connected by this login. Scheduled jobs for those destinations must be cancelled first.'
+                )
               ) : (
                 <>
                   Scheduled jobs for <strong>{disconnecting.account.handle}</strong> must be
@@ -1718,7 +1744,11 @@ function AccountsPage() {
                     });
                 }}
               >
-                {disconnecting.remote ? 'Revoke Meta grant' : 'Disconnect account'}
+                {disconnecting.remote
+                  ? disconnecting.account.grantFamily
+                    ? 'Disconnect Meta grant'
+                    : 'Revoke Meta grant'
+                  : 'Disconnect account'}
               </button>
             </div>
           </section>

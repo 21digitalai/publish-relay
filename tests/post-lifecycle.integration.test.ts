@@ -58,6 +58,7 @@ const migrations = [
   '0051_provider_subject_lifecycle.sql',
   '0054_tiktok_media_grants.sql',
   '0055_x_long_post_declaration.sql',
+  '0056_meta_grant_family.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

@@ -44,7 +44,8 @@ const runtimeConfigSchema = z
       .string()
       .regex(/^v\d+\.\d+$/)
       .optional(),
-    PUBLISH_RELAY_META_PERMISSIONS: z.string().min(1).optional(),
+    PUBLISH_RELAY_META_FACEBOOK_PAGES_PERMISSIONS: z.string().min(1).optional(),
+    PUBLISH_RELAY_META_INSTAGRAM_PERMISSIONS: z.string().min(1).optional(),
     X_API_KEY: z.string().min(1).optional(),
     X_API_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_APPROVED_LEGACY_X_INTEGRATION_ID: z.string().min(1).optional(),

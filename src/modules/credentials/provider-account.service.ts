@@ -44,6 +44,7 @@ export function listProviderAccounts(
       .select({
         id: providerAccounts.id,
         provider: providerConnections.provider,
+        grantFamily: providerConnections.grantFamily,
         destinationProvider: providerAccounts.destinationProvider,
         displayName: providerAccounts.displayName,
         status: providerConnections.status,

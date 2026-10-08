@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -90,6 +90,7 @@ export async function replaceProviderConnection(
     workspaceId: string;
     userId: string;
     provider: string;
+    grantFamily?: 'facebook_pages' | 'instagram';
     credentialId: string;
     accounts: readonly DiscoveredProviderAccount[];
     requestId: string;
@@ -123,6 +124,16 @@ export async function replaceProviderConnection(
   const destinations = input.accounts.map((account) =>
     normalizeDestination(input.provider, account),
   );
+  if (
+    input.provider === 'meta' &&
+    input.grantFamily &&
+    destinations.some((destination) =>
+      input.grantFamily === 'facebook_pages'
+        ? destination.destinationProvider !== 'facebook_page'
+        : destination.destinationProvider !== 'instagram',
+    )
+  )
+    throw new Error('Meta destination does not match the consent family');
   // Serialize grants in one workspace so two principals cannot claim a destination.
   await database
     .select({ id: workspaces.id })
@@ -142,6 +153,9 @@ export async function replaceProviderConnection(
         eq(providerConnections.workspaceId, input.workspaceId),
         eq(providerConnections.provider, input.provider),
         eq(providerConnections.externalSubjectId, subjectId),
+        input.grantFamily
+          ? eq(providerConnections.grantFamily, input.grantFamily)
+          : isNull(providerConnections.grantFamily),
       ),
     )
     .for('update')
@@ -149,9 +163,16 @@ export async function replaceProviderConnection(
   const current = existing[0];
   if (current?.status === 'revoking')
     throw new Error('This provider grant is being revoked; retry after revocation completes');
+  const legacyAccountIds: string[] = [];
   for (const destination of destinations) {
     const owners = await database
-      .select({ connectionId: providerAccounts.connectionId })
+      .select({
+        accountId: providerAccounts.id,
+        connectionId: providerAccounts.connectionId,
+        grantFamily: providerConnections.grantFamily,
+        externalSubjectId: providerConnections.externalSubjectId,
+        status: providerConnections.status,
+      })
       .from(providerAccounts)
       .innerJoin(providerConnections, eq(providerAccounts.connectionId, providerConnections.id))
       .where(
@@ -162,8 +183,21 @@ export async function replaceProviderConnection(
           eq(providerAccounts.remoteAccountId, destination.remoteAccountId),
         ),
       );
-    if (owners.some((owner) => owner.connectionId !== current?.id))
+    for (const owner of owners) {
+      if (owner.connectionId === current?.id) continue;
+      if (
+        input.provider === 'meta' &&
+        input.grantFamily &&
+        owner.grantFamily === null &&
+        owner.externalSubjectId === subjectId &&
+        owner.status === 'disconnected' &&
+        !owners.some((candidate) => candidate.connectionId === current?.id)
+      ) {
+        legacyAccountIds.push(owner.accountId);
+        continue;
+      }
       throw new ProviderDestinationConflictError();
+    }
   }
   const connectionRows = current
     ? await database
@@ -193,6 +227,7 @@ export async function replaceProviderConnection(
         .values({
           workspaceId: input.workspaceId,
           provider: input.provider,
+          grantFamily: input.grantFamily ?? null,
           memberUrn,
           externalSubjectId: subjectId,
           credentialId: input.credentialId,
@@ -204,6 +239,16 @@ export async function replaceProviderConnection(
         .returning({ id: providerConnections.id });
   const connection = connectionRows[0];
   if (!connection) throw new Error('Provider connection write returned no record');
+  if (legacyAccountIds.length > 0)
+    await database
+      .update(providerAccounts)
+      .set({ connectionId: connection.id, updatedAt: new Date() })
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          inArray(providerAccounts.id, legacyAccountIds),
+        ),
+      );
   const existingAccounts = await database
     .select({
       id: providerAccounts.id,

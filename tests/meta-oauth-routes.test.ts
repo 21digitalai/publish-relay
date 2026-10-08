@@ -7,6 +7,14 @@ vi.mock('../src/modules/providers/meta-oauth.service.js', () => ({
       super('Cancel or resolve scheduled publications before revoking this Meta connection');
     }
   },
+  MetaFamilyCallbackError: class MetaFamilyCallbackError extends Error {
+    constructor(
+      public readonly family: 'facebook_pages' | 'instagram',
+      cause: unknown,
+    ) {
+      super('Meta connection did not complete', { cause });
+    }
+  },
   beginMetaOauthConnection: vi.fn(),
   completeMetaOauthConnection: vi.fn(),
   failMetaOauthConnection: vi.fn(),
@@ -21,6 +29,7 @@ import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 import {
   MetaConnectionHasActiveJobsError,
+  MetaFamilyCallbackError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
   failMetaOauthConnection,
@@ -63,7 +72,7 @@ function store(authenticated: boolean): AuthStore {
   return value;
 }
 
-function application(authenticated: boolean) {
+function application(authenticated: boolean, configured = true) {
   const keys: MasterKeyProvider = {
     currentVersion: () => 'v1',
     getKey: () => Promise.resolve(Buffer.alloc(32)),
@@ -77,6 +86,17 @@ function application(authenticated: boolean) {
       keys,
       client: {} as never,
       callbackUrl: 'https://relay.test/api/oauth/meta/callback',
+      familyPermissions: configured
+        ? {
+            facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+            instagram: [
+              'pages_show_list',
+              'pages_read_engagement',
+              'instagram_basic',
+              'instagram_content_publish',
+            ],
+          }
+        : {},
     },
   });
   applications.push(app);
@@ -87,14 +107,29 @@ const session = 'publish_relay_session=w1.token';
 const csrf = { cookie: `${session}; publish_relay_csrf=csrf`, 'x-csrf-token': 'csrf' };
 
 describe('Meta OAuth routes', () => {
+  it('does not issue state when a family has no verified permission configuration', async () => {
+    const response = await application(true, false).inject({
+      method: 'POST',
+      url: '/api/oauth/meta/instagram',
+      headers: csrf,
+    });
+    expect(response.statusCode).toBe(503);
+    expect(beginMetaOauthConnection).not.toHaveBeenCalled();
+  });
   it('requires authentication and CSRF', async () => {
     expect(
-      (await application(false).inject({ method: 'POST', url: '/api/oauth/meta' })).statusCode,
+      (await application(false).inject({ method: 'POST', url: '/api/oauth/meta/facebook-pages' }))
+        .statusCode,
     ).toBe(401);
     const app = application(true);
     expect(
-      (await app.inject({ method: 'POST', url: '/api/oauth/meta', headers: { cookie: session } }))
-        .statusCode,
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/oauth/meta/facebook-pages',
+          headers: { cookie: session },
+        })
+      ).statusCode,
     ).toBe(403);
     expect(
       (
@@ -114,19 +149,41 @@ describe('Meta OAuth routes', () => {
       expiresAt: new Date('2026-09-17T16:00:00Z'),
     });
     expect(
-      (await app.inject({ method: 'POST', url: '/api/oauth/meta', headers: csrf })).json(),
+      (
+        await app.inject({ method: 'POST', url: '/api/oauth/meta/facebook-pages', headers: csrf })
+      ).json(),
     ).toMatchObject({
       data: { authorizationUrl: 'https://www.facebook.com/v23.0/dialog/oauth' },
       error: null,
     });
-    vi.mocked(completeMetaOauthConnection).mockResolvedValue({ accounts: [] } as never);
+    await app.inject({ method: 'POST', url: '/api/oauth/meta/instagram', headers: csrf });
+    expect(vi.mocked(beginMetaOauthConnection).mock.calls[0]?.[3]).toMatchObject({
+      family: 'facebook_pages',
+      permissions: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+    });
+    expect(vi.mocked(beginMetaOauthConnection).mock.calls[1]?.[3]).toMatchObject({
+      family: 'instagram',
+      permissions: [
+        'pages_show_list',
+        'pages_read_engagement',
+        'instagram_basic',
+        'instagram_content_publish',
+      ],
+    });
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/oauth/meta', headers: csrf })).statusCode,
+    ).toBe(410);
+    vi.mocked(completeMetaOauthConnection).mockResolvedValue({
+      family: 'facebook_pages',
+      accounts: [],
+    } as never);
     const callback = await app.inject({
       method: 'GET',
       url: '/api/oauth/meta/callback?state=state&code=code',
       headers: { cookie: session },
     });
     expect(callback.statusCode).toBe(302);
-    expect(callback.headers.location).toBe('/app?oauth=meta-connected');
+    expect(callback.headers.location).toBe('/app?oauth=meta-facebook_pages-connected');
     vi.mocked(revokeMetaConnection).mockResolvedValue(true);
     expect(
       (
@@ -137,7 +194,7 @@ describe('Meta OAuth routes', () => {
           payload: { accountId: '00000000-0000-4000-8000-000000000001' },
         })
       ).json(),
-    ).toEqual({ data: { revoked: true }, error: null });
+    ).toEqual({ data: { ended: true }, error: null });
   });
 
   it('returns an actionable conflict when selected Meta grant still owns jobs', async () => {
@@ -172,14 +229,14 @@ describe('Meta OAuth routes', () => {
 
   it('consumes provider-error state and never reflects provider error details', async () => {
     const app = application(true);
-    vi.mocked(failMetaOauthConnection).mockResolvedValue(true);
+    vi.mocked(failMetaOauthConnection).mockResolvedValue('facebook_pages');
     const response = await app.inject({
       method: 'GET',
       url: '/api/oauth/meta/callback?state=state&error=access_denied&error_description=token-secret',
       headers: { cookie: session },
     });
     expect(response.statusCode).toBe(302);
-    expect(response.headers.location).toBe('/app?oauth=meta-denied');
+    expect(response.headers.location).toBe('/app?oauth=meta-facebook_pages-denied');
     expect(response.body).not.toContain('token-secret');
     expect(failMetaOauthConnection).toHaveBeenCalledOnce();
     const failureInput = vi.mocked(failMetaOauthConnection).mock.calls[0]?.[2];
@@ -211,5 +268,18 @@ describe('Meta OAuth routes', () => {
     expect(failed.statusCode).toBe(302);
     expect(failed.headers.location).toBe('/app?oauth=meta-service-error');
     expect(failed.body).not.toMatch(/secret-state|secret-code/);
+  });
+
+  it('keeps a consumed Instagram callback error family-specific and safe', async () => {
+    vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+      new MetaFamilyCallbackError('instagram', new MetaRequestError(400, 'permanent')),
+    );
+    const response = await application(true).inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=secret-state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(response.headers.location).toBe('/app?oauth=meta-instagram-service-error');
+    expect(response.body).not.toMatch(/secret-state|secret-code/);
   });
 });

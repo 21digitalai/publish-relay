@@ -456,6 +456,7 @@ export const providerConnections = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     provider: text('provider').notNull(),
+    grantFamily: text('grant_family'),
     memberUrn: text('member_urn'),
     externalSubjectId: text('external_subject_id')
       .notNull()
@@ -480,6 +481,11 @@ export const providerConnections = pgTable(
       table.workspaceId,
       table.provider,
       table.externalSubjectId,
+      sql`COALESCE(${table.grantFamily}, 'legacy')`,
+    ),
+    check(
+      'provider_connections_meta_grant_family_valid',
+      sql`${table.grantFamily} IS NULL OR (${table.provider} = 'meta' AND ${table.grantFamily} IN ('facebook_pages', 'instagram'))`,
     ),
     uniqueIndex('provider_connections_linkedin_member_unique')
       .on(table.workspaceId, table.memberUrn)

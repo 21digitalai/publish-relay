@@ -1137,7 +1137,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                         ? account.destinationProvider === 'tiktok'
                           ? 'Video · options checked after selection'
                           : `${account.capabilitySnapshot.contentKinds.join(' · ')} · ${account.capabilityFreshness}`
-                        : `${account.availability.replaceAll('_', ' ')} · reconnect to schedule`}
+                        : account.availability === 'publishing_unavailable'
+                          ? 'Connected · publishing is not yet available'
+                          : `${account.availability.replaceAll('_', ' ')} · reconnect to schedule`}
                     </small>
                   </span>
                   {account.destinationProvider === 'tiktok' &&

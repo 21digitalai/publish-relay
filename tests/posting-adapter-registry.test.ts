@@ -50,9 +50,7 @@ describe('posting adapter registry', () => {
     expect(getPostingAdapter('Meta', 'facebook_page')?.auth.startPath).toBe(
       '/api/oauth/meta/facebook-pages',
     );
-    expect(getPostingAdapter('Meta', 'instagram')?.auth.startPath).toBe(
-      '/api/oauth/meta/instagram',
-    );
+    expect(getPostingAdapter('Meta', 'instagram')?.auth.startPath).toBe('/api/oauth/instagram');
     expect(getPostingAdapter('Meta')).toBeUndefined();
     expect(getPostingAdapter('unknown')).toBeUndefined();
   });

@@ -56,6 +56,8 @@ import {
 } from '../src/modules/providers/meta-oauth.service.js';
 import type { MetaFamilyCallbackError } from '../src/modules/providers/meta-oauth.service.js';
 import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
+import { completeInstagramLogin } from '../src/modules/providers/instagram-login.service.js';
+import { getFreshInstagramLoginToken } from '../src/modules/providers/instagram-login-credential.service.js';
 import {
   beginTikTokOauthConnection,
   completeTikTokOauthConnection,
@@ -91,6 +93,7 @@ const migrations = [
   '0051_provider_subject_lifecycle.sql',
   '0055_x_long_post_declaration.sql',
   '0056_meta_grant_family.sql',
+  '0057_instagram_login_legacy_grants.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -1487,6 +1490,247 @@ describe('credential and OAuth persistence', () => {
       "select count(*)::int as count from audit_events where action = 'meta.discovery.completed'",
     );
     expect(writes.rows[0]?.count).toBe(0);
+  });
+
+  it('keeps Instagram Login destination identity stable and preserves a valid grant on failed reconnect', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 23)),
+    };
+    const connect = async (requestId: string, fails = false) => {
+      const issued = await issueOauthTransaction(db, keys, {
+        workspaceId,
+        userId,
+        provider: 'instagram_login',
+        redirectUri: 'https://relay.test/api/oauth/instagram/callback',
+      });
+      return completeInstagramLogin(
+        db,
+        keys,
+        {
+          exchangeCode: () =>
+            fails
+              ? Promise.reject(new Error('Instagram token exchange failed'))
+              : Promise.resolve({
+                  accessToken: `ig-token-${requestId}`,
+                  appScopedUserId: 'app-user-1',
+                  remoteUserId: 'ig-user-1',
+                  username: 'publisher',
+                  expiresAt: new Date('2026-12-01T00:00:00Z'),
+                }),
+        } as never,
+        { workspaceId, userId, state: issued.state, code: 'code', requestId },
+      );
+    };
+    await connect('first');
+    const before = await database.query<{
+      id: string;
+      connection_id: string;
+      credential_id: string;
+      availability: string;
+      destination_provider: string;
+      remote_account_id: string;
+      status: string;
+    }>(
+      `select account.id, account.connection_id, account.credential_id,
+              account.availability, account.destination_provider, account.remote_account_id,
+              connection.status
+       from provider_accounts account join provider_connections connection
+         on connection.id = account.connection_id
+       where connection.provider = 'instagram_login'`,
+    );
+    expect(before.rows).toHaveLength(1);
+    expect(before.rows[0]).toMatchObject({
+      availability: 'publishing_unavailable',
+      destination_provider: 'instagram',
+      remote_account_id: 'ig-user-1',
+      status: 'active',
+    });
+    await expect(connect('failed', true)).rejects.toThrow('Instagram token exchange failed');
+    const afterFailure = await database.query(
+      "select id, credential_id from provider_connections where provider = 'instagram_login'",
+    );
+    expect(afterFailure.rows[0]).toMatchObject({
+      id: before.rows[0]?.connection_id,
+      credential_id: before.rows[0]?.credential_id,
+    });
+    await connect('reconnected');
+    const after = await database.query<{
+      id: string;
+      connection_id: string;
+      credential_id: string;
+    }>(
+      `select account.id, account.connection_id, account.credential_id
+       from provider_accounts account join provider_connections connection
+         on connection.id = account.connection_id
+       where connection.provider = 'instagram_login'`,
+    );
+    expect(after.rows[0]?.id).toBe(before.rows[0]?.id);
+    expect(after.rows[0]?.connection_id).toBe(before.rows[0]?.connection_id);
+    expect(after.rows[0]?.credential_id).not.toBe(before.rows[0]?.credential_id);
+    const credentials = await database.query<{ active: number; revoked: number }>(
+      `select count(*) filter (where revoked_at is null)::int as active,
+              count(*) filter (where revoked_at is not null)::int as revoked
+       from credentials`,
+    );
+    expect(credentials.rows[0]).toEqual({ active: 1, revoked: 1 });
+    expect(
+      await getFreshInstagramLoginToken(
+        db,
+        keys,
+        {
+          refreshToken: (token: string) => {
+            expect(token).toBe('ig-token-reconnected');
+            return Promise.resolve({
+              accessToken: 'ig-token-refreshed',
+              expiresAt: new Date('2027-01-29T00:00:00Z'),
+            });
+          },
+        } as never,
+        {
+          workspaceId,
+          appScopedUserId: 'app-user-1',
+          requestId: 'refresh',
+          now: new Date('2026-11-30T12:00:00Z'),
+        },
+      ),
+    ).toBe('ig-token-refreshed');
+    const refreshed = await database.query<{ version: number; access_expires_at: Date }>(
+      `select credential.version, connection.access_expires_at
+       from provider_connections connection join credentials credential
+         on credential.id = connection.credential_id
+       where connection.provider = 'instagram_login'`,
+    );
+    expect(refreshed.rows[0]).toEqual({
+      version: 2,
+      access_expires_at: new Date('2027-01-29T00:00:00Z'),
+    });
+  });
+
+  it('makes legacy Facebook Login Instagram destinations inert without changing the Page sibling', async () => {
+    const instagramCredential = await createCredential(
+      drizzle(database) as unknown as NodePgDatabase,
+      workspaceId,
+      encrypted(24),
+    );
+    const facebookCredential = await createCredential(
+      drizzle(database) as unknown as NodePgDatabase,
+      workspaceId,
+      encrypted(25),
+    );
+    const instagram = await database.query<{ id: string }>(
+      `insert into provider_connections
+         (workspace_id, provider, grant_family, external_subject_id, credential_id)
+       values ($1, 'meta', 'instagram', 'meta-user', $2) returning id`,
+      [workspaceId, instagramCredential.id],
+    );
+    const facebook = await database.query<{ id: string }>(
+      `insert into provider_connections
+         (workspace_id, provider, grant_family, external_subject_id, credential_id)
+       values ($1, 'meta', 'facebook_pages', 'meta-user', $2) returning id`,
+      [workspaceId, facebookCredential.id],
+    );
+    await database.query(
+      `insert into provider_accounts
+         (workspace_id, connection_id, provider_account_id, destination_provider,
+          remote_account_id, display_name, availability)
+       values ($1, $2, 'ig-1', 'instagram', 'ig-1', 'Instagram', 'active'),
+              ($1, $3, 'page-1', 'facebook_page', 'page-1', 'Page', 'active')`,
+      [workspaceId, instagram.rows[0]?.id, facebook.rows[0]?.id],
+    );
+    await database.exec(
+      await readFile(
+        new URL('../migrations/0057_instagram_login_legacy_grants.sql', import.meta.url),
+        'utf8',
+      ),
+    );
+    const rows = await database.query<{
+      destination_provider: string;
+      availability: string;
+      disconnected_at: Date | null;
+      status: string;
+    }>(
+      `select account.destination_provider, account.availability,
+              account.disconnected_at, connection.status
+       from provider_accounts account join provider_connections connection
+         on connection.id = account.connection_id
+       order by account.destination_provider`,
+    );
+    expect(rows.rows[0]).toEqual({
+      destination_provider: 'facebook_page',
+      availability: 'active',
+      disconnected_at: null,
+      status: 'active',
+    });
+    expect(rows.rows[1]).toMatchObject({
+      destination_provider: 'instagram',
+      availability: 'reauth_required',
+      status: 'disconnected',
+    });
+    expect(rows.rows[1]?.disconnected_at).toBeInstanceOf(Date);
+  });
+
+  it('re-homes an exact-ID inert legacy Instagram account without duplicating its identity', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 26)),
+    };
+    const credential = await createCredential(db, workspaceId, encrypted(26));
+    const oldConnection = await database.query<{ id: string }>(
+      `insert into provider_connections
+         (workspace_id, provider, grant_family, external_subject_id, credential_id, status)
+       values ($1, 'meta', 'instagram', 'old-meta-user', $2, 'disconnected') returning id`,
+      [workspaceId, credential.id],
+    );
+    const oldAccount = await database.query<{ id: string }>(
+      `insert into provider_accounts
+         (workspace_id, connection_id, provider_account_id, destination_provider,
+          remote_account_id, display_name, availability, disconnected_at)
+       values ($1, $2, 'ig-user-1', 'instagram', 'ig-user-1', 'old-name',
+               'reauth_required', now()) returning id`,
+      [workspaceId, oldConnection.rows[0]?.id],
+    );
+    const issued = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'instagram_login',
+      redirectUri: 'https://relay.test/api/oauth/instagram/callback',
+    });
+    await completeInstagramLogin(
+      db,
+      keys,
+      {
+        exchangeCode: () =>
+          Promise.resolve({
+            accessToken: 'new-token',
+            appScopedUserId: 'new-app-scoped-id',
+            remoteUserId: 'ig-user-1',
+            username: 'new-name',
+            expiresAt: new Date('2026-12-01T00:00:00Z'),
+          }),
+      } as never,
+      { workspaceId, userId, state: issued.state, code: 'code', requestId: 'rehome' },
+    );
+    const accounts = await database.query<{
+      id: string;
+      provider: string;
+      availability: string;
+      disconnected_at: Date | null;
+    }>(
+      `select account.id, connection.provider, account.availability, account.disconnected_at
+       from provider_accounts account join provider_connections connection
+         on connection.id = account.connection_id`,
+    );
+    expect(accounts.rows).toEqual([
+      {
+        id: oldAccount.rows[0]?.id,
+        provider: 'instagram_login',
+        availability: 'publishing_unavailable',
+        disconnected_at: null,
+      },
+    ]);
   });
 
   it('rejects a Page grant without publishing access and ignores legacy combined state', async () => {

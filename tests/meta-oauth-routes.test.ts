@@ -116,7 +116,7 @@ describe('Meta OAuth routes', () => {
   it('does not issue state when a family has no verified permission configuration', async () => {
     const response = await application(true, false).inject({
       method: 'POST',
-      url: '/api/oauth/meta/instagram',
+      url: '/api/oauth/meta/facebook-pages',
       headers: csrf,
     });
     expect(response.statusCode).toBe(503);
@@ -162,20 +162,15 @@ describe('Meta OAuth routes', () => {
       data: { authorizationUrl: 'https://www.facebook.com/v23.0/dialog/oauth' },
       error: null,
     });
-    await app.inject({ method: 'POST', url: '/api/oauth/meta/instagram', headers: csrf });
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/oauth/meta/instagram', headers: csrf }))
+        .statusCode,
+    ).toBe(410);
     expect(vi.mocked(beginMetaOauthConnection).mock.calls[0]?.[3]).toMatchObject({
       family: 'facebook_pages',
       permissions: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
     });
-    expect(vi.mocked(beginMetaOauthConnection).mock.calls[1]?.[3]).toMatchObject({
-      family: 'instagram',
-      permissions: [
-        'pages_show_list',
-        'pages_read_engagement',
-        'instagram_basic',
-        'instagram_content_publish',
-      ],
-    });
+    expect(beginMetaOauthConnection).toHaveBeenCalledTimes(1);
     expect(
       (await app.inject({ method: 'POST', url: '/api/oauth/meta', headers: csrf })).statusCode,
     ).toBe(410);

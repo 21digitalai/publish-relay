@@ -75,6 +75,7 @@ function destinationHealth(availability: string, status: string): Account['healt
   if (status === 'revoking') return 'Revocation pending';
   if (availability === 'permission_lost') return 'Permission lost';
   if (availability === 'remote_missing') return 'Remote account missing';
+  if (availability === 'publishing_unavailable') return 'Needs attention';
   if (availability === 'reauth_required' || status !== 'active') return 'Reconnect required';
   return 'Connected';
 }
@@ -929,9 +930,10 @@ function AccountRow({
   onDefaultsSaved: (account: Account) => void;
 }) {
   const revocationPending = account.health === 'Revocation pending';
+  const publishingUnavailable = account.availability === 'publishing_unavailable';
   const needsReconnect =
     account.health !== 'Connected' && account.health !== 'Needs attention' && !revocationPending;
-  const linkedinExpiringSoon = account.health === 'Needs attention';
+  const linkedinExpiringSoon = account.health === 'Needs attention' && !publishingUnavailable;
   const linkedinWarning =
     account.provider === 'LinkedIn'
       ? linkedInExpiryWarning(
@@ -976,10 +978,12 @@ function AccountRow({
       </div>
       <div>
         <span
-          className={`status-badge ${needsReconnect || linkedinExpiringSoon || revocationPending ? 'warning' : 'success'}`}
+          className={`status-badge ${needsReconnect || linkedinExpiringSoon || publishingUnavailable || revocationPending ? 'warning' : 'success'}`}
         >
           <span aria-hidden="true">
-            {needsReconnect || linkedinExpiringSoon || revocationPending ? '!' : '✓'}
+            {needsReconnect || linkedinExpiringSoon || publishingUnavailable || revocationPending
+              ? '!'
+              : '✓'}
           </span>{' '}
           {account.health}
         </span>
@@ -988,15 +992,17 @@ function AccountRow({
         <span>
           {revocationPending
             ? 'Grant revocation is unfinished. Retry Revoke Meta connection; scheduling and reconnect are paused.'
-            : account.health === 'Needs attention'
-              ? linkedinWarning
-              : account.health === 'Connected'
-                ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · capabilities ${account.capabilityFreshness}`
-                : account.health === 'Permission lost'
-                  ? 'Reconnect Meta and restore publishing permissions.'
-                  : account.health === 'Remote account missing'
-                    ? 'Reconnect Meta to refresh destinations; history remains available.'
-                    : 'Reconnect this provider account to schedule new work.'}
+            : publishingUnavailable
+              ? 'Instagram is connected. Publishing is not yet available for this connection.'
+              : account.health === 'Needs attention'
+                ? linkedinWarning
+                : account.health === 'Connected'
+                  ? `${account.capabilitySnapshot.contentKinds.join(' · ')} · capabilities ${account.capabilityFreshness}`
+                  : account.health === 'Permission lost'
+                    ? 'Reconnect Meta and restore publishing permissions.'
+                    : account.health === 'Remote account missing'
+                      ? 'Reconnect Meta to refresh destinations; history remains available.'
+                      : 'Reconnect this provider account to schedule new work.'}
         </span>
       </div>
       <div className="account-actions">
@@ -1206,6 +1212,18 @@ function AccountRow({
 function AccountsPage() {
   const oauthResult = new URLSearchParams(window.location.search).get('oauth');
   const oauthErrorMessages: Record<string, string> = {
+    'instagram-denied':
+      'No Instagram account was connected. Instagram authorization was not completed. Start a new connection to try again.',
+    'instagram-expired':
+      'No Instagram account was connected. This connection attempt expired or was already used. Start again from Accounts.',
+    'instagram-permissions':
+      'No Instagram account was connected. Both profile access and content publishing permission are required. Review the requested permissions and try again.',
+    'instagram-no-account':
+      'No eligible Instagram Professional account was found. Check that you selected a Business or Creator account, then try again.',
+    'instagram-conflict':
+      'No Instagram account was connected. This account is linked to another connection. Contact support to resolve the conflict.',
+    'instagram-service-error':
+      'No Instagram account was connected. We could not finish checking the connection. Start a new connection to retry; if it fails again, contact support.',
     'linkedin-member-mismatch':
       'A different LinkedIn member signed in. The selected account was not changed. Switch LinkedIn accounts and retry Reconnect.',
     'linkedin-permission-unavailable':
@@ -1301,9 +1319,11 @@ function AccountsPage() {
                     ? 'YouTube'
                     : account.provider.toLowerCase() === 'linkedin'
                       ? 'LinkedIn'
-                      : account.provider.toLowerCase() === 'meta'
-                        ? 'Meta'
-                        : account.provider,
+                      : account.provider.toLowerCase() === 'instagram_login'
+                        ? 'Instagram'
+                        : account.provider.toLowerCase() === 'meta'
+                          ? 'Meta'
+                          : account.provider,
               destinationProvider: account.destinationProvider ?? account.provider,
               ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
               name: account.displayName.replace(/ \(@[^)]*\)$/, ''),

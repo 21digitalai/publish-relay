@@ -50,19 +50,22 @@ export function registerMetaOauthRoutes(
   application.post('/api/oauth/meta', async (_request, reply) =>
     reply.code(410).send({ data: null, error: 'Choose Facebook Pages or Instagram separately' }),
   );
+  application.post('/api/oauth/meta/instagram', async (_request, reply) =>
+    reply.code(410).send({ data: null, error: 'Use Instagram Login to connect Instagram' }),
+  );
 
-  for (const family of ['facebook-pages', 'instagram'] as const)
+  for (const family of ['facebook-pages'] as const)
     application.post(`/api/oauth/meta/${family}`, async (request, reply) => {
       const identity = await authenticateRequest(request, dependencies.auth);
       if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
       if (!hasValidCsrf(request))
         return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
-      const grantFamily = family === 'facebook-pages' ? 'facebook_pages' : 'instagram';
+      const grantFamily = 'facebook_pages';
       const permissions = dependencies.familyPermissions?.[grantFamily];
       if (!permissions)
         return reply.code(503).send({
           data: null,
-          error: `${family === 'facebook-pages' ? 'Facebook Pages' : 'Instagram'} connection is not ready. No authorization was started.`,
+          error: 'Facebook Pages connection is not ready. No authorization was started.',
         });
       try {
         const result = await beginMetaOauthConnection(

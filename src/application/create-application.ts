@@ -42,6 +42,8 @@ import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.j
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
+import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
+import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
 import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
 import { registerTikTokMediaRoutes } from '../modules/providers/tiktok-media.routes.js';
 import { TikTokMediaGrantService } from '../modules/providers/tiktok-media-grant.service.js';
@@ -73,6 +75,11 @@ interface MetaOauthOptions {
   callbackUrl: string;
   familyPermissions?: Partial<Record<'facebook_pages' | 'instagram', readonly MetaPermission[]>>;
 }
+interface InstagramOauthOptions {
+  keys: MasterKeyProvider;
+  client: InstagramLoginClient;
+  callbackUrl: string;
+}
 interface TikTokOauthOptions {
   keys: MasterKeyProvider;
   client: TikTokHttpClient;
@@ -92,6 +99,7 @@ export interface CoreApplicationOptions {
   youtubeOauth?: YouTubeOauthOptions;
   linkedinOauth?: LinkedInOauthOptions;
   metaOauth?: MetaOauthOptions;
+  instagramOauth?: InstagramOauthOptions;
   tiktokOauth?: TikTokOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
   magicLinks?: MagicLinkService;
@@ -210,6 +218,7 @@ function registerBrowserRoutes(
     youtubeOauth,
     linkedinOauth,
     metaOauth,
+    instagramOauth,
     tiktokOauth,
     delegatedAuthorization,
   } = options;
@@ -254,6 +263,13 @@ function registerBrowserRoutes(
     registerLinkedInOauthRoutes(application, { auth, database, actionPolicy, ...linkedinOauth });
   if (auth && database && metaOauth)
     registerMetaOauthRoutes(application, { auth, database, actionPolicy, ...metaOauth });
+  if (auth && database)
+    registerInstagramLoginRoutes(application, {
+      auth,
+      database,
+      actionPolicy,
+      ...(instagramOauth ? { oauth: instagramOauth } : {}),
+    });
   if (auth && database && tiktokOauth)
     registerTikTokOauthRoutes(application, { auth, database, actionPolicy, ...tiktokOauth });
   if (auth && delegatedAuthorization)

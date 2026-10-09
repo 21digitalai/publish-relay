@@ -1,0 +1,146 @@
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../src/modules/providers/instagram-login.service.js', () => ({
+  beginInstagramLogin: vi.fn(),
+  completeInstagramLogin: vi.fn(),
+  failInstagramLogin: vi.fn(),
+}));
+
+import { createStandaloneApplication } from '../src/application/create-application.js';
+import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
+import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
+import {
+  InstagramLoginAccountError,
+  InstagramLoginPermissionError,
+} from '../src/modules/providers/instagram-login-client.js';
+import {
+  beginInstagramLogin,
+  completeInstagramLogin,
+  failInstagramLogin,
+} from '../src/modules/providers/instagram-login.service.js';
+
+const applications = [] as ReturnType<typeof createStandaloneApplication>[];
+afterEach(async () => {
+  vi.clearAllMocks();
+  await Promise.all(applications.splice(0).map((application) => application.close()));
+});
+
+function application(configured: boolean) {
+  const store = {
+    register: vi.fn(),
+    findLogin: vi.fn(),
+    createSession: vi.fn(),
+    revokeSessionsForUser: vi.fn(),
+    revokeSession: vi.fn(),
+    findSession: vi.fn().mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    }),
+    findCurrentRole: vi.fn().mockResolvedValue('owner'),
+    findShellProfile: vi.fn(),
+    findWorkspace: vi.fn(),
+    updateWorkspace: vi.fn(),
+    listWorkspaces: vi.fn(),
+    rotateWorkspaceSession: vi.fn(),
+    createWorkspace: vi.fn(),
+    reorderWorkspaces: vi.fn(),
+  } as AuthStore;
+  const keys: MasterKeyProvider = {
+    currentVersion: () => 'v1',
+    getKey: () => Promise.resolve(Buffer.alloc(32)),
+  };
+  const app = createStandaloneApplication({
+    config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
+    auth: new AuthService(store),
+    database: {} as NodePgDatabase,
+    ...(configured
+      ? {
+          instagramOauth: {
+            keys,
+            client: {} as never,
+            callbackUrl: 'https://relay.test/api/oauth/instagram/callback',
+          },
+        }
+      : {}),
+  });
+  applications.push(app);
+  return app;
+}
+
+const csrf = {
+  cookie: 'publish_relay_session=w1.token; publish_relay_csrf=csrf',
+  'x-csrf-token': 'csrf',
+};
+const sessionCookie = { cookie: 'publish_relay_session=w1.token' };
+
+describe('Instagram Login routes', () => {
+  it('fails closed before state issuance when separate Instagram credentials are absent', async () => {
+    const response = await application(false).inject({
+      method: 'POST',
+      url: '/api/oauth/instagram',
+      headers: csrf,
+    });
+    expect(response.statusCode).toBe(503);
+    expect(beginInstagramLogin).not.toHaveBeenCalled();
+  });
+
+  it('requires session and CSRF, then starts only the dedicated Instagram route', async () => {
+    const app = application(true);
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/oauth/instagram', headers: sessionCookie }))
+        .statusCode,
+    ).toBe(403);
+    vi.mocked(beginInstagramLogin).mockResolvedValue({
+      authorizationUrl: 'https://www.instagram.com/oauth/authorize?scope=instagram_business_basic',
+      expiresAt: new Date('2026-10-09T12:00:00Z'),
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/instagram',
+      headers: csrf,
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{ data: { authorizationUrl: string }; error: null }>();
+    expect(new URL(body.data.authorizationUrl).origin).toBe('https://www.instagram.com');
+    expect(body.error).toBeNull();
+    expect(vi.mocked(beginInstagramLogin).mock.calls[0]?.[3]).toMatchObject({
+      workspaceId: 'w1',
+      userId: 'u1',
+      callbackUrl: 'https://relay.test/api/oauth/instagram/callback',
+    });
+  });
+
+  it('maps consumed, replayed, partial, and ineligible callbacks to safe results', async () => {
+    const app = application(true);
+    vi.mocked(completeInstagramLogin).mockResolvedValue({ connectionId: 'connection' });
+    const callback = (query: string) =>
+      app.inject({
+        method: 'GET',
+        url: `/api/oauth/instagram/callback?${query}`,
+        headers: sessionCookie,
+      });
+    expect((await callback('state=one&code=code')).headers.location).toBe(
+      '/app?oauth=instagram-connected',
+    );
+    vi.mocked(completeInstagramLogin).mockResolvedValue(null);
+    expect((await callback('state=one&code=code')).headers.location).toBe(
+      '/app?oauth=instagram-expired',
+    );
+    vi.mocked(completeInstagramLogin).mockRejectedValue(new InstagramLoginPermissionError());
+    expect((await callback('state=one&code=code')).headers.location).toBe(
+      '/app?oauth=instagram-permissions',
+    );
+    vi.mocked(completeInstagramLogin).mockRejectedValue(new InstagramLoginAccountError());
+    expect((await callback('state=one&code=code')).headers.location).toBe(
+      '/app?oauth=instagram-no-account',
+    );
+    vi.mocked(failInstagramLogin).mockResolvedValue(true);
+    expect((await callback('state=one&error=access_denied')).headers.location).toBe(
+      '/app?oauth=instagram-denied',
+    );
+  });
+});

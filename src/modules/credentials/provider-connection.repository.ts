@@ -32,6 +32,7 @@ function normalizeDestination(
     x: ['x'],
     youtube: ['youtube'],
     meta: ['instagram', 'facebook_page'],
+    instagram_login: ['instagram'],
     tiktok: ['tiktok'],
   };
   const allowed = allowedDestinations[connectionFamily];
@@ -169,22 +170,37 @@ export async function replaceProviderConnection(
       .select({
         accountId: providerAccounts.id,
         connectionId: providerAccounts.connectionId,
+        provider: providerConnections.provider,
         grantFamily: providerConnections.grantFamily,
         externalSubjectId: providerConnections.externalSubjectId,
         status: providerConnections.status,
+        disconnectedAt: providerAccounts.disconnectedAt,
       })
       .from(providerAccounts)
       .innerJoin(providerConnections, eq(providerAccounts.connectionId, providerConnections.id))
       .where(
         and(
           eq(providerAccounts.workspaceId, input.workspaceId),
-          eq(providerConnections.provider, input.provider),
+          input.provider === 'instagram_login'
+            ? inArray(providerConnections.provider, ['instagram_login', 'meta'])
+            : eq(providerConnections.provider, input.provider),
           eq(providerAccounts.destinationProvider, destination.destinationProvider),
           eq(providerAccounts.remoteAccountId, destination.remoteAccountId),
         ),
       );
     for (const owner of owners) {
       if (owner.connectionId === current?.id) continue;
+      if (
+        input.provider === 'instagram_login' &&
+        owner.provider === 'meta' &&
+        owner.status === 'disconnected' &&
+        owner.disconnectedAt !== null &&
+        destination.destinationProvider === 'instagram' &&
+        !owners.some((candidate) => candidate.connectionId === current?.id)
+      ) {
+        legacyAccountIds.push(owner.accountId);
+        continue;
+      }
       if (
         input.provider === 'meta' &&
         input.grantFamily &&
@@ -199,6 +215,8 @@ export async function replaceProviderConnection(
       throw new ProviderDestinationConflictError();
     }
   }
+  if (new Set(legacyAccountIds).size !== legacyAccountIds.length || legacyAccountIds.length > 1)
+    throw new ProviderDestinationConflictError();
   const connectionRows = current
     ? await database
         .update(providerConnections)

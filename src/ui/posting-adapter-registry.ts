@@ -78,7 +78,7 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
     description: 'Connect an Instagram Professional account separately from Facebook Pages.',
     icon: { viewBox: '0 0 24 24', paths: ['M2 12c2-10 7-10 10 0 3 10 8 10 10 0'] },
     enabled: true,
-    auth: { kind: 'oauth', startPath: '/api/oauth/meta/instagram' },
+    auth: { kind: 'oauth', startPath: '/api/oauth/instagram' },
     configuration: { requiredBeforeConnect: [] },
   },
 ] as const;

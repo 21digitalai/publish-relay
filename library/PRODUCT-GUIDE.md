@@ -21,10 +21,11 @@ Users can register, connect multiple social accounts, schedule content through t
   2–10 image carousel. Text-only posts, video/Reels, Stories, and advanced Instagram features remain
   later work.
 - Facebook Page phase-one publishing: a canonical HTTPS link with optional message, or one JPEG/PNG image with a message. Text-only, multiple images, video, and advanced Page options remain later work.
-- One Meta connection discovers managed Facebook Pages and their linked Instagram Professional
-  accounts as separate destinations. Connection/discovery does not enable publishing by itself;
-  Instagram and Facebook publishing remain independent adapter slices with independent jobs and
-  outcomes.
+- Facebook Pages and Instagram have independent consent and grant paths. Instagram Login asks only
+  for Instagram profile and content-publishing permissions and does not require selecting a Facebook
+  Page. Connection/discovery does not enable publishing by itself; the new Instagram Login destination
+  remains non-publishable until its own transport is verified. Existing Facebook Login Instagram
+  grants require fresh consent and do not migrate tokens. Instagram and Facebook jobs remain independent.
 - Meta phase-one composition is destination-first. Instagram accepts one image or a 2–10 image
   carousel with a caption; Facebook Pages accept one image or an HTTPS link with a message. A
   combined Instagram + Facebook composition is intentionally limited to one image plus shared

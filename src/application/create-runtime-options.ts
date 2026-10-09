@@ -21,6 +21,7 @@ import {
   MetaHttpClient,
   parseMetaFamilyPermissions,
 } from '../modules/providers/meta-http-client.js';
+import { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import type { CoreApplicationOptions } from './create-application.js';
 
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
@@ -46,6 +47,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
     !publicOrigin
   )
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required when OAuth providers are enabled');
+  if (config.PUBLISH_RELAY_INSTAGRAM_APP_ID && !publicOrigin)
+    throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required for Instagram Login');
   if (
     Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID) !==
     Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET)
@@ -55,6 +58,11 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
     throw new Error('Meta OAuth requires both app ID and secret');
   if (config.PUBLISH_RELAY_META_APP_ID && !config.PUBLISH_RELAY_META_GRAPH_VERSION)
     throw new Error('Meta OAuth requires a pinned Graph version');
+  if (
+    Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_ID) !==
+    Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET)
+  )
+    throw new Error('Instagram Login requires its own app ID and secret');
 
   const pool = new pg.Pool({
     connectionString: config.DATABASE_URL,
@@ -133,15 +141,23 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                       ),
                     }
                   : {}),
-                ...(config.PUBLISH_RELAY_META_INSTAGRAM_PERMISSIONS
-                  ? {
-                      instagram: parseMetaFamilyPermissions(
-                        'instagram',
-                        config.PUBLISH_RELAY_META_INSTAGRAM_PERMISSIONS,
-                      ),
-                    }
-                  : {}),
               },
+            },
+          }
+        : {}),
+      ...(config.PUBLISH_RELAY_INSTAGRAM_APP_ID &&
+      config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET &&
+      config.PUBLISH_RELAY_META_GRAPH_VERSION &&
+      publicOrigin
+        ? {
+            instagramOauth: {
+              keys: masterKeys,
+              client: new InstagramLoginClient({
+                appId: config.PUBLISH_RELAY_INSTAGRAM_APP_ID,
+                appSecret: config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET,
+                graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+              }),
+              callbackUrl: new URL('/api/oauth/instagram/callback', publicOrigin).toString(),
             },
           }
         : {}),

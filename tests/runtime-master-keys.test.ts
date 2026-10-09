@@ -109,6 +109,27 @@ describe('production runtime secret configuration', () => {
     ).toMatchObject({ PUBLISH_RELAY_META_GRAPH_VERSION: 'v23.0' });
   });
 
+  it('requires a separate Instagram Login app pair and pinned Graph version', () => {
+    expect(() =>
+      loadRuntimeConfig({ NODE_ENV: 'test', PUBLISH_RELAY_INSTAGRAM_APP_ID: 'instagram-app' }),
+    ).toThrow(/Instagram Login requires its own app ID and secret/);
+    expect(() =>
+      loadRuntimeConfig({
+        NODE_ENV: 'test',
+        PUBLISH_RELAY_INSTAGRAM_APP_ID: 'instagram-app',
+        PUBLISH_RELAY_INSTAGRAM_APP_SECRET: 'instagram-secret',
+      }),
+    ).toThrow(/Instagram Login requires a pinned Graph API version/);
+    expect(
+      loadRuntimeConfig({
+        NODE_ENV: 'test',
+        PUBLISH_RELAY_INSTAGRAM_APP_ID: 'instagram-app',
+        PUBLISH_RELAY_INSTAGRAM_APP_SECRET: 'instagram-secret',
+        PUBLISH_RELAY_META_GRAPH_VERSION: 'v23.0',
+      }),
+    ).toMatchObject({ PUBLISH_RELAY_INSTAGRAM_APP_ID: 'instagram-app' });
+  });
+
   it('requires a distinct worker database URL in production', () => {
     const production = loadRuntimeConfig({
       NODE_ENV: 'production',

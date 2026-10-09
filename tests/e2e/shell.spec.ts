@@ -1235,6 +1235,50 @@ test('empty Instagram discovery is an actionable error without a phantom success
   await page.screenshot({ path: testInfo.outputPath('instagram-connected.png'), fullPage: true });
 });
 
+test('Instagram Login shows safe errors and a connected but non-publishable account on both viewports', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.goto('/app?oauth=instagram-no-account&code=secret-code');
+  await expect(page.getByRole('alert')).toContainText('No eligible Instagram Professional account');
+  await expect(page.getByRole('alert')).not.toContainText('secret-code');
+  await page.screenshot({
+    path: testInfo.outputPath('instagram-login-error-desktop.png'),
+    fullPage: true,
+  });
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000909',
+              provider: 'instagram_login',
+              destinationProvider: 'instagram',
+              displayName: 'bitcoinbarbulgaria',
+              status: 'active',
+              availability: 'publishing_unavailable',
+              updatedAt: '2026-10-09T11:00:00Z',
+              adapterDefaults: {},
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/app?oauth=instagram-connected');
+  await expect(
+    page.locator('.account-row').filter({ hasText: 'bitcoinbarbulgaria' }),
+  ).toContainText('Instagram is connected. Publishing is not yet available');
+  await page.screenshot({
+    path: testInfo.outputPath('instagram-login-connected-mobile.png'),
+    fullPage: true,
+  });
+});
+
 test('Meta picker offers two consent families and never starts the combined route', async ({
   page,
 }) => {
@@ -1248,6 +1292,14 @@ test('Meta picker offers two consent families and never starts the combined rout
       body: JSON.stringify({ data: null, error: 'This family is not configured yet' }),
     });
   });
+  await page.route('**/api/oauth/instagram', (route) => {
+    starts.push(new URL(route.request().url()).pathname);
+    return route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'Instagram Login is not configured yet' }),
+    });
+  });
   await page.goto(await workspacePath(page, 'accounts'));
   await page.getByRole('button', { name: 'Add Posting Adapter' }).click();
   await expect(page.getByRole('button', { name: /^Facebook Pages / })).toBeVisible();
@@ -1257,7 +1309,8 @@ test('Meta picker offers two consent families and never starts the combined rout
   await expect(page.getByRole('alert')).toContainText('This family is not configured yet');
   await page.getByRole('button', { name: 'Add Posting Adapter' }).click();
   await page.getByRole('button', { name: /^Instagram / }).click();
-  expect(starts).toEqual(['/api/oauth/meta/facebook-pages', '/api/oauth/meta/instagram']);
+  await expect(page.getByRole('alert')).toContainText('Instagram Login is not configured yet');
+  expect(starts).toEqual(['/api/oauth/meta/facebook-pages', '/api/oauth/instagram']);
 });
 
 test('LinkedIn health failure emits one anonymous connection error', async ({ page }) => {

@@ -1393,6 +1393,102 @@ describe('credential and OAuth persistence', () => {
     expect(completed.rows[0]?.count).toBe(1);
   });
 
+  it('disconnects only a pre-existing empty Instagram family grant on zero-result consent', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 15)),
+    };
+    const emptyCredential = await createCredential(db, workspaceId, encrypted(21));
+    const pageCredential = await createCredential(db, workspaceId, encrypted(22));
+    const empty = await database.query<{ id: string }>(
+      `insert into provider_connections
+         (workspace_id, provider, grant_family, external_subject_id, credential_id)
+       values ($1, 'meta', 'instagram', 'meta-user', $2) returning id`,
+      [workspaceId, emptyCredential.id],
+    );
+    const page = await database.query<{ id: string }>(
+      `insert into provider_connections
+         (workspace_id, provider, grant_family, external_subject_id, credential_id)
+       values ($1, 'meta', 'facebook_pages', 'meta-user', $2) returning id`,
+      [workspaceId, pageCredential.id],
+    );
+    await database.query(
+      `insert into provider_accounts
+         (workspace_id, connection_id, provider_account_id, destination_provider,
+          remote_account_id, display_name, availability)
+       values ($1, $2, 'page-1', 'facebook_page', 'page-1', 'Page One', 'active')`,
+      [workspaceId, page.rows[0]?.id],
+    );
+    const issued = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'meta:instagram',
+      redirectUri: 'https://relay.test/api/oauth/meta/callback',
+    });
+    await expect(
+      completeMetaOauthConnection(
+        db,
+        keys,
+        {
+          exchangeCode: () =>
+            Promise.resolve({
+              accessToken: 'new-authority',
+              userId: 'meta-user',
+              scopes: ['instagram_basic', 'instagram_content_publish'],
+            }),
+          discoverPages: () => Promise.resolve([]),
+        } as never,
+        {
+          workspaceId,
+          userId,
+          state: issued.state,
+          code: 'fixture-code',
+          requestId: 'empty-legacy',
+        },
+        { instagram: ['instagram_basic', 'instagram_content_publish'] },
+      ),
+    ).rejects.toMatchObject({
+      family: 'instagram',
+      cause: expect.any(MetaNoUsableDestinationsError),
+    } satisfies Partial<MetaFamilyCallbackError>);
+    const grants = await database.query<{
+      id: string;
+      grant_family: string;
+      status: string;
+      revoked_at: Date | null;
+      account_count: number;
+    }>(
+      `select connection.id, connection.grant_family, connection.status, credential.revoked_at,
+              count(account.id)::int as account_count
+       from provider_connections connection
+       join credentials credential on credential.id = connection.credential_id
+       left join provider_accounts account on account.connection_id = connection.id
+       where connection.provider = 'meta'
+       group by connection.id, credential.id
+       order by connection.grant_family`,
+    );
+    expect(grants.rows).toHaveLength(2);
+    expect(grants.rows[0]).toEqual({
+      id: page.rows[0]?.id,
+      grant_family: 'facebook_pages',
+      status: 'active',
+      revoked_at: null,
+      account_count: 1,
+    });
+    expect(grants.rows[1]).toMatchObject({
+      id: empty.rows[0]?.id,
+      grant_family: 'instagram',
+      status: 'disconnected',
+      account_count: 0,
+    });
+    expect(grants.rows[1]?.revoked_at).toBeInstanceOf(Date);
+    const writes = await database.query<{ count: number }>(
+      "select count(*)::int as count from audit_events where action = 'meta.discovery.completed'",
+    );
+    expect(writes.rows[0]?.count).toBe(0);
+  });
+
   it('rejects a Page grant without publishing access and ignores legacy combined state', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const keys: MasterKeyProvider = {

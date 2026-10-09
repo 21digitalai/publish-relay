@@ -261,6 +261,70 @@ async function persistMetaDiscovery(
   }
 }
 
+async function disconnectEmptyMetaFamilyGrant(
+  database: NodePgDatabase,
+  input: MetaConnectInput,
+  family: MetaGrantFamily,
+  subjectId: string,
+): Promise<void> {
+  await withTenantTransaction(database, input, async (transaction) => {
+    await assertActiveMembership(transaction, input.workspaceId, input.userId);
+    await transaction
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, input.workspaceId))
+      .for('update');
+    const connections = await transaction
+      .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
+      .from(providerConnections)
+      .where(
+        and(
+          eq(providerConnections.workspaceId, input.workspaceId),
+          eq(providerConnections.provider, 'meta'),
+          eq(providerConnections.grantFamily, family),
+          eq(providerConnections.externalSubjectId, subjectId),
+          eq(providerConnections.status, 'active'),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    const connection = connections[0];
+    if (!connection) return;
+    const accounts = await transaction
+      .select({ id: providerAccounts.id })
+      .from(providerAccounts)
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerAccounts.connectionId, connection.id),
+        ),
+      )
+      .limit(1);
+    if (accounts[0]) return;
+    const now = new Date();
+    await transaction
+      .update(providerConnections)
+      .set({ status: 'disconnected', updatedAt: now })
+      .where(
+        and(
+          eq(providerConnections.workspaceId, input.workspaceId),
+          eq(providerConnections.id, connection.id),
+        ),
+      );
+    await revokeCredential(transaction, input.workspaceId, connection.credentialId, now);
+    await transaction.insert(auditEvents).values({
+      workspaceId: input.workspaceId,
+      actorType: 'user',
+      actorId: input.userId,
+      action: 'meta.connection.disconnected',
+      targetType: 'provider_connection',
+      targetId: connection.id,
+      requestId: input.requestId,
+      metadata: { family, reason: 'no_usable_destinations' },
+    });
+  });
+}
+
 export async function completeMetaOauthConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
@@ -290,14 +354,17 @@ export async function completeMetaOauthConnection(
     const hasUsableDestination = pages.some((page) =>
       family === 'instagram' ? Boolean(page.instagram) : page.tasks.includes(REQUIRED_PAGE_TASK),
     );
-    if (!hasUsableDestination) throw new MetaNoUsableDestinationsError(family);
+    if (!hasUsableDestination) {
+      await disconnectEmptyMetaFamilyGrant(database, input, family, credential.userId);
+      throw new MetaNoUsableDestinationsError(family);
+    }
     return {
       family,
       ...(await persistMetaDiscovery(database, keys, input, credential, pages, family)),
     };
   } catch (error) {
     await recordMetaOauthAudit(database, input, 'meta.oauth.failed', family);
-    // A callback failure has no verified existing connection to mark unavailable.
+    // Only an independently verified empty grant is disconnected above.
     throw new MetaFamilyCallbackError(family, error);
   }
 }

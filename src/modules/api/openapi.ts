@@ -38,7 +38,13 @@ const destinationCollectionSchema = z.object({
       destinationProvider: z.enum(['x', 'youtube', 'linkedin', 'instagram', 'facebook_page']),
       displayName: z.string().min(1),
       status: z.string().min(1),
-      availability: z.enum(['active', 'reauth_required', 'permission_lost', 'remote_missing']),
+      availability: z.enum([
+        'active',
+        'reauth_required',
+        'permission_lost',
+        'remote_missing',
+        'publishing_unavailable',
+      ]),
       remoteParentAccountId: z.string().nullable(),
       capabilitySnapshot: z.object({
         schemaVersion: z.literal(1),

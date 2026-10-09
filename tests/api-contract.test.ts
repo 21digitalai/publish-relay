@@ -72,6 +72,7 @@ describe('API v1 contract', () => {
     const document = JSON.stringify(paths['/api/v1/destinations']);
     for (const provider of ['x', 'youtube', 'linkedin', 'instagram', 'facebook_page'])
       expect(document).toContain(provider);
+    expect(document).toContain('publishing_unavailable');
   });
 
   it('documents versioned provider-specific post request branches', () => {

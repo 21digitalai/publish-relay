@@ -1219,7 +1219,7 @@ test('empty Instagram discovery is an actionable error without a phantom success
   await mockMetaDestinations(page);
   await page.reload();
   await expect(page.getByRole('alert')).toContainText(
-    'Your previous Instagram connection, if any, was kept',
+    'Any previously usable Instagram account remains available',
   );
   await expect(page.locator('.account-row').filter({ hasText: '@mira' }).first()).toBeVisible();
   await page.screenshot({

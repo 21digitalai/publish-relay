@@ -65,6 +65,12 @@ export class MetaFamilyCallbackError extends Error {
   }
 }
 
+export class MetaNoUsableDestinationsError extends Error {
+  constructor(public readonly family: MetaGrantFamily) {
+    super(`No usable ${family} destinations were discovered`);
+  }
+}
+
 function serializeCredential(value: object): Buffer {
   return Buffer.from(JSON.stringify(value));
 }
@@ -281,6 +287,10 @@ export async function completeMetaOauthConnection(
       permissions,
     });
     const pages = await client.discoverPages(credential.accessToken, family);
+    const hasUsableDestination = pages.some((page) =>
+      family === 'instagram' ? Boolean(page.instagram) : page.tasks.includes(REQUIRED_PAGE_TASK),
+    );
+    if (!hasUsableDestination) throw new MetaNoUsableDestinationsError(family);
     return {
       family,
       ...(await persistMetaDiscovery(database, keys, input, credential, pages, family)),

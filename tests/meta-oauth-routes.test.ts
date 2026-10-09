@@ -15,6 +15,11 @@ vi.mock('../src/modules/providers/meta-oauth.service.js', () => ({
       super('Meta connection did not complete', { cause });
     }
   },
+  MetaNoUsableDestinationsError: class MetaNoUsableDestinationsError extends Error {
+    constructor(public readonly family: 'facebook_pages' | 'instagram') {
+      super(`No usable ${family} destinations were discovered`);
+    }
+  },
   beginMetaOauthConnection: vi.fn(),
   completeMetaOauthConnection: vi.fn(),
   failMetaOauthConnection: vi.fn(),
@@ -30,6 +35,7 @@ import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 import {
   MetaConnectionHasActiveJobsError,
   MetaFamilyCallbackError,
+  MetaNoUsableDestinationsError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
   failMetaOauthConnection,
@@ -175,7 +181,7 @@ describe('Meta OAuth routes', () => {
     ).toBe(410);
     vi.mocked(completeMetaOauthConnection).mockResolvedValue({
       family: 'facebook_pages',
-      accounts: [],
+      accounts: [{ destinationProvider: 'facebook_page', displayName: 'Page One' }],
     } as never);
     const callback = await app.inject({
       method: 'GET',
@@ -282,4 +288,34 @@ describe('Meta OAuth routes', () => {
     expect(response.headers.location).toBe('/app?oauth=meta-instagram-service-error');
     expect(response.body).not.toMatch(/secret-state|secret-code/);
   });
+
+  it('never renders connected for an empty service result', async () => {
+    vi.mocked(completeMetaOauthConnection).mockResolvedValue({
+      family: 'instagram',
+      accounts: [],
+    } as never);
+    const response = await application(true).inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=state&code=code',
+      headers: { cookie: session },
+    });
+    expect(response.headers.location).toBe('/app?oauth=meta-instagram-no-accounts');
+  });
+
+  it.each(['instagram', 'facebook_pages'] as const)(
+    'redirects empty %s discovery to safe family guidance rather than connected',
+    async (family) => {
+      vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+        new MetaFamilyCallbackError(family, new MetaNoUsableDestinationsError(family)),
+      );
+      const response = await application(true).inject({
+        method: 'GET',
+        url: '/api/oauth/meta/callback?state=secret-state&code=secret-code',
+        headers: { cookie: session },
+      });
+      expect(response.statusCode).toBe(302);
+      expect(response.headers.location).toBe(`/app?oauth=meta-${family}-no-accounts`);
+      expect(response.body).not.toMatch(/secret-state|secret-code/);
+    },
+  );
 });

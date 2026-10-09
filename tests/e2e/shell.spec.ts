@@ -1201,6 +1201,40 @@ test('OAuth callback failures show safe guidance on desktop and mobile', async (
   await expect(page.getByRole('button', { name: 'Add Posting Adapter' })).toBeVisible();
 });
 
+test('empty Instagram discovery is an actionable error without a phantom success row', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.goto('/app?oauth=meta-instagram-no-accounts');
+  await expect(page.getByRole('alert')).toContainText(
+    'No eligible linked Instagram account was found',
+  );
+  await expect(page.getByLabel('Account health summary')).toContainText('0Connected accounts');
+  await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('instagram-no-accounts-first.png'),
+    fullPage: true,
+  });
+
+  await mockMetaDestinations(page);
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText(
+    'Your previous Instagram connection, if any, was kept',
+  );
+  await expect(page.locator('.account-row').filter({ hasText: '@mira' }).first()).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('instagram-no-accounts-reconnect.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/app?oauth=meta-instagram-connected');
+  await expect(page.locator('.account-row').filter({ hasText: '@mira' }).first()).toBeVisible();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'No eligible linked Instagram' }),
+  ).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('instagram-connected.png'), fullPage: true });
+});
+
 test('Meta picker offers two consent families and never starts the combined route', async ({
   page,
 }) => {

@@ -1230,6 +1230,10 @@ function AccountsPage() {
       'No Facebook Page was connected. We could not finish checking the connection. Start a new Facebook Pages connection to retry; if it fails again, contact support.',
     'meta-instagram-service-error':
       'No Instagram account was connected. We could not finish checking the connection. Start a new Instagram connection to retry; if it fails again, contact support.',
+    'meta-instagram-no-accounts':
+      'No eligible linked Instagram account was found. Your previous Instagram connection, if any, was kept. Check that your Instagram account is linked to a Facebook Page you manage, then try Instagram again. If it still does not appear, contact support.',
+    'meta-facebook_pages-no-accounts':
+      'No Facebook Page you can publish to was found. Your previous Facebook Pages connection, if any, was kept. Check your Page access, then try Facebook Pages again. If it still does not appear, contact support.',
     'meta-conflict':
       'No Meta account was connected. This destination is already linked to another connection. Contact support to resolve the conflict.',
     'meta-facebook_pages-conflict':

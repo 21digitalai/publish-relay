@@ -13,6 +13,7 @@ import { MetaRequestError } from './meta-http-client.js';
 import {
   MetaConnectionHasActiveJobsError,
   MetaFamilyCallbackError,
+  MetaNoUsableDestinationsError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
   failMetaOauthConnection,
@@ -130,7 +131,11 @@ export function registerMetaOauthRoutes(
             'Meta OAuth provider validation failed',
           );
         const suffix =
-          error.cause instanceof ProviderDestinationConflictError ? 'conflict' : 'service-error';
+          error.cause instanceof MetaNoUsableDestinationsError
+            ? 'no-accounts'
+            : error.cause instanceof ProviderDestinationConflictError
+              ? 'conflict'
+              : 'service-error';
         return reply.redirect(`/app?oauth=meta-${error.family}-${suffix}`);
       }
       if (error instanceof ProviderDestinationConflictError)
@@ -144,9 +149,10 @@ export function registerMetaOauthRoutes(
       }
       throw error;
     }
-    return result
-      ? reply.redirect(`/app?oauth=meta-${result.family}-connected`)
-      : reply.redirect('/app?oauth=meta-expired');
+    if (!result) return reply.redirect('/app?oauth=meta-expired');
+    return reply.redirect(
+      `/app?oauth=meta-${result.family}-${result.accounts.length > 0 ? 'connected' : 'no-accounts'}`,
+    );
   });
 
   application.post('/api/oauth/meta/revoke', async (request, reply) => {

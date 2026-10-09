@@ -50,7 +50,11 @@ import {
   LinkedInMemberMismatchError,
 } from '../src/modules/providers/linkedin-oauth.service.js';
 import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
-import { completeMetaOauthConnection } from '../src/modules/providers/meta-oauth.service.js';
+import {
+  completeMetaOauthConnection,
+  MetaNoUsableDestinationsError,
+} from '../src/modules/providers/meta-oauth.service.js';
+import type { MetaFamilyCallbackError } from '../src/modules/providers/meta-oauth.service.js';
 import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 import {
   beginTikTokOauthConnection,
@@ -1300,6 +1304,143 @@ describe('credential and OAuth persistence', () => {
         'provider.destination.lost',
       ]),
     );
+  });
+
+  it('rejects empty Instagram discovery before any first-connect or reconnect write', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 15)),
+    };
+    const connect = async (requestId: string, hasInstagram: boolean) => {
+      const issued = await issueOauthTransaction(db, keys, {
+        workspaceId,
+        userId,
+        provider: 'meta:instagram',
+        redirectUri: 'https://relay.test/api/oauth/meta/callback',
+      });
+      return completeMetaOauthConnection(
+        db,
+        keys,
+        {
+          exchangeCode: () =>
+            Promise.resolve({
+              accessToken: `authority-${requestId}`,
+              userId: 'meta-user',
+              scopes: [
+                'pages_show_list',
+                'pages_read_engagement',
+                'instagram_basic',
+                'instagram_content_publish',
+              ],
+            }),
+          discoverPages: () =>
+            Promise.resolve([
+              {
+                id: 'page-1',
+                name: 'Page One',
+                accessToken: 'page-token',
+                tasks: [],
+                ...(hasInstagram ? { instagram: { id: 'ig-1', name: 'Instagram One' } } : {}),
+              },
+            ]),
+        } as never,
+        { workspaceId, userId, state: issued.state, code: 'fixture-code', requestId },
+        {
+          instagram: [
+            'pages_show_list',
+            'pages_read_engagement',
+            'instagram_basic',
+            'instagram_content_publish',
+          ],
+        },
+      );
+    };
+    const snapshot = async () => {
+      const rows = await database.query<{
+        connection_id: string;
+        credential_id: string;
+        account_id: string;
+        availability: string;
+      }>(`select connection.id as connection_id, connection.credential_id,
+                  account.id as account_id, account.availability
+           from provider_connections connection
+           left join provider_accounts account on account.connection_id = connection.id
+           where connection.provider = 'meta'`);
+      const credentials = await database.query<{ count: number }>(
+        'select count(*)::int as count from credentials',
+      );
+      return { rows: rows.rows, credentialCount: credentials.rows[0]?.count };
+    };
+    await expect(connect('empty-first', false)).rejects.toMatchObject({
+      family: 'instagram',
+      cause: expect.any(MetaNoUsableDestinationsError),
+    } satisfies Partial<MetaFamilyCallbackError>);
+    expect(await snapshot()).toEqual({ rows: [], credentialCount: 0 });
+
+    await connect('valid', true);
+    const beforeReconnect = await snapshot();
+    expect(beforeReconnect.rows).toHaveLength(1);
+    expect(beforeReconnect.rows[0]?.availability).toBe('active');
+    await expect(connect('empty-reconnect', false)).rejects.toMatchObject({
+      family: 'instagram',
+      cause: expect.any(MetaNoUsableDestinationsError),
+    } satisfies Partial<MetaFamilyCallbackError>);
+    expect(await snapshot()).toEqual(beforeReconnect);
+    const completed = await database.query<{ count: number }>(
+      "select count(*)::int as count from audit_events where action = 'meta.discovery.completed'",
+    );
+    expect(completed.rows[0]?.count).toBe(1);
+  });
+
+  it('rejects a Page grant without publishing access and ignores legacy combined state', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 16)),
+    };
+    const client = {
+      exchangeCode: () =>
+        Promise.resolve({
+          accessToken: 'authority',
+          userId: 'meta-user',
+          scopes: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+        }),
+      discoverPages: () =>
+        Promise.resolve([
+          {
+            id: 'page-1',
+            name: 'Page One',
+            accessToken: 'page-token',
+            tasks: [],
+          },
+        ]),
+    };
+    const callback = async (provider: string) => {
+      const issued = await issueOauthTransaction(db, keys, {
+        workspaceId,
+        userId,
+        provider,
+        redirectUri: 'https://relay.test/api/oauth/meta/callback',
+      });
+      return completeMetaOauthConnection(
+        db,
+        keys,
+        client as never,
+        { workspaceId, userId, state: issued.state, code: 'fixture-code', requestId: provider },
+        { facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'] },
+      );
+    };
+    await expect(callback('meta:facebook_pages')).rejects.toMatchObject({
+      family: 'facebook_pages',
+      cause: expect.any(MetaNoUsableDestinationsError),
+    } satisfies Partial<MetaFamilyCallbackError>);
+    expect(await callback('meta')).toBeNull();
+    expect(client.exchangeCode).toBeDefined();
+    const count = await database.query<{ count: number }>(
+      "select count(*)::int as count from provider_connections where provider = 'meta'",
+    );
+    expect(count.rows[0]?.count).toBe(0);
   });
 
   it('re-homes only matching legacy Meta destinations after explicit family consent without changing job IDs', async () => {

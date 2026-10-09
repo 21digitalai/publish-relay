@@ -24,7 +24,10 @@ import {
   disconnectProviderSubject,
   rotateProviderSubjectCredential,
 } from '../src/modules/credentials/provider-subject.service.js';
-import { markProviderDestinationsUnavailable } from '../src/modules/credentials/provider-connection.repository.js';
+import {
+  markProviderDestinationsUnavailable,
+  ProviderDestinationConflictError,
+} from '../src/modules/credentials/provider-connection.repository.js';
 import {
   disconnectProviderAccount,
   listProviderAccounts,
@@ -1731,6 +1734,147 @@ describe('credential and OAuth persistence', () => {
         disconnected_at: null,
       },
     ]);
+  });
+
+  it('re-homes an inert Instagram account from an active combined Meta grant while preserving its Page and jobs', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 27)),
+    };
+    const authority = await createCredential(db, workspaceId, encrypted(27));
+    const sharedPageToken = await createCredential(db, workspaceId, encrypted(28));
+    const combined = await database.query<{ id: string }>(
+      `INSERT INTO provider_connections (workspace_id, provider, external_subject_id, credential_id)
+       VALUES ($1, 'meta', 'combined-meta-user', $2) RETURNING id`,
+      [workspaceId, authority.id],
+    );
+    const accounts = await database.query<{ id: string; destination_provider: string }>(
+      `INSERT INTO provider_accounts
+         (workspace_id, connection_id, provider_account_id, destination_provider,
+          remote_account_id, display_name, credential_id, availability)
+       VALUES ($1, $2, 'page-1', 'facebook_page', 'page-1', 'Page', $3, 'active'),
+              ($1, $2, 'ig-user-1', 'instagram', 'ig-user-1', 'Instagram', $3, 'active')
+       RETURNING id, destination_provider`,
+      [workspaceId, combined.rows[0]?.id, sharedPageToken.id],
+    );
+    const instagramId = accounts.rows.find((row) => row.destination_provider === 'instagram')?.id;
+    const pageId = accounts.rows.find((row) => row.destination_provider === 'facebook_page')?.id;
+    await database.query('INSERT INTO posts (workspace_id, created_by_user_id) VALUES ($1, $2)', [
+      workspaceId,
+      userId,
+    ]);
+    const post = await database.query<{ id: string }>('SELECT id FROM posts LIMIT 1');
+    const revision = await database.query<{ id: string }>(
+      `INSERT INTO post_revisions (workspace_id, post_id, revision_number, content)
+       VALUES ($1, $2, 1, '{}') RETURNING id`,
+      [workspaceId, post.rows[0]?.id],
+    );
+    const job = await database.query<{ id: string }>(
+      `INSERT INTO publication_jobs (workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state)
+       VALUES ($1, $2, $3, $4, now(), 'scheduled') RETURNING id`,
+      [workspaceId, post.rows[0]?.id, revision.rows[0]?.id, instagramId],
+    );
+    await database.exec(
+      await readFile(
+        new URL('../migrations/0057_instagram_login_legacy_grants.sql', import.meta.url),
+        'utf8',
+      ),
+    );
+    const issued = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'instagram_login',
+      redirectUri: 'https://relay.test/api/oauth/instagram/callback',
+    });
+    await completeInstagramLogin(
+      db,
+      keys,
+      {
+        exchangeCode: () =>
+          Promise.resolve({
+            accessToken: 'new-token',
+            appScopedUserId: 'app-user-1',
+            remoteUserId: 'ig-user-1',
+            username: 'new-name',
+            expiresAt: new Date('2026-12-01T00:00:00Z'),
+          }),
+      } as never,
+      { workspaceId, userId, state: issued.state, code: 'code', requestId: 'combined-rehome' },
+    );
+    const after = await database.query<{
+      id: string;
+      destination_provider: string;
+      connection_id: string;
+      provider: string;
+      credential_id: string | null;
+      availability: string;
+      status: string;
+    }>(
+      `SELECT account.id, account.destination_provider, account.connection_id,
+              connection.provider, account.credential_id, account.availability, connection.status
+       FROM provider_accounts account JOIN provider_connections connection ON connection.id = account.connection_id
+       ORDER BY account.destination_provider`,
+    );
+    expect(after.rows).toHaveLength(2);
+    expect(after.rows[0]).toMatchObject({
+      id: pageId,
+      connection_id: combined.rows[0]?.id,
+      provider: 'meta',
+      credential_id: sharedPageToken.id,
+      availability: 'active',
+      status: 'active',
+    });
+    expect(after.rows[1]).toMatchObject({
+      id: instagramId,
+      provider: 'instagram_login',
+      availability: 'publishing_unavailable',
+      status: 'active',
+    });
+    const pageTokens = await database.query<{ revoked_at: Date | null }>(
+      'SELECT revoked_at FROM credentials WHERE id = $1',
+      [sharedPageToken.id],
+    );
+    expect(pageTokens.rows[0]?.revoked_at).toBeNull();
+    const jobs = await database.query<{ id: string; provider_account_id: string }>(
+      'SELECT id, provider_account_id FROM publication_jobs',
+    );
+    expect(jobs.rows).toEqual([{ id: job.rows[0]?.id, provider_account_id: instagramId }]);
+
+    const connectDifferentSubject = async (remoteUserId: string) => {
+      const next = await issueOauthTransaction(db, keys, {
+        workspaceId,
+        userId,
+        provider: 'instagram_login',
+        redirectUri: 'https://relay.test/api/oauth/instagram/callback',
+      });
+      return completeInstagramLogin(
+        db,
+        keys,
+        {
+          exchangeCode: () =>
+            Promise.resolve({
+              accessToken: 'other-token',
+              appScopedUserId: 'different-app-subject',
+              remoteUserId,
+              username: 'other-name',
+              expiresAt: new Date('2026-12-01T00:00:00Z'),
+            }),
+        } as never,
+        { workspaceId, userId, state: next.state, code: 'code', requestId: 'other-subject' },
+      );
+    };
+    await expect(connectDifferentSubject('ig-user-1')).rejects.toBeInstanceOf(
+      ProviderDestinationConflictError,
+    );
+    await connectDifferentSubject('ig-user-2');
+    const afterMismatch = await database.query<{ id: string; remote_account_id: string }>(
+      "SELECT id, remote_account_id FROM provider_accounts WHERE destination_provider = 'instagram' ORDER BY remote_account_id",
+    );
+    expect(afterMismatch.rows).toHaveLength(2);
+    expect(afterMismatch.rows[0]).toEqual({ id: instagramId, remote_account_id: 'ig-user-1' });
+    expect(afterMismatch.rows[1]?.id).not.toBe(instagramId);
+    expect(afterMismatch.rows[1]?.remote_account_id).toBe('ig-user-2');
   });
 
   it('rejects a Page grant without publishing access and ignores legacy combined state', async () => {

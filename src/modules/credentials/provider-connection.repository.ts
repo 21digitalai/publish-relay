@@ -174,6 +174,7 @@ export async function replaceProviderConnection(
         grantFamily: providerConnections.grantFamily,
         externalSubjectId: providerConnections.externalSubjectId,
         status: providerConnections.status,
+        availability: providerAccounts.availability,
         disconnectedAt: providerAccounts.disconnectedAt,
       })
       .from(providerAccounts)
@@ -193,7 +194,9 @@ export async function replaceProviderConnection(
       if (
         input.provider === 'instagram_login' &&
         owner.provider === 'meta' &&
-        owner.status === 'disconnected' &&
+        (owner.status === 'disconnected' ||
+          (owner.status === 'active' && owner.grantFamily === null)) &&
+        owner.availability === 'reauth_required' &&
         owner.disconnectedAt !== null &&
         destination.destinationProvider === 'instagram' &&
         !owners.some((candidate) => candidate.connectionId === current?.id)
@@ -427,10 +430,50 @@ export async function replaceProviderConnection(
     requestId: input.requestId,
     metadata: { provider: input.provider, accountCount: input.accounts.length },
   });
+  const replacedCredentialId = current?.credentialId ?? null;
+  const candidates = [
+    ...new Set([
+      ...(replacedCredentialId ? [replacedCredentialId] : []),
+      ...replacedAccountCredentialIds,
+    ]),
+  ];
+  const [referencingAccounts, referencingConnections] = candidates.length
+    ? await Promise.all([
+        database
+          .select({ credentialId: providerAccounts.credentialId })
+          .from(providerAccounts)
+          .where(
+            and(
+              eq(providerAccounts.workspaceId, input.workspaceId),
+              inArray(providerAccounts.credentialId, candidates),
+              inArray(providerAccounts.availability, ['active', 'publishing_unavailable']),
+              isNull(providerAccounts.disconnectedAt),
+            ),
+          ),
+        database
+          .select({ credentialId: providerConnections.credentialId })
+          .from(providerConnections)
+          .where(
+            and(
+              eq(providerConnections.workspaceId, input.workspaceId),
+              inArray(providerConnections.credentialId, candidates),
+            ),
+          ),
+      ])
+    : [[], []];
+  const stillReferenced = new Set([
+    ...referencingAccounts.map((row) => row.credentialId),
+    ...referencingConnections.map((row) => row.credentialId),
+  ]);
   return {
     connectionId: connection.id,
-    replacedCredentialId: current?.credentialId ?? null,
-    replacedAccountCredentialIds,
+    replacedCredentialId:
+      replacedCredentialId && !stillReferenced.has(replacedCredentialId)
+        ? replacedCredentialId
+        : null,
+    replacedAccountCredentialIds: replacedAccountCredentialIds.filter(
+      (id) => !stillReferenced.has(id),
+    ),
   };
 }
 

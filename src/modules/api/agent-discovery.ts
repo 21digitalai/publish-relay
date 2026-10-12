@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.3.0';
-const CLI_VERSION = '1.2.0';
+const CONTRACT_VERSION = '1.4.0';
+const CLI_VERSION = '1.3.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -35,6 +35,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 
 - account current: authenticated key only; use it as the read-first workspace guard.
 - posts list/show and publishes show/poll: schedules:read.
+- posts validate: schedules:read. Use posts validate --body-file <request.json> for read-only per-destination admission, including X weighted length and the selected account limit. It accepts the same body as create and needs no idempotency key. A valid preview does not reserve a future create.
 - posts create: schedules:write. Live provider submission also requires publishes:submit on the server-side operation.
 - media upload: content:write. Send exact local bytes with --file, an explicit --content-type, and a unique idempotency key. Remote URL fetching is not supported.
 - drafts create/show: content:write. Create a tenant-scoped imported-media draft with a stable opaque externalId, ordered ready mediaIds, and optional label/HTTPS returnUrl. Open the returned cockpit link for the user to complete the canonical Relay composer; the resulting post link appears after that one-time transition.
@@ -69,6 +70,7 @@ Use the shipped non-interactive CLI for scripts. Read command help before execut
 Read-only example: PUBLISH_RELAY_API_KEY=<workspace-service-key> node publish-relay-cli.js account current --base-url https://relay.example --require-workspace <workspace-id>.
 Destination discovery example: add destinations list with the same --base-url and --require-workspace, then use the returned destination id in providerAccountIds. The list never returns credentials or provider defaults.
 Mutation example: add posts create with --body-file <request.json> and --idempotency-key <unique-operation-key> only after the read-first workspace check.
+Validation example: add posts validate with --body-file <request.json> before create; inspect data.valid and each data.destinations item. This does not create a post or call a provider.
 Media example: add media upload with --file <image-path> --content-type image/png and --idempotency-key <unique-operation-key>.
 Draft handoff example: upload each local asset, then run drafts create with a JSON body containing externalId and the returned mediaIds plus a unique idempotency key. Retain the returned self and cockpit links; do not build a second scheduler UI in the source client.
 YouTube scheduling example: set title and any sparse provider override in the posts create body, select the connected destination, then retain data.jobs[].effectiveProviderSettings from the response. Do not repeat unchanged privacy, Made for Kids, notification, tags, or category defaults on every request.

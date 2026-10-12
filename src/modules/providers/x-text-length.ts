@@ -14,7 +14,10 @@ export function composeXThreadText(parts: readonly string[]): string {
     .join('\n\n');
 }
 
-function xPostTexts(content: Record<string, unknown>, mediaIds: readonly string[]): string[] {
+export function xPostTexts(
+  content: Record<string, unknown>,
+  mediaIds: readonly string[],
+): string[] {
   const kind = content.kind ?? content.type;
   if (kind !== 'thread') return typeof content.text === 'string' ? [content.text] : [];
   if (!Array.isArray(content.posts) || content.posts.length < 2)

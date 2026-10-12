@@ -7,6 +7,7 @@ import {
   postCollectionResponseSchema,
   postDetailResponseSchema,
   postMutationResponseSchema,
+  postValidationResponseSchema,
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
@@ -535,6 +536,44 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               content: {
                 'application/json': { schema: openApiJsonSchema(errorResponseSchema) },
               },
+            },
+          },
+        },
+      },
+      '/api/v1/posts/validate': {
+        post: {
+          operationId: 'validatePost',
+          description:
+            'Read-only technical admission preview using the same candidate body as create. No post, media, job, or audit write. A valid result is not a reservation; revalidate at create.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: openApiJsonSchema(createPostRequestSchema) } },
+          },
+          responses: {
+            '200': {
+              description: 'Per-destination admission result',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(postValidationResponseSchema)),
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid candidate shape',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '401': {
+              description: 'Authentication required',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '403': {
+              description: 'Missing schedules:read capability',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
+            },
+            '429': {
+              description: 'Read rate limit exceeded',
+              content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
             },
           },
         },

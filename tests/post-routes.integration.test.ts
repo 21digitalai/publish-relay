@@ -1354,6 +1354,125 @@ afterEach(async () => {
 });
 
 describe('POST /api/v1/posts', () => {
+  it('previews X admission per account without writing and exposes the same CLI result', async () => {
+    const headers = {
+      authorization: 'Bearer pr_test.secret',
+      'x-publish-relay-workspace': workspaceId,
+    };
+    const longAccountId = '00000000-0000-4000-8000-000000000819';
+    await database.exec(`
+      UPDATE provider_accounts SET destination_provider = 'x' WHERE id = '${providerAccountId}';
+      INSERT INTO provider_accounts
+        (id, workspace_id, connection_id, provider_account_id, remote_account_id, destination_provider, display_name, x_long_posts_allowed)
+      VALUES ('${longAccountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000806', 'long', 'long', 'x', 'Long', true);
+    `);
+    const payload = {
+      ...requestPayload('x'.repeat(845)),
+      providerAccountIds: [providerAccountId, longAccountId],
+    };
+    const preview = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts/validate',
+      headers,
+      payload,
+    });
+    expect(preview.statusCode).toBe(200);
+    const data = preview.json<{ data: { valid: boolean; destinations: unknown } }>().data;
+    expect(data.valid).toBe(false);
+    expect(data.destinations).toEqual([
+      {
+        providerAccountId,
+        valid: false,
+        error: 'X post text is 845 weighted characters; selected account limit is 280',
+        weightedLength: 845,
+        limit: 280,
+      },
+      { providerAccountId: longAccountId, valid: true, weightedLength: 845, limit: 25000 },
+    ]);
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-post-validate-'));
+    temporaryDirectories.push(directory);
+    const bodyFile = join(directory, 'candidate.json');
+    await writeFile(bodyFile, JSON.stringify(payload));
+    const cli = await runCli([
+      'posts',
+      'validate',
+      '--require-workspace',
+      workspaceId,
+      '--body-file',
+      bodyFile,
+    ]);
+    expect(cli.code).toBe(0);
+    expect((cli.body.data as { destinations: unknown }).destinations).toEqual(data.destinations);
+    const rows = await database.query<{
+      posts: number;
+      revisions: number;
+      jobs: number;
+      audit: number;
+      replay: number;
+    }>(
+      'SELECT (SELECT count(*) FROM posts)::int AS posts, (SELECT count(*) FROM post_revisions)::int AS revisions, (SELECT count(*) FROM publication_jobs)::int AS jobs, (SELECT count(*) FROM audit_events)::int AS audit, (SELECT count(*) FROM api_mutation_results)::int AS replay',
+    );
+    expect(rows.rows[0]).toEqual({ posts: 1, revisions: 1, jobs: 1, audit: 0, replay: 0 });
+  });
+
+  it('hides foreign targets and requires read capability', async () => {
+    const headers = {
+      authorization: 'Bearer pr_test.secret',
+      'x-publish-relay-workspace': workspaceId,
+    };
+    const foreign = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts/validate',
+      headers,
+      payload: { ...requestPayload(), providerAccountIds: [foreignProviderAccountId] },
+    });
+    expect(foreign.statusCode).toBe(200);
+    expect(foreign.json<{ data: { destinations: unknown } }>().data.destinations).toEqual([
+      {
+        providerAccountId: foreignProviderAccountId,
+        valid: false,
+        error: 'One or more provider accounts do not belong to the workspace',
+      },
+    ]);
+    authenticate.mockResolvedValueOnce(null);
+    const unauthenticated = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts/validate',
+      headers,
+      payload: requestPayload(),
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+    requireCapability.mockRejectedValueOnce(new ApiKeyAuthorizationError('Missing capability'));
+    const denied = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts/validate',
+      headers,
+      payload: requestPayload(),
+    });
+    expect(denied.statusCode).toBe(403);
+  });
+
+  it('leaves cleanup-eligible media untouched during preview', async () => {
+    const mediaId = '00000000-0000-4000-8000-000000000820';
+    await database.exec(`
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state, cleanup_eligible_at)
+      VALUES ('${mediaId}', '${workspaceId}', 'local-test.jpg', 'test-hash', 'image/jpeg', 10, 'cleanup_eligible', now());
+    `);
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts/validate',
+      headers: { authorization: 'Bearer pr_test.secret', 'x-publish-relay-workspace': workspaceId },
+      payload: { ...requestPayload(), mediaIds: [mediaId] },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ data: { valid: boolean } }>().data.valid).toBe(true);
+    const media = await database.query<{ state: string; cleanup_eligible_at: Date | null }>(
+      `SELECT state, cleanup_eligible_at FROM media_objects WHERE id = '${mediaId}'`,
+    );
+    expect(media.rows[0]?.state).toBe('cleanup_eligible');
+    expect(media.rows[0]?.cleanup_eligible_at).not.toBeNull();
+  });
+
   it('creates and replays with delegated grant attribution while enforcing scope and workspace', async () => {
     authenticate.mockResolvedValue(null);
     authenticateDelegated.mockResolvedValue({

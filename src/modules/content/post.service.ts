@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { sql } from 'drizzle-orm';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
@@ -12,6 +13,7 @@ import {
   createPostIntent,
   reschedulePostIntent,
   revisePostIntent,
+  validatePostTargets,
   type PostRevisionInput,
 } from './post.repository.js';
 
@@ -23,7 +25,7 @@ export interface PostIntentInput extends PostRevisionInput {
   idempotencyKey?: string;
 }
 
-function validatePostIntent(input: PostIntentInput): void {
+function validatePostIntent(input: PostRevisionInput): void {
   if (input.providerAccountIds.length === 0)
     throw new PostValidationError('At least one provider account is required');
   if (new Set(input.providerAccountIds).size !== input.providerAccountIds.length)
@@ -32,6 +34,18 @@ function validatePostIntent(input: PostIntentInput): void {
     throw new PostValidationError('Media references must be unique');
   if (!Number.isFinite(input.scheduledAt.getTime()))
     throw new PostValidationError('Scheduled time is invalid');
+}
+
+export async function validatePostCandidate(
+  database: NodePgDatabase,
+  input: PostRevisionInput & { workspaceId: string },
+) {
+  validatePostIntent(input);
+  return withTenantTransaction(database, input, async (transaction) => {
+    await transaction.execute(sql`set transaction read only`);
+    const destinations = await validatePostTargets(transaction, input);
+    return { valid: destinations.every((destination) => destination.valid), destinations };
+  });
 }
 
 export async function createPost(

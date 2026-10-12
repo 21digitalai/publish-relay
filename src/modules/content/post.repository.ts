@@ -16,7 +16,13 @@ import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.
 import { validateLinkedInTextContent } from '../providers/linkedin-content.js';
 import { publicationSettingsRegistry } from '../providers/publication-settings-registry.js';
 import type { DestinationProvider } from '../providers/contract.js';
-import { validateXPostLength } from '../providers/x-text-length.js';
+import {
+  validateXPostLength,
+  weightedXPostLength,
+  xPostTexts,
+  X_DECLARED_LONG_POST_LIMIT,
+  X_STANDARD_POST_LIMIT,
+} from '../providers/x-text-length.js';
 
 export function buildMetaEffectivePayload(
   destinationProvider: string,
@@ -96,13 +102,15 @@ async function validateTargetOwnership(
     workspaceId: string;
   },
   validateXText = true,
-): Promise<void> {
+  readOnly = false,
+): Promise<{ id: string; destinationProvider: string; xLongPostsAllowed: boolean }[]> {
   // Serialize admission with grant revoke reservation and subject reconnect.
-  await database
-    .select({ id: workspaces.id })
-    .from(workspaces)
-    .where(eq(workspaces.id, input.workspaceId))
-    .for('update');
+  if (!readOnly)
+    await database
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, input.workspaceId))
+      .for('update');
   const accounts = await database
     .select({
       id: providerAccounts.id,
@@ -146,7 +154,7 @@ async function validateTargetOwnership(
       throw new PostValidationError(error instanceof Error ? error.message : 'Invalid X post text');
     }
   }
-  if (input.mediaIds.length === 0) return;
+  if (input.mediaIds.length === 0) return accounts;
   const media = await database.execute<{ id: string }>(sql`
     select id from media_objects
     where workspace_id = ${input.workspaceId}
@@ -156,11 +164,12 @@ async function validateTargetOwnership(
       )})
       and state in ('ready', 'cleanup_eligible', 'cleanup_failed')
     order by id
-    for update
+    ${readOnly ? sql`` : sql`for update`}
   `);
   if (media.rows.length !== input.mediaIds.length)
     throw new PostValidationError('One or more media objects do not belong to the workspace');
-  await database.execute(sql`
+  if (!readOnly)
+    await database.execute(sql`
     update media_objects
     set state = 'ready', cleanup_eligible_at = null, cleanup_started_at = null,
       cleanup_retry_at = null, updated_at = now()
@@ -171,17 +180,13 @@ async function validateTargetOwnership(
       )})
       and state in ('cleanup_eligible', 'cleanup_failed')
   `);
+  return accounts;
 }
 
-async function createRevisionTargets(
+async function resolveRevisionTargets(
   database: NodePgDatabase,
-  input: PostRevisionInput & {
-    workspaceId: string;
-    userId?: string;
-    postId: string;
-    revisionNumber: number;
-  },
-): Promise<{ revisionId: string; jobIds: string[] }> {
+  input: PostRevisionInput & { workspaceId: string },
+) {
   const accountRows = await database
     .select({
       id: providerAccounts.id,
@@ -293,6 +298,71 @@ async function createRevisionTargets(
       }
     }),
   );
+  return { effectivePayloads, effectiveSettings };
+}
+
+export async function validatePostTargets(
+  database: NodePgDatabase,
+  input: PostRevisionInput & { workspaceId: string },
+): Promise<
+  {
+    providerAccountId: string;
+    valid: boolean;
+    error?: string;
+    weightedLength?: number;
+    limit?: number;
+  }[]
+> {
+  const results = [];
+  for (const providerAccountId of input.providerAccountIds) {
+    const target = { ...input, providerAccountIds: [providerAccountId] };
+    let account: { destinationProvider: string; xLongPostsAllowed: boolean } | undefined;
+    try {
+      const accounts = await validateTargetOwnership(database, target, true, true);
+      account = accounts[0];
+      await resolveRevisionTargets(database, target);
+      const lengths =
+        account?.destinationProvider === 'x'
+          ? xPostTexts(input.content, input.mediaIds).map(weightedXPostLength)
+          : [];
+      results.push({
+        providerAccountId,
+        valid: true,
+        ...(lengths.length
+          ? {
+              weightedLength: Math.max(...lengths),
+              limit: account?.xLongPostsAllowed
+                ? X_DECLARED_LONG_POST_LIMIT
+                : X_STANDARD_POST_LIMIT,
+            }
+          : {}),
+      });
+    } catch (error) {
+      if (!(error instanceof PostValidationError)) throw error;
+      const message = error.message;
+      const xLength =
+        /^X post text is (\d+) weighted characters; selected account limit is (\d+)$/.exec(message);
+      results.push({
+        providerAccountId,
+        valid: false,
+        error: message,
+        ...(xLength ? { weightedLength: Number(xLength[1]), limit: Number(xLength[2]) } : {}),
+      });
+    }
+  }
+  return results;
+}
+
+async function createRevisionTargets(
+  database: NodePgDatabase,
+  input: PostRevisionInput & {
+    workspaceId: string;
+    userId?: string;
+    postId: string;
+    revisionNumber: number;
+  },
+): Promise<{ revisionId: string; jobIds: string[] }> {
+  const { effectivePayloads, effectiveSettings } = await resolveRevisionTargets(database, input);
   const actor = persistedActor(input.actor, input.userId);
   const revisions = await database
     .insert(postRevisions)

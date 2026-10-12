@@ -19,6 +19,7 @@ const ROUTES = {
   'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
   'drafts:show': { method: 'GET', path: '/api/v1/drafts/:id' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
+  'posts:validate': { method: 'POST', path: '/api/v1/posts/validate', body: true },
   'posts:list': { method: 'GET', path: '/api/v1/posts' },
   'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
   'media:upload': { method: 'POST', path: '/api/v1/media' },
@@ -115,6 +116,14 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'notifySubscribers',
     'tags',
     'categoryId',
+  ]),
+  'posts:validate': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'valid',
+    'destinations',
+    'providerAccountId',
+    'weightedLength',
+    'limit',
   ]),
   'posts:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

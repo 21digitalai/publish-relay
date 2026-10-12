@@ -74,6 +74,21 @@ export const postMutationResponseSchema = z.object({
   }),
 });
 
+export const postValidationResponseSchema = z.object({
+  valid: z.boolean(),
+  destinations: z
+    .array(
+      z.object({
+        providerAccountId: z.uuid(),
+        valid: z.boolean(),
+        error: z.string().optional(),
+        weightedLength: z.number().int().nonnegative().optional(),
+        limit: z.number().int().positive().optional(),
+      }),
+    )
+    .max(50),
+});
+
 const timestampSchema = z.iso.datetime();
 const postSummarySchema = z.object({
   id: z.uuid(),

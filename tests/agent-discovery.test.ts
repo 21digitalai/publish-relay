@@ -69,8 +69,8 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.3.0');
-    expect(manifest.data.cliVersion).toBe('1.2.0');
+    expect(manifest.data.contractVersion).toBe('1.4.0');
+    expect(manifest.data.cliVersion).toBe('1.3.0');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('destinations list');
     expect(skill.body).toContain('publishes retry <job-id>');

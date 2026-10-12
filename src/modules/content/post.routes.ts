@@ -22,7 +22,7 @@ import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/
 import { createPostRequestSchema, normalizeCreatePostRequest } from './post.contract.js';
 import { PostValidationError } from './post.errors.js';
 import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
-import { createPostInTransaction } from './post.service.js';
+import { createPostInTransaction, validatePostCandidate } from './post.service.js';
 import { requestOperatorRetryInTransaction } from '../scheduler/job.repository.js';
 
 function resourceLinks(result: { postId: string; revisionId: string; jobIds: string[] }) {
@@ -287,6 +287,40 @@ export function registerPostRoutes(
           .code(400)
           .send(errorEnvelope('invalid_request', error.message, request.id));
       throw error;
+    }
+  });
+
+  application.post('/api/v1/posts/validate', async (request, reply) => {
+    try {
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'schedules:read',
+      );
+      if (!principal)
+        return await reply
+          .code(401)
+          .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
+      const body = createPostRequestSchema.parse(request.body);
+      const result = await validatePostCandidate(database, {
+        workspaceId: principal.workspaceId,
+        ...normalizeCreatePostRequest(body),
+        scheduledAt: new Date(body.scheduledAt),
+      });
+      return await reply.send(successEnvelope(result, request.id));
+    } catch (error) {
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
+        return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (error instanceof z.ZodError || error instanceof PostValidationError)
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', error.message, request.id));
+      request.log.error({ err: error }, 'Post validation failed');
+      return await reply
+        .code(500)
+        .send(errorEnvelope('internal_error', 'Internal server error', request.id));
     }
   });
 

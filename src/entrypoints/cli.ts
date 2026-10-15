@@ -130,6 +130,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
   'posts:validate': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'valid',
+    'mediaNotValidated',
     'destinations',
     'providerAccountId',
     'weightedLength',

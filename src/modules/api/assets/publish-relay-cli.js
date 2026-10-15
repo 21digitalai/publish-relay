@@ -120,6 +120,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   'posts:validate': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'valid',
+    'mediaNotValidated',
     'destinations',
     'providerAccountId',
     'weightedLength',

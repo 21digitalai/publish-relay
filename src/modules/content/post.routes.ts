@@ -19,7 +19,11 @@ import {
 } from '../policy/action-policy.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
-import { createPostRequestSchema, normalizeCreatePostRequest } from './post.contract.js';
+import {
+  createPostRequestSchema,
+  normalizeCreatePostRequest,
+  postValidationRequestSchema,
+} from './post.contract.js';
 import { PostValidationError } from './post.errors.js';
 import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
 import { createPostInTransaction, validatePostCandidate } from './post.service.js';
@@ -303,11 +307,12 @@ export function registerPostRoutes(
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
       if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
-      const body = createPostRequestSchema.parse(request.body);
+      const body = postValidationRequestSchema.parse(request.body);
       const result = await validatePostCandidate(database, {
         workspaceId: principal.workspaceId,
         ...normalizeCreatePostRequest(body),
         scheduledAt: new Date(body.scheduledAt),
+        ...(body.validationPreview ? { xMediaPresent: true } : {}),
       });
       return await reply.send(successEnvelope(result, request.id));
     } catch (error) {

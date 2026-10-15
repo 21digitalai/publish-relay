@@ -39,6 +39,16 @@ export const createPostRequestSchema = z.union([
   legacyCreatePostRequestSchema,
 ]);
 
+export const postValidationRequestSchema = z.intersection(
+  createPostRequestSchema,
+  z.object({
+    validationPreview: z
+      .object({ xMediaPresent: z.literal(true) })
+      .strict()
+      .optional(),
+  }),
+);
+
 export function normalizeCreatePostRequest(request: z.infer<typeof createPostRequestSchema>): {
   content: Record<string, unknown>;
   mediaIds: string[];
@@ -76,6 +86,7 @@ export const postMutationResponseSchema = z.object({
 
 export const postValidationResponseSchema = z.object({
   valid: z.boolean(),
+  mediaNotValidated: z.literal(true).optional(),
   destinations: z
     .array(
       z.object({

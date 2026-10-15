@@ -1354,6 +1354,100 @@ afterEach(async () => {
 });
 
 describe('POST /api/v1/posts', () => {
+  it('previews media-bearing X thread parts before upload without accepting other shapes or writes', async () => {
+    const headers = {
+      authorization: 'Bearer pr_test.secret',
+      'x-publish-relay-workspace': workspaceId,
+    };
+    await database.exec(
+      `UPDATE provider_accounts SET destination_provider = 'x' WHERE id = '${providerAccountId}'`,
+    );
+    const content = {
+      kind: 'thread',
+      posts: [
+        { text: 'a'.repeat(200), mediaIds: [] },
+        { text: 'b'.repeat(200), mediaIds: [] },
+      ],
+    };
+    const payload = { ...requestPayload(), content, validationPreview: { xMediaPresent: true } };
+    const validate = (candidate: Record<string, unknown>) =>
+      application.inject({
+        method: 'POST',
+        url: '/api/v1/posts/validate',
+        headers,
+        payload: candidate,
+      });
+    const ordinary = await validate({ ...payload, validationPreview: undefined });
+    expect(ordinary.json<{ data: { valid: boolean } }>().data.valid).toBe(false);
+    const preview = await validate(payload);
+    expect(preview.statusCode).toBe(200);
+    expect(
+      preview.json<{
+        data: { valid: boolean; mediaNotValidated: boolean; destinations: unknown };
+      }>().data,
+    ).toEqual({
+      valid: true,
+      mediaNotValidated: true,
+      destinations: [{ providerAccountId, valid: true, weightedLength: 200, limit: 280 }],
+    });
+    const directory = await mkdtemp(join(tmpdir(), 'publish-relay-x-preview-'));
+    temporaryDirectories.push(directory);
+    const bodyFile = join(directory, 'candidate.json');
+    await writeFile(bodyFile, JSON.stringify(payload));
+    const cli = await runCli([
+      'posts',
+      'validate',
+      '--require-workspace',
+      workspaceId,
+      '--body-file',
+      bodyFile,
+    ]);
+    expect(cli.code).toBe(0);
+    expect(cli.body.data).toMatchObject({ valid: true, mediaNotValidated: true });
+    const overLimit = await validate({
+      ...payload,
+      content: { ...content, posts: [content.posts[0], { text: 'b'.repeat(281), mediaIds: [] }] },
+    });
+    expect(overLimit.json<{ data: { valid: boolean } }>().data.valid).toBe(false);
+    await database.exec(
+      `UPDATE provider_accounts SET x_long_posts_allowed = true WHERE id = '${providerAccountId}'`,
+    );
+    const declaredLong = await validate({
+      ...payload,
+      content: { ...content, posts: [content.posts[0], { text: 'b'.repeat(281), mediaIds: [] }] },
+    });
+    expect(
+      declaredLong.json<{ data: { valid: boolean; destinations: { limit: number }[] } }>().data,
+    ).toMatchObject({ valid: true, destinations: [{ limit: 25000 }] });
+    const foreign = await validate({ ...payload, providerAccountIds: [foreignProviderAccountId] });
+    expect(foreign.json<{ data: { valid: boolean } }>().data.valid).toBe(false);
+    await database.exec(
+      `UPDATE provider_accounts SET destination_provider = 'linkedin' WHERE id = '${providerAccountId}'`,
+    );
+    const unsupported = await validate(payload);
+    expect(unsupported.statusCode).toBe(200);
+    expect(unsupported.json<{ data: { valid: boolean } }>().data.valid).toBe(false);
+    await database.exec(
+      `UPDATE provider_accounts SET destination_provider = 'x' WHERE id = '${providerAccountId}'`,
+    );
+    for (const candidate of [
+      { ...payload, mediaIds: ['00000000-0000-4000-8000-000000000821'] },
+      { ...payload, content: { kind: 'thread', posts: ['first', 'second'] } },
+    ]) {
+      expect((await validate(candidate)).statusCode).toBe(400);
+    }
+    const rows = await database.query<{
+      posts: number;
+      revisions: number;
+      jobs: number;
+      media: number;
+      audit: number;
+    }>(
+      'SELECT (SELECT count(*) FROM posts)::int AS posts, (SELECT count(*) FROM post_revisions)::int AS revisions, (SELECT count(*) FROM publication_jobs)::int AS jobs, (SELECT count(*) FROM media_objects)::int AS media, (SELECT count(*) FROM audit_events)::int AS audit',
+    );
+    expect(rows.rows[0]).toEqual({ posts: 1, revisions: 1, jobs: 1, media: 1, audit: 0 });
+  });
+
   it('previews X admission per account without writing and exposes the same CLI result', async () => {
     const headers = {
       authorization: 'Bearer pr_test.secret',

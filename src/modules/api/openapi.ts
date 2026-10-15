@@ -8,6 +8,7 @@ import {
   postDetailResponseSchema,
   postMutationResponseSchema,
   postValidationResponseSchema,
+  postValidationRequestSchema,
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
@@ -544,11 +545,13 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         post: {
           operationId: 'validatePost',
           description:
-            'Read-only technical admission preview using the same candidate body as create. No post, media, job, or audit write. A valid result is not a reservation; revalidate at create.',
+            'Read-only technical admission preview using the create candidate body. Optional validationPreview: { xMediaPresent: true } admits X object-thread parts separately before upload, with no media IDs. This does not validate future media ownership or content; create must revalidate after upload. No post, media, job, or audit write.',
           security: [{ bearerAuth: [], workspace: [] }],
           requestBody: {
             required: true,
-            content: { 'application/json': { schema: openApiJsonSchema(createPostRequestSchema) } },
+            content: {
+              'application/json': { schema: openApiJsonSchema(postValidationRequestSchema) },
+            },
           },
           responses: {
             '200': {

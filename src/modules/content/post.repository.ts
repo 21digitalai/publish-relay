@@ -100,6 +100,7 @@ async function validateTargetOwnership(
     'content' | 'mediaIds' | 'providerAccountIds' | 'selectedDestination'
   > & {
     workspaceId: string;
+    xMediaPresent?: boolean;
   },
   validateXText = true,
   readOnly = false,
@@ -149,7 +150,12 @@ async function validateTargetOwnership(
   for (const account of accounts) {
     if (account.destinationProvider !== 'x' || !validateXText) continue;
     try {
-      validateXPostLength(input.content, account.xLongPostsAllowed, input.mediaIds);
+      validateXPostLength(
+        input.content,
+        account.xLongPostsAllowed,
+        input.mediaIds,
+        input.xMediaPresent,
+      );
     } catch (error) {
       throw new PostValidationError(error instanceof Error ? error.message : 'Invalid X post text');
     }
@@ -303,7 +309,7 @@ async function resolveRevisionTargets(
 
 export async function validatePostTargets(
   database: NodePgDatabase,
-  input: PostRevisionInput & { workspaceId: string },
+  input: PostRevisionInput & { workspaceId: string; xMediaPresent?: boolean },
 ): Promise<
   {
     providerAccountId: string;
@@ -320,10 +326,12 @@ export async function validatePostTargets(
     try {
       const accounts = await validateTargetOwnership(database, target, true, true);
       account = accounts[0];
+      if (input.xMediaPresent && account?.destinationProvider !== 'x')
+        throw new PostValidationError('X media preview requires an X destination');
       await resolveRevisionTargets(database, target);
       const lengths =
         account?.destinationProvider === 'x'
-          ? xPostTexts(input.content, input.mediaIds).map(weightedXPostLength)
+          ? xPostTexts(input.content, input.mediaIds, input.xMediaPresent).map(weightedXPostLength)
           : [];
       results.push({
         providerAccountId,

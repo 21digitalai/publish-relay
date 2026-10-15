@@ -38,13 +38,39 @@ function validatePostIntent(input: PostRevisionInput): void {
 
 export async function validatePostCandidate(
   database: NodePgDatabase,
-  input: PostRevisionInput & { workspaceId: string },
+  input: PostRevisionInput & { workspaceId: string; xMediaPresent?: boolean },
 ) {
   validatePostIntent(input);
+  if (input.xMediaPresent) {
+    const posts = input.content.posts;
+    if (
+      input.mediaIds.length !== 0 ||
+      (input.selectedDestination && input.selectedDestination !== 'x') ||
+      input.content.kind !== 'thread' ||
+      !Array.isArray(posts) ||
+      posts.length < 2 ||
+      posts.some((part: unknown) => {
+        if (!part || typeof part !== 'object') return true;
+        const candidate = part as Record<string, unknown>;
+        return (
+          typeof candidate.text !== 'string' ||
+          !Array.isArray(candidate.mediaIds) ||
+          candidate.mediaIds.length !== 0
+        );
+      })
+    )
+      throw new PostValidationError(
+        'X media preview requires object thread parts without uploaded media',
+      );
+  }
   return withTenantTransaction(database, input, async (transaction) => {
     await transaction.execute(sql`set transaction read only`);
     const destinations = await validatePostTargets(transaction, input);
-    return { valid: destinations.every((destination) => destination.valid), destinations };
+    return {
+      valid: destinations.every((destination) => destination.valid),
+      destinations,
+      ...(input.xMediaPresent ? { mediaNotValidated: true as const } : {}),
+    };
   });
 }
 

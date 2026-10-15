@@ -17,6 +17,7 @@ export function composeXThreadText(parts: readonly string[]): string {
 export function xPostTexts(
   content: Record<string, unknown>,
   mediaIds: readonly string[],
+  mediaPresent = false,
 ): string[] {
   const kind = content.kind ?? content.type;
   if (kind !== 'thread') return typeof content.text === 'string' ? [content.text] : [];
@@ -31,16 +32,19 @@ export function xPostTexts(
       return part.text;
     throw new Error('X thread contains an invalid part');
   });
-  return hasObjectPart && mediaIds.length > 0 ? parts : [composeXThreadText(parts)];
+  return hasObjectPart && (mediaIds.length > 0 || mediaPresent)
+    ? parts
+    : [composeXThreadText(parts)];
 }
 
 export function validateXPostLength(
   content: Record<string, unknown>,
   declaredLongPosts: boolean,
   mediaIds: readonly string[] = [],
+  mediaPresent = false,
 ): void {
   const limit = declaredLongPosts ? X_DECLARED_LONG_POST_LIMIT : X_STANDARD_POST_LIMIT;
-  for (const text of xPostTexts(content, mediaIds)) {
+  for (const text of xPostTexts(content, mediaIds, mediaPresent)) {
     const length = weightedXPostLength(text);
     if (length > limit)
       throw new Error(

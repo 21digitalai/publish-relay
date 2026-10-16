@@ -856,6 +856,19 @@ export function Rail({
               </button>
             ))}
           </div>
+          <a
+            className="workspace-create-link"
+            href={workspaceHref('settings/workspace')}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setWorkspaceOpen(false);
+                triggerRef.current?.focus();
+              }
+            }}
+          >
+            <span aria-hidden="true">＋</span> Add new workspace
+          </a>
         </div>
       )}
       <button

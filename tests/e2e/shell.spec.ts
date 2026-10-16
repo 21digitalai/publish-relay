@@ -1419,6 +1419,38 @@ test('operates the workspace switcher completely from the keyboard', async ({ pa
     page.getByText('Manage publishing access and connection health for Relay.'),
   ).toBeVisible();
   expect(switchedTo).toContain('00000000-0000-4000-8000-000000000402/switch');
+  if ((page.viewportSize()?.width ?? 0) < 768)
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  const switchedTrigger = page.getByRole('button', { name: /Relay editor/ });
+  await switchedTrigger.click();
+  await expect(page.getByRole('link', { name: 'Add new workspace' })).toHaveAttribute(
+    'href',
+    '/w/relay/settings/workspace',
+  );
+});
+
+test('keeps workspace creation reachable when search has no matches', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  await page.goto(await workspacePath(page, 'accounts'));
+  if ((page.viewportSize()?.width ?? 0) < 768)
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  const trigger = page.locator('.workspace-switcher');
+  await trigger.click();
+  const search = page.getByRole('combobox', { name: 'Search workspaces' });
+  await search.fill('no workspace matches this query');
+  await expect(page.getByRole('listbox', { name: 'Workspaces' }).getByRole('option')).toHaveCount(
+    0,
+  );
+  const addWorkspace = page.getByRole('link', { name: 'Add new workspace' });
+  await expect(addWorkspace).toBeVisible();
+  await search.press('Tab');
+  await expect(addWorkspace).toBeFocused();
+  await addWorkspace.press('Escape');
+  await expect(trigger).toBeFocused();
+  await trigger.press('Enter');
+  await addWorkspace.click();
+  await expect(page).toHaveURL(/\/w\/[^/]+\/settings\/workspace$/);
+  await expect(page.getByRole('heading', { name: 'Manage workspaces' })).toBeVisible();
 });
 
 test('keeps the current session valid after a hidden invalid workspace switch', async ({

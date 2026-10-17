@@ -38,9 +38,13 @@ describe('Instagram Login transport', () => {
   it('requests only Instagram scopes and uses only Instagram token and profile hosts', async () => {
     const { client, requests } = clientWithResponses([
       {
-        access_token: 'short-token',
-        user_id: 'app-scoped-1',
-        permissions: 'instagram_business_basic,instagram_business_content_publish',
+        data: [
+          {
+            access_token: 'short-token',
+            user_id: 'app-scoped-1',
+            permissions: 'instagram_business_basic,instagram_business_content_publish',
+          },
+        ],
       },
       { access_token: 'long-token', expires_in: 3600 },
       {
@@ -92,6 +96,40 @@ describe('Instagram Login transport', () => {
       appScopedUserId: '123',
       remoteUserId: '456',
     });
+  });
+
+  it('rejects empty or ambiguous token envelopes and partial grants before extension', async () => {
+    for (const response of [
+      { data: [] },
+      {
+        data: [
+          { access_token: 'one', user_id: '123', permissions: 'instagram_business_basic' },
+          {
+            access_token: 'two',
+            user_id: '456',
+            permissions: 'instagram_business_content_publish',
+          },
+        ],
+      },
+    ]) {
+      const { client, requests } = clientWithResponses([response]);
+      await expect(
+        client.exchangeCode({ code: 'code', redirectUri: callback }),
+      ).rejects.toMatchObject({
+        stage: 'token-exchange',
+        category: 'invalid-response',
+      });
+      expect(requests).toHaveLength(1);
+    }
+    const partial = clientWithResponses([
+      {
+        data: [{ access_token: 'short', user_id: '123', permissions: 'instagram_business_basic' }],
+      },
+    ]);
+    await expect(
+      partial.client.exchangeCode({ code: 'code', redirectUri: callback }),
+    ).rejects.toBeInstanceOf(InstagramLoginPermissionError);
+    expect(partial.requests).toHaveLength(1);
   });
 
   it('classifies provider HTTP and schema failures without retaining provider payloads', async () => {

@@ -17,6 +17,10 @@ const shortTokenSchema = z.object({
     z.string().transform((permissions) => permissions.split(',').map((scope) => scope.trim())),
   ]),
 });
+const shortTokenResponseSchema = z.union([
+  shortTokenSchema,
+  z.object({ data: z.tuple([shortTokenSchema]) }).transform((response) => response.data[0]),
+]);
 const longTokenSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.string().optional(),
@@ -105,7 +109,7 @@ export class InstagramLoginClient {
     redirectUri: string;
   }): Promise<InstagramLoginGrant> {
     const short = this.parseResponse(
-      shortTokenSchema,
+      shortTokenResponseSchema,
       await this.fetchJson('token-exchange', 'https://api.instagram.com/oauth/access_token', {
         method: 'POST',
         body: this.tokenExchangeBody({

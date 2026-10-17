@@ -98,6 +98,37 @@ describe('Instagram Login transport', () => {
     });
   });
 
+  it('preserves a 17-digit numeric Instagram ID from raw provider JSON without rounding', async () => {
+    const bodies = [
+      '{"access_token":"short-token","user_id":17841463019426546,"permissions":["instagram_business_basic","instagram_business_content_publish"]}',
+      '{"access_token":"long-token","expires_in":3600}',
+      '{"id":17841463019426546,"user_id":17841463019426547,"username":"publisher","account_type":"BUSINESS"}',
+    ];
+    const request = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(bodies.shift(), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+    const client = new InstagramLoginClient({
+      appId,
+      appSecret: 'separate-instagram-secret',
+      graphVersion: 'v23.0',
+      fetch: request,
+      now: () => Date.parse('2026-10-09T11:00:00Z'),
+    });
+
+    await expect(
+      client.exchangeCode({ code: 'one-use-code', redirectUri: callback }),
+    ).resolves.toMatchObject({
+      appScopedUserId: '17841463019426546',
+      remoteUserId: '17841463019426547',
+    });
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+
   it('rejects empty or ambiguous token envelopes and partial grants before extension', async () => {
     for (const response of [
       { data: [] },

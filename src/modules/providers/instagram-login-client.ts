@@ -81,6 +81,16 @@ function responseShape(value: unknown): InstagramLoginResponseShape {
   };
 }
 
+function parseProviderJson(body: string): unknown {
+  // Meta may encode 64-bit Instagram IDs as JSON numbers. Preserve their source
+  // digits before JavaScript Number conversion can round the account identity.
+  return JSON.parse(body, (key: string, value: unknown, context?: { source?: string }) => {
+    if (key !== 'id' && key !== 'user_id') return value;
+    if (typeof value !== 'number' || Number.isSafeInteger(value) || !context?.source) return value;
+    return /^(0|[1-9]\d*)$/.test(context.source) ? context.source : value;
+  }) as unknown;
+}
+
 export class InstagramLoginDiagnosticError extends Error {
   public constructor(
     public readonly stage: InstagramLoginStage,
@@ -257,7 +267,7 @@ export class InstagramLoginClient {
     }
     if (!response.ok) throw new InstagramLoginRequestError(stage, response.status);
     try {
-      return (await response.json()) as unknown;
+      return parseProviderJson(await response.text());
     } catch {
       throw new InstagramLoginDiagnosticError(stage, 'invalid-response');
     }

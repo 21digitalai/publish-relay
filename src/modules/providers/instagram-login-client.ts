@@ -12,7 +12,10 @@ const instagramIdSchema = z.union([
 const shortTokenSchema = z.object({
   access_token: z.string().min(1),
   user_id: instagramIdSchema,
-  permissions: z.array(z.string()),
+  permissions: z.union([
+    z.array(z.string()),
+    z.string().transform((permissions) => permissions.split(',').map((scope) => scope.trim())),
+  ]),
 });
 const longTokenSchema = z.object({
   access_token: z.string().min(1),

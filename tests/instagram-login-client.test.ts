@@ -40,7 +40,7 @@ describe('Instagram Login transport', () => {
       {
         access_token: 'short-token',
         user_id: 'app-scoped-1',
-        permissions: ['instagram_business_basic', 'instagram_business_content_publish'],
+        permissions: 'instagram_business_basic,instagram_business_content_publish',
       },
       { access_token: 'long-token', expires_in: 3600 },
       {
@@ -145,7 +145,7 @@ describe('Instagram Login transport', () => {
 
   it('rejects partial permission and ineligible or mismatched accounts before persistence', async () => {
     const partial = clientWithResponses([
-      { access_token: 'short', user_id: 'one', permissions: ['instagram_business_basic'] },
+      { access_token: 'short', user_id: 'one', permissions: 'instagram_business_basic' },
     ]);
     await expect(
       partial.client.exchangeCode({ code: 'code', redirectUri: callback }),

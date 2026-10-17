@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   InstagramLoginAccountError,
   InstagramLoginClient,
+  InstagramLoginDiagnosticError,
   InstagramLoginPermissionError,
+  InstagramLoginRequestError,
 } from '../src/modules/providers/instagram-login-client.js';
 
 const appId = '856816254187944';
@@ -68,7 +70,77 @@ describe('Instagram Login transport', () => {
       'https://graph.instagram.com',
     ]);
     expect(requests[0]?.init?.method).toBe('POST');
+    expect(requests[0]?.init?.body).toBeInstanceOf(FormData);
+    expect((requests[0]?.init?.body as FormData).get('redirect_uri')).toBe(callback);
+    expect(new Headers(requests[0]?.init?.headers).has('content-type')).toBe(false);
     expect(requests[2]?.url.pathname).toBe('/v23.0/me');
+  });
+
+  it('accepts a numeric Instagram user ID while retaining the exact app-scoped subject', async () => {
+    const { client } = clientWithResponses([
+      {
+        access_token: 'short-token',
+        user_id: 123,
+        permissions: ['instagram_business_basic', 'instagram_business_content_publish'],
+      },
+      { access_token: 'long-token', expires_in: 3600 },
+      { id: '123', user_id: 456, username: 'publisher', account_type: 'MEDIA_CREATOR' },
+    ]);
+    await expect(
+      client.exchangeCode({ code: 'one-use-code', redirectUri: callback }),
+    ).resolves.toMatchObject({
+      appScopedUserId: '123',
+      remoteUserId: '456',
+    });
+  });
+
+  it('classifies provider HTTP and schema failures without retaining provider payloads', async () => {
+    const providerBody = 'secret-token-and-code';
+    const failing = new InstagramLoginClient({
+      appId,
+      appSecret: 'separate-instagram-secret',
+      graphVersion: 'v23.0',
+      fetch: vi.fn().mockResolvedValue(new Response(providerBody, { status: 400 })),
+    });
+    const requestError = await failing
+      .exchangeCode({ code: 'one-use-code', redirectUri: callback })
+      .catch((error: unknown) => error);
+    expect(requestError).toBeInstanceOf(InstagramLoginRequestError);
+    expect(requestError).toMatchObject({ stage: 'token-exchange', category: 'http', status: 400 });
+    expect(JSON.stringify(requestError)).not.toContain(providerBody);
+    const invalid = clientWithResponses([{ access_token: 'secret-token', user_id: '123' }]);
+    const schemaError = await invalid.client
+      .exchangeCode({ code: 'code', redirectUri: callback })
+      .catch((error: unknown) => error);
+    expect(schemaError).toBeInstanceOf(InstagramLoginDiagnosticError);
+    expect(schemaError).toMatchObject({ stage: 'token-exchange', category: 'invalid-response' });
+    expect(JSON.stringify(schemaError)).not.toContain('secret-token');
+  });
+
+  it('distinguishes token extension and profile lookup failures', async () => {
+    const short = {
+      access_token: 'short-token',
+      user_id: '123',
+      permissions: ['instagram_business_basic', 'instagram_business_content_publish'],
+    };
+    const extension = clientWithResponses([short, { access_token: 'long-token' }]);
+    await expect(
+      extension.client.exchangeCode({ code: 'code', redirectUri: callback }),
+    ).rejects.toMatchObject({
+      stage: 'token-extension',
+      category: 'invalid-response',
+    });
+    const profile = clientWithResponses([
+      short,
+      { access_token: 'long-token', expires_in: 3600 },
+      { id: 'other', user_id: '456', username: 'publisher', account_type: 'BUSINESS' },
+    ]);
+    await expect(
+      profile.client.exchangeCode({ code: 'code', redirectUri: callback }),
+    ).rejects.toMatchObject({
+      stage: 'profile-lookup',
+      category: 'ineligible-account',
+    });
   });
 
   it('rejects partial permission and ineligible or mismatched accounts before persistence', async () => {

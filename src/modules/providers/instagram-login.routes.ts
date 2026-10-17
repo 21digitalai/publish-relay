@@ -10,6 +10,7 @@ import { verifyCsrfToken } from '../identity/session.js';
 import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-policy.js';
 import {
   InstagramLoginAccountError,
+  InstagramLoginDiagnosticError,
   InstagramLoginPermissionError,
   type InstagramLoginClient,
 } from './instagram-login-client.js';
@@ -17,6 +18,7 @@ import {
   beginInstagramLogin,
   completeInstagramLogin,
   failInstagramLogin,
+  InstagramLoginPersistenceError,
 } from './instagram-login.service.js';
 
 const successSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
@@ -108,7 +110,25 @@ export function registerInstagramLoginRoutes(
             : error instanceof ProviderDestinationConflictError
               ? 'conflict'
               : 'service-error';
-      request.log.warn({ provider: 'instagram', reason }, 'Instagram Login callback failed');
+      const diagnostic =
+        error instanceof InstagramLoginDiagnosticError
+          ? {
+              stage: error.stage,
+              category: error.category,
+              ...(error.status === undefined ? {} : { status: error.status }),
+            }
+          : {
+              stage:
+                error instanceof ProviderDestinationConflictError ||
+                error instanceof InstagramLoginPersistenceError
+                  ? 'persistence'
+                  : 'callback',
+              category: error instanceof ProviderDestinationConflictError ? 'conflict' : 'internal',
+            };
+      request.log.warn(
+        { provider: 'instagram', reason, ...diagnostic },
+        'Instagram Login callback failed',
+      );
       return reply.redirect(`/app?oauth=instagram-${reason}`);
     }
   });

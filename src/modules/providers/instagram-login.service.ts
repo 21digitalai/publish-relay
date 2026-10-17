@@ -7,6 +7,7 @@ import { encryptCredential, type MasterKeyProvider } from '../credentials/envelo
 import { consumeOauthCallback, issueOauthTransaction } from '../credentials/oauth.service.js';
 import {
   assertActiveMembership,
+  ProviderDestinationConflictError,
   replaceProviderConnection,
 } from '../credentials/provider-connection.repository.js';
 import {
@@ -20,6 +21,12 @@ interface InstagramLoginInput {
   workspaceId: string;
   userId: string;
   requestId: string;
+}
+
+export class InstagramLoginPersistenceError extends Error {
+  public constructor() {
+    super('Instagram Login persistence failed');
+  }
 }
 
 export async function beginInstagramLogin(
@@ -110,6 +117,9 @@ export async function completeInstagramLogin(
       });
       return { connectionId: connection.connectionId };
     });
+  } catch (error) {
+    if (error instanceof ProviderDestinationConflictError) throw error;
+    throw new InstagramLoginPersistenceError();
   } finally {
     plaintext.fill(0);
   }

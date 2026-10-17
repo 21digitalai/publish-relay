@@ -1,7 +1,9 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as InstagramLoginService from '../src/modules/providers/instagram-login.service.js';
 
-vi.mock('../src/modules/providers/instagram-login.service.js', () => ({
+vi.mock('../src/modules/providers/instagram-login.service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof InstagramLoginService>()),
   beginInstagramLogin: vi.fn(),
   completeInstagramLogin: vi.fn(),
   failInstagramLogin: vi.fn(),
@@ -18,6 +20,7 @@ import {
   beginInstagramLogin,
   completeInstagramLogin,
   failInstagramLogin,
+  InstagramLoginPersistenceError,
 } from '../src/modules/providers/instagram-login.service.js';
 
 const applications = [] as ReturnType<typeof createStandaloneApplication>[];
@@ -137,6 +140,10 @@ describe('Instagram Login routes', () => {
     vi.mocked(completeInstagramLogin).mockRejectedValue(new InstagramLoginAccountError());
     expect((await callback('state=one&code=code')).headers.location).toBe(
       '/app?oauth=instagram-no-account',
+    );
+    vi.mocked(completeInstagramLogin).mockRejectedValue(new InstagramLoginPersistenceError());
+    expect((await callback('state=one&code=code')).headers.location).toBe(
+      '/app?oauth=instagram-service-error',
     );
     vi.mocked(failInstagramLogin).mockResolvedValue(true);
     expect((await callback('state=one&error=access_denied')).headers.location).toBe(

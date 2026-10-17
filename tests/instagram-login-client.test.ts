@@ -151,8 +151,34 @@ describe('Instagram Login transport', () => {
       .exchangeCode({ code: 'code', redirectUri: callback })
       .catch((error: unknown) => error);
     expect(schemaError).toBeInstanceOf(InstagramLoginDiagnosticError);
-    expect(schemaError).toMatchObject({ stage: 'token-exchange', category: 'invalid-response' });
+    expect(schemaError).toMatchObject({
+      stage: 'token-exchange',
+      category: 'invalid-response',
+      shape: {
+        root: 'object',
+        data: 'missing',
+        accessToken: 'string',
+        userId: 'string',
+        permissions: 'missing',
+      },
+    });
     expect(JSON.stringify(schemaError)).not.toContain('secret-token');
+    const wrapped = clientWithResponses([
+      { data: [{ access_token: 'wrapped-secret', user_id: 123 }] },
+    ]);
+    const wrappedError = await wrapped.client
+      .exchangeCode({ code: 'code', redirectUri: callback })
+      .catch((error: unknown) => error);
+    expect(wrappedError).toMatchObject({
+      shape: {
+        root: 'object',
+        data: 'single',
+        accessToken: 'string',
+        userId: 'number',
+        permissions: 'missing',
+      },
+    });
+    expect(JSON.stringify(wrappedError)).not.toContain('wrapped-secret');
   });
 
   it('distinguishes token extension and profile lookup failures', async () => {

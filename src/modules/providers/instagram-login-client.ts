@@ -36,12 +36,57 @@ const accountSchema = z.object({
 export type InstagramLoginStage = 'token-exchange' | 'token-extension' | 'profile-lookup';
 export type InstagramLoginFailureCategory =
   'http' | 'transport' | 'invalid-response' | 'permission' | 'ineligible-account';
+type ResponseFieldType = 'missing' | 'string' | 'number' | 'array' | 'object' | 'other';
+
+export interface InstagramLoginResponseShape {
+  root: ResponseFieldType;
+  data: 'missing' | 'single' | 'empty' | 'multiple' | 'not-array';
+  accessToken: ResponseFieldType;
+  userId: ResponseFieldType;
+  permissions: ResponseFieldType;
+}
+
+function fieldType(value: unknown): ResponseFieldType {
+  if (value === undefined) return 'missing';
+  if (Array.isArray(value)) return 'array';
+  if (value !== null && typeof value === 'object') return 'object';
+  if (typeof value === 'string') return 'string';
+  if (typeof value === 'number') return 'number';
+  return 'other';
+}
+
+function responseShape(value: unknown): InstagramLoginResponseShape {
+  const root = fieldType(value);
+  const record = root === 'object' ? (value as Record<string, unknown>) : {};
+  const data = record.data;
+  const dataMode =
+    data === undefined
+      ? 'missing'
+      : !Array.isArray(data)
+        ? 'not-array'
+        : data.length === 0
+          ? 'empty'
+          : data.length === 1
+            ? 'single'
+            : 'multiple';
+  const candidate: unknown =
+    Array.isArray(data) && data.length === 1 ? (data as unknown[])[0] : value;
+  const fields = fieldType(candidate) === 'object' ? (candidate as Record<string, unknown>) : {};
+  return {
+    root,
+    data: dataMode,
+    accessToken: fieldType(fields.access_token),
+    userId: fieldType(fields.user_id),
+    permissions: fieldType(fields.permissions),
+  };
+}
 
 export class InstagramLoginDiagnosticError extends Error {
   public constructor(
     public readonly stage: InstagramLoginStage,
     public readonly category: InstagramLoginFailureCategory,
     public readonly status?: number,
+    public readonly shape?: InstagramLoginResponseShape,
   ) {
     super(`Instagram Login ${stage} failed (${category})`);
   }
@@ -181,7 +226,13 @@ export class InstagramLoginClient {
 
   private parseResponse<T>(schema: z.ZodType<T>, value: unknown, stage: InstagramLoginStage): T {
     const result = schema.safeParse(value);
-    if (!result.success) throw new InstagramLoginDiagnosticError(stage, 'invalid-response');
+    if (!result.success)
+      throw new InstagramLoginDiagnosticError(
+        stage,
+        'invalid-response',
+        undefined,
+        responseShape(value),
+      );
     return result.data;
   }
 

@@ -14,6 +14,7 @@ import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
 import { AuthService, type AuthStore } from '../src/modules/identity/auth.service.js';
 import {
   InstagramLoginAccountError,
+  InstagramLoginDiagnosticError,
   InstagramLoginRequestError,
   InstagramLoginPermissionError,
 } from '../src/modules/providers/instagram-login-client.js';
@@ -190,5 +191,52 @@ describe('Instagram Login routes', () => {
     expect(logged).not.toContain('private-code');
     expect(logged).not.toContain('private-token');
     expect(logged).not.toContain('private-body');
+  });
+
+  it('logs only fixed shape labels for an Instagram token schema failure', async () => {
+    const app = application(true);
+    const warnings: unknown[][] = [];
+    app.addHook('onRequest', (request, _reply, done) => {
+      vi.spyOn(request.log, 'warn').mockImplementation((...values: unknown[]) => {
+        warnings.push(values);
+      });
+      done();
+    });
+    vi.mocked(completeInstagramLogin).mockRejectedValue(
+      new InstagramLoginDiagnosticError('token-exchange', 'invalid-response', undefined, {
+        root: 'object',
+        data: 'single',
+        accessToken: 'string',
+        userId: 'number',
+        permissions: 'missing',
+      }),
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/instagram/callback?state=private-state&code=private-code',
+      headers: sessionCookie,
+    });
+    expect(response.headers.location).toBe('/app?oauth=instagram-service-error');
+    expect(warnings).toEqual([
+      [
+        {
+          provider: 'instagram',
+          reason: 'service-error',
+          stage: 'token-exchange',
+          category: 'invalid-response',
+          responseShape: {
+            root: 'object',
+            data: 'single',
+            accessToken: 'string',
+            userId: 'number',
+            permissions: 'missing',
+          },
+        },
+        'Instagram Login callback failed',
+      ],
+    ]);
+    const logged = JSON.stringify(warnings);
+    expect(logged).not.toContain('private-state');
+    expect(logged).not.toContain('private-code');
   });
 });

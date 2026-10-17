@@ -116,6 +116,7 @@ export function registerInstagramLoginRoutes(
               stage: error.stage,
               category: error.category,
               ...(error.status === undefined ? {} : { status: error.status }),
+              ...(error.shape === undefined ? {} : { responseShape: error.shape }),
             }
           : {
               stage:

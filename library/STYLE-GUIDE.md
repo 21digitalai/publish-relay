@@ -112,7 +112,7 @@ Routes:
 
 Workspace selection is a searchable popover showing name, role, and active-account count. Raw IDs never appear in normal workflows.
 
-Queue search/view and calendar mode/date are URL-owned state so refresh and copied links preserve the operator's current context. Queue priority is deterministic: attention first, active work nearest-first, then history newest-first. Every workspace link derives from the active route; no fallback workspace slug is permitted.
+Queue search/view and calendar mode/date are URL-owned state so refresh and copied links preserve the operator's current context. Queue priority is deterministic: attention first, active work nearest-first, then history newest-first. Workspace navigation uses the authenticated active workspace profile; a mismatched route redirects to that workspace before the shell renders.
 Queue filter menus use the shared `FilterSelect` listbox primitive in `src/ui/workflow.tsx`; browser-native selects are not used. The trigger exposes expanded state, supports keyboard open/Escape close, and each option exposes selected state. All filters, sort, search, and view tabs share one URL-backed state owner and one complete reset action.
 
 ## Authentication and onboarding

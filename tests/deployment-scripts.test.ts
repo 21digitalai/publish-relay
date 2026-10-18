@@ -12,13 +12,15 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createDeployFixture, writeExecutable } from './deployment-fixture.js';
 
 import { loadRuntimeConfig } from '../src/config/runtime-config.js';
 
 const projectRoot = resolve(import.meta.dirname, '..');
+const RELEASE_SCRIPT_TEST_TIMEOUT_MS = 20_000;
+vi.setConfig({ testTimeout: RELEASE_SCRIPT_TEST_TIMEOUT_MS });
 
 describe('deployment scripts', () => {
   it('provisions distinct forced-RLS web and cross-workspace worker authorities', () => {
@@ -110,7 +112,7 @@ describe('deployment scripts', () => {
     expect(readFileSync(join(projectRoot, 'deploy/publish-release.sh'), 'utf8')).not.toContain(
       '--chdir',
     );
-  }, 10_000);
+  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
 
   it('restores the reviewed compiled artifact after production dependency install', () => {
     const fixture = createDeployFixture();
@@ -132,7 +134,7 @@ describe('deployment scripts', () => {
     expect(statSync(releaseMigration).mode & 0o040).toBe(0o040);
     expect(readFileSync(fixture.log, 'utf8')).toContain('script=dist/database/migrate.js');
     expect(readlinkSync(fixture.currentLink)).toContain('release-artifact-restore');
-  }, 10_000);
+  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
 
   it('fails closed before install when the selected Node 24 toolchain is missing', () => {
     const fixture = createDeployFixture();

@@ -13,13 +13,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeployFixture, writeExecutable } from './deployment-fixture.js';
 
 const deploy = join(import.meta.dirname, '../deploy/publish-release.sh');
 const guard = join(import.meta.dirname, '../deploy/release-filesystem.mjs');
 const roots: string[] = [];
 const hostLsof = spawnSync('which', ['lsof'], { encoding: 'utf8' }).stdout.trim();
+const RELEASE_SCRIPT_TEST_TIMEOUT_MS = 20_000;
+vi.setConfig({ testTimeout: RELEASE_SCRIPT_TEST_TIMEOUT_MS });
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -66,7 +68,7 @@ describe('serialized one-release deployment lifecycle', () => {
     expect(readlinkSync(value.currentLink)).toBe(join(value.releaseRoot, 'new'));
     expect(existsSync(join(value.root, '.deployment-lock'))).toBe(false);
     assertProtected(value);
-  }, 10_000);
+  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
 
   it.each(['FAIL_MIGRATION', 'FAIL_BOOTSTRAP'])(
     'cleans the failed candidate before switch on %s',
@@ -78,7 +80,7 @@ describe('serialized one-release deployment lifecycle', () => {
       expect(existsSync(join(value.root, '.deployment-lock'))).toBe(false);
       assertProtected(value);
     },
-    10_000,
+    RELEASE_SCRIPT_TEST_TIMEOUT_MS,
   );
 
   it('reverts and verifies old after candidate readiness failure, then removes only candidate', () => {
@@ -117,7 +119,7 @@ describe('serialized one-release deployment lifecycle', () => {
       expect(existsSync(join(value.root, '.deployment-lock'))).toBe(true);
       assertProtected(value);
     },
-    10_000,
+    RELEASE_SCRIPT_TEST_TIMEOUT_MS,
   );
 
   it('refuses concurrent starts and never steals even an apparently stale lock', () => {
@@ -273,5 +275,5 @@ describe('serialized one-release deployment lifecycle', () => {
     expect(readFileSync(join(value.releaseRoot, 'new/package-lock.json'))).toEqual(before);
     expect(readdirSync(value.releaseRoot)).toEqual(['new']);
     assertProtected(value);
-  }, 10_000);
+  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
 });

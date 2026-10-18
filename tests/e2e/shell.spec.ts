@@ -802,15 +802,17 @@ test('owner shares one Page with workspace checkboxes and sees revoke guard', as
       contentType: 'application/json',
       body: JSON.stringify({
         data: {
-          accounts: [{
-            id: accountId,
-            provider: 'meta',
-            destinationProvider: 'facebook_page',
-            displayName: 'Sneji Page',
-            status: 'active',
-            availability: 'active',
-            adapterDefaults: {},
-          }],
+          accounts: [
+            {
+              id: accountId,
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: 'Sneji Page',
+              status: 'active',
+              availability: 'active',
+              adapterDefaults: {},
+            },
+          ],
           nextCursor: null,
         },
         error: null,
@@ -856,11 +858,15 @@ test('owner shares one Page with workspace checkboxes and sees revoke guard', as
   await editorial.click();
   await expect(page.getByRole('alert')).toContainText('Resolve scheduled jobs');
   await expect(editorial).toHaveAttribute('aria-checked', 'true');
-  await page.screenshot({ path: testInfo.outputPath('page-exposure-checkboxes.png'), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath('page-exposure-checkboxes.png'),
+    fullPage: true,
+  });
   await page.reload();
   await page.getByRole('button', { name: 'Share with workspaces' }).click();
   await expect(page.getByRole('checkbox', { name: 'AI Influencer' })).toHaveAttribute(
-    'aria-checked', 'true',
+    'aria-checked',
+    'true',
   );
 });
 

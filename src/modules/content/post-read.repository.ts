@@ -127,27 +127,32 @@ export async function listBrowserJobSummaries(database: NodePgDatabase, input: B
         ),
       )
     : undefined;
-  return withTenantTransaction(database, {
-    workspaceId: input.workspaceId,
-    ...(input.userId ? { userId: input.userId } : {}),
-  }, (transaction) =>
-    browserJobJoins(transaction)
-      .where(
-        and(
-          eq(publicationJobs.workspaceId, input.workspaceId),
-          input.states?.length ? inArray(publicationJobs.state, input.states) : undefined,
-          input.providerAccountId
-            ? eq(publicationJobs.providerAccountId, input.providerAccountId)
-            : undefined,
-          input.scheduledAfter ? gte(publicationJobs.scheduledAt, input.scheduledAfter) : undefined,
-          input.scheduledBefore
-            ? lte(publicationJobs.scheduledAt, input.scheduledBefore)
-            : undefined,
-          cursor,
-        ),
-      )
-      .orderBy(desc(publicationJobs.scheduledAt), desc(publicationJobs.id))
-      .limit(input.limit),
+  return withTenantTransaction(
+    database,
+    {
+      workspaceId: input.workspaceId,
+      ...(input.userId ? { userId: input.userId } : {}),
+    },
+    (transaction) =>
+      browserJobJoins(transaction)
+        .where(
+          and(
+            eq(publicationJobs.workspaceId, input.workspaceId),
+            input.states?.length ? inArray(publicationJobs.state, input.states) : undefined,
+            input.providerAccountId
+              ? eq(publicationJobs.providerAccountId, input.providerAccountId)
+              : undefined,
+            input.scheduledAfter
+              ? gte(publicationJobs.scheduledAt, input.scheduledAfter)
+              : undefined,
+            input.scheduledBefore
+              ? lte(publicationJobs.scheduledAt, input.scheduledBefore)
+              : undefined,
+            cursor,
+          ),
+        )
+        .orderBy(desc(publicationJobs.scheduledAt), desc(publicationJobs.id))
+        .limit(input.limit),
   );
 }
 
@@ -158,98 +163,102 @@ export async function getBrowserJobDetail(
   userId?: string,
   machineActor?: { type: 'api-key' | 'delegated'; id: string; capability: 'schedules:read' },
 ) {
-  return withTenantTransaction(database, {
-    workspaceId,
-    ...(userId ? { userId } : {}),
-    ...(machineActor ? { machineActor } : {}),
-  }, async (transaction) => {
-    const rows = await browserJobJoins(transaction)
-      .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.id, jobId)))
-      .limit(1);
-    const job = rows[0];
-    if (!job) return null;
-    const [media, attempts, activity] = await Promise.all([
-      transaction
-        .select({
-          id: mediaObjects.id,
-          position: revisionMedia.position,
-          mimeType: mediaObjects.mimeType,
-          byteSize: mediaObjects.byteSize,
-          sha256: mediaObjects.sha256,
-          state: mediaObjects.state,
-        })
-        .from(revisionMedia)
-        .innerJoin(
-          mediaObjects,
-          and(
-            eq(mediaObjects.workspaceId, revisionMedia.workspaceId),
-            eq(mediaObjects.id, revisionMedia.mediaId),
-          ),
-        )
-        .where(
-          and(
-            eq(revisionMedia.workspaceId, workspaceId),
-            eq(revisionMedia.revisionId, job.revisionId),
-          ),
-        )
-        .orderBy(asc(revisionMedia.position)),
-      transaction
-        .select({
-          id: publicationAttempts.id,
-          attemptNumber: publicationAttempts.attemptNumber,
-          startedAt: publicationAttempts.startedAt,
-          finishedAt: publicationAttempts.finishedAt,
-          outcome: publicationAttempts.outcome,
-          externalPostId: publicationAttempts.externalPostId,
-          retryAt: publicationAttempts.retryAt,
-          error: publicationAttempts.redactedError,
-        })
-        .from(publicationAttempts)
-        .where(
-          and(
-            eq(publicationAttempts.workspaceId, workspaceId),
-            eq(publicationAttempts.jobId, jobId),
-          ),
-        )
-        .orderBy(asc(publicationAttempts.attemptNumber)),
-      transaction
-        .select({
-          id: publicationJobEvents.id,
-          fromState: publicationJobEvents.fromState,
-          toState: publicationJobEvents.toState,
-          reason: publicationJobEvents.reason,
-          createdAt: publicationJobEvents.createdAt,
-        })
-        .from(publicationJobEvents)
-        .where(
-          and(
-            eq(publicationJobEvents.workspaceId, workspaceId),
-            eq(publicationJobEvents.jobId, jobId),
-          ),
-        )
-        .orderBy(asc(publicationJobEvents.createdAt), asc(publicationJobEvents.id)),
-    ]);
-    const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
-    const externalUrl = published?.externalPostId
-      ? job.providerAccount.provider === 'x' && job.providerAccount.handle
-        ? `https://x.com/${job.providerAccount.handle}/status/${published.externalPostId}`
-        : job.providerAccount.provider === 'youtube'
-          ? `https://www.youtube.com/watch?v=${published.externalPostId}`
-          : job.providerAccount.provider === 'linkedin'
-            ? `https://www.linkedin.com/feed/update/${encodeURIComponent(published.externalPostId)}/`
-            : null
-      : null;
-    return {
-      ...job,
-      media: media.map((item) => ({
-        ...item,
-        previewUrl: item.state === 'ready' ? `/api/workflow/media/${item.id}` : null,
-      })),
-      attempts,
-      activity,
-      providerResult: published ? { id: published.externalPostId, url: externalUrl } : null,
-    };
-  });
+  return withTenantTransaction(
+    database,
+    {
+      workspaceId,
+      ...(userId ? { userId } : {}),
+      ...(machineActor ? { machineActor } : {}),
+    },
+    async (transaction) => {
+      const rows = await browserJobJoins(transaction)
+        .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.id, jobId)))
+        .limit(1);
+      const job = rows[0];
+      if (!job) return null;
+      const [media, attempts, activity] = await Promise.all([
+        transaction
+          .select({
+            id: mediaObjects.id,
+            position: revisionMedia.position,
+            mimeType: mediaObjects.mimeType,
+            byteSize: mediaObjects.byteSize,
+            sha256: mediaObjects.sha256,
+            state: mediaObjects.state,
+          })
+          .from(revisionMedia)
+          .innerJoin(
+            mediaObjects,
+            and(
+              eq(mediaObjects.workspaceId, revisionMedia.workspaceId),
+              eq(mediaObjects.id, revisionMedia.mediaId),
+            ),
+          )
+          .where(
+            and(
+              eq(revisionMedia.workspaceId, workspaceId),
+              eq(revisionMedia.revisionId, job.revisionId),
+            ),
+          )
+          .orderBy(asc(revisionMedia.position)),
+        transaction
+          .select({
+            id: publicationAttempts.id,
+            attemptNumber: publicationAttempts.attemptNumber,
+            startedAt: publicationAttempts.startedAt,
+            finishedAt: publicationAttempts.finishedAt,
+            outcome: publicationAttempts.outcome,
+            externalPostId: publicationAttempts.externalPostId,
+            retryAt: publicationAttempts.retryAt,
+            error: publicationAttempts.redactedError,
+          })
+          .from(publicationAttempts)
+          .where(
+            and(
+              eq(publicationAttempts.workspaceId, workspaceId),
+              eq(publicationAttempts.jobId, jobId),
+            ),
+          )
+          .orderBy(asc(publicationAttempts.attemptNumber)),
+        transaction
+          .select({
+            id: publicationJobEvents.id,
+            fromState: publicationJobEvents.fromState,
+            toState: publicationJobEvents.toState,
+            reason: publicationJobEvents.reason,
+            createdAt: publicationJobEvents.createdAt,
+          })
+          .from(publicationJobEvents)
+          .where(
+            and(
+              eq(publicationJobEvents.workspaceId, workspaceId),
+              eq(publicationJobEvents.jobId, jobId),
+            ),
+          )
+          .orderBy(asc(publicationJobEvents.createdAt), asc(publicationJobEvents.id)),
+      ]);
+      const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
+      const externalUrl = published?.externalPostId
+        ? job.providerAccount.provider === 'x' && job.providerAccount.handle
+          ? `https://x.com/${job.providerAccount.handle}/status/${published.externalPostId}`
+          : job.providerAccount.provider === 'youtube'
+            ? `https://www.youtube.com/watch?v=${published.externalPostId}`
+            : job.providerAccount.provider === 'linkedin'
+              ? `https://www.linkedin.com/feed/update/${encodeURIComponent(published.externalPostId)}/`
+              : null
+        : null;
+      return {
+        ...job,
+        media: media.map((item) => ({
+          ...item,
+          previewUrl: item.state === 'ready' ? `/api/workflow/media/${item.id}` : null,
+        })),
+        attempts,
+        activity,
+        providerResult: published ? { id: published.externalPostId, url: externalUrl } : null,
+      };
+    },
+  );
 }
 
 export interface PostSummary {

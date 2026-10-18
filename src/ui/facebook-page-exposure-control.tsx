@@ -129,30 +129,41 @@ export function FacebookPageExposureControl({
           {!loading && !error && workspaces.length === 0 && (
             <p>No other workspaces you own are available.</p>
           )}
-          {!loading && workspaces.map((workspace) => (
-            <button
-              key={workspace.id}
-              type="button"
-              className="page-exposure-choice"
-              role="checkbox"
-              aria-checked={selected.has(workspace.id)}
-              disabled={savingId !== null}
-              onClick={() => void updateChoice(workspace)}
-            >
-              <span className="page-exposure-check" aria-hidden="true">
-                {selected.has(workspace.id) ? '✓' : ''}
-              </span>
-              <span>{workspace.name}</span>
-              {savingId === workspace.id && <span className="sr-only">Saving</span>}
-            </button>
-          ))}
-          {error && <p className="page-exposure-error" role="alert">{error}</p>}
+          {!loading &&
+            workspaces.map((workspace) => (
+              <button
+                key={workspace.id}
+                type="button"
+                className="page-exposure-choice"
+                role="checkbox"
+                aria-checked={selected.has(workspace.id)}
+                disabled={savingId !== null}
+                onClick={() => void updateChoice(workspace)}
+              >
+                <span className="page-exposure-check" aria-hidden="true">
+                  {selected.has(workspace.id) ? '✓' : ''}
+                </span>
+                <span>{workspace.name}</span>
+                {savingId === workspace.id && <span className="sr-only">Saving</span>}
+              </button>
+            ))}
+          {error && (
+            <p className="page-exposure-error" role="alert">
+              {error}
+            </p>
+          )}
           {error && workspaces.length === 0 && (
-            <button type="button" className="secondary-button" onClick={() => void openChoices(true)}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void openChoices(true)}
+            >
               Try again
             </button>
           )}
-          <span className="sr-only" aria-live="polite">{announcement}</span>
+          <span className="sr-only" aria-live="polite">
+            {announcement}
+          </span>
         </div>
       )}
     </div>

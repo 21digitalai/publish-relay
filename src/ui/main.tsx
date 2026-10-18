@@ -1119,13 +1119,15 @@ function AccountRow({
           </button>
         )}
       </div>
-      {!account.isExposed && account.destinationProvider === 'facebook_page' && originWorkspaceId && (
-        <FacebookPageExposureControl
-          accountId={account.id}
-          accountName={account.name}
-          originWorkspaceId={originWorkspaceId}
-        />
-      )}
+      {!account.isExposed &&
+        account.destinationProvider === 'facebook_page' &&
+        originWorkspaceId && (
+          <FacebookPageExposureControl
+            accountId={account.id}
+            accountName={account.name}
+            originWorkspaceId={originWorkspaceId}
+          />
+        )}
       {account.provider === 'X' && account.xLongPosts && (
         <div className="x-long-post-setting">
           <button

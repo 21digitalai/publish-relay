@@ -54,21 +54,25 @@ function assertProtected(value: ReturnType<typeof fixture>) {
 }
 
 describe('serialized one-release deployment lifecycle', () => {
-  it('holds at most two releases, switches then smokes, removes old, and preserves durable data', () => {
-    const value = fixture();
-    // Observe the actual filesystem at the external readiness boundary.
-    writeExecutable(
-      join(value.root, 'bin/curl'),
-      '[[ "$(ls "$PUBLISH_RELAY_RELEASE_ROOT" | wc -l)" -eq 2 ]]; [[ "$(/usr/bin/readlink "$PUBLISH_RELAY_CURRENT_LINK")" == */new ]]',
-    );
-    const result = run(value);
-    expect(result.stderr).toBe('');
-    expect(result.status).toBe(0);
-    expect(readdirSync(value.releaseRoot)).toEqual(['new']);
-    expect(readlinkSync(value.currentLink)).toBe(join(value.releaseRoot, 'new'));
-    expect(existsSync(join(value.root, '.deployment-lock'))).toBe(false);
-    assertProtected(value);
-  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
+  it(
+    'holds at most two releases, switches then smokes, removes old, and preserves durable data',
+    () => {
+      const value = fixture();
+      // Observe the actual filesystem at the external readiness boundary.
+      writeExecutable(
+        join(value.root, 'bin/curl'),
+        '[[ "$(ls "$PUBLISH_RELAY_RELEASE_ROOT" | wc -l)" -eq 2 ]]; [[ "$(/usr/bin/readlink "$PUBLISH_RELAY_CURRENT_LINK")" == */new ]]',
+      );
+      const result = run(value);
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(readdirSync(value.releaseRoot)).toEqual(['new']);
+      expect(readlinkSync(value.currentLink)).toBe(join(value.releaseRoot, 'new'));
+      expect(existsSync(join(value.root, '.deployment-lock'))).toBe(false);
+      assertProtected(value);
+    },
+    RELEASE_SCRIPT_TEST_TIMEOUT_MS,
+  );
 
   it.each(['FAIL_MIGRATION', 'FAIL_BOOTSTRAP'])(
     'cleans the failed candidate before switch on %s',
@@ -265,15 +269,19 @@ describe('serialized one-release deployment lifecycle', () => {
     },
   );
 
-  it('rebuild rollback delegates to the same transaction and a repeated release ID does not mutate it', () => {
-    const value = fixture();
-    expect(run(value, {}, join(import.meta.dirname, '../deploy/rollback-release.sh')).status).toBe(
-      0,
-    );
-    const before = readFileSync(join(value.releaseRoot, 'new/package-lock.json'));
-    expect(run(value).status).not.toBe(0);
-    expect(readFileSync(join(value.releaseRoot, 'new/package-lock.json'))).toEqual(before);
-    expect(readdirSync(value.releaseRoot)).toEqual(['new']);
-    assertProtected(value);
-  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
+  it(
+    'rebuild rollback delegates to the same transaction and a repeated release ID does not mutate it',
+    () => {
+      const value = fixture();
+      expect(
+        run(value, {}, join(import.meta.dirname, '../deploy/rollback-release.sh')).status,
+      ).toBe(0);
+      const before = readFileSync(join(value.releaseRoot, 'new/package-lock.json'));
+      expect(run(value).status).not.toBe(0);
+      expect(readFileSync(join(value.releaseRoot, 'new/package-lock.json'))).toEqual(before);
+      expect(readdirSync(value.releaseRoot)).toEqual(['new']);
+      assertProtected(value);
+    },
+    RELEASE_SCRIPT_TEST_TIMEOUT_MS,
+  );
 });

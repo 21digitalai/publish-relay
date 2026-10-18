@@ -77,64 +77,76 @@ describe('deployment scripts', () => {
     }
   });
 
-  it('uses the compiled production migration before switching the current release', () => {
-    const fixture = createDeployFixture();
-    execFileSync(
-      'bash',
-      [join(projectRoot, 'deploy/publish-release.sh'), 'release-1', fixture.source],
-      {
-        env: fixture.environment,
-      },
-    );
-    const commands = readFileSync(fixture.log, 'utf8');
-    const releaseDirectory = join(realpathSync(fixture.releaseRoot), 'release-1');
-    expect(commands).toContain('npm ci --omit=dev --ignore-scripts');
-    expect(commands).toContain(
-      `node=${fixture.nodeBin} cwd=${releaseDirectory} script=dist/database/migrate.js database=set password=set`,
-    );
-    expect(commands).toContain(
-      `psql cwd=${releaseDirectory} pgdatabase=missing password=set -v ON_ERROR_STOP=1 -f deploy/bootstrap-database-authorities.sql postgresql://migrator@127.0.0.1/publish_relay`,
-    );
-    expect(commands).not.toContain('fixture-password');
-    expect(commands.indexOf('script=dist/database/migrate.js')).toBeLessThan(
-      commands.indexOf('psql cwd='),
-    );
-    expect(commands.indexOf('psql cwd=')).toBeLessThan(commands.indexOf('ln -s '));
-    expect(commands.indexOf('ln -s ')).toBeLessThan(commands.indexOf('systemctl restart'));
-    expect(commands.indexOf('systemctl restart')).toBeLessThan(
-      commands.indexOf('systemctl is-active'),
-    );
-    expect(commands.indexOf('systemctl is-active')).toBeLessThan(commands.indexOf('curl --fail'));
-    expect(commands).toContain(
-      'curl --fail --silent --show-error --connect-timeout 5 --max-time 10 http://127.0.0.1:3999/health/ready',
-    );
-    expect(readlinkSync(fixture.currentLink)).toContain('release-1');
-    expect(readFileSync(join(projectRoot, 'deploy/publish-release.sh'), 'utf8')).not.toContain(
-      '--chdir',
-    );
-  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
+  it(
+    'uses the compiled production migration before switching the current release',
+    () => {
+      const fixture = createDeployFixture();
+      execFileSync(
+        'bash',
+        [join(projectRoot, 'deploy/publish-release.sh'), 'release-1', fixture.source],
+        {
+          env: fixture.environment,
+        },
+      );
+      const commands = readFileSync(fixture.log, 'utf8');
+      const releaseDirectory = join(realpathSync(fixture.releaseRoot), 'release-1');
+      expect(commands).toContain('npm ci --omit=dev --ignore-scripts');
+      expect(commands).toContain(
+        `node=${fixture.nodeBin} cwd=${releaseDirectory} script=dist/database/migrate.js database=set password=set`,
+      );
+      expect(commands).toContain(
+        `psql cwd=${releaseDirectory} pgdatabase=missing password=set -v ON_ERROR_STOP=1 -f deploy/bootstrap-database-authorities.sql postgresql://migrator@127.0.0.1/publish_relay`,
+      );
+      expect(commands).not.toContain('fixture-password');
+      expect(commands.indexOf('script=dist/database/migrate.js')).toBeLessThan(
+        commands.indexOf('psql cwd='),
+      );
+      expect(commands.indexOf('psql cwd=')).toBeLessThan(commands.indexOf('ln -s '));
+      expect(commands.indexOf('ln -s ')).toBeLessThan(commands.indexOf('systemctl restart'));
+      expect(commands.indexOf('systemctl restart')).toBeLessThan(
+        commands.indexOf('systemctl is-active'),
+      );
+      expect(commands.indexOf('systemctl is-active')).toBeLessThan(commands.indexOf('curl --fail'));
+      expect(commands).toContain(
+        'curl --fail --silent --show-error --connect-timeout 5 --max-time 10 http://127.0.0.1:3999/health/ready',
+      );
+      expect(readlinkSync(fixture.currentLink)).toContain('release-1');
+      expect(readFileSync(join(projectRoot, 'deploy/publish-release.sh'), 'utf8')).not.toContain(
+        '--chdir',
+      );
+    },
+    RELEASE_SCRIPT_TEST_TIMEOUT_MS,
+  );
 
-  it('restores the reviewed compiled artifact after production dependency install', () => {
-    const fixture = createDeployFixture();
-    const sourceDist = join(fixture.source, 'dist');
-    const sourceMigration = join(sourceDist, 'database', 'migrate.js');
-    chmodSync(sourceDist, 0o700);
-    chmodSync(join(sourceDist, 'database'), 0o700);
-    chmodSync(sourceMigration, 0o600);
-    execFileSync(
-      'bash',
-      [join(projectRoot, 'deploy/publish-release.sh'), 'release-artifact-restore', fixture.source],
-      { env: { ...fixture.environment, NPM_REMOVES_DIST: '1' } },
-    );
-    const releaseDirectory = join(realpathSync(fixture.releaseRoot), 'release-artifact-restore');
-    const releaseDist = join(releaseDirectory, 'dist');
-    const releaseMigration = join(releaseDist, 'database', 'migrate.js');
-    expect(existsSync(releaseMigration)).toBe(true);
-    expect(statSync(releaseDist).mode & 0o050).toBe(0o050);
-    expect(statSync(releaseMigration).mode & 0o040).toBe(0o040);
-    expect(readFileSync(fixture.log, 'utf8')).toContain('script=dist/database/migrate.js');
-    expect(readlinkSync(fixture.currentLink)).toContain('release-artifact-restore');
-  }, RELEASE_SCRIPT_TEST_TIMEOUT_MS);
+  it(
+    'restores the reviewed compiled artifact after production dependency install',
+    () => {
+      const fixture = createDeployFixture();
+      const sourceDist = join(fixture.source, 'dist');
+      const sourceMigration = join(sourceDist, 'database', 'migrate.js');
+      chmodSync(sourceDist, 0o700);
+      chmodSync(join(sourceDist, 'database'), 0o700);
+      chmodSync(sourceMigration, 0o600);
+      execFileSync(
+        'bash',
+        [
+          join(projectRoot, 'deploy/publish-release.sh'),
+          'release-artifact-restore',
+          fixture.source,
+        ],
+        { env: { ...fixture.environment, NPM_REMOVES_DIST: '1' } },
+      );
+      const releaseDirectory = join(realpathSync(fixture.releaseRoot), 'release-artifact-restore');
+      const releaseDist = join(releaseDirectory, 'dist');
+      const releaseMigration = join(releaseDist, 'database', 'migrate.js');
+      expect(existsSync(releaseMigration)).toBe(true);
+      expect(statSync(releaseDist).mode & 0o050).toBe(0o050);
+      expect(statSync(releaseMigration).mode & 0o040).toBe(0o040);
+      expect(readFileSync(fixture.log, 'utf8')).toContain('script=dist/database/migrate.js');
+      expect(readlinkSync(fixture.currentLink)).toContain('release-artifact-restore');
+    },
+    RELEASE_SCRIPT_TEST_TIMEOUT_MS,
+  );
 
   it('fails closed before install when the selected Node 24 toolchain is missing', () => {
     const fixture = createDeployFixture();

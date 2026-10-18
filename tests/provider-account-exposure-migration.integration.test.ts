@@ -6,6 +6,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { describe, expect, it } from 'vitest';
 
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
+import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
 
 const origin = '00000000-0000-4000-8000-000000000101';
 const target = '00000000-0000-4000-8000-000000000102';
@@ -15,8 +16,88 @@ const connection = '00000000-0000-4000-8000-000000000105';
 const post = '00000000-0000-4000-8000-000000000106';
 const revision = '00000000-0000-4000-8000-000000000107';
 const credential = '00000000-0000-4000-8000-000000000108';
+const nonOwner = '00000000-0000-4000-8000-000000000109';
 
 describe('provider account exposure migration', () => {
+  it('grants only to a shared owner, guards active jobs, and preserves a revoked row', async () => {
+    const database = new PGlite();
+    try {
+      const folder = new URL('../migrations/', import.meta.url);
+      const names = (await readdir(folder)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+      for (const name of names) await database.exec(await readFile(new URL(name, folder), 'utf8'));
+      await database.exec(`
+        CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
+        GRANT USAGE ON SCHEMA public TO publish_relay_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.edit_facebook_page_exposure(uuid, uuid, uuid, boolean, text)
+          TO publish_relay_app;
+        INSERT INTO users (id, display_name, email, password_hash)
+          VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
+            ('${nonOwner}', 'Editor', 'editor@example.test', 'hash');
+        INSERT INTO workspaces (id, name, slug) VALUES
+          ('${origin}', 'Origin', 'origin'), ('${target}', 'Target', 'target');
+        INSERT INTO memberships (workspace_id, user_id, role) VALUES
+          ('${origin}', '${user}', 'owner'), ('${target}', '${user}', 'owner'),
+          ('${origin}', '${nonOwner}', 'editor'), ('${target}', '${nonOwner}', 'owner');
+        INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce,
+          wrapped_key_tag, ciphertext, nonce, tag)
+          VALUES ('${credential}', '${origin}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+        INSERT INTO provider_connections (id, workspace_id, provider, credential_id, status)
+          VALUES ('${connection}', '${origin}', 'meta', '${credential}', 'active');
+        INSERT INTO provider_accounts
+          (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name)
+          VALUES ('${account}', '${origin}', '${connection}', 'page', 'facebook_page', 'page', 'Page');
+        SELECT set_config('app.workspace_id', '${origin}', false);
+        SET ROLE publish_relay_app;
+      `);
+      const edit = (expose: boolean) =>
+        database.query<{ result: string }>(
+          `SELECT public.edit_facebook_page_exposure('${origin}', '${target}', '${account}', ${String(expose)}, 'test-request') AS result`,
+        );
+      expect((await edit(true)).rows[0]?.result).toBe('unavailable');
+      await database.exec(`SELECT set_config('app.user_id', '${nonOwner}', false)`);
+      expect((await edit(true)).rows[0]?.result).toBe('unavailable');
+      expect(
+        await editFacebookPageExposure(drizzle(database) as unknown as NodePgDatabase, {
+          originWorkspaceId: origin,
+          targetWorkspaceId: target,
+          accountId: account,
+          userId: user,
+          requestId: 'service-request',
+          expose: true,
+        }),
+      ).toBe('updated');
+      await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
+      expect((await edit(true)).rows[0]?.result).toBe('unchanged');
+      await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
+      expect(
+        (await database.query('SELECT provider_account_id FROM provider_account_exposures')).rows,
+      ).toEqual([{ provider_account_id: account }]);
+      await database.exec(`RESET ROLE;
+        INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${post}', '${target}', '${user}');
+        INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+          VALUES ('${revision}', '${target}', '${post}', 1, '{"kind":"text","text":"hello"}');
+        INSERT INTO publication_jobs (workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
+          VALUES ('${target}', '${post}', '${revision}', '${account}', '2026-10-19T10:00:00Z');
+        SET ROLE publish_relay_app;
+        SELECT set_config('app.workspace_id', '${origin}', false);`);
+      expect((await edit(false)).rows[0]?.result).toBe('active_jobs');
+      await database.exec(`RESET ROLE;
+        UPDATE publication_jobs SET state = 'published' WHERE workspace_id = '${target}';
+        SET ROLE publish_relay_app;`);
+      expect((await edit(false)).rows[0]?.result).toBe('updated');
+      expect((await edit(true)).rows[0]?.result).toBe('updated');
+      await database.exec('RESET ROLE');
+      const rows = await database.query<{ count: number; preference: boolean }>(
+        `SELECT count(*)::int AS count, bool_and(show_other_workspace_posts) AS preference
+         FROM provider_account_exposures WHERE workspace_id = '${target}'`,
+      );
+      expect(rows.rows).toEqual([{ count: 1, preference: true }]);
+    } finally {
+      await database.close();
+    }
+  });
+
   it('backfills an existing account and its historical job without changing their IDs', async () => {
     const database = new PGlite();
     try {

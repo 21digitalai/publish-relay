@@ -13,6 +13,7 @@ import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
 import { beginAdapterConnection, getCsrfToken } from './posting-adapter-connection.js';
 import {
   CalendarPage,
+  CalendarMirrorDetailPage,
   ExternalDraftPage,
   JobDetailPage,
   QueuePage,
@@ -2686,6 +2687,7 @@ export function App() {
   if (path.startsWith('/onboarding/')) return <OnboardingPage />;
   if (/\/w\/[^/]+\/queue$/.test(path)) return <QueuePage />;
   if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;
+  if (/\/w\/[^/]+\/calendar\/exposed-pages\/[^/]+$/.test(path)) return <CalendarMirrorDetailPage />;
   if (/\/w\/[^/]+\/jobs\/[^/]+$/.test(path)) return <JobDetailPage />;
   if (/\/w\/[^/]+\/drafts\/[^/]+$/.test(path)) return <ExternalDraftPage />;
   if (/\/w\/[^/]+\/settings\/(workspace|automation|integrations)$/.test(path))

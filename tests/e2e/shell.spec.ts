@@ -2667,6 +2667,18 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  await page.route('**/api/workspaces/current', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"id":"workspace-1","name":"Avery Studio","slug":"avery-studio","timezone":"Europe/Sofia"},"error":null}',
+    }),
+  );
+  await page.route('**/api/workflow/calendar/exposed-pages?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[],"next":null},"error":null}',
+    }),
+  );
   await page.route('**/api/workflow/jobs?limit=100', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     await route.fulfill({
@@ -2709,7 +2721,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
     });
   });
   await page.goto('/w/avery-studio/calendar?mode=Week&date=2026-09-01');
-  await expect(page.getByRole('status')).toContainText('Loading publication calendar');
+  await expect(page.getByRole('status', { name: 'Loading publication calendar' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('calendar-loading.png'), fullPage: true });
   await expect(page.getByRole('button', { name: '2 accounts' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('calendar-week.png'), fullPage: true });
@@ -2792,6 +2804,93 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await page.reload();
   await expect(page.getByRole('alert')).toContainText('Calendar offline');
   await page.screenshot({ path: testInfo.outputPath('calendar-error.png'), fullPage: true });
+});
+
+test('shows a shared Page once in the calendar with read-only origin detail', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workspaces/current', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"id":"workspace-1","name":"AI Influencer","slug":"ai-influencer","timezone":"Europe/Sofia"},"error":null}',
+    }),
+  );
+  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[]},"error":null}',
+    }),
+  );
+  await page.route('**/api/workflow/calendar/exposed-pages?*', (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    expect(query.get('startsAt')).toBe('2026-10-24T21:00:00.000Z');
+    expect(query.get('endsAt')).toBe('2026-10-25T22:00:00.000Z');
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: '00000000-0000-4000-8000-000000000711',
+              providerAccountId: '00000000-0000-4000-8000-000000000712',
+              providerAccountName: 'Sneji Eli Geri',
+              originWorkspaceName: '21digital',
+              state: 'scheduled',
+              scheduledAt: '2026-10-25T01:30:00.000Z',
+              contentPreview: 'Shared caption',
+              mediaCount: 1,
+            },
+          ],
+          next: null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route(
+    '**/api/workflow/calendar/exposed-pages/00000000-0000-4000-8000-000000000711',
+    (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            id: '00000000-0000-4000-8000-000000000711',
+            providerAccountName: 'Sneji Eli Geri',
+            originWorkspaceName: '21digital',
+            state: 'scheduled',
+            scheduledAt: '2026-10-25T01:30:00.000Z',
+            caption: 'Shared caption',
+            linkUrl: null,
+            media: [{ id: 'media-1', position: 0, previewUrl: null }],
+          },
+          error: null,
+        }),
+      }),
+  );
+  await page.goto('/w/ai-influencer/calendar?mode=Day&date=2026-10-25');
+  const card = page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ });
+  await expect(card).toHaveCount(1);
+  await expect(card).toHaveAttribute(
+    'href',
+    /calendar\/exposed-pages\/00000000-0000-4000-8000-000000000711/,
+  );
+  await card.click();
+  await expect(page.getByRole('heading', { name: 'Sneji Eli Geri' })).toBeVisible();
+  await expect(page.getByText('From 21digital · Read-only in this workspace')).toBeVisible();
+  await expect(page.getByText('Shared caption')).toBeVisible();
+  await expect(page.getByRole('button', { name: /edit|cancel|retry/i })).toHaveCount(0);
+  await page.unroute('**/api/workflow/calendar/exposed-pages/00000000-0000-4000-8000-000000000711');
+  await page.route(
+    '**/api/workflow/calendar/exposed-pages/00000000-0000-4000-8000-000000000711',
+    (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: '{"data":null,"error":"Job was not found"}',
+      }),
+  );
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('Job was not found');
+  await expect(page.getByText('Shared caption')).toHaveCount(0);
 });
 
 test('refreshes background publication outcomes without replaying historical toasts', async ({

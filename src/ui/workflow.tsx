@@ -12,6 +12,8 @@ import { DefaultsSelect } from './defaults-select.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
 import { TikTokComposerForm, type ImportedDraftMedia } from './tiktok-composer.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
+import { useCalendarMirror, type CalendarMirrorJob } from './calendar-mirror.js';
+import { calendarDateKey, calendarTime, calendarZonedMidnight } from './calendar-time.js';
 
 type JobState =
   | 'scheduled'
@@ -36,6 +38,7 @@ interface Job {
   provider: string;
   media?: { count: number; previewUrl: string | null } | undefined;
   creator?: ActorDto | undefined;
+  originWorkspaceName?: string | undefined;
 }
 
 interface ActorDto {
@@ -341,13 +344,14 @@ function actorLabel(actor?: ActorDto): string {
   return `${kind} · ${actor.label ?? 'Unknown'}`;
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string, timeZone?: string): string {
   return new Intl.DateTimeFormat('en', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     timeZoneName: 'short',
+    ...(timeZone ? { timeZone } : {}),
   }).format(new Date(value));
 }
 
@@ -396,8 +400,33 @@ function sameDay(left: Date, right: Date): boolean {
   return startOfDay(left).getTime() === startOfDay(right).getTime();
 }
 
+function localDateKey(date: Date): string {
+  return `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function calendarDayMatches(value: string, day: Date, timeZone: string): boolean {
+  return calendarDateKey(new Date(value), timeZone) === localDateKey(day);
+}
+
 function jobPath(job: Job): string {
-  return `${workspacePath()}/jobs/${job.id}`;
+  return job.originWorkspaceName
+    ? `${workspacePath()}/calendar/exposed-pages/${job.id}`
+    : `${workspacePath()}/jobs/${job.id}`;
+}
+
+function toCalendarMirrorJob(dto: CalendarMirrorJob): Job {
+  return {
+    id: dto.id,
+    providerAccountId: dto.providerAccountId,
+    state: dto.state === 'retry_wait' ? 'retrying' : (dto.state as JobState),
+    scheduledAt: dto.scheduledAt,
+    text: dto.contentPreview,
+    account: dto.providerAccountName,
+    handle: '',
+    provider: 'FACEBOOK',
+    media: { count: dto.mediaCount, previewUrl: null },
+    originWorkspaceName: dto.originWorkspaceName,
+  };
 }
 
 function cookieValue(name: string): string {
@@ -2094,6 +2123,8 @@ export function QueuePage() {
 export function CalendarPage() {
   const initialParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const [mode, setMode] = useState(initialParams.get('mode') ?? 'Week');
+  const [timeZone, setTimeZone] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [visibleDate, setVisibleDate] = useState(() => {
     const supplied = initialParams.get('date');
     const parsed = supplied ? new Date(`${supplied}T12:00:00`) : new Date();
@@ -2103,9 +2134,57 @@ export function CalendarPage() {
     'Could not load the calendar',
   );
   useEffect(() => {
+    const controller = new AbortController();
+    void fetch('/api/workspaces/current', { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Could not load workspace timezone');
+        return response.json() as Promise<{
+          data: { timezone: string } | null;
+        }>;
+      })
+      .then((result) => {
+        if (!result.data?.timezone) throw new Error('Workspace timezone is unavailable');
+        setTimeZone(result.data.timezone);
+        if (!initialParams.has('date')) {
+          const key = calendarDateKey(new Date(), result.data.timezone);
+          setVisibleDate(new Date(`${key}T12:00:00`));
+        }
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted)
+          setSessionError(error instanceof Error ? error.message : 'Could not load workspace');
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [initialParams]);
+  const mirrorWindow = useMemo(() => {
+    if (!timeZone) return null;
+    const first =
+      mode === 'Month'
+        ? startOfWeek(new Date(visibleDate.getFullYear(), visibleDate.getMonth(), 1))
+        : mode === 'Week'
+          ? startOfWeek(visibleDate)
+          : visibleDate;
+    const last = addDays(first, mode === 'Month' ? 42 : mode === 'Week' ? 7 : 1);
+    return {
+      startsAt: calendarZonedMidnight(localDateKey(first), timeZone).toISOString(),
+      endsAt: calendarZonedMidnight(localDateKey(last), timeZone).toISOString(),
+    };
+  }, [mode, visibleDate, timeZone]);
+  const mirror = useCalendarMirror(mirrorWindow?.startsAt ?? null, mirrorWindow?.endsAt ?? null);
+  const calendarJobs = useMemo(() => {
+    if (!jobs || !mirror.jobs) return null;
+    const byId = new Map(jobs.map((job) => [job.id, job]));
+    for (const item of mirror.jobs) {
+      if (!byId.has(item.id)) byId.set(item.id, toCalendarMirrorJob(item));
+    }
+    return [...byId.values()];
+  }, [jobs, mirror.jobs]);
+  useEffect(() => {
     const params = new URLSearchParams({
       mode,
-      date: `${String(visibleDate.getFullYear())}-${String(visibleDate.getMonth() + 1).padStart(2, '0')}-${String(visibleDate.getDate()).padStart(2, '0')}`,
+      date: localDateKey(visibleDate),
     });
     window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
   }, [mode, visibleDate]);
@@ -2118,14 +2197,15 @@ export function CalendarPage() {
       <PublicationToastStack toasts={toasts} onDismiss={dismissToast} />
       <div className="calendar-heading">
         <div>
-          <p className="eyebrow">Europe/Sofia · EEST</p>
+          <p className="eyebrow">{timeZone ?? 'Loading timezone'}</p>
           <h1>{visibleDate.toLocaleDateString('en', { month: 'long', year: 'numeric' })}</h1>
         </div>
         <div className="calendar-actions">
           <button
             className="secondary-button"
             onClick={() => {
-              setVisibleDate(startOfDay(new Date()));
+              const key = calendarDateKey(new Date(), timeZone ?? 'UTC');
+              setVisibleDate(new Date(`${key}T12:00:00`));
             }}
           >
             Today
@@ -2166,30 +2246,50 @@ export function CalendarPage() {
             ))}
           </div>
           <button className="filter-button">
-            {new Set((jobs ?? []).map((job) => `${job.provider}:${job.handle}`)).size} accounts
+            {
+              new Set(
+                (calendarJobs ?? []).map(
+                  (job) => job.providerAccountId ?? `${job.provider}:${job.handle}`,
+                ),
+              ).size
+            }{' '}
+            accounts
           </button>
           <button className="filter-button">All statuses</button>
         </div>
-        {loadError ? (
+        {loadError || mirror.error || sessionError ? (
           <div className="filter-empty" role="alert">
             <h2>Calendar unavailable</h2>
-            <p>{loadError}</p>
+            <p>{loadError ?? mirror.error ?? sessionError}</p>
           </div>
-        ) : jobs === null ? (
+        ) : calendarJobs === null || !timeZone ? (
           <WorkflowLoading kind="calendar" label="Loading publication calendar" />
         ) : mode === 'Month' ? (
-          <MonthCalendar jobs={jobs} anchor={visibleDate} />
+          <MonthCalendar jobs={calendarJobs} anchor={visibleDate} timeZone={timeZone} />
         ) : mode === 'Timeline' ? (
-          <TimelineCalendar jobs={jobs} anchor={visibleDate} />
+          <TimelineCalendar jobs={calendarJobs} anchor={visibleDate} timeZone={timeZone} />
         ) : (
-          <TimeCalendar dayOnly={mode === 'Day'} jobs={jobs} anchor={visibleDate} />
+          <TimeCalendar
+            dayOnly={mode === 'Day'}
+            jobs={calendarJobs}
+            anchor={visibleDate}
+            timeZone={timeZone}
+          />
         )}
       </section>
     </WorkspaceLayout>
   );
 }
 
-function MonthCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
+function MonthCalendar({
+  jobs,
+  anchor,
+  timeZone,
+}: {
+  jobs: Job[];
+  anchor: Date;
+  timeZone: string;
+}) {
   const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const visibleStart = startOfWeek(monthStart);
   return (
@@ -2203,7 +2303,7 @@ function MonthCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
         {Array.from({ length: 42 }, (_, index) => {
           const date = addDays(visibleStart, index);
           const dayJobs = jobs
-            .filter((job) => sameDay(new Date(job.scheduledAt), date))
+            .filter((job) => calendarDayMatches(job.scheduledAt, date, timeZone))
             .sort(
               (left, right) => Number(right.state === 'failed') - Number(left.state === 'failed'),
             );
@@ -2211,7 +2311,11 @@ function MonthCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
           return (
             <div
               className={
-                sameDay(date, new Date()) ? 'today' : isCurrentMonth ? '' : 'outside-month'
+                localDateKey(date) === calendarDateKey(new Date(), timeZone)
+                  ? 'today'
+                  : isCurrentMonth
+                    ? ''
+                    : 'outside-month'
               }
               role="gridcell"
               aria-label={date.toLocaleDateString('en', { dateStyle: 'full' })}
@@ -2223,10 +2327,11 @@ function MonthCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
                   className={`calendar-job ${job.state}`}
                   href={jobPath(job)}
                   key={job.id}
-                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
+                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
                 >
-                  <strong>{formatTime(job.scheduledAt).split(', ').at(-1)}</strong>
+                  <strong>{formatTime(job.scheduledAt, timeZone).split(', ').at(-1)}</strong>
                   {job.account}
+                  {job.originWorkspaceName && <span> · {job.originWorkspaceName}</span>}
                   {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               ))}
@@ -2241,7 +2346,17 @@ function MonthCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
   );
 }
 
-function TimeCalendar({ dayOnly, jobs, anchor }: { dayOnly: boolean; jobs: Job[]; anchor: Date }) {
+function TimeCalendar({
+  dayOnly,
+  jobs,
+  anchor,
+  timeZone,
+}: {
+  dayOnly: boolean;
+  jobs: Job[];
+  anchor: Date;
+  timeZone: string;
+}) {
   const firstDay = dayOnly ? anchor : startOfWeek(anchor);
   const dates = Array.from({ length: dayOnly ? 1 : 7 }, (_, index) => addDays(firstDay, index));
   const hourStart = 8;
@@ -2265,21 +2380,21 @@ function TimeCalendar({ dayOnly, jobs, anchor }: { dayOnly: boolean; jobs: Job[]
         {dates.map((date) => (
           <div className="time-day" key={date.toISOString()}>
             {jobs
-              .filter((job) => sameDay(new Date(job.scheduledAt), date))
+              .filter((job) => calendarDayMatches(job.scheduledAt, date, timeZone))
               .map((job) => {
-                const scheduled = new Date(job.scheduledAt);
+                const scheduled = calendarTime(job.scheduledAt, timeZone);
                 const top =
-                  ((scheduled.getHours() - hourStart) * 60 + scheduled.getMinutes()) *
-                  (pixelsPerHour / 60);
+                  ((scheduled.hour - hourStart) * 60 + scheduled.minute) * (pixelsPerHour / 60);
                 return (
                   <a
                     className={`calendar-block ${job.state}`}
                     style={{ top: `${String(Math.max(0, top))}px` }}
                     href={jobPath(job)}
                     key={job.id}
-                    aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
+                    aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
                   >
                     <strong>{job.account}</strong>
+                    {job.originWorkspaceName && <span>From {job.originWorkspaceName}</span>}
                     <span>{job.text}</span>
                     {job.state === 'published' && <CalendarPublishedMark />}
                   </a>
@@ -2292,8 +2407,16 @@ function TimeCalendar({ dayOnly, jobs, anchor }: { dayOnly: boolean; jobs: Job[]
   );
 }
 
-function TimelineCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
-  const visibleJobs = jobs.filter((job) => sameDay(new Date(job.scheduledAt), anchor));
+function TimelineCalendar({
+  jobs,
+  anchor,
+  timeZone,
+}: {
+  jobs: Job[];
+  anchor: Date;
+  timeZone: string;
+}) {
+  const visibleJobs = jobs.filter((job) => calendarDayMatches(job.scheduledAt, anchor, timeZone));
   const lanes = Array.from(
     visibleJobs.reduce((grouped, job) => {
       const key = `${job.provider}:${job.handle}`;
@@ -2319,9 +2442,8 @@ function TimelineCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
           <div className="timeline-lane" key={accountKey}>
             <strong>{firstJob.account}</strong>
             {accountJobs.map((job, jobIndex) => {
-              const scheduled = new Date(job.scheduledAt);
-              const minuteOffset =
-                (scheduled.getHours() - timelineStartHour) * 60 + scheduled.getMinutes();
+              const scheduled = calendarTime(job.scheduledAt, timeZone);
+              const minuteOffset = (scheduled.hour - timelineStartHour) * 60 + scheduled.minute;
               const column = Math.max(2, Math.min(25, 2 + Math.floor(minuteOffset / 15)));
               return (
                 <a
@@ -2332,9 +2454,10 @@ function TimelineCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
                     gridRow: String(jobIndex + 1),
                   }}
                   key={job.id}
-                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt)}`}
+                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
                 >
                   {job.text}
+                  {job.originWorkspaceName && <span> · From {job.originWorkspaceName}</span>}
                   {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               );
@@ -2343,6 +2466,113 @@ function TimelineCalendar({ jobs, anchor }: { jobs: Job[]; anchor: Date }) {
         );
       })}
     </div>
+  );
+}
+
+interface CalendarMirrorDetail {
+  id: string;
+  providerAccountName: string;
+  originWorkspaceName: string;
+  state: string;
+  scheduledAt: string;
+  caption: string | null;
+  linkUrl: string | null;
+  media: { id: string; position: number; previewUrl: string | null }[];
+}
+
+export function CalendarMirrorDetailPage() {
+  const jobId = window.location.pathname.split('/').at(-1) ?? '';
+  const [detail, setDetail] = useState<CalendarMirrorDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`/api/workflow/calendar/exposed-pages/${encodeURIComponent(jobId)}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          data: CalendarMirrorDetail | null;
+          error: string | null;
+        };
+        if (!response.ok || !result.data)
+          throw new Error(result.error ?? 'Shared Page post is unavailable');
+        setDetail(result.data);
+      })
+      .catch((failure: unknown) => {
+        if (!controller.signal.aborted)
+          setError(failure instanceof Error ? failure.message : 'Shared Page post is unavailable');
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [jobId]);
+  return (
+    <WorkspaceLayout active="calendar">
+      <div className="detail-route">
+        <a className="back-link" href={`${workspacePath()}/calendar`}>
+          ← Back to calendar
+        </a>
+        {error ? (
+          <div className="filter-empty" role="alert">
+            <h1>Post unavailable</h1>
+            <p>{error}</p>
+          </div>
+        ) : !detail ? (
+          <WorkflowLoading kind="detail" label="Loading shared Page post" />
+        ) : (
+          <section className="job-detail">
+            <header>
+              <div>
+                <Status state={detail.state as JobState} />
+                <h1>{detail.providerAccountName}</h1>
+                <p>From {detail.originWorkspaceName} · Read-only in this workspace</p>
+              </div>
+            </header>
+            <div className="detail-grid">
+              <section>
+                <h2>Content</h2>
+                <p className="detail-content">{detail.caption ?? 'No caption · media-only post'}</p>
+                {detail.media.length > 0 && (
+                  <div className="detail-media-gallery" aria-label="Post media">
+                    {detail.media.map((media) =>
+                      media.previewUrl ? (
+                        <img
+                          key={media.id}
+                          src={media.previewUrl}
+                          alt={`Post media ${String(media.position + 1)}`}
+                        />
+                      ) : (
+                        <div className="missing-media" key={media.id}>
+                          Media {String(media.position + 1)} unavailable
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
+                <div className="detail-meta">
+                  <span>
+                    Scheduled<strong>{formatTime(detail.scheduledAt, 'UTC')}</strong>
+                  </span>
+                  <span>
+                    Timezone<strong>UTC</strong>
+                  </span>
+                </div>
+                {detail.linkUrl && /^https:\/\//i.test(detail.linkUrl) && (
+                  <a
+                    className="secondary-button"
+                    href={detail.linkUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    View published post
+                  </a>
+                )}
+              </section>
+            </div>
+          </section>
+        )}
+      </div>
+    </WorkspaceLayout>
   );
 }
 

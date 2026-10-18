@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { FacebookPageExposureControl } from './facebook-page-exposure-control.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
@@ -1000,12 +1001,14 @@ function AccountRow({
   onRevokeGrant,
   onReconnect,
   onDefaultsSaved,
+  originWorkspaceId,
 }: {
   account: Account;
   onDisconnect: (account: Account) => void;
   onRevokeGrant: (account: Account) => void;
   onReconnect: () => void;
   onDefaultsSaved: (account: Account) => void;
+  originWorkspaceId: string | null;
 }) {
   const revocationPending = account.health === 'Revocation pending';
   const publishingUnavailable = account.availability === 'publishing_unavailable';
@@ -1116,6 +1119,13 @@ function AccountRow({
           </button>
         )}
       </div>
+      {!account.isExposed && account.destinationProvider === 'facebook_page' && originWorkspaceId && (
+        <FacebookPageExposureControl
+          accountId={account.id}
+          accountName={account.name}
+          originWorkspaceId={originWorkspaceId}
+        />
+      )}
       {account.provider === 'X' && account.xLongPosts && (
         <div className="x-long-post-setting">
           <button
@@ -1367,6 +1377,7 @@ function AccountsPage() {
   const [loadingMoreAccounts, setLoadingMoreAccounts] = useState(false);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [workspaceName, setWorkspaceName] = useState('your active workspace');
+  const [managedWorkspaceId, setManagedWorkspaceId] = useState<string | null>(null);
   const loadAccounts = useCallback(() => {
     setLoadState('loading');
     setActionError(null);
@@ -1457,10 +1468,15 @@ function AccountsPage() {
     void fetch('/api/auth/session')
       .then(async (response) => {
         if (!response.ok) throw new Error('Workspace could not be loaded');
-        return response.json() as Promise<{ data: { workspace: { name: string } } }>;
+        return response.json() as Promise<{
+          data: { workspace: { id: string; name: string; role: string } };
+        }>;
       })
       .then((result) => {
         setWorkspaceName(result.data.workspace.name);
+        setManagedWorkspaceId(
+          result.data.workspace.role === 'owner' ? result.data.workspace.id : null,
+        );
       })
       .catch(() => {
         setWorkspaceName('your active workspace');
@@ -1672,6 +1688,7 @@ function AccountsPage() {
                             current.map((item) => (item.id === updated.id ? updated : item)),
                           );
                         }}
+                        originWorkspaceId={managedWorkspaceId}
                       />
                     ))}
                   </div>

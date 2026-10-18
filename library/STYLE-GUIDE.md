@@ -129,6 +129,8 @@ Auth uses a centered 440px panel on the canvas with a restrained violet radial g
 
 Connected X rows reuse the inline `.defaults-toggle` switch to save an account-scoped long-post self-declaration immediately. The switch defaults off, labels the choice as self-declared, warns that X may reject longer posts, and shows pending/error/saved states without claiming verified Premium access. Reconnect-required rows cannot edit it until reconnected.
 
+Origin-owned Facebook Page rows expose a `Share with workspaces` control in Accounts. Its anchored panel lists only other workspaces the current user owns; each workspace is a keyboard-operable checkbox button with explicit checked, saving, error, and confirmation states. The owner controls only visibility of the same Page connection, never a copied credential or account. Shared target rows show their origin label and omit origin-owned management actions. `src/ui/facebook-page-exposure-control.tsx` owns the panel and the paginated exposure selection load; AccountRow supplies the origin workspace identity.
+
 Group by provider and show each connected account independently. Rows include provider logo, avatar, display name, handle, health, capabilities, last successful sync, and actions.
 
 `src/ui/posting-adapter-registry.ts` is the single source of truth for adapters exposed by the connected-accounts picker. The Accounts page renders one **Add Posting Adapter** entry and iterates enabled registry entries for provider label, icon, description, OAuth start path, and pre-connect configuration requirements. Adding or disabling an adapter must not require picker markup changes. Provider-specific reconnect actions resolve through the same registry.

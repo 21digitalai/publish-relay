@@ -770,6 +770,100 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
   await expect(page.getByRole('checkbox', { name: /Facebook · Later Page/ })).toBeVisible();
 });
 
+test('owner shares one Page with workspace checkboxes and sees revoke guard', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  const currentResponse = await page.request.get('/api/workspaces/current');
+  const current = (await currentResponse.json()) as {
+    data: { id: string; slug: string; name: string };
+  };
+  const accountId = '00000000-0000-4000-8000-000000000311';
+  const editorialId = '00000000-0000-4000-8000-000000000312';
+  const influencerId = '00000000-0000-4000-8000-000000000313';
+  const selected = new Set([editorialId]);
+  await page.route('**/api/workspaces', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          workspaces: [
+            { ...current.data, role: 'owner' },
+            { id: editorialId, name: 'Editorial', slug: 'editorial', role: 'owner' },
+            { id: influencerId, name: 'AI Influencer', slug: 'ai-influencer', role: 'owner' },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [{
+            id: accountId,
+            provider: 'meta',
+            destinationProvider: 'facebook_page',
+            displayName: 'Sneji Page',
+            status: 'active',
+            availability: 'active',
+            adapterDefaults: {},
+          }],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/exposures`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { workspaceIds: [...selected], nextCursor: null },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/exposures/*`, async (route) => {
+    const target = route.request().url().split('/').at(-1);
+    if (target === editorialId) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: null,
+          error: 'Resolve scheduled jobs before hiding this Page from the workspace',
+        }),
+      });
+      return;
+    }
+    selected.add(influencerId);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { exposed: true }, error: null }),
+    });
+  });
+  await page.goto(`/w/${current.data.slug}/accounts`);
+  await page.getByRole('button', { name: 'Share with workspaces' }).click();
+  const editorial = page.getByRole('checkbox', { name: 'Editorial' });
+  const influencer = page.getByRole('checkbox', { name: 'AI Influencer' });
+  await expect(editorial).toHaveAttribute('aria-checked', 'true');
+  await expect(influencer).toHaveAttribute('aria-checked', 'false');
+  await influencer.click();
+  await expect(influencer).toHaveAttribute('aria-checked', 'true');
+  await editorial.click();
+  await expect(page.getByRole('alert')).toContainText('Resolve scheduled jobs');
+  await expect(editorial).toHaveAttribute('aria-checked', 'true');
+  await page.screenshot({ path: testInfo.outputPath('page-exposure-checkboxes.png'), fullPage: true });
+  await page.reload();
+  await page.getByRole('button', { name: 'Share with workspaces' }).click();
+  await expect(page.getByRole('checkbox', { name: 'AI Influencer' })).toHaveAttribute(
+    'aria-checked', 'true',
+  );
+});
+
 test('self-declares X long posts per account with persistence and recovery', async ({
   page,
 }, testInfo) => {

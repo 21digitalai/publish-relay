@@ -37,6 +37,8 @@ export interface ProviderAccountSummary {
   isExposed?: boolean;
 }
 
+const EXPOSED_PAGE_LIST_LIMIT = 100;
+
 export function listProviderAccounts(
   database: NodePgDatabase,
   workspaceId: string,
@@ -118,6 +120,7 @@ export function listProviderAccounts(
         origin_workspace_name AS "originWorkspaceName", availability,
         connection_status AS "connectionStatus", updated_at AS "updatedAt"
       FROM public.list_visible_exposed_facebook_pages(${workspaceId}::uuid)
+      LIMIT ${EXPOSED_PAGE_LIST_LIMIT}
     `);
       const rawRows: unknown = Array.isArray(result) ? result : result.rows;
       const exposed = z

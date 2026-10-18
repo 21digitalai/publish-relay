@@ -9,7 +9,10 @@ import {
   providerConnections,
   workspaces,
 } from '../../database/schema.js';
-import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import {
+  withTenantTransaction,
+  type TenantTransactionOptions,
+} from '../../database/tenant-transaction.js';
 import { hasActiveProviderAccountJobs } from './provider-account-exposure.service.js';
 import { z } from 'zod';
 import type { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
@@ -64,11 +67,19 @@ export async function listProviderAccounts(
   database: NodePgDatabase,
   workspaceId: string,
   userId?: string,
+  machineActor?: TenantTransactionOptions['machineActor'],
 ): Promise<ProviderAccountSummary[]> {
   const accounts: ProviderAccountSummary[] = [];
   let cursor: string | null = null;
   do {
-    const page = await listProviderAccountsPage(database, workspaceId, userId, cursor ?? undefined);
+    const page = await listProviderAccountsPage(
+      database,
+      workspaceId,
+      userId,
+      cursor ?? undefined,
+      undefined,
+      machineActor,
+    );
     accounts.push(...page.accounts);
     cursor = page.nextCursor;
   } while (cursor);
@@ -81,11 +92,12 @@ export function listProviderAccountsPage(
   userId?: string,
   cursor?: string,
   providerFilter?: 'linkedin',
+  machineActor?: TenantTransactionOptions['machineActor'],
 ): Promise<{ accounts: ProviderAccountSummary[]; nextCursor: string | null }> {
   const after = decodePageCursor(cursor);
   return withTenantTransaction(
     database,
-    { workspaceId, ...(userId ? { userId } : {}) },
+    { workspaceId, ...(userId ? { userId } : {}), ...(machineActor ? { machineActor } : {}) },
     async (transaction) => {
       const localAfter = after?.[0] === 'local' ? after : null;
       const rows =
@@ -189,7 +201,8 @@ export function listProviderAccountsPage(
         : null;
       if (rows.length > EXPOSED_PAGE_LIST_LIMIT || local.length === EXPOSED_PAGE_LIST_LIMIT)
         return { accounts: local, nextCursor: localCursor };
-      if (!userId || providerFilter) return { accounts: local, nextCursor: null };
+      if ((!userId && !machineActor) || providerFilter)
+        return { accounts: local, nextCursor: null };
       const remaining = EXPOSED_PAGE_LIST_LIMIT - local.length;
       const exposedAfter = after?.[0] === 'exposed' ? after : null;
       const result = await transaction.execute<{

@@ -526,6 +526,13 @@
       "when": 1792327200000,
       "tag": "0074_origin_page_calendar_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1792361400000,
+      "tag": "0075_machine_exposed_page_discovery",
+      "breakpoints": true
     }
   ]
 }

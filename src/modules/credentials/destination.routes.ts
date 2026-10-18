@@ -111,7 +111,11 @@ export function registerDestinationRoutes(
           .code(429)
           .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
       }
-      const accounts = await listProviderAccounts(database, principal.workspaceId);
+      const accounts = await listProviderAccounts(database, principal.workspaceId, undefined, {
+        type: principal.kind,
+        id: principal.actorId,
+        capability: 'destinations:read',
+      });
       return await reply.send(
         successEnvelope(
           {

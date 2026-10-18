@@ -88,6 +88,8 @@ const migrations = [
   '0009_generalize_oauth_transaction_secret.sql',
   '0016_common_barracuda.sql',
   '0025_lucky_legion.sql',
+  '0028_nosy_dracula.sql',
+  '0042_long_pepper_potts.sql',
   '0019_media_retention_lifecycle.sql',
   '0045_meta_destination_foundation.sql',
   '0046_linkedin_connection_expiry.sql',
@@ -98,8 +100,11 @@ const migrations = [
   '0055_x_long_post_declaration.sql',
   '0056_meta_grant_family.sql',
   '0057_instagram_login_legacy_grants.sql',
+  '0058_workspace_tombstone.sql',
   '0059_provider_account_exposures.sql',
   '0061_cross_workspace_account_job_guard.sql',
+  '0065_paginated_exposed_facebook_pages.sql',
+  '0075_machine_exposed_page_discovery.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

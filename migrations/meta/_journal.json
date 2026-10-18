@@ -484,6 +484,13 @@
       "when": 1792323000000,
       "tag": "0068_browser_shared_page_machine_job_read",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1792324200000,
+      "tag": "0069_exposed_page_calendar_projection",
+      "breakpoints": true
     }
   ]
 }

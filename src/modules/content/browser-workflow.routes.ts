@@ -16,6 +16,7 @@ import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
+import { listExposedPageCalendarJobs } from './calendar-mirror.repository.js';
 import {
   getExternalDraftForWorkspace,
   transitionExternalDraft,
@@ -56,6 +57,14 @@ const listQuerySchema = z.object({
   beforeScheduledAt: z.iso.datetime().optional(),
   beforeId: z.uuid().optional(),
 });
+const calendarMirrorQuerySchema = z.object({
+  startsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  afterScheduledAt: z.iso.datetime().optional(),
+  afterId: z.uuid().optional(),
+});
+const MAX_CALENDAR_MIRROR_WINDOW_MS = 45 * 24 * 60 * 60_000;
 const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
 const mediaParamsSchema = z.object({ mediaId: z.uuid() });
@@ -522,7 +531,10 @@ export function registerBrowserWorkflowRoutes(
     const jobs = await Promise.all(
       (responseBody.data.jobIds ?? []).map(async (jobId) => {
         const job = await getBrowserJobDetail(
-          dependencies.database, identity.workspaceId, jobId, identity.userId,
+          dependencies.database,
+          identity.workspaceId,
+          jobId,
+          identity.userId,
         );
         return job
           ? { id: job.id, effectiveProviderSettings: job.effectiveProviderSettings }
@@ -647,6 +659,45 @@ export function registerBrowserWorkflowRoutes(
     } catch (error) {
       return mutationError(request, reply, error);
     }
+  });
+
+  application.get('/api/workflow/calendar/exposed-pages', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const parsed = calendarMirrorQuerySchema.safeParse(request.query);
+    if (!parsed.success)
+      return reply.code(400).send({ data: null, error: 'Invalid calendar window' });
+    const query = parsed.data;
+    const startsAt = new Date(query.startsAt);
+    const endsAt = new Date(query.endsAt);
+    if (
+      Boolean(query.afterScheduledAt) !== Boolean(query.afterId) ||
+      endsAt.getTime() <= startsAt.getTime() ||
+      endsAt.getTime() - startsAt.getTime() > MAX_CALENDAR_MIRROR_WINDOW_MS
+    )
+      return reply.code(400).send({ data: null, error: 'Invalid calendar window' });
+    const rows = await listExposedPageCalendarJobs(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      userId: identity.userId,
+      startsAt,
+      endsAt,
+      limit: query.limit + 1,
+      ...(query.afterScheduledAt && query.afterId
+        ? { after: { scheduledAt: new Date(query.afterScheduledAt), id: query.afterId } }
+        : {}),
+    });
+    const items = rows.slice(0, query.limit);
+    const last = items.at(-1);
+    return {
+      data: {
+        items,
+        next:
+          rows.length > query.limit && last
+            ? { afterScheduledAt: last.scheduledAt.toISOString(), afterId: last.id }
+            : null,
+      },
+      error: null,
+    };
   });
 
   application.get('/api/workflow/jobs', async (request, reply) => {

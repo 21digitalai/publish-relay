@@ -7,6 +7,7 @@ import { PostValidationError } from '../src/modules/content/post.errors.js';
 
 const authorizeRequest = vi.fn();
 const listBrowserJobSummaries = vi.fn();
+const listExposedPageCalendarJobs = vi.fn();
 const getBrowserJobDetail = vi.fn();
 const cancelPendingJob = vi.fn();
 const requestOperatorRetry = vi.fn();
@@ -53,6 +54,9 @@ vi.mock('../src/modules/content/post-read.repository.js', async (importOriginal)
   listBrowserJobSummaries,
   getBrowserJobDetail,
 }));
+vi.mock('../src/modules/content/calendar-mirror.repository.js', () => ({
+  listExposedPageCalendarJobs,
+}));
 
 const { registerBrowserWorkflowRoutes } =
   await import('../src/modules/content/browser-workflow.routes.js');
@@ -90,6 +94,48 @@ describe('browser workflow read contract', () => {
     vi.clearAllMocks();
     verifyCsrfToken.mockReturnValue(true);
     authorizeRequest.mockResolvedValue({ workspaceId, userId: 'user', role: 'owner' });
+  });
+
+  it('bounds mirrored Page calendar reads and keeps them off the local job list', async () => {
+    const scheduledAt = new Date('2026-10-25T01:30:00.000Z');
+    listExposedPageCalendarJobs.mockResolvedValue([
+      {
+        id: jobId,
+        providerAccountId: '00000000-0000-4000-8000-000000000804',
+        providerAccountName: 'Shared Page',
+        originWorkspaceName: 'Origin',
+        state: 'scheduled',
+        scheduledAt,
+        contentPreview: 'Preview',
+        mediaCount: 1,
+      },
+      { id: postId, scheduledAt: new Date('2026-10-25T02:30:00.000Z') },
+    ]);
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, { auth: {} as AuthService, database: {} as never });
+    const response = await application.inject({
+      method: 'GET',
+      url: '/api/workflow/calendar/exposed-pages?startsAt=2026-10-25T00%3A00%3A00Z&endsAt=2026-10-26T00%3A00%3A00Z&limit=1',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(listExposedPageCalendarJobs).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId, userId: 'user', limit: 2 }),
+    );
+    expect(response.json()).toMatchObject({
+      data: {
+        items: [{ id: jobId, originWorkspaceName: 'Origin', providerAccountName: 'Shared Page' }],
+        next: { afterScheduledAt: scheduledAt.toISOString(), afterId: jobId },
+      },
+    });
+    expect(response.body).not.toContain('credentialId');
+    expect(Buffer.byteLength(response.body)).toBeLessThan(1000);
+    const invalid = await application.inject({
+      method: 'GET',
+      url: '/api/workflow/calendar/exposed-pages?startsAt=2026-10-01T00%3A00%3A00Z&endsAt=2026-12-01T00%3A00%3A00Z',
+    });
+    expect(invalid.statusCode).toBe(400);
+    await application.close();
   });
 
   it('uses live session tenancy and returns an allowlisted paginated summary', async () => {

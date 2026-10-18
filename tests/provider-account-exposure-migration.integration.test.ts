@@ -65,6 +65,9 @@ describe('provider account exposure migration', () => {
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.resolve_browser_job_account(uuid, uuid)
           TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.list_exposed_page_calendar_jobs(
+          uuid, timestamptz, timestamptz, timestamptz, uuid, integer)
+          TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
             ('${nonOwner}', 'Editor', 'editor@example.test', 'hash'),
@@ -195,18 +198,23 @@ describe('provider account exposure migration', () => {
       });
       const firstTargetJob = targetJobs[0];
       if (!firstTargetJob) throw new Error('Expected a target-owned Page job');
+      expect(await getBrowserJobDetail(browserDb, target, firstTargetJob.id, user)).toMatchObject({
+        id: firstTargetJob.id,
+        providerAccount: { id: account },
+      });
       expect(
-        await getBrowserJobDetail(browserDb, target, firstTargetJob.id, user),
-      ).toMatchObject({ id: firstTargetJob.id, providerAccount: { id: account } });
-      expect(await listBrowserJobSummaries(browserDb, {
-        workspaceId: target,
-        userId: outsider,
-        limit: 10,
-      })).toEqual([]);
-      expect(await listBrowserJobSummaries(browserDb, {
-        workspaceId: target,
-        limit: 10,
-      })).toEqual([]);
+        await listBrowserJobSummaries(browserDb, {
+          workspaceId: target,
+          userId: outsider,
+          limit: 10,
+        }),
+      ).toEqual([]);
+      expect(
+        await listBrowserJobSummaries(browserDb, {
+          workspaceId: target,
+          limit: 10,
+        }),
+      ).toEqual([]);
       for (const actor of [
         { type: 'api-key' as const, id: apiKey },
         { type: 'delegated' as const, id: delegatedGrant },
@@ -222,9 +230,13 @@ describe('provider account exposure migration', () => {
         });
         expect(JSON.stringify(detail)).not.toMatch(/credentialId|remoteAccountId|accessToken/);
       }
-      expect(await getJobDetail(browserDb, target, firstTargetJob.id, {
-        type: 'api-key', id: outsider, capability: 'schedules:read',
-      })).toBeNull();
+      expect(
+        await getJobDetail(browserDb, target, firstTargetJob.id, {
+          type: 'api-key',
+          id: outsider,
+          capability: 'schedules:read',
+        }),
+      ).toBeNull();
       for (const actor of [
         { type: 'api-key' as const, id: outsider },
         { type: 'delegated' as const, id: outsider },
@@ -295,6 +307,40 @@ describe('provider account exposure migration', () => {
       const originScheduled = await scheduleIn(origin, user);
       expect(originScheduled.jobIds).toHaveLength(1);
       await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
+      const mirror = (startsAt = '2026-10-19T00:00:00Z') =>
+        database
+          .query<{ id: string; provider_account_id: string; origin_workspace_name: string }>(
+            `
+          SELECT id, provider_account_id, origin_workspace_name
+          FROM public.list_exposed_page_calendar_jobs(
+            '${target}', '${startsAt}', '2026-10-20T00:00:00Z', NULL, NULL, 100)
+        `,
+          )
+          .then((result) => result.rows);
+      await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
+      expect(await mirror()).toEqual([
+        {
+          id: originScheduled.jobIds[0],
+          provider_account_id: account,
+          origin_workspace_name: 'Origin',
+        },
+      ]);
+      await database.exec(`SELECT set_config('app.user_id', '${nonOwner}', false)`);
+      expect(await mirror()).toHaveLength(1);
+      await database.exec(`SELECT set_config('app.user_id', '${outsider}', false)`);
+      expect(await mirror()).toEqual([]);
+      await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
+      expect(await mirror('2026-10-19T11:00:00Z')).toEqual([]);
+      await database.exec(`RESET ROLE;
+        UPDATE provider_account_exposures SET show_other_workspace_posts = false
+        WHERE workspace_id = '${target}' AND provider_account_id = '${account}';
+        SET ROLE publish_relay_app;`);
+      expect(await mirror()).toEqual([]);
+      await database.exec(`RESET ROLE;
+        UPDATE provider_account_exposures SET show_other_workspace_posts = true
+        WHERE workspace_id = '${target}' AND provider_account_id = '${account}';
+        SET ROLE publish_relay_app;`);
+      expect(await mirror()).toHaveLength(1);
       expect(
         (await database.query('SELECT provider_account_id FROM provider_account_exposures')).rows,
       ).toEqual([{ provider_account_id: account }]);
@@ -332,6 +378,9 @@ describe('provider account exposure migration', () => {
         SET ROLE publish_relay_app;`);
       expect((await activeJobs()).rows[0]?.active).toBe(false);
       expect((await edit(false)).rows[0]?.result).toBe('updated');
+      await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
+      expect(await mirror()).toEqual([]);
+      await database.exec(`SELECT set_config('app.workspace_id', '${origin}', false)`);
       expect(
         await listProviderAccounts(drizzle(database) as unknown as NodePgDatabase, target, user),
       ).toEqual([]);

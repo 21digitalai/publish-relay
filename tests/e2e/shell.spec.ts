@@ -1981,6 +1981,7 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   expect(
     (await errorHooks(page)).filter((event) => event.properties.area === 'publishing'),
   ).toEqual([
+    { type: 'user_error_shown', properties: { area: 'publishing', category: 'provider' } },
     { type: 'user_error_shown', properties: { area: 'publishing', category: 'unknown' } },
   ]);
   await expect(page.getByRole('status')).toContainText('Retry failed: Retry service unavailable');
@@ -2611,7 +2612,7 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
-  await page.route('**/api/workflow/jobs?limit=100', async (route) => {
+  await page.route('**/api/workflow/jobs?*', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     await route.fulfill({
       contentType: 'application/json',
@@ -2683,8 +2684,8 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   await page.getByPlaceholder('Search posts or accounts').fill('no-match');
   await expect(page.getByText('No jobs match these filters')).toBeVisible();
 
-  await page.unroute('**/api/workflow/jobs?limit=100');
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+  await page.unroute('**/api/workflow/jobs?*');
+  await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
   );
   await page.reload();
@@ -2694,8 +2695,8 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
   await expect(page.getByText('Nothing scheduled yet')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('queue-empty.png'), fullPage: true });
 
-  await page.unroute('**/api/workflow/jobs?limit=100');
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+  await page.unroute('**/api/workflow/jobs?*');
+  await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({
       status: 503,
       contentType: 'application/json',
@@ -2723,7 +2724,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
       body: '{"data":{"items":[],"next":null},"error":null}',
     }),
   );
-  await page.route('**/api/workflow/jobs?limit=100', async (route) => {
+  await page.route('**/api/workflow/jobs?*', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     await route.fulfill({
       contentType: 'application/json',
@@ -2828,8 +2829,8 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   );
   await page.screenshot({ path: testInfo.outputPath('calendar-timeline.png'), fullPage: true });
 
-  await page.unroute('**/api/workflow/jobs?limit=100');
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+  await page.unroute('**/api/workflow/jobs?*');
+  await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
   );
   await page.reload();
@@ -2837,8 +2838,8 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await expect(page.locator('.timeline-calendar')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('calendar-empty.png'), fullPage: true });
 
-  await page.unroute('**/api/workflow/jobs?limit=100');
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+  await page.unroute('**/api/workflow/jobs?*');
+  await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({
       status: 503,
       contentType: 'application/json',
@@ -2858,7 +2859,7 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
       body: '{"data":{"id":"workspace-1","name":"AI Influencer","slug":"ai-influencer","timezone":"Europe/Sofia"},"error":null}',
     }),
   );
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+  await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({
       contentType: 'application/json',
       body: '{"data":{"items":[]},"error":null}',
@@ -2974,6 +2975,116 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
   await expect(page.getByText('Shared caption')).toHaveCount(0);
 });
 
+test('paginates an older calendar week past 100 local jobs and deduplicates the shared Page', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  let targetWorkspace = false;
+  let secondPageRequests = 0;
+  await page.route('**/api/workspaces/current', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { name: targetWorkspace ? 'AI Influencer' : '21digital', timezone: 'Europe/Sofia' },
+        error: null,
+      }),
+    }),
+  );
+  const pageJob = {
+    id: '00000000-0000-4000-8000-000000000811',
+    state: 'scheduled',
+    scheduledAt: '2026-10-20T08:00:00.000Z',
+    contentPreview: 'Older Page post',
+    providerAccount: {
+      id: '00000000-0000-4000-8000-000000000812',
+      displayName: 'Sneji Eli Geri',
+      handle: 'sneji',
+      provider: 'facebook',
+    },
+  };
+  const laterJobs = Array.from({ length: 100 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    state: 'scheduled',
+    scheduledAt: `2026-10-21T${String(23 - Math.floor(index / 6)).padStart(2, '0')}:${String(
+      59 - (index % 6) * 10,
+    ).padStart(2, '0')}:00.000Z`,
+    contentPreview: `Later job ${String(index)}`,
+    providerAccount: { displayName: 'Other account', handle: 'other', provider: 'x' },
+  }));
+  const latestJob = laterJobs[0];
+  const lastJob = laterJobs.at(-1);
+  if (!latestJob || !lastJob) throw new Error('Calendar fixture requires local jobs');
+  await page.route('**/api/workflow/jobs?*', (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    const containsOlderWeek =
+      Date.parse(query.get('scheduledAfter') ?? '') <= Date.parse(pageJob.scheduledAt) &&
+      Date.parse(query.get('scheduledBefore') ?? '') >= Date.parse(latestJob.scheduledAt);
+    const items =
+      targetWorkspace || !containsOlderWeek ? [] : query.has('beforeId') ? [pageJob] : laterJobs;
+    if (query.has('beforeId')) secondPageRequests += 1;
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items,
+          next:
+            items === laterJobs
+              ? { beforeScheduledAt: lastJob.scheduledAt, beforeId: lastJob.id }
+              : null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/workflow/calendar/exposed-pages?*', (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    const includesPage =
+      Date.parse(query.get('startsAt') ?? '') <= Date.parse(pageJob.scheduledAt) &&
+      Date.parse(query.get('endsAt') ?? '') >= Date.parse(pageJob.scheduledAt);
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: includesPage
+            ? [
+                {
+                  id: pageJob.id,
+                  providerAccountId: pageJob.providerAccount.id,
+                  providerAccountName: 'Sneji Eli Geri',
+                  originWorkspaceName: targetWorkspace ? '21digital' : 'AI Influencer',
+                  state: 'scheduled',
+                  scheduledAt: pageJob.scheduledAt,
+                  contentPreview: pageJob.contentPreview,
+                  mediaCount: 0,
+                },
+              ]
+            : [],
+          next: null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto('/w/21digital/calendar?mode=Week&date=2026-10-26');
+  await page.getByRole('button', { name: 'Previous date' }).click();
+  await expect(page.getByRole('link', { name: /Sneji Eli Geri, Scheduled/ })).toHaveCount(1);
+  expect(secondPageRequests).toBeGreaterThan(0);
+  await expect(page.getByRole('link', { name: /Other account, Scheduled/ })).toHaveCount(100);
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
+  await expect(page.getByRole('link', { name: /Sneji Eli Geri, Scheduled/ })).toHaveCount(1);
+
+  targetWorkspace = true;
+  await page.goto('/w/ai-influencer/calendar?mode=Week&date=2026-10-20');
+  await expect(
+    page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
+  ).toHaveCount(1);
+  await expect(page.getByRole('link', { name: /Other account, Scheduled/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
+  await expect(
+    page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
+  ).toHaveCount(1);
+});
+
 test('uses Page-wide occupancy only as advisory Composer guidance', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-18T05:00:00.000Z'));
   await establishWorkspaceSession(page);
@@ -3018,7 +3129,7 @@ test('refreshes background publication outcomes without replaying historical toa
   await page.clock.install();
   let state = 'scheduled';
   let polls = 0;
-  await page.route('**/api/workflow/jobs?limit=100', (route) => {
+  await page.route('**/api/workflow/jobs?*', (route) => {
     polls += 1;
     return route.fulfill({
       contentType: 'application/json',
@@ -3088,7 +3199,7 @@ test('refreshes background publication outcomes without replaying historical toa
 
 test('shows published jobs as success across calendar modes after reload', async ({ page }) => {
   await establishWorkspaceSession(page);
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+  await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -3130,7 +3241,7 @@ test('shows published jobs as success across calendar modes after reload', async
 
 test('navigates calendar months across month-end and leap-year boundaries', async ({ page }) => {
   await establishWorkspaceSession(page);
-  await page.route('**/api/workflow/jobs?limit=100', (route) =>
+  await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
   );
   await page.goto(await workspacePath(page, 'calendar?mode=Month&date=2027-01-31'));

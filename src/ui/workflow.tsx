@@ -112,12 +112,66 @@ const COLLISION_PAGE_LIMIT = 100;
 const COLLISION_MAX_PAGES_PER_ACCOUNT = 50;
 const COLLISION_WINDOW_MS = 7 * 24 * 60 * 60_000;
 const PUBLICATION_REFRESH_MS = 10_000;
+const CALENDAR_LOCAL_WINDOW_MS = 7 * 24 * 60 * 60_000;
+const CALENDAR_LOCAL_MAX_PAGES = 50;
 
-function useVisiblePublicationJobs(errorMessage: string) {
+async function fetchCalendarLocalJobs(
+  startsAt: string,
+  endsAt: string,
+  signal: AbortSignal,
+): Promise<Job[]> {
+  const byId = new Map<string, Job>();
+  for (
+    let start = Date.parse(startsAt), end = Date.parse(endsAt);
+    start < end;
+    start += CALENDAR_LOCAL_WINDOW_MS
+  ) {
+    const windowEnd = Math.min(start + CALENDAR_LOCAL_WINDOW_MS, end);
+    let next: QueueCursor | null = null;
+    let complete = false;
+    for (let page = 0; page < CALENDAR_LOCAL_MAX_PAGES; page += 1) {
+      const query = new URLSearchParams({
+        limit: '100',
+        scheduledAfter: new Date(start).toISOString(),
+        scheduledBefore: new Date(windowEnd).toISOString(),
+      });
+      if (next) {
+        query.set('beforeScheduledAt', next.beforeScheduledAt);
+        query.set('beforeId', next.beforeId);
+      }
+      const response = await fetch(`/api/workflow/jobs?${query}`, { signal });
+      const result = (await response.json()) as {
+        data: { items: QueueJobDto[]; next: QueueCursor | null } | null;
+        error: string | null;
+      };
+      if (!response.ok || !result.data)
+        throw new Error(result.error ?? 'Could not load the calendar');
+      for (const item of result.data.items) byId.set(item.id, toJob(item));
+      next = result.data.next;
+      if (!next) {
+        complete = true;
+        break;
+      }
+    }
+    if (!complete) throw new Error('Too many local posts for this calendar window');
+  }
+  return [...byId.values()];
+}
+
+function useVisiblePublicationJobs(
+  errorMessage: string,
+  calendarWindow?: { startsAt: string; endsAt: string } | null,
+) {
+  const windowStartsAt = calendarWindow?.startsAt;
+  const windowEndsAt = calendarWindow?.endsAt;
+  const waitingForCalendarWindow = calendarWindow === null;
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<PublicationToast[]>([]);
   useEffect(() => {
+    if (waitingForCalendarWindow) return;
+    setJobs(null);
+    setLoadError(null);
     const controller = new AbortController();
     let previous: Map<string, JobState> | null = null;
     let busy = false;
@@ -126,13 +180,20 @@ function useVisiblePublicationJobs(errorMessage: string) {
       if (document.hidden || busy) return;
       busy = true;
       try {
-        const response = await fetch('/api/workflow/jobs?limit=100', { signal: controller.signal });
-        const result = (await response.json()) as {
-          data: { items: QueueJobDto[] } | null;
-          error: string | null;
-        };
-        if (!response.ok || !result.data) throw new Error(result.error ?? errorMessage);
-        const current = result.data.items.map(toJob);
+        const current =
+          windowStartsAt && windowEndsAt
+            ? await fetchCalendarLocalJobs(windowStartsAt, windowEndsAt, controller.signal)
+            : await (async () => {
+                const response = await fetch('/api/workflow/jobs?limit=100', {
+                  signal: controller.signal,
+                });
+                const result = (await response.json()) as {
+                  data: { items: QueueJobDto[] } | null;
+                  error: string | null;
+                };
+                if (!response.ok || !result.data) throw new Error(result.error ?? errorMessage);
+                return result.data.items.map(toJob);
+              })();
         const changed = previous
           ? current.filter((job) => {
               const prior = previous?.get(job.id);
@@ -195,7 +256,7 @@ function useVisiblePublicationJobs(errorMessage: string) {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onFocus);
     };
-  }, [errorMessage]);
+  }, [errorMessage, waitingForCalendarWindow, windowStartsAt, windowEndsAt]);
   return {
     jobs,
     loadError,
@@ -2174,9 +2235,6 @@ export function CalendarPage() {
     const parsed = supplied ? new Date(`${supplied}T12:00:00`) : new Date();
     return Number.isFinite(parsed.getTime()) ? startOfDay(parsed) : startOfDay(new Date());
   });
-  const { jobs, loadError, toasts, dismissToast } = useVisiblePublicationJobs(
-    'Could not load the calendar',
-  );
   useEffect(() => {
     const controller = new AbortController();
     void fetch('/api/workspaces/current', { signal: controller.signal })
@@ -2216,6 +2274,10 @@ export function CalendarPage() {
       endsAt: calendarZonedMidnight(localDateKey(last), timeZone).toISOString(),
     };
   }, [mode, visibleDate, timeZone]);
+  const { jobs, loadError, toasts, dismissToast } = useVisiblePublicationJobs(
+    'Could not load the calendar',
+    mirrorWindow,
+  );
   const mirror = useCalendarMirror(mirrorWindow?.startsAt ?? null, mirrorWindow?.endsAt ?? null);
   const calendarJobs = useMemo(() => {
     if (!jobs || !mirror.jobs) return null;

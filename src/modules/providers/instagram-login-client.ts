@@ -5,7 +5,7 @@ export const INSTAGRAM_LOGIN_SCOPES = [
   'instagram_business_content_publish',
 ] as const;
 
-export function hasExactInstagramLoginScopes(scopes: unknown): boolean {
+export function hasExactInstagramLoginScopes(scopes: unknown): scopes is string[] {
   return (
     Array.isArray(scopes) &&
     scopes.length === INSTAGRAM_LOGIN_SCOPES.length &&

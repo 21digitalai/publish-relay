@@ -1639,11 +1639,77 @@ describe('credential and OAuth persistence', () => {
     } as never;
     await database.exec(`UPDATE provider_connections SET scopes = '["instagram_business_basic"]'
       WHERE id = '${connectionId}'`);
+    await database.exec(`UPDATE provider_connections SET access_expires_at = '2026-12-01T12:00:00Z'
+      WHERE id = '${connectionId}'`);
+    let partialRefreshCalls = 0;
+    const partialClient = {
+      refreshToken: () => {
+        partialRefreshCalls += 1;
+        return Promise.resolve({ accessToken: 'unexpected', expiresAt: new Date('2027-01-01') });
+      },
+      lookupAccount: () => {
+        throw new Error('Partial grant must not reach identity lookup');
+      },
+    } as never;
+    await expect(
+      getFreshInstagramLoginToken(db, keys, partialClient, {
+        workspaceId,
+        appScopedUserId: 'app-user-1',
+        requestId: 'partial-refresh',
+        now: promotionInput.now,
+      }),
+    ).rejects.toThrow('permission is incomplete');
+    await expect(
+      promoteInstagramLoginAccount(db, keys, partialClient, promotionInput),
+    ).resolves.toBe(false);
+    expect(partialRefreshCalls).toBe(0);
+    const partialGrant = await database.query<{ scopes: string[]; availability: string }>(
+      `select connection.scopes, account.availability from provider_connections connection
+       join provider_accounts account on account.connection_id = connection.id
+       where connection.id = '${connectionId}'`,
+    );
+    expect(partialGrant.rows[0]).toMatchObject({
+      scopes: ['instagram_business_basic'],
+      availability: 'publishing_unavailable',
+    });
+    const partialAudit = await database.query<{ count: number }>(
+      "select count(*)::int as count from audit_events where request_id in ('partial-refresh', 'reviewed-release-promotion')",
+    );
+    expect(partialAudit.rows[0]?.count).toBe(0);
     await expect(
       promoteInstagramLoginAccount(db, keys, matchingIdentity, promotionInput),
     ).resolves.toBe(false);
     await database.exec(`UPDATE provider_connections
       SET scopes = '["instagram_business_basic","instagram_business_content_publish"]'
+      WHERE id = '${connectionId}'`);
+    await expect(
+      getFreshInstagramLoginToken(
+        db,
+        keys,
+        {
+          refreshToken: async () => {
+            await database.exec(`UPDATE provider_connections
+              SET scopes = '["instagram_business_basic"]' WHERE id = '${connectionId}'`);
+            return { accessToken: 'unverified-refresh', expiresAt: new Date('2027-01-01') };
+          },
+        } as never,
+        {
+          workspaceId,
+          appScopedUserId: 'app-user-1',
+          requestId: 'scope-race-refresh',
+          now: promotionInput.now,
+        },
+      ),
+    ).rejects.toThrow('permission is incomplete');
+    const racedGrant = await database.query<{ scopes: string[]; version: number }>(
+      `select connection.scopes, credential.version from provider_connections connection
+       join credentials credential on credential.id = connection.credential_id
+       where connection.id = '${connectionId}'`,
+    );
+    expect(racedGrant.rows[0]).toEqual({ scopes: ['instagram_business_basic'], version: 2 });
+    await database.exec(`UPDATE provider_connections
+      SET scopes = '["instagram_business_basic","instagram_business_content_publish"]',
+          access_expires_at = '2027-01-29T00:00:00Z'
       WHERE id = '${connectionId}'`);
     await expect(
       promoteInstagramLoginAccount(db, keys, matchingIdentity, {

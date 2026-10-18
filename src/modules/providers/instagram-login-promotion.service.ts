@@ -31,6 +31,7 @@ export async function promoteInstagramLoginAccount(
       .select({
         subject: providerConnections.externalSubjectId,
         provider: providerConnections.provider,
+        scopes: providerConnections.scopes,
         availability: providerAccounts.availability,
       })
       .from(providerAccounts)
@@ -46,7 +47,8 @@ export async function promoteInstagramLoginAccount(
   });
   if (
     candidate?.provider !== 'instagram_login' ||
-    candidate.availability !== 'publishing_unavailable'
+    candidate.availability !== 'publishing_unavailable' ||
+    !hasExactInstagramLoginScopes(candidate.scopes)
   )
     return false;
   const token = await getFreshInstagramLoginToken(database, keys, client, {

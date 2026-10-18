@@ -242,6 +242,10 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
   transport and account/Page credential; `instagram_login` uses `graph.instagram.com`, the
   Instagram user token, and `getFreshInstagramLoginToken` with version-checked bounded refresh.
   The existing adapter, artifacts, media-token route, job claims and reconciliation remain shared.
+- Refresh never infers or upgrades Instagram grant scopes from requested constants. It requires
+  the persisted exact publishing scopes before the provider call and preserves/rechecks that
+  stored grant under the rotation lock; a concurrent scope change fails closed. Promotion checks
+  the original scopes before invoking refresh and again under its activation lock.
 - Admission and dispatch require the exact two Instagram Login publishing scopes and JPEG media;
   Meta's Instagram Login publishing contract does not prove PNG input. Existing Facebook Login
   Instagram and Facebook Page behavior remains unchanged. An ambiguous container or publish

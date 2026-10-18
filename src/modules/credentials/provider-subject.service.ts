@@ -25,13 +25,18 @@ export async function rotateProviderSubjectCredential(
     expectedVersion: number;
     encrypted: EncryptedCredential;
     scopes: readonly string[];
+    preserveStoredScopes?: boolean;
     accessExpiresAt: Date;
     refreshExpiresAt: Date | null;
   },
 ): Promise<boolean> {
   return withTenantTransaction(database, input, async (transaction) => {
     const rows = await transaction
-      .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
+      .select({
+        id: providerConnections.id,
+        credentialId: providerConnections.credentialId,
+        scopes: providerConnections.scopes,
+      })
       .from(providerConnections)
       .where(
         and(
@@ -46,6 +51,11 @@ export async function rotateProviderSubjectCredential(
       .limit(1);
     const connection = rows[0];
     if (!connection) return false;
+    if (
+      input.preserveStoredScopes &&
+      JSON.stringify(connection.scopes) !== JSON.stringify(input.scopes)
+    )
+      return false;
     const rotated = await rotateCredential(
       transaction,
       input.workspaceId,
@@ -58,7 +68,7 @@ export async function rotateProviderSubjectCredential(
     await transaction
       .update(providerConnections)
       .set({
-        scopes: [...input.scopes],
+        scopes: input.preserveStoredScopes ? connection.scopes : [...input.scopes],
         accessExpiresAt: input.accessExpiresAt,
         refreshExpiresAt: input.refreshExpiresAt,
         lastRefreshedAt: now,

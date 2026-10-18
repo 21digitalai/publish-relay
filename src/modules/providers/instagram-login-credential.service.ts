@@ -11,7 +11,10 @@ import {
   type MasterKeyProvider,
 } from '../credentials/envelope.js';
 import { rotateProviderSubjectCredential } from '../credentials/provider-subject.service.js';
-import { INSTAGRAM_LOGIN_SCOPES, type InstagramLoginClient } from './instagram-login-client.js';
+import {
+  hasExactInstagramLoginScopes,
+  type InstagramLoginClient,
+} from './instagram-login-client.js';
 
 const credentialSchema = z.object({ accessToken: z.string().min(1) });
 const REFRESH_SKEW_MS = 24 * 60 * 60 * 1000;
@@ -27,6 +30,7 @@ async function readGrant(
     const rows = await transaction
       .select({
         credentialId: providerConnections.credentialId,
+        scopes: providerConnections.scopes,
         accessExpiresAt: providerConnections.accessExpiresAt,
         lastRefreshedAt: providerConnections.lastRefreshedAt,
       })
@@ -63,6 +67,8 @@ export async function getFreshInstagramLoginToken(
 ): Promise<string> {
   const now = input.now ?? new Date();
   const current = await readGrant(database, keys, input.workspaceId, input.appScopedUserId);
+  if (!hasExactInstagramLoginScopes(current.scopes))
+    throw new Error('Instagram publishing permission is incomplete; reconnect this account');
   if (!current.accessExpiresAt || current.accessExpiresAt <= now)
     throw new Error('Instagram grant expired; reconnect this account');
   if (current.accessExpiresAt.getTime() > now.getTime() + REFRESH_SKEW_MS)
@@ -86,13 +92,16 @@ export async function getFreshInstagramLoginToken(
     externalSubjectId: input.appScopedUserId,
     expectedVersion: current.credential.version,
     encrypted,
-    scopes: INSTAGRAM_LOGIN_SCOPES,
+    scopes: current.scopes,
+    preserveStoredScopes: true,
     accessExpiresAt: refreshed.expiresAt,
     refreshExpiresAt: null,
     requestId: input.requestId,
   });
   if (rotated) return refreshed.accessToken;
   const winner = await readGrant(database, keys, input.workspaceId, input.appScopedUserId);
+  if (!hasExactInstagramLoginScopes(winner.scopes))
+    throw new Error('Instagram publishing permission is incomplete; reconnect this account');
   if (!winner.accessExpiresAt || winner.accessExpiresAt <= now)
     throw new Error('Concurrent Instagram token refresh did not produce a usable credential');
   return winner.token.accessToken;

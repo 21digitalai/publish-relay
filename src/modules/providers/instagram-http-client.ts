@@ -35,6 +35,7 @@ export class InstagramRequestError extends Error {
 
 export interface InstagramHttpClientOptions {
   graphVersion: string;
+  transport?: 'facebook_login' | 'instagram_login';
   fetch?: typeof fetch;
 }
 
@@ -62,12 +63,16 @@ function errorKind(status: number, code?: number, isTransient?: boolean): Instag
 
 export class InstagramHttpClient {
   private readonly request: typeof fetch;
-  private readonly origin = 'https://graph.facebook.com';
+  private readonly origin: string;
 
   public constructor(private readonly options: InstagramHttpClientOptions) {
     if (!/^v\d+\.\d+$/.test(options.graphVersion))
       throw new Error('Meta Graph API version must be pinned');
     this.request = options.fetch ?? fetch;
+    this.origin =
+      options.transport === 'instagram_login'
+        ? 'https://graph.instagram.com'
+        : 'https://graph.facebook.com';
   }
 
   public async createImageContainer(input: {

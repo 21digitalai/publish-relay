@@ -21,6 +21,7 @@
     "package:hosted": "node scripts/package-hosted-core.mjs",
     "start:web": "node dist/entrypoints/web.js",
     "start:worker": "node dist/entrypoints/worker.js",
+    "promote:instagram-login": "node dist/entrypoints/promote-instagram-login.js",
     "cli": "tsx src/entrypoints/cli.ts",
     "lint": "eslint .",
     "format": "prettier --write .",

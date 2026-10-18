@@ -61,6 +61,7 @@ import type { MetaFamilyCallbackError } from '../src/modules/providers/meta-oaut
 import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 import { completeInstagramLogin } from '../src/modules/providers/instagram-login.service.js';
 import { getFreshInstagramLoginToken } from '../src/modules/providers/instagram-login-credential.service.js';
+import { promoteInstagramLoginAccount } from '../src/modules/providers/instagram-login-promotion.service.js';
 import {
   beginTikTokOauthConnection,
   completeTikTokOauthConnection,
@@ -1609,6 +1610,61 @@ describe('credential and OAuth persistence', () => {
       version: 2,
       access_expires_at: new Date('2027-01-29T00:00:00Z'),
     });
+    const accountId = before.rows[0]?.id;
+    if (!accountId) throw new Error('Missing Instagram Login account fixture');
+    const connectionId = before.rows[0]?.connection_id;
+    if (!connectionId) throw new Error('Missing Instagram Login connection fixture');
+    const promotionInput = {
+      workspaceId,
+      accountId,
+      requestId: 'reviewed-release-promotion',
+      now: new Date('2026-12-01T00:00:00Z'),
+    };
+    const mismatchedIdentity = {
+      lookupAccount: () =>
+        Promise.resolve({ appScopedUserId: 'app-user-1', remoteUserId: 'other-ig-user' }),
+    } as never;
+    await expect(
+      promoteInstagramLoginAccount(db, keys, mismatchedIdentity, promotionInput),
+    ).resolves.toBe(false);
+    const beforePromotion = await database.query<{ availability: string }>(
+      `select availability from provider_accounts where id = '${accountId}'`,
+    );
+    expect(beforePromotion.rows[0]?.availability).toBe('publishing_unavailable');
+    const matchingIdentity = {
+      lookupAccount: (token: string) => {
+        expect(token).toBe('ig-token-refreshed');
+        return Promise.resolve({ appScopedUserId: 'app-user-1', remoteUserId: 'ig-user-1' });
+      },
+    } as never;
+    await database.exec(`UPDATE provider_connections SET scopes = '["instagram_business_basic"]'
+      WHERE id = '${connectionId}'`);
+    await expect(
+      promoteInstagramLoginAccount(db, keys, matchingIdentity, promotionInput),
+    ).resolves.toBe(false);
+    await database.exec(`UPDATE provider_connections
+      SET scopes = '["instagram_business_basic","instagram_business_content_publish"]'
+      WHERE id = '${connectionId}'`);
+    await expect(
+      promoteInstagramLoginAccount(db, keys, matchingIdentity, {
+        ...promotionInput,
+        workspaceId: '00000000-0000-4000-8000-000000000999',
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      promoteInstagramLoginAccount(db, keys, matchingIdentity, promotionInput),
+    ).resolves.toBe(true);
+    await expect(
+      promoteInstagramLoginAccount(db, keys, matchingIdentity, promotionInput),
+    ).resolves.toBe(false);
+    const promoted = await database.query<{ availability: string }>(
+      `select availability from provider_accounts where id = '${accountId}'`,
+    );
+    expect(promoted.rows[0]?.availability).toBe('active');
+    const promotionAudit = await database.query<{ count: number }>(
+      "select count(*)::int as count from audit_events where action = 'instagram.login.publishing_enabled'",
+    );
+    expect(promotionAudit.rows[0]?.count).toBe(1);
   });
 
   it('makes legacy Facebook Login Instagram destinations inert without changing the Page sibling', async () => {

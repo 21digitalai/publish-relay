@@ -6,10 +6,42 @@ import {
   InstagramLoginDiagnosticError,
   InstagramLoginPermissionError,
   InstagramLoginRequestError,
+  hasExactInstagramLoginScopes,
 } from '../src/modules/providers/instagram-login-client.js';
 
 const appId = '856816254187944';
 const callback = 'https://publishrelay.app/api/oauth/instagram/callback';
+
+it('accepts only the exact Instagram Login publishing grant', () => {
+  expect(
+    hasExactInstagramLoginScopes([
+      'instagram_business_content_publish',
+      'instagram_business_basic',
+    ]),
+  ).toBe(true);
+  expect(hasExactInstagramLoginScopes(['instagram_business_basic'])).toBe(false);
+  expect(
+    hasExactInstagramLoginScopes([
+      'instagram_business_basic',
+      'instagram_business_content_publish',
+      'pages_show_list',
+    ]),
+  ).toBe(false);
+});
+
+it('looks up the current app-scoped and publishing IDs without exposing token in URL', async () => {
+  const { client, requests } = clientWithResponses([
+    { id: 'app-123', user_id: 'ig-456', username: 'publisher', account_type: 'BUSINESS' },
+  ]);
+  await expect(client.lookupAccount('user-token')).resolves.toEqual({
+    appScopedUserId: 'app-123',
+    remoteUserId: 'ig-456',
+    username: 'publisher',
+  });
+  expect(requests[0]?.url.origin).toBe('https://graph.instagram.com');
+  expect(requests[0]?.url.toString()).not.toContain('user-token');
+  expect(new Headers(requests[0]?.init?.headers).get('authorization')).toBe('Bearer user-token');
+});
 
 function clientWithResponses(responses: unknown[]) {
   const requests: { url: URL; init: RequestInit | undefined }[] = [];

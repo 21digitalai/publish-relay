@@ -6,6 +6,7 @@ import {
   mediaObjects,
   postRevisions,
   providerAccounts,
+  providerConnections,
   publicationJobs,
   revisionMedia,
 } from '../../database/schema.js';
@@ -24,12 +25,19 @@ import {
 import { InstagramPublishingAdapter } from './instagram-adapter.js';
 import { PostgresInstagramArtifactStore } from './instagram-artifact-store.js';
 import type { InstagramHttpClient } from './instagram-http-client.js';
+import { getFreshInstagramLoginToken } from './instagram-login-credential.service.js';
+import {
+  hasExactInstagramLoginScopes,
+  type InstagramLoginClient,
+} from './instagram-login-client.js';
 import type { InstagramMediaTokenCodec } from './instagram-media-token.js';
 
 export interface InstagramDispatchRuntime {
   database: NodePgDatabase;
   keys: MasterKeyProvider;
   client: InstagramHttpClient;
+  loginClient?: InstagramHttpClient;
+  loginTokenClient?: InstagramLoginClient;
   tokenCodec: InstagramMediaTokenCodec;
   publicOrigin: string;
   workerId: string;
@@ -59,6 +67,12 @@ async function loadContext(database: NodePgDatabase, workspaceId: string, jobId:
         accountRemoteId: providerAccounts.remoteAccountId,
         availability: providerAccounts.availability,
         credentialId: providerAccounts.credentialId,
+        connectionProvider: providerConnections.provider,
+        connectionStatus: providerConnections.status,
+        connectionSubject: providerConnections.externalSubjectId,
+        connectionScopes: providerConnections.scopes,
+        connectionCredentialId: providerConnections.credentialId,
+        connectionRevokedAt: providerConnections.revokedAt,
         content: postRevisions.content,
         mediaId: revisionMedia.mediaId,
         mimeType: mediaObjects.mimeType,
@@ -69,6 +83,13 @@ async function loadContext(database: NodePgDatabase, workspaceId: string, jobId:
         and(
           eq(providerAccounts.workspaceId, publicationJobs.workspaceId),
           eq(providerAccounts.id, publicationJobs.providerAccountId),
+        ),
+      )
+      .innerJoin(
+        providerConnections,
+        and(
+          eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+          eq(providerConnections.id, providerAccounts.connectionId),
         ),
       )
       .innerJoin(
@@ -103,13 +124,58 @@ async function loadContext(database: NodePgDatabase, workspaceId: string, jobId:
     const first = rows[0];
     if (!first?.credentialId || first.availability !== 'active')
       throw new Error('Instagram destination is unavailable');
+    if (first.connectionStatus !== 'active' || first.connectionRevokedAt)
+      throw new Error('Instagram grant is unavailable');
+    if (first.connectionProvider === 'instagram_login') {
+      if (
+        first.credentialId !== first.connectionCredentialId ||
+        !hasExactInstagramLoginScopes(first.connectionScopes) ||
+        rows.some((row) => row.mimeType !== 'image/jpeg')
+      )
+        throw new Error('Instagram Login grant or JPEG media is unavailable');
+    } else if (first.connectionProvider !== 'meta') {
+      throw new Error('Unsupported Instagram connection provider');
+    }
     return {
       accountRemoteId: first.accountRemoteId,
       credentialId: first.credentialId,
+      connectionProvider: first.connectionProvider,
+      connectionSubject: first.connectionSubject,
       text: z.object({ text: z.string().min(1) }).parse(first.content).text,
       media: rows.map((row) => ({ id: row.mediaId, mimeType: row.mimeType })),
     };
   });
+}
+
+async function dispatchCredential(
+  runtime: InstagramDispatchRuntime,
+  context: Awaited<ReturnType<typeof loadContext>>,
+  workspaceId: string,
+  jobId: string,
+  now: Date,
+) {
+  if (context.connectionProvider === 'instagram_login') {
+    if (!runtime.loginClient || !runtime.loginTokenClient)
+      throw new Error('Instagram Login publishing runtime is unavailable');
+    return {
+      client: runtime.loginClient,
+      token: await getFreshInstagramLoginToken(
+        runtime.database,
+        runtime.keys,
+        runtime.loginTokenClient,
+        {
+          workspaceId,
+          appScopedUserId: context.connectionSubject,
+          requestId: `instagram-dispatch:${jobId}`,
+          now,
+        },
+      ),
+    };
+  }
+  return {
+    client: runtime.client,
+    token: await readToken(runtime, workspaceId, context.credentialId),
+  };
 }
 
 async function readToken(
@@ -143,6 +209,13 @@ async function dispatchJob(
     revisionId: job.revisionId,
     providerAccountId: job.providerAccountId,
   });
+  const { client, token: accessToken } = await dispatchCredential(
+    runtime,
+    context,
+    job.workspaceId,
+    job.id,
+    now,
+  );
   const attempt = await startDispatchAttempt(runtime.database, {
     workspaceId: job.workspaceId,
     jobId: job.id,
@@ -151,9 +224,8 @@ async function dispatchJob(
     now,
   });
   if (!attempt) return false;
-  const accessToken = await readToken(runtime, job.workspaceId, context.credentialId);
   const adapter = new InstagramPublishingAdapter({
-    client: runtime.client,
+    client,
     artifacts: new PostgresInstagramArtifactStore(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,
@@ -245,9 +317,15 @@ export async function reconcileInstagramJobs(
       const job = rows[0];
       if (!job) continue;
       const context = await loadContext(runtime.database, job.workspaceId, job.id);
-      const accessToken = await readToken(runtime, job.workspaceId, context.credentialId);
+      const { client, token: accessToken } = await dispatchCredential(
+        runtime,
+        context,
+        job.workspaceId,
+        job.id,
+        now,
+      );
       const adapter = new InstagramPublishingAdapter({
-        client: runtime.client,
+        client,
         artifacts: new PostgresInstagramArtifactStore(runtime.database, {
           workspaceId: job.workspaceId,
           jobId: job.id,

@@ -13,6 +13,7 @@ import {
 } from '../../database/schema.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
+import { hasExactInstagramLoginScopes } from '../providers/instagram-login-client.js';
 import { validateLinkedInTextContent } from '../providers/linkedin-content.js';
 import { publicationSettingsRegistry } from '../providers/publication-settings-registry.js';
 import type { DestinationProvider } from '../providers/contract.js';
@@ -198,6 +199,8 @@ async function resolveRevisionTargets(
       id: providerAccounts.id,
       destinationProvider: providerAccounts.destinationProvider,
       provider: providerConnections.provider,
+      scopes: providerConnections.scopes,
+      accessExpiresAt: providerConnections.accessExpiresAt,
       status: providerConnections.status,
       expiresAt: providerConnections.expiresAt,
       disconnectedAt: providerAccounts.disconnectedAt,
@@ -213,7 +216,7 @@ async function resolveRevisionTargets(
     );
   const accountsById = new Map(accountRows.map((account) => [account.id, account]));
   const metaAccountIds = accountRows
-    .filter((account) => account.provider === 'meta')
+    .filter((account) => account.provider === 'meta' || account.provider === 'instagram_login')
     .map((account) => account.id);
   const metaRows =
     metaAccountIds.length === 0
@@ -251,9 +254,21 @@ async function resolveRevisionTargets(
     input.providerAccountIds.map((accountId) => {
       const account = accountsById.get(accountId);
       if (!account) throw new PostValidationError('Provider account is unavailable');
-      if (account.provider !== 'meta') return [accountId, null] as const;
+      if (account.provider !== 'meta' && account.provider !== 'instagram_login')
+        return [accountId, null] as const;
       const metaAccount = metaAccountsById.get(accountId);
       if (!metaAccount) throw new PostValidationError('Meta destination is unavailable');
+      if (account.provider === 'instagram_login') {
+        if (
+          metaAccount.destinationProvider !== 'instagram' ||
+          !hasExactInstagramLoginScopes(account.scopes) ||
+          !account.accessExpiresAt ||
+          account.accessExpiresAt <= new Date()
+        )
+          throw new PostValidationError('Instagram Login grant is unavailable');
+        if (mediaMimeTypes.some((mimeType) => mimeType !== 'image/jpeg'))
+          throw new PostValidationError('Instagram Login currently accepts JPEG images only');
+      }
       return [
         accountId,
         buildMetaEffectivePayload(

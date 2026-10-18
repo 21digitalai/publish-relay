@@ -15,6 +15,7 @@ import {
 import { runMediaRetentionCycle } from '../src/modules/content/media-retention.worker.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { createPost, editPost, reschedulePost } from '../src/modules/content/post.service.js';
+import { validatePostTargets } from '../src/modules/content/post.repository.js';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 import {
@@ -136,6 +137,54 @@ beforeEach(async () => {
 });
 
 afterEach(async () => database.close());
+
+describe('Instagram Login scheduling admission', () => {
+  it('accepts JPEG while rejecting PNG and a partial grant before creating a job', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000241';
+    const jpegId = '00000000-0000-4000-8000-000000000242';
+    const pngId = '00000000-0000-4000-8000-000000000243';
+    await database.exec(`
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id, scopes, access_expires_at)
+      VALUES ('00000000-0000-4000-8000-000000000240', '${workspaceId}', 'instagram_login',
+        '00000000-0000-4000-8000-000000000205', 'app-user',
+        '["instagram_business_basic","instagram_business_content_publish"]', now() + interval '30 days');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id,
+        destination_provider, remote_account_id, display_name, credential_id)
+      VALUES ('${accountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000240',
+        'ig-user', 'instagram', 'ig-user', 'Instagram', '00000000-0000-4000-8000-000000000205');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state) VALUES
+        ('${jpegId}', '${workspaceId}', 'jpeg.jpg', 'hash-jpeg', 'image/jpeg', 5, 'ready'),
+        ('${pngId}', '${workspaceId}', 'png.png', 'hash-png', 'image/png', 5, 'ready');
+    `);
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const input = {
+      workspaceId,
+      providerAccountIds: [accountId],
+      selectedDestination: 'instagram',
+      content: { kind: 'single_image', text: 'Caption' },
+      scheduledAt: new Date(Date.now() + 60_000),
+    };
+    await expect(validatePostTargets(db, { ...input, mediaIds: [jpegId] })).resolves.toEqual([
+      { providerAccountId: accountId, valid: true },
+    ]);
+    await expect(validatePostTargets(db, { ...input, mediaIds: [pngId] })).resolves.toEqual([
+      expect.objectContaining({
+        providerAccountId: accountId,
+        valid: false,
+        error: 'Instagram Login currently accepts JPEG images only',
+      }),
+    ]);
+    await database.exec(`UPDATE provider_connections SET scopes = '["instagram_business_basic"]'
+      WHERE id = '00000000-0000-4000-8000-000000000240'`);
+    await expect(validatePostTargets(db, { ...input, mediaIds: [jpegId] })).resolves.toEqual([
+      expect.objectContaining({
+        providerAccountId: accountId,
+        valid: false,
+        error: 'Instagram Login grant is unavailable',
+      }),
+    ]);
+  });
+});
 
 describe('media retention lifecycle', () => {
   it('retries abandoned upload deletion after storage failure and refuses attached media', async () => {

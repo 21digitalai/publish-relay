@@ -235,6 +235,25 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 # Agent destination discovery
 
+## Instagram Login publishing bridge
+
+- `instagram-dispatch.service.ts` selects the transport and credential from the joined connection
+  provider, not a remote ID or display name. Legacy `meta` Instagram keeps the Facebook Graph
+  transport and account/Page credential; `instagram_login` uses `graph.instagram.com`, the
+  Instagram user token, and `getFreshInstagramLoginToken` with version-checked bounded refresh.
+  The existing adapter, artifacts, media-token route, job claims and reconciliation remain shared.
+- Admission and dispatch require the exact two Instagram Login publishing scopes and JPEG media;
+  Meta's Instagram Login publishing contract does not prove PNG input. Existing Facebook Login
+  Instagram and Facebook Page behavior remains unchanged. An ambiguous container or publish
+  outcome stays held for reconciliation, never blindly replayed.
+- OAuth callback saves new Instagram Login destinations as `publishing_unavailable`. After an
+  independently reviewed release, `promote-instagram-login` is the explicit operator-run path:
+  it refreshes the active grant if required, looks up the current Instagram identity through the
+  user token, then rechecks workspace, provider, exact scopes, expiry, active credential, remote
+  identity, and unchanged unavailable state inside a tenant transaction before activating one
+  account and writing one audit event. A failed/partial/revoked/mismatched grant remains unavailable. This entrypoint must
+  never be run as part of migration or OAuth callback.
+
 ## TikTok pull-media grant boundary
 
 - `TikTokMediaGrantService` is the sole fixture-safe issuer/resolver/revoker for TikTok PULL_FROM_URL grants. It binds one active TikTok destination and one retained ready MP4 to a random grant ID, a hashed opaque encrypted bearer token, a byte/hash/type snapshot, and a 91-minute expiry. It persists the grant before returning the HTTPS URL; no OAuth, provider init, or posting occurs in this service.

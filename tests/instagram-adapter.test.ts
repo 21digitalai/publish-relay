@@ -61,7 +61,7 @@ describe('InstagramPublishingAdapter', () => {
     expect(getInstagramRetryAt({ status: 'failed', code: 'auth' }, now)).toBeUndefined();
   });
   it.each([1, 2, 10])(
-    'publishes and resumes a %i-image payload from durable artifacts',
+    'publishes and resumes a %i-image Instagram Login payload from durable artifacts',
     async (count) => {
       let nextId = 0;
       const fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -78,6 +78,7 @@ describe('InstagramPublishingAdapter', () => {
       const adapter = new InstagramPublishingAdapter({
         client: new InstagramHttpClient({
           graphVersion: 'v23.0',
+          transport: 'instagram_login',
           fetch: fetch as typeof globalThis.fetch,
         }),
         artifacts,
@@ -93,8 +94,38 @@ describe('InstagramPublishingAdapter', () => {
       const callsAfterFirstPublish = fetch.mock.calls.length;
       await expect(adapter.publish(staged)).resolves.toMatchObject({ status: 'published' });
       expect(fetch).toHaveBeenCalledTimes(callsAfterFirstPublish);
+      for (const [url, init] of fetch.mock.calls) {
+        expect(new URL(url).origin).toBe('https://graph.instagram.com');
+        expect(init?.headers).toMatchObject({ authorization: 'Bearer token' });
+      }
+      const mediaPosts = fetch.mock.calls.filter(
+        ([url, init]) => init?.method === 'POST' && new URL(url).pathname.endsWith('/media'),
+      );
+      expect(mediaPosts).toHaveLength(count === 1 ? 1 : count + 1);
+      if (count > 1) {
+        const body = mediaPosts.at(-1)?.[1]?.body;
+        expect(body).toBeInstanceOf(URLSearchParams);
+        expect((body as URLSearchParams).get('media_type')).toBe('CAROUSEL');
+      }
     },
   );
+
+  it('keeps the existing Facebook Login host and token family', async () => {
+    const fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      void url;
+      void init;
+      return response({ status_code: 'FINISHED' });
+    });
+    const client = new InstagramHttpClient({
+      graphVersion: 'v23.0',
+      fetch: fetch as typeof globalThis.fetch,
+    });
+    await client.getContainerStatus('container', 'page-token');
+    const call = fetch.mock.calls[0];
+    if (!call) throw new Error('Expected Facebook Graph request');
+    expect(new URL(call[0]).origin).toBe('https://graph.facebook.com');
+    expect(call[1]?.headers).toMatchObject({ authorization: 'Bearer page-token' });
+  });
 
   it.each([0, 11])('rejects an invalid image count of %i', async (count) => {
     const adapter = new InstagramPublishingAdapter({
@@ -247,4 +278,30 @@ describe('InstagramPublishingAdapter', () => {
       },
     });
   });
+
+  it.each([
+    [401, 'auth'],
+    [403, 'permission'],
+  ] as const)(
+    'classifies Instagram Login HTTP %i as %s without leaking token material',
+    async (status, kind) => {
+      const client = new InstagramHttpClient({
+        graphVersion: 'v23.0',
+        transport: 'instagram_login',
+        fetch: vi.fn(async () =>
+          response(
+            { error: { code: status === 401 ? 190 : 200, message: 'secret-token' } },
+            status,
+          ),
+        ) as typeof globalThis.fetch,
+      });
+      try {
+        await client.getContainerStatus('container', 'secret-token');
+        throw new Error('Expected provider failure');
+      } catch (error) {
+        expect(error).toMatchObject({ evidence: { kind, status } });
+        expect(String(error)).not.toContain('secret-token');
+      }
+    },
+  );
 });

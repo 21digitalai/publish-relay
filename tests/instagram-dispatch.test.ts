@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stage = vi.fn();
 const publish = vi.fn();
+const adapterClients: unknown[] = [];
 
 vi.mock('../src/modules/providers/instagram-adapter.js', () => ({
   InstagramPublishingAdapter: class {
+    public constructor(runtime: { client: unknown }) {
+      adapterClients.push(runtime.client);
+    }
     public stage = stage;
     public publish = publish;
   },
@@ -24,6 +28,9 @@ vi.mock('../src/modules/credentials/envelope.js', () => ({
 vi.mock('../src/modules/credentials/credential.repository.js', () => ({
   getActiveCredential: vi.fn(() => Promise.resolve({ id: 'credential-1' })),
 }));
+vi.mock('../src/modules/providers/instagram-login-credential.service.js', () => ({
+  getFreshInstagramLoginToken: vi.fn(() => Promise.resolve('instagram-user-token')),
+}));
 vi.mock('../src/modules/scheduler/job.repository.js', () => ({
   claimDueJobs: vi.fn(),
   claimReconciliationJobs: vi.fn(() => Promise.resolve([])),
@@ -40,7 +47,16 @@ vi.mock('../src/database/tenant-transaction.js', () => ({
   ),
 }));
 
-import { reconcileInstagramJobs } from '../src/modules/providers/instagram-dispatch.service.js';
+import {
+  dispatchDueInstagramJobs,
+  reconcileInstagramJobs,
+} from '../src/modules/providers/instagram-dispatch.service.js';
+import { getFreshInstagramLoginToken } from '../src/modules/providers/instagram-login-credential.service.js';
+import {
+  claimDueJobs,
+  finishDispatchAttempt,
+  startDispatchAttempt,
+} from '../src/modules/scheduler/job.repository.js';
 import {
   claimReconciliationJobs,
   resolveReconciliation,
@@ -57,11 +73,19 @@ const contextRows = [
     accountRemoteId: 'ig-1',
     availability: 'active',
     credentialId: 'credential-1',
+    connectionProvider: 'meta',
+    connectionStatus: 'active',
+    connectionSubject: 'facebook-subject',
+    connectionScopes: [] as string[],
+    connectionCredentialId: 'credential-1',
+    connectionRevokedAt: null,
     content: { text: 'Caption' },
     mediaId: 'media-1',
     mimeType: 'image/jpeg',
   },
 ];
+const contextRow = contextRows[0];
+if (!contextRow) throw new Error('Missing Instagram context fixture');
 const databaseQuery = {
   select: vi.fn(() => databaseQuery),
   from: vi.fn(() => databaseQuery),
@@ -74,6 +98,8 @@ const runtime = {
   database: databaseQuery as never,
   keys: {} as never,
   client: {} as never,
+  loginClient: { transport: 'instagram' } as never,
+  loginTokenClient: {} as never,
   tokenCodec: { issue: vi.fn(() => 'opaque') } as never,
   publicOrigin: 'https://relay.example',
   workerId: 'worker-1',
@@ -83,6 +109,7 @@ const runtime = {
 describe('Instagram reconciliation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    adapterClients.length = 0;
     databaseQuery.limit.mockResolvedValue([job]);
     databaseQuery.orderBy.mockResolvedValue(contextRows);
     stage.mockResolvedValue({ stageId: 'instagram:job-key' });
@@ -111,6 +138,7 @@ describe('Instagram reconciliation', () => {
         externalPostId: 'media-1',
       }),
     );
+    expect(adapterClients).toEqual([runtime.client]);
   });
 
   it('keeps ambiguous publication held without replay or resolution', async () => {
@@ -124,5 +152,58 @@ describe('Instagram reconciliation', () => {
       0,
     );
     expect(resolveReconciliation).not.toHaveBeenCalled();
+  });
+
+  it('selects the Instagram Login transport and refreshed user token from the connection family', async () => {
+    databaseQuery.orderBy.mockResolvedValue([
+      {
+        ...contextRow,
+        connectionProvider: 'instagram_login',
+        connectionSubject: 'app-user',
+        connectionScopes: ['instagram_business_basic', 'instagram_business_content_publish'],
+      },
+    ]);
+    vi.mocked(claimDueJobs).mockResolvedValue([job] as never);
+    vi.mocked(startDispatchAttempt).mockResolvedValue({ attemptId: 'attempt-1' } as never);
+    publish.mockResolvedValue({
+      status: 'published',
+      externalPostId: 'media-1',
+      externalUrl: 'https://instagram.com/p/1',
+    });
+
+    await expect(dispatchDueInstagramJobs(runtime, new Date('2026-10-18T00:00:00Z'))).resolves.toBe(
+      1,
+    );
+    expect(getFreshInstagramLoginToken).toHaveBeenCalledWith(
+      runtime.database,
+      runtime.keys,
+      runtime.loginTokenClient,
+      expect.objectContaining({ workspaceId: job.workspaceId, appScopedUserId: 'app-user' }),
+    );
+    expect(adapterClients).toEqual([runtime.loginClient]);
+    expect(finishDispatchAttempt).toHaveBeenCalled();
+  });
+
+  it('refuses partial grants and PNG before sending to the adapter', async () => {
+    vi.mocked(claimDueJobs).mockResolvedValue([job] as never);
+    databaseQuery.orderBy.mockResolvedValue([
+      {
+        ...contextRow,
+        connectionProvider: 'instagram_login',
+        connectionScopes: ['instagram_business_basic'],
+      },
+    ]);
+    await expect(dispatchDueInstagramJobs(runtime)).rejects.toThrow('grant or JPEG');
+    databaseQuery.orderBy.mockResolvedValue([
+      {
+        ...contextRow,
+        connectionProvider: 'instagram_login',
+        connectionScopes: ['instagram_business_basic', 'instagram_business_content_publish'],
+        mimeType: 'image/png',
+      },
+    ]);
+    await expect(dispatchDueInstagramJobs(runtime)).rejects.toThrow('grant or JPEG');
+    expect(startDispatchAttempt).not.toHaveBeenCalled();
+    expect(getFreshInstagramLoginToken).not.toHaveBeenCalled();
   });
 });

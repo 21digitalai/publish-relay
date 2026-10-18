@@ -31,6 +31,7 @@ import { YouTubeHttpClient } from '../modules/providers/youtube-http-client.js';
 import { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
 import { dispatchDueLinkedInJobs } from '../modules/providers/linkedin-dispatch.service.js';
 import { InstagramHttpClient } from '../modules/providers/instagram-http-client.js';
+import { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
 import {
   dispatchDueInstagramJobs,
@@ -128,6 +129,19 @@ const instagramRuntime =
         database,
         keys,
         client: new InstagramHttpClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
+        ...(config.PUBLISH_RELAY_INSTAGRAM_APP_ID && config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET
+          ? {
+              loginClient: new InstagramHttpClient({
+                graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+                transport: 'instagram_login' as const,
+              }),
+              loginTokenClient: new InstagramLoginClient({
+                appId: config.PUBLISH_RELAY_INSTAGRAM_APP_ID,
+                appSecret: config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET,
+                graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+              }),
+            }
+          : {}),
         tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
         publicOrigin: config.PUBLISH_RELAY_PUBLIC_ORIGIN,
         workerId: config.WORKER_ID ?? 'publish-relay-worker',

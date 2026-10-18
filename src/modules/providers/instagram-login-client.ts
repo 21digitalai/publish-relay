@@ -5,6 +5,14 @@ export const INSTAGRAM_LOGIN_SCOPES = [
   'instagram_business_content_publish',
 ] as const;
 
+export function hasExactInstagramLoginScopes(scopes: unknown): boolean {
+  return (
+    Array.isArray(scopes) &&
+    scopes.length === INSTAGRAM_LOGIN_SCOPES.length &&
+    INSTAGRAM_LOGIN_SCOPES.every((scope) => scopes.includes(scope))
+  );
+}
+
 const instagramIdSchema = z.union([
   z.string().min(1),
   z.number().int().nonnegative().refine(Number.isSafeInteger).transform(String),
@@ -190,20 +198,12 @@ export class InstagramLoginClient {
       await this.fetchJson('token-extension', longUrl),
       'token-extension',
     );
-    const accountUrl = new URL(`https://graph.instagram.com/${this.options.graphVersion}/me`);
-    accountUrl.searchParams.set('fields', 'id,user_id,username,account_type');
-    const accountResult = accountSchema.safeParse(
-      await this.fetchJson('profile-lookup', accountUrl, {
-        headers: { authorization: `Bearer ${long.access_token}` },
-      }),
-    );
-    if (!accountResult.success) throw new InstagramLoginAccountError();
-    const account = accountResult.data;
-    if (account.id !== short.user_id || !account.user_id) throw new InstagramLoginAccountError();
+    const account = await this.lookupAccount(long.access_token);
+    if (account.appScopedUserId !== short.user_id) throw new InstagramLoginAccountError();
     return {
       accessToken: long.access_token,
       appScopedUserId: short.user_id,
-      remoteUserId: account.user_id,
+      remoteUserId: account.remoteUserId,
       username: account.username,
       expiresAt: new Date(this.now() + long.expires_in * 1000),
     };
@@ -225,6 +225,24 @@ export class InstagramLoginClient {
     return {
       accessToken: refreshed.access_token,
       expiresAt: new Date(this.now() + refreshed.expires_in * 1000),
+    };
+  }
+
+  public async lookupAccount(
+    accessToken: string,
+  ): Promise<{ appScopedUserId: string; remoteUserId: string; username: string }> {
+    const url = new URL(`https://graph.instagram.com/${this.options.graphVersion}/me`);
+    url.searchParams.set('fields', 'id,user_id,username,account_type');
+    const account = accountSchema.safeParse(
+      await this.fetchJson('profile-lookup', url, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      }),
+    );
+    if (!account.success) throw new InstagramLoginAccountError();
+    return {
+      appScopedUserId: account.data.id,
+      remoteUserId: account.data.user_id,
+      username: account.data.username,
     };
   }
 

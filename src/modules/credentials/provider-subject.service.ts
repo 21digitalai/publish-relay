@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -6,8 +6,9 @@ import {
   auditEvents,
   providerAccounts,
   providerConnections,
-  publicationJobs,
+  workspaces,
 } from '../../database/schema.js';
+import { hasActiveProviderAccountJobs } from './provider-account-exposure.service.js';
 import { revokeCredential, rotateCredential } from './credential.repository.js';
 import type { EncryptedCredential } from './envelope.js';
 import { assertActiveMembership } from './provider-connection.repository.js';
@@ -95,6 +96,11 @@ export async function disconnectProviderSubject(
 ): Promise<boolean> {
   return withTenantTransaction(database, input, async (transaction) => {
     await assertActiveMembership(transaction, input.workspaceId, input.userId);
+    await transaction
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, input.workspaceId))
+      .for('update');
     const rows = await transaction
       .select({ id: providerConnections.id, credentialId: providerConnections.credentialId })
       .from(providerConnections)
@@ -109,30 +115,8 @@ export async function disconnectProviderSubject(
       .limit(1);
     const connection = rows[0];
     if (!connection) return false;
-    const activeJobs = await transaction
-      .select({ id: publicationJobs.id })
-      .from(publicationJobs)
-      .innerJoin(providerAccounts, eq(publicationJobs.providerAccountId, providerAccounts.id))
-      .where(
-        and(
-          eq(publicationJobs.workspaceId, input.workspaceId),
-          eq(providerAccounts.connectionId, connection.id),
-          or(
-            inArray(publicationJobs.state, [
-              'scheduled',
-              'leased',
-              'dispatching',
-              'accepted_pending',
-              'retry_wait',
-            ]),
-            eq(publicationJobs.reconciliationRequired, true),
-          ),
-        ),
-      )
-      .limit(1);
-    if (activeJobs[0]) throw new Error('Scheduled publications must be resolved before disconnect');
     const accounts = await transaction
-      .select({ credentialId: providerAccounts.credentialId })
+      .select({ id: providerAccounts.id, credentialId: providerAccounts.credentialId })
       .from(providerAccounts)
       .where(
         and(
@@ -140,6 +124,9 @@ export async function disconnectProviderSubject(
           eq(providerAccounts.connectionId, connection.id),
         ),
       );
+    for (const account of accounts)
+      if (await hasActiveProviderAccountJobs(transaction, input.workspaceId, account.id))
+        throw new Error('Scheduled publications must be resolved before disconnect');
     const now = new Date();
     await transaction
       .update(providerAccounts)

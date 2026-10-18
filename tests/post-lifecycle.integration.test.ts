@@ -50,6 +50,7 @@ const migrations = [
   '0025_lucky_legion.sql',
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
+  '0042_long_pepper_potts.sql',
   '0045_meta_destination_foundation.sql',
   '0046_linkedin_connection_expiry.sql',
   '0047_linkedin_member_connections.sql',
@@ -60,6 +61,11 @@ const migrations = [
   '0054_tiktok_media_grants.sql',
   '0055_x_long_post_declaration.sql',
   '0056_meta_grant_family.sql',
+  '0058_workspace_tombstone.sql',
+  '0059_provider_account_exposures.sql',
+  '0060_facebook_page_exposure_edit.sql',
+  '0061_cross_workspace_account_job_guard.sql',
+  '0062_exposed_account_admission.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

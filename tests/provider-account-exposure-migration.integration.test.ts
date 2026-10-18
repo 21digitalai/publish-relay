@@ -7,6 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
+import { createPost, editPost } from '../src/modules/content/post.service.js';
+import { disconnectProviderSubject } from '../src/modules/credentials/provider-subject.service.js';
+import { revokeMetaConnection } from '../src/modules/providers/meta-oauth.service.js';
 
 const origin = '00000000-0000-4000-8000-000000000101';
 const target = '00000000-0000-4000-8000-000000000102';
@@ -17,6 +20,7 @@ const post = '00000000-0000-4000-8000-000000000106';
 const revision = '00000000-0000-4000-8000-000000000107';
 const credential = '00000000-0000-4000-8000-000000000108';
 const nonOwner = '00000000-0000-4000-8000-000000000109';
+const outsider = '00000000-0000-4000-8000-000000000110';
 
 describe('provider account exposure migration', () => {
   it('grants only to a shared owner, guards active jobs, and preserves a revoked row', async () => {
@@ -33,9 +37,12 @@ describe('provider account exposure migration', () => {
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.provider_account_has_active_jobs(uuid, uuid)
           TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.resolve_exposed_post_accounts(uuid, uuid[], boolean)
+          TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
-            ('${nonOwner}', 'Editor', 'editor@example.test', 'hash');
+            ('${nonOwner}', 'Editor', 'editor@example.test', 'hash'),
+            ('${outsider}', 'Outsider', 'outsider@example.test', 'hash');
         INSERT INTO workspaces (id, name, slug) VALUES
           ('${origin}', 'Origin', 'origin'), ('${target}', 'Target', 'target');
         INSERT INTO memberships (workspace_id, user_id, role) VALUES
@@ -44,11 +51,11 @@ describe('provider account exposure migration', () => {
         INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce,
           wrapped_key_tag, ciphertext, nonce, tag)
           VALUES ('${credential}', '${origin}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
-        INSERT INTO provider_connections (id, workspace_id, provider, credential_id, status)
-          VALUES ('${connection}', '${origin}', 'meta', '${credential}', 'active');
+        INSERT INTO provider_connections (id, workspace_id, provider, credential_id, status, scopes)
+          VALUES ('${connection}', '${origin}', 'meta', '${credential}', 'active', '["pages_manage_posts"]');
         INSERT INTO provider_accounts
-          (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name)
-          VALUES ('${account}', '${origin}', '${connection}', 'page', 'facebook_page', 'page', 'Page');
+          (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name, adapter_defaults)
+          VALUES ('${account}', '${origin}', '${connection}', 'page', 'facebook_page', 'page', 'Page', '{"originOnly":true}');
         SELECT set_config('app.workspace_id', '${origin}', false);
         SET ROLE publish_relay_app;
       `);
@@ -59,6 +66,17 @@ describe('provider account exposure migration', () => {
       expect((await edit(true)).rows[0]?.result).toBe('unavailable');
       await database.exec(`SELECT set_config('app.user_id', '${nonOwner}', false)`);
       expect((await edit(true)).rows[0]?.result).toBe('unavailable');
+      const scheduleIn = (workspaceId: string, userId: string) =>
+        createPost(drizzle(database) as unknown as NodePgDatabase, {
+          workspaceId,
+          userId,
+          providerAccountIds: [account],
+          mediaIds: [],
+          content: { kind: 'link', text: 'Cross-workspace Page', linkUrl: 'https://example.test/' },
+          scheduledAt: new Date('2026-10-19T10:00:00Z'),
+        });
+      const targetPost = (userId: string) => scheduleIn(target, userId);
+      await expect(targetPost(user)).rejects.toThrow('do not belong to the workspace');
       expect(
         await editFacebookPageExposure(drizzle(database) as unknown as NodePgDatabase, {
           originWorkspaceId: origin,
@@ -72,28 +90,77 @@ describe('provider account exposure migration', () => {
       await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
       expect((await edit(true)).rows[0]?.result).toBe('unchanged');
       await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
+      const projection = await database.query<{ scopes: unknown; adapter_defaults: unknown }>(
+        `SELECT scopes, adapter_defaults FROM public.resolve_exposed_post_accounts(
+          '${target}', ARRAY['${account}']::uuid[], false)`,
+      );
+      expect(projection.rows).toEqual([{ scopes: [], adapter_defaults: {} }]);
+      await expect(targetPost(outsider)).rejects.toThrow('do not belong to the workspace');
+      const scheduled = await targetPost(user);
+      expect(scheduled.jobIds).toHaveLength(1);
+      const revised = await editPost(drizzle(database) as unknown as NodePgDatabase, {
+        workspaceId: target,
+        userId: user,
+        postId: scheduled.postId,
+        providerAccountIds: [account],
+        mediaIds: [],
+        content: { kind: 'link', text: 'Revised shared Page', linkUrl: 'https://example.test/' },
+        scheduledAt: new Date('2026-10-19T11:00:00Z'),
+      });
+      expect(revised.supersededJobIds).toEqual(scheduled.jobIds);
+      expect(revised.jobIds).toHaveLength(1);
+      const originScheduled = await scheduleIn(origin, user);
+      expect(originScheduled.jobIds).toHaveLength(1);
+      await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
       expect(
         (await database.query('SELECT provider_account_id FROM provider_account_exposures')).rows,
       ).toEqual([{ provider_account_id: account }]);
-      await database.exec(`RESET ROLE;
-        INSERT INTO posts (id, workspace_id, created_by_user_id) VALUES ('${post}', '${target}', '${user}');
-        INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
-          VALUES ('${revision}', '${target}', '${post}', 1, '{"kind":"text","text":"hello"}');
-        INSERT INTO publication_jobs (workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
-          VALUES ('${target}', '${post}', '${revision}', '${account}', '2026-10-19T10:00:00Z');
-        SET ROLE publish_relay_app;
-        SELECT set_config('app.workspace_id', '${origin}', false);`);
+      await database.exec(`SELECT set_config('app.workspace_id', '${origin}', false)`);
       const activeJobs = () =>
         database.query<{ active: boolean }>(
           `SELECT public.provider_account_has_active_jobs('${origin}', '${account}') AS active`,
         );
       expect((await activeJobs()).rows[0]?.active).toBe(true);
       expect((await edit(false)).rows[0]?.result).toBe('active_jobs');
+      await expect(
+        revokeMetaConnection(
+          drizzle(database) as unknown as NodePgDatabase,
+          {} as never,
+          {} as never,
+          { workspaceId: origin, userId: user, accountId: account, requestId: 'revoke-test' },
+        ),
+      ).rejects.toThrow('Cancel or resolve scheduled publications');
+      const subject = await database.query<{ external_subject_id: string }>(
+        `SELECT external_subject_id FROM provider_connections WHERE id = '${connection}'`,
+      );
+      if (!subject.rows[0]) throw new Error('Connection fixture missing');
+      await expect(
+        disconnectProviderSubject(drizzle(database) as unknown as NodePgDatabase, {
+          workspaceId: origin,
+          userId: user,
+          provider: 'meta',
+          externalSubjectId: subject.rows[0].external_subject_id,
+          requestId: 'disconnect-test',
+        }),
+      ).rejects.toThrow('Scheduled publications must be resolved');
       await database.exec(`RESET ROLE;
-        UPDATE publication_jobs SET state = 'published' WHERE workspace_id = '${target}';
+        UPDATE publication_jobs SET state = 'published'
+          WHERE workspace_id IN ('${target}', '${origin}');
         SET ROLE publish_relay_app;`);
       expect((await activeJobs()).rows[0]?.active).toBe(false);
       expect((await edit(false)).rows[0]?.result).toBe('updated');
+      await expect(targetPost(user)).rejects.toThrow('do not belong to the workspace');
+      await expect(
+        editPost(drizzle(database) as unknown as NodePgDatabase, {
+          workspaceId: target,
+          userId: user,
+          postId: scheduled.postId,
+          providerAccountIds: [account],
+          mediaIds: [],
+          content: { kind: 'link', text: 'Denied revision', linkUrl: 'https://example.test/' },
+          scheduledAt: new Date('2026-10-19T12:00:00Z'),
+        }),
+      ).rejects.toThrow('do not belong to the workspace');
       expect((await edit(true)).rows[0]?.result).toBe('updated');
       await database.exec('RESET ROLE');
       const rows = await database.query<{ count: number; preference: boolean }>(

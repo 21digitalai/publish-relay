@@ -1,11 +1,10 @@
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   auditEvents,
   providerAccounts,
   providerConnections,
-  publicationJobs,
   workspaces,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -14,6 +13,7 @@ import {
   getActiveCredential,
   revokeCredential,
 } from '../credentials/credential.repository.js';
+import { hasActiveProviderAccountJobs } from '../credentials/provider-account-exposure.service.js';
 import {
   decryptCredential,
   encryptCredential,
@@ -428,28 +428,18 @@ async function assertNoMetaActiveJobs(
   workspaceId: string,
   connectionId: string,
 ): Promise<void> {
-  const activeJobs = await transaction
-    .select({ id: publicationJobs.id })
-    .from(publicationJobs)
-    .innerJoin(providerAccounts, eq(publicationJobs.providerAccountId, providerAccounts.id))
+  const accounts = await transaction
+    .select({ id: providerAccounts.id })
+    .from(providerAccounts)
     .where(
       and(
-        eq(publicationJobs.workspaceId, workspaceId),
+        eq(providerAccounts.workspaceId, workspaceId),
         eq(providerAccounts.connectionId, connectionId),
-        or(
-          inArray(publicationJobs.state, [
-            'scheduled',
-            'leased',
-            'dispatching',
-            'accepted_pending',
-            'retry_wait',
-          ]),
-          eq(publicationJobs.reconciliationRequired, true),
-        ),
       ),
-    )
-    .limit(1);
-  if (activeJobs[0]) throw new MetaConnectionHasActiveJobsError();
+    );
+  for (const account of accounts)
+    if (await hasActiveProviderAccountJobs(transaction, workspaceId, account.id))
+      throw new MetaConnectionHasActiveJobsError();
 }
 
 interface MetaRevokeInput {

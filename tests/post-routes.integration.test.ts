@@ -58,6 +58,7 @@ const migrations = [
   '0032_little_stellaris.sql',
   '0034_simple_jamie_braddock.sql',
   '0035_delegated_account_receipt.sql',
+  '0042_long_pepper_potts.sql',
   '0045_meta_destination_foundation.sql',
   '0046_linkedin_connection_expiry.sql',
   '0047_linkedin_member_connections.sql',
@@ -66,7 +67,11 @@ const migrations = [
   '0051_provider_subject_lifecycle.sql',
   '0055_x_long_post_declaration.sql',
   '0056_meta_grant_family.sql',
+  '0058_workspace_tombstone.sql',
+  '0059_provider_account_exposures.sql',
+  '0060_facebook_page_exposure_edit.sql',
   '0061_cross_workspace_account_job_guard.sql',
+  '0062_exposed_account_admission.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';

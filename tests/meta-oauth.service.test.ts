@@ -28,6 +28,9 @@ vi.mock('../src/modules/credentials/provider-connection.repository.js', () => ({
   markProviderDestinationsUnavailable: vi.fn(),
   replaceProviderConnection: vi.fn(),
 }));
+vi.mock('../src/modules/credentials/provider-account-exposure.service.js', () => ({
+  hasActiveProviderAccountJobs: vi.fn().mockResolvedValue(false),
+}));
 
 import {
   consumeOauthCallback,
@@ -57,7 +60,6 @@ interface RevokeHarness {
 function createRevokeHarness(grantFamily: string | null = null): RevokeHarness {
   const updates: Record<string, unknown>[] = [];
   const audits: Record<string, unknown>[] = [];
-  let selected = 0;
   let status = 'active';
   const transaction = {
     select: () => ({
@@ -65,11 +67,9 @@ function createRevokeHarness(grantFamily: string | null = null): RevokeHarness {
         innerJoin: () => ({
           where: () => ({
             limit: () =>
-              Promise.resolve(
-                ++selected % 2 === 1
-                  ? [{ id: 'connection', credentialId: 'authority', status, grantFamily }]
-                  : [],
-              ),
+              Promise.resolve([
+                { id: 'connection', credentialId: 'authority', status, grantFamily },
+              ]),
           }),
         }),
         where: () => ({

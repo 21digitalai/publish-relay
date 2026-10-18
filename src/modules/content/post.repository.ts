@@ -5,12 +5,10 @@ import {
   postRevisions,
   posts,
   mediaObjects,
-  providerAccounts,
-  providerConnections,
   publicationJobs,
   revisionMedia,
-  workspaces,
 } from '../../database/schema.js';
+import { loadPostAccounts } from './exposed-post-accounts.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
 import { hasExactInstagramLoginScopes } from '../providers/instagram-login-client.js';
@@ -106,29 +104,14 @@ async function validateTargetOwnership(
   validateXText = true,
   readOnly = false,
 ): Promise<{ id: string; destinationProvider: string; xLongPostsAllowed: boolean }[]> {
-  // Serialize admission with grant revoke reservation and subject reconnect.
-  if (!readOnly)
-    await database
-      .select({ id: workspaces.id })
-      .from(workspaces)
-      .where(eq(workspaces.id, input.workspaceId))
-      .for('update');
-  const accounts = await database
-    .select({
-      id: providerAccounts.id,
-      destinationProvider: providerAccounts.destinationProvider,
-      disconnectedAt: providerAccounts.disconnectedAt,
-      connectionStatus: providerConnections.status,
-      xLongPostsAllowed: providerAccounts.xLongPostsAllowed,
-    })
-    .from(providerAccounts)
-    .innerJoin(providerConnections, eq(providerConnections.id, providerAccounts.connectionId))
-    .where(
-      and(
-        eq(providerAccounts.workspaceId, input.workspaceId),
-        inArray(providerAccounts.id, input.providerAccountIds),
-      ),
-    );
+  // Cross-workspace admission reserves origin then target; the privileged projection
+  // rechecks the active exposure after those locks and before target-owned writes.
+  const accounts = await loadPostAccounts(
+    database,
+    input.workspaceId,
+    input.providerAccountIds,
+    !readOnly,
+  );
   if (accounts.length !== input.providerAccountIds.length)
     throw new PostValidationError('One or more provider accounts do not belong to the workspace');
   if (accounts.some((account) => account.destinationProvider === 'tiktok'))
@@ -194,47 +177,13 @@ async function resolveRevisionTargets(
   database: NodePgDatabase,
   input: PostRevisionInput & { workspaceId: string },
 ) {
-  const accountRows = await database
-    .select({
-      id: providerAccounts.id,
-      destinationProvider: providerAccounts.destinationProvider,
-      provider: providerConnections.provider,
-      scopes: providerConnections.scopes,
-      accessExpiresAt: providerConnections.accessExpiresAt,
-      status: providerConnections.status,
-      expiresAt: providerConnections.expiresAt,
-      disconnectedAt: providerAccounts.disconnectedAt,
-      adapterDefaults: providerAccounts.adapterDefaults,
-    })
-    .from(providerAccounts)
-    .innerJoin(providerConnections, eq(providerConnections.id, providerAccounts.connectionId))
-    .where(
-      and(
-        eq(providerAccounts.workspaceId, input.workspaceId),
-        inArray(providerAccounts.id, input.providerAccountIds),
-      ),
-    );
+  const accountRows = await loadPostAccounts(
+    database,
+    input.workspaceId,
+    input.providerAccountIds,
+    false,
+  );
   const accountsById = new Map(accountRows.map((account) => [account.id, account]));
-  const metaAccountIds = accountRows
-    .filter((account) => account.provider === 'meta' || account.provider === 'instagram_login')
-    .map((account) => account.id);
-  const metaRows =
-    metaAccountIds.length === 0
-      ? []
-      : await database
-          .select({
-            id: providerAccounts.id,
-            destinationProvider: providerAccounts.destinationProvider,
-            availability: providerAccounts.availability,
-          })
-          .from(providerAccounts)
-          .where(
-            and(
-              eq(providerAccounts.workspaceId, input.workspaceId),
-              inArray(providerAccounts.id, metaAccountIds),
-            ),
-          );
-  const metaAccountsById = new Map(metaRows.map((account) => [account.id, account]));
   const mediaRows =
     input.mediaIds.length === 0
       ? []
@@ -256,11 +205,9 @@ async function resolveRevisionTargets(
       if (!account) throw new PostValidationError('Provider account is unavailable');
       if (account.provider !== 'meta' && account.provider !== 'instagram_login')
         return [accountId, null] as const;
-      const metaAccount = metaAccountsById.get(accountId);
-      if (!metaAccount) throw new PostValidationError('Meta destination is unavailable');
       if (account.provider === 'instagram_login') {
         if (
-          metaAccount.destinationProvider !== 'instagram' ||
+          account.destinationProvider !== 'instagram' ||
           !hasExactInstagramLoginScopes(account.scopes) ||
           !account.accessExpiresAt ||
           account.accessExpiresAt <= new Date()
@@ -272,8 +219,8 @@ async function resolveRevisionTargets(
       return [
         accountId,
         buildMetaEffectivePayload(
-          metaAccount.destinationProvider,
-          metaAccount.availability,
+          account.destinationProvider,
+          account.availability,
           input.content,
           input.mediaIds,
           mediaMimeTypes,
@@ -287,7 +234,7 @@ async function resolveRevisionTargets(
       if (!account) throw new PostValidationError('Provider account is unavailable');
       if (account.provider === 'linkedin') {
         if (
-          account.status !== 'active' ||
+          account.connectionStatus !== 'active' ||
           account.disconnectedAt ||
           !account.expiresAt ||
           account.expiresAt <= input.scheduledAt

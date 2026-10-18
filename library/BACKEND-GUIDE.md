@@ -244,6 +244,10 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - `list_user_workspaces`, session/authentication, switch, and API-key lookup exclude tombstoned
   workspaces. A deletion retry reports the target unavailable. Migration 0058 owns the column,
   workspace listing filter, and tenant-authorized FK-resource check.
+- Workspace switching and deletion acquire locks in the same order: owner user row `FOR UPDATE`,
+  then the target workspace row (switch `FOR KEY SHARE`, deletion `FOR UPDATE`). Switching holds
+  that target lock through session rotation, so deletion either sees its active session and refuses
+  or switching sees the committed tombstone without revoking the current session.
 
 # Agent destination discovery
 

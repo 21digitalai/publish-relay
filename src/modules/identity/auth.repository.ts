@@ -387,6 +387,14 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           sql`select set_config('app.workspace_id', ${input.targetWorkspaceId}, true)`,
         );
         await transaction.execute(sql`select set_config('app.user_id', ${input.userId}, true)`);
+        // Match deletion's lock order so a switch cannot create a session after tombstoning.
+        const [user] = await transaction
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, input.userId))
+          .for('update')
+          .limit(1);
+        if (!user) return null;
         const [target] = await transaction
           .select({ workspaceId: workspaces.id, slug: workspaces.slug, role: memberships.role })
           .from(memberships)
@@ -398,6 +406,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
               isNull(workspaces.deletedAt),
             ),
           )
+          .for('key share', { of: workspaces })
           .limit(1);
         if (!target) return null;
         await transaction.execute(

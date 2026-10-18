@@ -714,6 +714,8 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  let showPosts = true;
+  let failVisibilitySave = true;
   await page.route('**/api/provider-accounts*', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -732,6 +734,7 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
                   adapterDefaults: {},
                   isExposed: true,
                   originWorkspaceName: '21digital',
+                  showOtherWorkspacePosts: showPosts,
                 },
               ]
             : [
@@ -746,6 +749,7 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
                   adapterDefaults: {},
                   isExposed: true,
                   originWorkspaceName: '21digital',
+                  showOtherWorkspacePosts: showPosts,
                 },
               ],
           nextCursor: route.request().url().includes('cursor=') ? null : 'test-cursor',
@@ -754,8 +758,47 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
       }),
     }),
   );
+  await page.route(
+    '**/api/provider-accounts/00000000-0000-4000-8000-000000000309/calendar-visibility',
+    async (route) => {
+      if (failVisibilitySave) {
+        failVisibilitySave = false;
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ data: null, error: 'Could not save calendar setting' }),
+        });
+        return;
+      }
+      const body = route.request().postDataJSON() as { showPosts: boolean };
+      showPosts = body.showPosts;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { showPosts }, error: null }),
+      });
+    },
+  );
   await page.goto(await workspacePath(page, 'accounts'));
   await expect(page.getByText('Shared from 21digital')).toBeVisible();
+  const visibility = page.getByRole('switch', { name: 'Show posts from other workspaces' }).first();
+  await expect(visibility).toHaveAttribute('aria-checked', 'true');
+  await visibility.click();
+  await expect(page.getByRole('alert')).toContainText('Could not save calendar setting');
+  await expect(visibility).toHaveAttribute('aria-checked', 'true');
+  await page.screenshot({
+    path: testInfo.outputPath('shared-page-calendar-error.png'),
+    fullPage: true,
+  });
+  await visibility.click();
+  await expect(visibility).toHaveAttribute('aria-checked', 'false');
+  await page.screenshot({
+    path: testInfo.outputPath('shared-page-calendar-hidden.png'),
+    fullPage: true,
+  });
+  await page.reload();
+  await expect(visibility).toHaveAttribute('aria-checked', 'false');
+  await visibility.click();
+  await expect(visibility).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('button', { name: 'More actions for Shared Page' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Revoke Meta connection' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Load more accounts' }).click();

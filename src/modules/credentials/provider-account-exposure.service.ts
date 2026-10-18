@@ -8,6 +8,28 @@ export type ExposureEditResult = 'unavailable' | 'unchanged' | 'active_jobs' | '
 const editResultSchema = z.enum(['unavailable', 'unchanged', 'active_jobs', 'updated']);
 const EXPOSURE_TARGET_PAGE_SIZE = 100;
 
+export function setExposedPageCalendarVisibility(
+  database: NodePgDatabase,
+  input: { workspaceId: string; accountId: string; userId: string; showPosts: boolean },
+): Promise<boolean> {
+  return withTenantTransaction(
+    database,
+    {
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+    },
+    async (transaction) => {
+      const result = await transaction.execute<{ updated: boolean }>(sql`
+      SELECT public.set_exposed_page_calendar_visibility(
+        ${input.workspaceId}::uuid, ${input.accountId}::uuid, ${input.showPosts}
+      ) AS updated
+    `);
+      const rows: unknown = Array.isArray(result) ? result : result.rows;
+      return z.array(z.object({ updated: z.boolean() })).parse(rows)[0]?.updated ?? false;
+    },
+  );
+}
+
 export async function listFacebookPageExposureTargets(
   database: NodePgDatabase,
   input: { originWorkspaceId: string; accountId: string; userId: string; afterId?: string },

@@ -13,6 +13,7 @@ import {
 } from '../src/modules/content/post-read.repository.js';
 import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
 import { listFacebookPageExposureTargets } from '../src/modules/credentials/provider-account-exposure.service.js';
+import { setExposedPageCalendarVisibility } from '../src/modules/credentials/provider-account-exposure.service.js';
 import {
   createPost,
   createPostInTransaction,
@@ -67,6 +68,8 @@ describe('provider account exposure migration', () => {
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.list_exposed_page_calendar_jobs(
           uuid, timestamptz, timestamptz, timestamptz, uuid, integer)
+          TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.set_exposed_page_calendar_visibility(uuid, uuid, boolean)
           TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
@@ -331,15 +334,22 @@ describe('provider account exposure migration', () => {
       expect(await mirror()).toEqual([]);
       await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
       expect(await mirror('2026-10-19T11:00:00Z')).toEqual([]);
-      await database.exec(`RESET ROLE;
-        UPDATE provider_account_exposures SET show_other_workspace_posts = false
-        WHERE workspace_id = '${target}' AND provider_account_id = '${account}';
-        SET ROLE publish_relay_app;`);
+      const setVisibility = (viewer: string, showPosts: boolean) =>
+        setExposedPageCalendarVisibility(browserDb, {
+          workspaceId: target,
+          userId: viewer,
+          accountId: account,
+          showPosts,
+        });
+      expect(await setVisibility(outsider, false)).toBe(false);
+      expect(await setVisibility(user, false)).toBe(true);
       expect(await mirror()).toEqual([]);
-      await database.exec(`RESET ROLE;
-        UPDATE provider_account_exposures SET show_other_workspace_posts = true
-        WHERE workspace_id = '${target}' AND provider_account_id = '${account}';
-        SET ROLE publish_relay_app;`);
+      expect(
+        (await listProviderAccountsPage(browserDb, target, user)).accounts.find(
+          (item) => item.id === account,
+        )?.showOtherWorkspacePosts,
+      ).toBe(false);
+      expect(await setVisibility(user, true)).toBe(true);
       expect(await mirror()).toHaveLength(1);
       expect(
         (await database.query('SELECT provider_account_id FROM provider_account_exposures')).rows,

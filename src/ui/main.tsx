@@ -47,6 +47,7 @@ interface Account {
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
   isExposed?: boolean;
   originWorkspaceName?: string;
+  showOtherWorkspacePosts?: boolean;
 }
 
 interface AccountDto {
@@ -64,6 +65,7 @@ interface AccountDto {
   xLongPosts?: Account['xLongPosts'];
   isExposed?: boolean;
   originWorkspaceName?: string;
+  showOtherWorkspacePosts?: boolean;
 }
 
 interface AccountPageResponse {
@@ -109,6 +111,9 @@ function mapAccountDto(account: AccountDto): Account {
         : null,
     ...(account.isExposed ? { isExposed: true } : {}),
     ...(account.originWorkspaceName ? { originWorkspaceName: account.originWorkspaceName } : {}),
+    ...(account.isExposed
+      ? { showOtherWorkspacePosts: account.showOtherWorkspacePosts !== false }
+      : {}),
   };
 }
 
@@ -1029,6 +1034,11 @@ function AccountRow({
       : null;
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [savingXLongPosts, setSavingXLongPosts] = useState(false);
+  const [savingCalendarVisibility, setSavingCalendarVisibility] = useState(false);
+  const [calendarVisibilityError, setCalendarVisibilityError] = useState<string | null>(null);
+  const [calendarVisibilityAnnouncement, setCalendarVisibilityAnnouncement] = useState<
+    string | null
+  >(null);
   const [xLongPostsError, setXLongPostsError] = useState<string | null>(null);
   const [xLongPostsAnnouncement, setXLongPostsAnnouncement] = useState<string | null>(null);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
@@ -1128,6 +1138,58 @@ function AccountRow({
             originWorkspaceId={originWorkspaceId}
           />
         )}
+      {account.isExposed && originWorkspaceId && (
+        <div className="account-calendar-visibility x-long-post-setting">
+          <button
+            type="button"
+            className="account-calendar-visibility-toggle defaults-toggle"
+            role="switch"
+            aria-checked={account.showOtherWorkspacePosts !== false}
+            disabled={savingCalendarVisibility}
+            onClick={() => {
+              const showPosts = account.showOtherWorkspacePosts === false;
+              setSavingCalendarVisibility(true);
+              setCalendarVisibilityError(null);
+              setCalendarVisibilityAnnouncement(null);
+              void fetch(`/api/provider-accounts/${account.id}/calendar-visibility`, {
+                method: 'PATCH',
+                headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+                body: JSON.stringify({ showPosts }),
+              })
+                .then(async (response) => {
+                  const result = (await response.json()) as {
+                    data: { showPosts: boolean } | null;
+                    error: string | null;
+                  };
+                  if (!response.ok || !result.data)
+                    throw new Error(result.error ?? 'Calendar setting could not be saved');
+                  onDefaultsSaved({ ...account, showOtherWorkspacePosts: result.data.showPosts });
+                  setCalendarVisibilityAnnouncement(`Calendar setting saved for ${account.name}.`);
+                })
+                .catch((error: unknown) => {
+                  setCalendarVisibilityError(
+                    error instanceof Error ? error.message : 'Calendar setting could not be saved',
+                  );
+                })
+                .finally(() => {
+                  setSavingCalendarVisibility(false);
+                });
+            }}
+          >
+            <span className="toggle-track" aria-hidden="true">
+              <span />
+            </span>
+            Show posts from other workspaces
+          </button>
+          <small>Only hides other workspaces’ posts here. Publishing is unchanged.</small>
+          {calendarVisibilityError && (
+            <span className="field-error" role="alert">
+              {calendarVisibilityError}
+            </span>
+          )}
+          <LiveRegion message={calendarVisibilityAnnouncement} />
+        </div>
+      )}
       {account.provider === 'X' && account.xLongPosts && (
         <div className="x-long-post-setting">
           <button

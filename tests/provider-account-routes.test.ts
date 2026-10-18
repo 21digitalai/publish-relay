@@ -19,6 +19,7 @@ vi.mock('../src/modules/credentials/provider-account-exposure.service.js', () =>
   listFacebookPageExposureTargets: vi.fn(() =>
     Promise.resolve({ workspaceIds: [], nextCursor: null }),
   ),
+  setExposedPageCalendarVisibility: vi.fn(() => Promise.resolve(true)),
 }));
 vi.mock('../src/modules/providers/tiktok-capabilities.service.js', () => ({
   fetchTikTokCapabilitySnapshot: vi.fn(),
@@ -35,6 +36,7 @@ import { registerProviderAccountRoutes } from '../src/modules/credentials/provid
 import {
   editFacebookPageExposure,
   listFacebookPageExposureTargets,
+  setExposedPageCalendarVisibility,
 } from '../src/modules/credentials/provider-account-exposure.service.js';
 import { fetchTikTokCapabilitySnapshot } from '../src/modules/providers/tiktok-capabilities.service.js';
 
@@ -145,6 +147,41 @@ describe('provider account routes', () => {
     expect((await app.inject({ method: 'GET', url: `${url}?cursor=bad` })).statusCode).toBe(400);
     vi.mocked(authorizeRequest).mockResolvedValueOnce(null);
     expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
+  });
+
+  it('requires target-owner auth, CSRF, and a boolean for calendar visibility', async () => {
+    const app = await application();
+    const url = `/api/provider-accounts/${accountId}/calendar-visibility`;
+    vi.mocked(authorizeRequest).mockResolvedValueOnce(null);
+    expect(
+      (await app.inject({ method: 'PATCH', url, payload: { showPosts: false } })).statusCode,
+    ).toBe(401);
+    expect(
+      (await app.inject({ method: 'PATCH', url, payload: { showPosts: false } })).statusCode,
+    ).toBe(403);
+    const headers = { cookie: 'publish_relay_csrf=token', 'x-csrf-token': 'token' };
+    expect(
+      (await app.inject({ method: 'PATCH', url, headers, payload: { showPosts: 'false' } }))
+        .statusCode,
+    ).toBe(400);
+    const updated = await app.inject({
+      method: 'PATCH',
+      url,
+      headers,
+      payload: { showPosts: false },
+    });
+    expect(updated.json()).toMatchObject({ data: { showPosts: false } });
+    expect(setExposedPageCalendarVisibility).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: identity.workspaceId,
+      userId: identity.userId,
+      accountId,
+      showPosts: false,
+    });
+    vi.mocked(setExposedPageCalendarVisibility).mockResolvedValueOnce(false);
+    expect(
+      (await app.inject({ method: 'PATCH', url, headers, payload: { showPosts: true } }))
+        .statusCode,
+    ).toBe(404);
   });
 
   it('requires owner permission, CSRF, and a strict boolean for X declaration', async () => {

@@ -23,12 +23,14 @@ import {
 import {
   editFacebookPageExposure,
   listFacebookPageExposureTargets,
+  setExposedPageCalendarVisibility,
 } from './provider-account-exposure.service.js';
 
 const accountParamsSchema = z.object({ accountId: z.uuid() });
 const xLongPostDeclarationSchema = z.strictObject({ allowed: z.boolean() });
 const exposureParamsSchema = z.object({ accountId: z.uuid(), workspaceId: z.uuid() });
 const exposureBodySchema = z.strictObject({ expose: z.boolean() });
+const calendarVisibilitySchema = z.strictObject({ showPosts: z.boolean() });
 
 export function registerProviderAccountRoutes(
   application: FastifyInstance,
@@ -182,6 +184,34 @@ export function registerProviderAccountRoutes(
     });
     return { data: page, error: null };
   });
+
+  application.patch(
+    '/api/provider-accounts/:accountId/calendar-visibility',
+    async (request, reply) => {
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (
+        !verifyCsrfToken(
+          request.cookies[CSRF_COOKIE],
+          request.headers['x-csrf-token'] as string | undefined,
+        )
+      )
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = accountParamsSchema.safeParse(request.params);
+      const body = calendarVisibilitySchema.safeParse(request.body);
+      if (!params.success || !body.success)
+        return reply.code(400).send({ data: null, error: 'Invalid calendar visibility' });
+      const updated = await setExposedPageCalendarVisibility(dependencies.database, {
+        workspaceId: identity.workspaceId,
+        userId: identity.userId,
+        accountId: params.data.accountId,
+        showPosts: body.data.showPosts,
+      });
+      return updated
+        ? { data: { showPosts: body.data.showPosts }, error: null }
+        : reply.code(404).send({ data: null, error: 'Shared Page was not found' });
+    },
+  );
 
   application.patch('/api/provider-accounts/:accountId/x-long-posts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');

@@ -1,10 +1,11 @@
-import { and, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   auditEvents,
   credentials,
   providerAccounts,
+  providerAccountExposures,
   providerConnections,
   workspaces,
 } from '../../database/schema.js';
@@ -35,6 +36,7 @@ export interface ProviderAccountSummary {
   expiresAt?: Date | null;
   originWorkspaceName?: string;
   isExposed?: boolean;
+  showOtherWorkspacePosts?: boolean;
 }
 
 const EXPOSED_PAGE_LIST_LIMIT = 100;
@@ -202,6 +204,26 @@ export function listProviderAccountsPage(
         )
         .parse(rawRows);
       const page = exposed.slice(0, remaining);
+      const preferences = page.length
+        ? await transaction
+            .select({
+              providerAccountId: providerAccountExposures.providerAccountId,
+              showOtherWorkspacePosts: providerAccountExposures.showOtherWorkspacePosts,
+            })
+            .from(providerAccountExposures)
+            .where(
+              and(
+                eq(providerAccountExposures.workspaceId, workspaceId),
+                inArray(
+                  providerAccountExposures.providerAccountId,
+                  page.map((item) => item.id),
+                ),
+              ),
+            )
+        : [];
+      const preferenceByAccount = new Map(
+        preferences.map((item) => [item.providerAccountId, item.showOtherWorkspacePosts]),
+      );
       const last = page.at(-1);
       return {
         accounts: [
@@ -222,6 +244,7 @@ export function listProviderAccountsPage(
             updatedAt: new Date(page.updatedAt),
             originWorkspaceName: page.originWorkspaceName,
             isExposed: true,
+            showOtherWorkspacePosts: preferenceByAccount.get(page.id) ?? true,
           })),
         ],
         nextCursor:

@@ -20,7 +20,10 @@ import {
   updateYouTubeAccountDefaults,
   updateXLongPostDeclaration,
 } from './provider-account.service.js';
-import { editFacebookPageExposure } from './provider-account-exposure.service.js';
+import {
+  editFacebookPageExposure,
+  listFacebookPageExposureTargets,
+} from './provider-account-exposure.service.js';
 
 const accountParamsSchema = z.object({ accountId: z.uuid() });
 const xLongPostDeclarationSchema = z.strictObject({ allowed: z.boolean() });
@@ -150,15 +153,29 @@ export function registerProviderAccountRoutes(
       if (result === 'unavailable')
         return reply.code(404).send({ data: null, error: 'Page or target workspace unavailable' });
       if (result === 'active_jobs')
-        return reply
-          .code(409)
-          .send({
-            data: null,
-            error: 'Resolve scheduled jobs before hiding this Page from the workspace',
-          });
+        return reply.code(409).send({
+          data: null,
+          error: 'Resolve scheduled jobs before hiding this Page from the workspace',
+        });
       return { data: { exposed: body.data.expose }, error: null };
     },
   );
+
+  application.get('/api/provider-accounts/:accountId/exposures', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const params = accountParamsSchema.safeParse(request.params);
+    const query = z.object({ cursor: z.uuid().optional() }).safeParse(request.query);
+    if (!params.success || !query.success)
+      return reply.code(400).send({ data: null, error: 'Invalid Page exposure query' });
+    const page = await listFacebookPageExposureTargets(dependencies.database, {
+      originWorkspaceId: identity.workspaceId,
+      accountId: params.data.accountId,
+      userId: identity.userId,
+      ...(query.data.cursor ? { afterId: query.data.cursor } : {}),
+    });
+    return { data: page, error: null };
+  });
 
   application.patch('/api/provider-accounts/:accountId/x-long-posts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');

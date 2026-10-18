@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
+import { listFacebookPageExposureTargets } from '../src/modules/credentials/provider-account-exposure.service.js';
 import {
   createPost,
   createPostInTransaction,
@@ -54,6 +55,8 @@ describe('provider account exposure migration', () => {
         GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages(uuid)
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages_page(uuid, text, uuid, integer)
+          TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.list_facebook_page_exposure_targets(uuid, uuid, uuid, integer)
           TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
@@ -113,6 +116,20 @@ describe('provider account exposure migration', () => {
           expose: true,
         }),
       ).toBe('updated');
+      expect(
+        await listFacebookPageExposureTargets(drizzle(database) as unknown as NodePgDatabase, {
+          originWorkspaceId: origin,
+          accountId: account,
+          userId: user,
+        }),
+      ).toEqual({ workspaceIds: [target], nextCursor: null });
+      expect(
+        await listFacebookPageExposureTargets(drizzle(database) as unknown as NodePgDatabase, {
+          originWorkspaceId: origin,
+          accountId: account,
+          userId: outsider,
+        }),
+      ).toEqual({ workspaceIds: [], nextCursor: null });
       await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
       expect((await edit(true)).rows[0]?.result).toBe('unchanged');
       await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);

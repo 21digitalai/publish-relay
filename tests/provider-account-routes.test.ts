@@ -16,6 +16,9 @@ vi.mock('../src/modules/credentials/provider-account.service.js', () => ({
 }));
 vi.mock('../src/modules/credentials/provider-account-exposure.service.js', () => ({
   editFacebookPageExposure: vi.fn(() => Promise.resolve('updated')),
+  listFacebookPageExposureTargets: vi.fn(() =>
+    Promise.resolve({ workspaceIds: [], nextCursor: null }),
+  ),
 }));
 vi.mock('../src/modules/providers/tiktok-capabilities.service.js', () => ({
   fetchTikTokCapabilitySnapshot: vi.fn(),
@@ -29,7 +32,10 @@ import {
   updateXLongPostDeclaration,
 } from '../src/modules/credentials/provider-account.service.js';
 import { registerProviderAccountRoutes } from '../src/modules/credentials/provider-account.routes.js';
-import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
+import {
+  editFacebookPageExposure,
+  listFacebookPageExposureTargets,
+} from '../src/modules/credentials/provider-account-exposure.service.js';
 import { fetchTikTokCapabilitySnapshot } from '../src/modules/providers/tiktok-capabilities.service.js';
 
 const accountId = '00000000-0000-4000-8000-000000000204';
@@ -119,6 +125,26 @@ describe('provider account routes', () => {
     expect(
       (await app.inject({ method: 'PATCH', url, headers, payload: { expose: false } })).statusCode,
     ).toBe(409);
+  });
+
+  it('lists only authorized Page exposure target IDs with a bounded cursor', async () => {
+    const app = await application();
+    const url = `/api/provider-accounts/${accountId}/exposures`;
+    vi.mocked(listFacebookPageExposureTargets).mockResolvedValueOnce({
+      workspaceIds: [targetWorkspaceId],
+      nextCursor: targetWorkspaceId,
+    });
+    const response = await app.inject({ method: 'GET', url });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        workspaceIds: [targetWorkspaceId],
+        nextCursor: targetWorkspaceId,
+      },
+    });
+    expect((await app.inject({ method: 'GET', url: `${url}?cursor=bad` })).statusCode).toBe(400);
+    vi.mocked(authorizeRequest).mockResolvedValueOnce(null);
+    expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
   });
 
   it('requires owner permission, CSRF, and a strict boolean for X declaration', async () => {

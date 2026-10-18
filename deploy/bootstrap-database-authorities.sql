@@ -46,6 +46,9 @@ BEGIN
   IF to_regprocedure('public.list_visible_exposed_facebook_pages_page(uuid,text,uuid,integer)') IS NOT NULL THEN
     GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages_page(uuid, text, uuid, integer) TO publish_relay_web;
   END IF;
+  IF to_regprocedure('public.list_facebook_page_exposure_targets(uuid,uuid,uuid,integer)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.list_facebook_page_exposure_targets(uuid, uuid, uuid, integer) TO publish_relay_web;
+  END IF;
 END
 $functions$;
 

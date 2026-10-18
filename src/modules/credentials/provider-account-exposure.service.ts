@@ -6,6 +6,34 @@ import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
 export type ExposureEditResult = 'unavailable' | 'unchanged' | 'active_jobs' | 'updated';
 const editResultSchema = z.enum(['unavailable', 'unchanged', 'active_jobs', 'updated']);
+const EXPOSURE_TARGET_PAGE_SIZE = 100;
+
+export async function listFacebookPageExposureTargets(
+  database: NodePgDatabase,
+  input: { originWorkspaceId: string; accountId: string; userId: string; afterId?: string },
+): Promise<{ workspaceIds: string[]; nextCursor: string | null }> {
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.originWorkspaceId, userId: input.userId },
+    async (transaction) => {
+      const result = await transaction.execute(sql`
+        SELECT workspace_id AS "workspaceId"
+        FROM public.list_facebook_page_exposure_targets(
+          ${input.originWorkspaceId}::uuid, ${input.accountId}::uuid,
+          ${input.afterId ?? null}::uuid, ${EXPOSURE_TARGET_PAGE_SIZE + 1}
+        )
+      `);
+      const rows: unknown = Array.isArray(result) ? result : result.rows;
+      const parsed = z.array(z.object({ workspaceId: z.uuid() })).parse(rows);
+      const page = parsed.slice(0, EXPOSURE_TARGET_PAGE_SIZE);
+      return {
+        workspaceIds: page.map((item) => item.workspaceId),
+        nextCursor:
+          parsed.length > EXPOSURE_TARGET_PAGE_SIZE ? (page.at(-1)?.workspaceId ?? null) : null,
+      };
+    },
+  );
+}
 
 export async function hasActiveProviderAccountJobs(
   transaction: NodePgDatabase,

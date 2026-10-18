@@ -463,6 +463,13 @@
       "when": 1792320600000,
       "tag": "0065_paginated_exposed_facebook_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1792321200000,
+      "tag": "0066_page_exposure_target_listing",
+      "breakpoints": true
     }
   ]
 }

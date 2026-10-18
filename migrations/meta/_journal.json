@@ -428,6 +428,13 @@
       "when": 1792317600000,
       "tag": "0060_facebook_page_exposure_edit",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792318400000,
+      "tag": "0061_cross_workspace_account_job_guard",
+      "breakpoints": true
     }
   ]
 }

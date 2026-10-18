@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -6,10 +6,10 @@ import {
   credentials,
   providerAccounts,
   providerConnections,
-  publicationJobs,
   workspaces,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { hasActiveProviderAccountJobs } from './provider-account-exposure.service.js';
 import type { z } from 'zod';
 import type { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
 import {
@@ -265,27 +265,8 @@ export async function disconnectProviderAccount(
       const account = rows[0];
       if (!account) return 'missing';
       if (account.connectionStatus === 'revoking') return 'revoking';
-      const activeJobs = await transaction
-        .select({ id: publicationJobs.id })
-        .from(publicationJobs)
-        .where(
-          and(
-            eq(publicationJobs.workspaceId, input.workspaceId),
-            eq(publicationJobs.providerAccountId, input.accountId),
-            or(
-              inArray(publicationJobs.state, [
-                'scheduled',
-                'leased',
-                'dispatching',
-                'accepted_pending',
-                'retry_wait',
-              ]),
-              eq(publicationJobs.reconciliationRequired, true),
-            ),
-          ),
-        )
-        .limit(1);
-      if (activeJobs[0]) return 'scheduled';
+      if (await hasActiveProviderAccountJobs(transaction, input.workspaceId, input.accountId))
+        return 'scheduled';
       await transaction
         .update(providerAccounts)
         .set({ disconnectedAt: new Date(), updatedAt: new Date() })

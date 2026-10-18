@@ -7,6 +7,22 @@ import { withTenantTransaction } from '../../database/tenant-transaction.js';
 export type ExposureEditResult = 'unavailable' | 'unchanged' | 'active_jobs' | 'updated';
 const editResultSchema = z.enum(['unavailable', 'unchanged', 'active_jobs', 'updated']);
 
+export async function hasActiveProviderAccountJobs(
+  transaction: NodePgDatabase,
+  originWorkspaceId: string,
+  accountId: string,
+): Promise<boolean> {
+  const result = await transaction.execute(sql`
+    SELECT public.provider_account_has_active_jobs(
+      ${originWorkspaceId}::uuid, ${accountId}::uuid
+    ) AS active
+  `);
+  const rows: unknown = Array.isArray(result) ? result : result.rows;
+  const parsed = z.array(z.object({ active: z.boolean() })).parse(rows);
+  if (!parsed[0]) throw new Error('Provider account job guard returned no result');
+  return parsed[0].active;
+}
+
 /** The database command owns both-workspace authorization, locking, and audit. */
 export function editFacebookPageExposure(
   database: NodePgDatabase,

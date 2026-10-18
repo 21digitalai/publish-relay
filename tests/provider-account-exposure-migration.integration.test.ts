@@ -31,6 +31,8 @@ describe('provider account exposure migration', () => {
         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.edit_facebook_page_exposure(uuid, uuid, uuid, boolean, text)
           TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.provider_account_has_active_jobs(uuid, uuid)
+          TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
             ('${nonOwner}', 'Editor', 'editor@example.test', 'hash');
@@ -81,10 +83,16 @@ describe('provider account exposure migration', () => {
           VALUES ('${target}', '${post}', '${revision}', '${account}', '2026-10-19T10:00:00Z');
         SET ROLE publish_relay_app;
         SELECT set_config('app.workspace_id', '${origin}', false);`);
+      const activeJobs = () =>
+        database.query<{ active: boolean }>(
+          `SELECT public.provider_account_has_active_jobs('${origin}', '${account}') AS active`,
+        );
+      expect((await activeJobs()).rows[0]?.active).toBe(true);
       expect((await edit(false)).rows[0]?.result).toBe('active_jobs');
       await database.exec(`RESET ROLE;
         UPDATE publication_jobs SET state = 'published' WHERE workspace_id = '${target}';
         SET ROLE publish_relay_app;`);
+      expect((await activeJobs()).rows[0]?.active).toBe(false);
       expect((await edit(false)).rows[0]?.result).toBe('updated');
       expect((await edit(true)).rows[0]?.result).toBe('updated');
       await database.exec('RESET ROLE');

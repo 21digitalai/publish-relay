@@ -34,6 +34,9 @@ BEGIN
   IF to_regprocedure('public.edit_facebook_page_exposure(uuid,uuid,uuid,boolean,text)') IS NOT NULL THEN
     GRANT EXECUTE ON FUNCTION public.edit_facebook_page_exposure(uuid, uuid, uuid, boolean, text) TO publish_relay_web;
   END IF;
+  IF to_regprocedure('public.provider_account_has_active_jobs(uuid,uuid)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.provider_account_has_active_jobs(uuid, uuid) TO publish_relay_web;
+  END IF;
 END
 $functions$;
 

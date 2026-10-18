@@ -9,6 +9,7 @@ const authorizeRequest = vi.fn();
 const listBrowserJobSummaries = vi.fn();
 const listExposedPageCalendarJobs = vi.fn();
 const getExposedPageCalendarJob = vi.fn();
+const getExposedPageCalendarMedia = vi.fn();
 const getBrowserJobDetail = vi.fn();
 const cancelPendingJob = vi.fn();
 const requestOperatorRetry = vi.fn();
@@ -58,6 +59,7 @@ vi.mock('../src/modules/content/post-read.repository.js', async (importOriginal)
 vi.mock('../src/modules/content/calendar-mirror.repository.js', () => ({
   listExposedPageCalendarJobs,
   getExposedPageCalendarJob,
+  getExposedPageCalendarMedia,
 }));
 
 const { registerBrowserWorkflowRoutes } =
@@ -165,6 +167,36 @@ describe('browser workflow read contract', () => {
     });
     expect(response.body).not.toMatch(/credential|storageKey|remoteAccount/);
     getExposedPageCalendarJob.mockResolvedValueOnce(null);
+    expect((await app.inject({ method: 'GET', url: path })).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('streams only exact-job authorized mirrored media without exposing storage paths', async () => {
+    getExposedPageCalendarMedia.mockResolvedValue({
+      storageKey: 'origin/private.jpg',
+      mimeType: 'image/jpeg',
+      byteSize: 10,
+    });
+    const read = vi.fn().mockResolvedValue(Buffer.alloc(10));
+    const app = Fastify();
+    registerBrowserWorkflowRoutes(app, {
+      auth: {} as AuthService,
+      database: {} as never,
+      mediaStorage: { read } as never,
+    });
+    const path = `/api/workflow/calendar/exposed-pages/${jobId}/media/${postId}`;
+    const response = await app.inject({ method: 'GET', url: path });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers['content-type']).toContain('image/jpeg');
+    expect(read).toHaveBeenCalledWith('origin/private.jpg');
+    expect(getExposedPageCalendarMedia).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId,
+      userId: 'user',
+      jobId,
+      mediaId: postId,
+    });
+    getExposedPageCalendarMedia.mockResolvedValueOnce(null);
     expect((await app.inject({ method: 'GET', url: path })).statusCode).toBe(404);
     await app.close();
   });

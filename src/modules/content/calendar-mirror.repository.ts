@@ -118,3 +118,36 @@ export function getExposedPageCalendarJob(
     },
   );
 }
+
+export function getExposedPageCalendarMedia(
+  database: NodePgDatabase,
+  input: { workspaceId: string; userId: string; jobId: string; mediaId: string },
+) {
+  return withTenantTransaction(
+    database,
+    {
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+    },
+    async (transaction) => {
+      const result = await transaction.execute(sql`
+      SELECT storage_key AS "storageKey", mime_type AS "mimeType", byte_size AS "byteSize"
+      FROM public.get_exposed_page_calendar_media(
+        ${input.workspaceId}::uuid, ${input.jobId}::uuid, ${input.mediaId}::uuid
+      )
+    `);
+      const rows: unknown = Array.isArray(result) ? result : result.rows;
+      return (
+        z
+          .array(
+            z.object({
+              storageKey: z.string(),
+              mimeType: z.string(),
+              byteSize: z.number(),
+            }),
+          )
+          .parse(rows)[0] ?? null
+      );
+    },
+  );
+}

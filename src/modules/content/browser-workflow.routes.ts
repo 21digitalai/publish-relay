@@ -18,6 +18,7 @@ import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.reposit
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
 import {
   getExposedPageCalendarJob,
+  getExposedPageCalendarMedia,
   listExposedPageCalendarJobs,
 } from './calendar-mirror.repository.js';
 import {
@@ -71,6 +72,7 @@ const MAX_CALENDAR_MIRROR_WINDOW_MS = 45 * 24 * 60 * 60_000;
 const jobParamsSchema = z.object({ jobId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
 const mediaParamsSchema = z.object({ mediaId: z.uuid() });
+const mirrorMediaParamsSchema = z.object({ jobId: z.uuid(), mediaId: z.uuid() });
 const draftParamsSchema = z.object({ draftId: z.uuid() });
 const browserCreatePostSchema = z.intersection(
   createPostRequestSchema,
@@ -714,9 +716,53 @@ export function registerBrowserWorkflowRoutes(
       jobId: params.data.jobId,
     });
     return job
-      ? { data: job, error: null }
+      ? {
+          data: {
+            ...job,
+            media: job.media.map((item) => ({
+              ...item,
+              previewUrl:
+                item.ready && mediaStorage
+                  ? `/api/workflow/calendar/exposed-pages/${job.id}/media/${item.id}`
+                  : null,
+            })),
+          },
+          error: null,
+        }
       : reply.code(404).send({ data: null, error: 'Job was not found' });
   });
+
+  if (mediaStorage)
+    application.get(
+      '/api/workflow/calendar/exposed-pages/:jobId/media/:mediaId',
+      async (request, reply) => {
+        const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+        if (!identity)
+          return reply.code(401).send({ data: null, error: 'Authentication required' });
+        const params = mirrorMediaParamsSchema.safeParse(request.params);
+        if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid media' });
+        const media = await getExposedPageCalendarMedia(dependencies.database, {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          jobId: params.data.jobId,
+          mediaId: params.data.mediaId,
+        });
+        if (!media) return reply.code(404).send({ data: null, error: 'Media was not found' });
+        let bytes: Buffer;
+        try {
+          bytes = await mediaStorage.read(media.storageKey);
+        } catch (error) {
+          request.log.error(
+            { err: error, mediaId: params.data.mediaId },
+            'Mirror media read failed',
+          );
+          return reply.code(500).send({ data: null, error: 'Stored media is unavailable' });
+        }
+        if (bytes.byteLength !== media.byteSize)
+          return reply.code(500).send({ data: null, error: 'Stored media is unavailable' });
+        return reply.header('cache-control', 'no-store').type(media.mimeType).send(bytes);
+      },
+    );
 
   application.get('/api/workflow/jobs', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');

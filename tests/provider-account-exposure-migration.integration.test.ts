@@ -6,7 +6,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { describe, expect, it } from 'vitest';
 
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
-import { getExposedPageCalendarJob } from '../src/modules/content/calendar-mirror.repository.js';
+import {
+  getExposedPageCalendarJob,
+  getExposedPageCalendarMedia,
+} from '../src/modules/content/calendar-mirror.repository.js';
 import {
   getBrowserJobDetail,
   getJobDetail,
@@ -73,6 +76,8 @@ describe('provider account exposure migration', () => {
         GRANT EXECUTE ON FUNCTION public.set_exposed_page_calendar_visibility(uuid, uuid, boolean)
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.get_exposed_page_calendar_job(uuid, uuid)
+          TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.get_exposed_page_calendar_media(uuid, uuid, uuid)
           TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
@@ -312,6 +317,18 @@ describe('provider account exposure migration', () => {
       expect(revised.jobIds).toHaveLength(1);
       const originScheduled = await scheduleIn(origin, user);
       expect(originScheduled.jobIds).toHaveLength(1);
+      const originJobId = originScheduled.jobIds[0];
+      if (!originJobId) throw new Error('Expected origin job');
+      const mirroredMediaId = '00000000-0000-4000-8000-000000000599';
+      await database.exec('RESET ROLE');
+      const originRevision = await database.query<{ revision_id: string }>(`
+        SELECT revision_id FROM publication_jobs WHERE id = '${originJobId}'`);
+      if (!originRevision.rows[0]) throw new Error('Expected origin revision');
+      await database.exec(`INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mirroredMediaId}', '${origin}', 'origin/private.jpg', 'test-hash', 'image/jpeg', 10, 'ready');
+        INSERT INTO revision_media (workspace_id, revision_id, media_id, position)
+        VALUES ('${origin}', '${originRevision.rows[0].revision_id}', '${mirroredMediaId}', 0);
+        SET ROLE publish_relay_app;`);
       await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
       const mirror = (startsAt = '2026-10-19T00:00:00Z') =>
         database
@@ -342,11 +359,31 @@ describe('provider account exposure migration', () => {
         originWorkspaceName: 'Origin',
         providerAccountId: account,
         caption: 'Cross-workspace Page',
-        media: [],
+        media: [{ id: mirroredMediaId, mimeType: 'image/jpeg', byteSize: 10, ready: true }],
       });
       expect(JSON.stringify(await mirroredDetail())).not.toMatch(
         /credential|storageKey|remoteAccount/,
       );
+      const mirroredMedia = () =>
+        getExposedPageCalendarMedia(browserDb, {
+          workspaceId: target,
+          userId: user,
+          jobId: originScheduled.jobIds[0] ?? '',
+          mediaId: mirroredMediaId,
+        });
+      expect(await mirroredMedia()).toEqual({
+        storageKey: 'origin/private.jpg',
+        mimeType: 'image/jpeg',
+        byteSize: 10,
+      });
+      expect(
+        await getExposedPageCalendarMedia(browserDb, {
+          workspaceId: target,
+          userId: user,
+          jobId: firstTargetJob.id,
+          mediaId: mirroredMediaId,
+        }),
+      ).toBeNull();
       await database.exec(`SELECT set_config('app.user_id', '${nonOwner}', false)`);
       expect(await mirror()).toHaveLength(1);
       await database.exec(`SELECT set_config('app.user_id', '${outsider}', false)`);
@@ -356,6 +393,14 @@ describe('provider account exposure migration', () => {
           workspaceId: target,
           userId: outsider,
           jobId: originScheduled.jobIds[0] ?? '',
+        }),
+      ).toBeNull();
+      expect(
+        await getExposedPageCalendarMedia(browserDb, {
+          workspaceId: target,
+          userId: outsider,
+          jobId: originScheduled.jobIds[0] ?? '',
+          mediaId: mirroredMediaId,
         }),
       ).toBeNull();
       await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
@@ -371,6 +416,7 @@ describe('provider account exposure migration', () => {
       expect(await setVisibility(user, false)).toBe(true);
       expect(await mirror()).toEqual([]);
       expect(await mirroredDetail()).toBeNull();
+      expect(await mirroredMedia()).toBeNull();
       expect(
         (await listProviderAccountsPage(browserDb, target, user)).accounts.find(
           (item) => item.id === account,
@@ -418,6 +464,7 @@ describe('provider account exposure migration', () => {
       await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
       expect(await mirror()).toEqual([]);
       expect(await mirroredDetail()).toBeNull();
+      expect(await mirroredMedia()).toBeNull();
       await database.exec(`SELECT set_config('app.workspace_id', '${origin}', false)`);
       expect(
         await listProviderAccounts(drizzle(database) as unknown as NodePgDatabase, target, user),

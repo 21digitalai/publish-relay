@@ -2864,10 +2864,17 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
       body: '{"data":{"items":[]},"error":null}',
     }),
   );
+  let sawDstDayWindow = false;
   await page.route('**/api/workflow/calendar/exposed-pages?*', (route) => {
     const query = new URL(route.request().url()).searchParams;
-    expect(query.get('startsAt')).toBe('2026-10-24T21:00:00.000Z');
-    expect(query.get('endsAt')).toBe('2026-10-25T22:00:00.000Z');
+    const startsAt = query.get('startsAt') ?? '';
+    const endsAt = query.get('endsAt') ?? '';
+    expect(Date.parse(startsAt)).toBeLessThanOrEqual(Date.parse('2026-10-25T01:30:00Z'));
+    expect(Date.parse(endsAt)).toBeGreaterThan(Date.parse('2026-10-25T01:30:00Z'));
+    if (startsAt === '2026-10-24T21:00:00.000Z') {
+      expect(endsAt).toBe('2026-10-25T22:00:00.000Z');
+      sawDstDayWindow = true;
+    }
     return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -2921,6 +2928,20 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
       }),
   );
   await page.goto('/w/ai-influencer/calendar?mode=Day&date=2026-10-25');
+  await expect(
+    page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
+  ).toHaveCount(1);
+  expect(sawDstDayWindow).toBe(true);
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
+  await expect(
+    page
+      .getByRole('gridcell', { name: /Sunday, October 25, 2026/ })
+      .getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
+  ).toHaveCount(1);
+  await page.getByRole('button', { name: 'Week', exact: true }).click();
+  await expect(
+    page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
+  ).toHaveCount(1);
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   await expect(page.locator('.timeline-lane')).toHaveCount(2);
   await expect(page.locator('.timeline-lane').nth(0)).toContainText('Sneji Eli Geri');

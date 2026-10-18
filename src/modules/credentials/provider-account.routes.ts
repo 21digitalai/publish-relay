@@ -20,9 +20,12 @@ import {
   updateYouTubeAccountDefaults,
   updateXLongPostDeclaration,
 } from './provider-account.service.js';
+import { editFacebookPageExposure } from './provider-account-exposure.service.js';
 
 const accountParamsSchema = z.object({ accountId: z.uuid() });
 const xLongPostDeclarationSchema = z.strictObject({ allowed: z.boolean() });
+const exposureParamsSchema = z.object({ accountId: z.uuid(), workspaceId: z.uuid() });
+const exposureBodySchema = z.strictObject({ expose: z.boolean() });
 
 export function registerProviderAccountRoutes(
   application: FastifyInstance,
@@ -119,6 +122,43 @@ export function registerProviderAccountRoutes(
       });
     return { data: { disconnected: true }, error: null };
   });
+
+  application.patch(
+    '/api/provider-accounts/:accountId/exposures/:workspaceId',
+    async (request, reply) => {
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (
+        !verifyCsrfToken(
+          request.cookies[CSRF_COOKIE],
+          request.headers['x-csrf-token'] as string | undefined,
+        )
+      )
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = exposureParamsSchema.safeParse(request.params);
+      const body = exposureBodySchema.safeParse(request.body);
+      if (!params.success || !body.success)
+        return reply.code(400).send({ data: null, error: 'Invalid Page exposure selection' });
+      const result = await editFacebookPageExposure(dependencies.database, {
+        originWorkspaceId: identity.workspaceId,
+        targetWorkspaceId: params.data.workspaceId,
+        accountId: params.data.accountId,
+        userId: identity.userId,
+        requestId: request.id,
+        expose: body.data.expose,
+      });
+      if (result === 'unavailable')
+        return reply.code(404).send({ data: null, error: 'Page or target workspace unavailable' });
+      if (result === 'active_jobs')
+        return reply
+          .code(409)
+          .send({
+            data: null,
+            error: 'Resolve scheduled jobs before hiding this Page from the workspace',
+          });
+      return { data: { exposed: body.data.expose }, error: null };
+    },
+  );
 
   application.patch('/api/provider-accounts/:accountId/x-long-posts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');

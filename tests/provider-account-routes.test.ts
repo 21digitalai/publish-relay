@@ -14,6 +14,9 @@ vi.mock('../src/modules/credentials/provider-account.service.js', () => ({
   updateYouTubeAccountDefaults: vi.fn(() => Promise.resolve('updated')),
   updateXLongPostDeclaration: vi.fn(() => Promise.resolve('updated')),
 }));
+vi.mock('../src/modules/credentials/provider-account-exposure.service.js', () => ({
+  editFacebookPageExposure: vi.fn(() => Promise.resolve('updated')),
+}));
 vi.mock('../src/modules/providers/tiktok-capabilities.service.js', () => ({
   fetchTikTokCapabilitySnapshot: vi.fn(),
   TikTokCapabilityUnavailableError: class extends Error {},
@@ -26,9 +29,11 @@ import {
   updateXLongPostDeclaration,
 } from '../src/modules/credentials/provider-account.service.js';
 import { registerProviderAccountRoutes } from '../src/modules/credentials/provider-account.routes.js';
+import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
 import { fetchTikTokCapabilitySnapshot } from '../src/modules/providers/tiktok-capabilities.service.js';
 
 const accountId = '00000000-0000-4000-8000-000000000204';
+const targetWorkspaceId = '00000000-0000-4000-8000-000000000205';
 const identity = { workspaceId: 'workspace-1', userId: 'user-1' };
 
 async function application(withTikTok = false) {
@@ -82,6 +87,38 @@ describe('provider account routes', () => {
     expect(response.body).toContain('adapterDefaults');
     expect(response.body).not.toContain('credentialId');
     expect(response.body).not.toContain('connectionId');
+  });
+
+  it('requires owner capability and CSRF for the Page exposure checkbox mutation', async () => {
+    const app = await application();
+    const url = `/api/provider-accounts/${accountId}/exposures/${targetWorkspaceId}`;
+    vi.mocked(authorizeRequest).mockResolvedValueOnce(null);
+    expect((await app.inject({ method: 'PATCH', url, payload: { expose: true } })).statusCode).toBe(
+      401,
+    );
+    expect((await app.inject({ method: 'PATCH', url, payload: { expose: true } })).statusCode).toBe(
+      403,
+    );
+    const headers = { cookie: 'publish_relay_csrf=token', 'x-csrf-token': 'token' };
+    expect(
+      (await app.inject({ method: 'PATCH', url, headers, payload: { expose: 'true' } })).statusCode,
+    ).toBe(400);
+    const updated = await app.inject({ method: 'PATCH', url, headers, payload: { expose: true } });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ data: { exposed: true } });
+    const exposureInput = vi.mocked(editFacebookPageExposure).mock.calls[0]?.[1];
+    expect(exposureInput).toMatchObject({
+      originWorkspaceId: identity.workspaceId,
+      targetWorkspaceId,
+      accountId,
+      userId: identity.userId,
+      expose: true,
+    });
+    expect(typeof exposureInput?.requestId).toBe('string');
+    vi.mocked(editFacebookPageExposure).mockResolvedValueOnce('active_jobs');
+    expect(
+      (await app.inject({ method: 'PATCH', url, headers, payload: { expose: false } })).statusCode,
+    ).toBe(409);
   });
 
   it('requires owner permission, CSRF, and a strict boolean for X declaration', async () => {

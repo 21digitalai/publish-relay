@@ -756,7 +756,6 @@ export function Rail({
   const searchRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [activeWorkspaceIndex, setActiveWorkspaceIndex] = useState(0);
-  const activeSlug = window.location.pathname.split('/')[2] ?? '';
   useEffect(() => {
     void fetch('/api/auth/session')
       .then(async (response) => {
@@ -793,9 +792,7 @@ export function Rail({
     if (workspaceOpen) searchRef.current?.focus();
   }, [workspaceOpen]);
   const activeWorkspace =
-    workspaces.find((workspace) => workspace.slug === activeSlug) ??
-    workspaces[0] ??
-    profile?.workspace;
+    workspaces.find((workspace) => workspace.id === profile?.workspace.id) ?? profile?.workspace;
   const initials = profile?.user.displayName
     .split(/\s+/)
     .filter(Boolean)
@@ -825,7 +822,7 @@ export function Rail({
       });
   };
   const workspaceHref = (destination: string) =>
-    `/w/${activeWorkspace?.slug ?? (activeSlug || 'workspace')}/${destination}`;
+    `/w/${activeWorkspace?.slug ?? 'workspace'}/${destination}`;
   return (
     <aside className={`app-rail ${open ? 'open' : ''}`} aria-label="Primary navigation">
       <div className="rail-header">

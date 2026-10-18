@@ -682,7 +682,10 @@ test('registers, persists the first workspace update, and reloads the protected 
   await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
   await expect(page.getByRole('button', { name: /X Publish posts and threads/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Instagram/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Instagram Connect an Instagram/ })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /^Facebook Pages Connect a Facebook Page/ }),
+  ).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Name your workspace' })).toBeVisible();
   await expect(page.getByLabel('Workspace name')).toHaveValue('Atlas Publishing');
@@ -1089,7 +1092,7 @@ test('edits YouTube destination defaults through the account row', async ({ page
   await expect(page.getByRole('button', { name: /X Publish posts and threads/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeVisible();
   await page.getByRole('button', { name: 'Close adapter picker' }).press('Shift+Tab');
-  await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeFocused();
+  await expect(page.locator('.adapter-picker-option').last()).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Close adapter picker' })).toBeFocused();
   await page.keyboard.press('Escape');
@@ -1572,7 +1575,7 @@ test('Meta picker offers two consent families and never starts the combined rout
 test('LinkedIn health failure emits one anonymous connection error', async ({ page }) => {
   await watchErrorHooks(page);
   await establishWorkspaceSession(page);
-  await page.route('**/api/provider-accounts', (route) =>
+  await page.route('**/api/provider-accounts?*', (route) =>
     route.fulfill({ status: 503, body: '{"data":null,"error":"private detail"}' }),
   );
   await page.goto(await workspacePath(page, 'queue'));
@@ -1597,67 +1600,19 @@ test('uses the mobile navigation drawer', async ({ page }) => {
 test('operates the workspace switcher completely from the keyboard', async ({ page }) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);
-  let switchedTo = '';
-  let activeShellWorkspace = {
-    id: '00000000-0000-4000-8000-000000000401',
-    slug: 'atlas',
-    name: 'Atlas',
-  };
-  await page.route('**/api/auth/session', (route) =>
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        data: {
-          user: { displayName: 'Switch Operator', email: 'switch@example.test' },
-          workspace: {
-            ...activeShellWorkspace,
-            role: activeShellWorkspace.slug === 'atlas' ? 'owner' : 'editor',
-          },
-        },
-        error: null,
-      }),
-    }),
-  );
-  await page.route('**/api/workspaces', (route) =>
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        data: {
-          workspaces: [
-            {
-              id: '00000000-0000-4000-8000-000000000401',
-              slug: 'atlas',
-              name: 'Atlas',
-              role: 'owner',
-            },
-            {
-              id: '00000000-0000-4000-8000-000000000402',
-              slug: 'relay',
-              name: 'Relay',
-              role: 'editor',
-            },
-          ],
-        },
-        error: null,
-      }),
-    }),
-  );
-  await page.route('**/api/workspaces/*/switch', (route) => {
-    switchedTo = route.request().url();
-    activeShellWorkspace = {
-      id: '00000000-0000-4000-8000-000000000402',
-      slug: 'relay',
-      name: 'Relay',
-    };
-    return route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ data: { workspace: { slug: 'relay' } }, error: null }),
-    });
+  const csrf = (await page.context().cookies()).find(
+    (cookie) => cookie.name === 'publish_relay_csrf',
+  )?.value;
+  const created = await page.request.post('/api/workspaces', {
+    headers: { 'x-csrf-token': csrf ?? '' },
+    data: { name: 'Relay' },
   });
+  expect(created.ok()).toBe(true);
+  const target = (await created.json()) as { data: { id: string; slug: string } };
   await page.goto(await workspacePath(page, 'accounts'));
   if ((page.viewportSize()?.width ?? 0) < 768)
     await page.getByRole('button', { name: 'Open navigation' }).click();
-  const trigger = page.getByRole('button', { name: /Atlas owner/ });
+  const trigger = page.locator('.workspace-switcher');
   await trigger.click();
   const search = page.getByRole('combobox', { name: 'Search workspaces' });
   await expect(search).toBeFocused();
@@ -1665,24 +1620,69 @@ test('operates the workspace switcher completely from the keyboard', async ({ pa
   await expect(trigger).toBeFocused();
   await trigger.press('Enter');
   await search.press('End');
-  await expect(search).toHaveAttribute('aria-activedescendant', /000000000402$/);
-  await search.press('Enter');
-  await expect(page).toHaveURL('/w/relay/accounts');
-  await expect(page.getByRole('button', { name: /Switch Operator/ })).toContainText(
-    'switch@example.test',
+  await expect(search).toHaveAttribute(
+    'aria-activedescendant',
+    `workspace-option-${target.data.id}`,
   );
+  await search.press('Enter');
+  await expect(page).toHaveURL(`/w/${target.data.slug}/accounts`);
   await expect(
     page.getByText('Manage publishing access and connection health for Relay.'),
   ).toBeVisible();
-  expect(switchedTo).toContain('00000000-0000-4000-8000-000000000402/switch');
+  const current = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { id: string };
+  };
+  expect(current.data.id).toBe(target.data.id);
   if ((page.viewportSize()?.width ?? 0) < 768)
     await page.getByRole('button', { name: 'Open navigation' }).click();
-  const switchedTrigger = page.getByRole('button', { name: /Relay editor/ });
+  const switchedTrigger = page.locator('.workspace-switcher');
   await switchedTrigger.click();
   await expect(page.getByRole('link', { name: 'Add new workspace' })).toHaveAttribute(
     'href',
-    '/w/relay/settings/workspace',
+    `/w/${target.data.slug}/settings/workspace`,
   );
+});
+
+test('direct workspace links cannot mislabel the active session, but the switcher changes it', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  const current = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { id: string; slug: string };
+  };
+  const csrf = (await page.context().cookies()).find(
+    (cookie) => cookie.name === 'publish_relay_csrf',
+  )?.value;
+  const created = await page.request.post('/api/workspaces', {
+    headers: { 'x-csrf-token': csrf ?? '' },
+    data: { name: 'Second workspace' },
+  });
+  expect(created.ok()).toBe(true);
+  const target = (await created.json()) as { data: { id: string; slug: string } };
+
+  await page.goto(`/w/${target.data.slug}/calendar?mode=Week&date=2026-10-25`);
+  await expect(page).toHaveURL(`/w/${current.data.slug}/calendar?mode=Week&date=2026-10-25`);
+  await expect(page.locator('.workspace-switcher')).toContainText('Atlas');
+  const stillCurrent = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { id: string };
+  };
+  expect(stillCurrent.data.id).toBe(current.data.id);
+
+  if ((page.viewportSize()?.width ?? 0) < 768)
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.locator('.workspace-switcher').click();
+  await page.getByRole('option', { name: /Second workspace/ }).click();
+  await expect(page).toHaveURL(`/w/${target.data.slug}/accounts`);
+  const switched = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { id: string };
+  };
+  expect(switched.data.id).toBe(target.data.id);
+  if ((page.viewportSize()?.width ?? 0) < 768)
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(page.locator('.workspace-switcher')).toContainText('Second workspace');
+
+  await page.goto(`/w/${current.data.slug}/jobs/not-a-local-job`);
+  await expect(page).toHaveURL(`/w/${target.data.slug}/jobs/not-a-local-job`);
 });
 
 test('keeps workspace creation reachable when search has no matches', async ({ page }) => {
@@ -2648,7 +2648,7 @@ test('renders truthful queue loading, live states, empty, filtered-empty, and er
     });
   });
   await page.goto(await workspacePath(page, 'queue'));
-  await expect(page.getByRole('status')).toContainText('Loading publication queue');
+  await expect(page.getByRole('status', { name: 'Loading publication queue' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('queue-loading.png'), fullPage: true });
   await expect(page.getByRole('link', { name: /^Dispatching / })).toBeVisible();
   await expect(page.getByRole('link', { name: /^Retrying / })).toBeVisible();
@@ -2712,6 +2712,8 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  const activePath = await workspacePath(page, 'calendar?mode=Week&date=2026-09-01');
+  const activeSlug = activePath.split('/')[2] ?? '';
   await page.route('**/api/workspaces/current', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -2765,7 +2767,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
       }),
     });
   });
-  await page.goto('/w/avery-studio/calendar?mode=Week&date=2026-09-01');
+  await page.goto(activePath);
   await expect(page.getByRole('status', { name: 'Loading publication calendar' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('calendar-loading.png'), fullPage: true });
   await expect(page.getByRole('button', { name: '2 accounts' })).toBeVisible();
@@ -2779,7 +2781,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await expect(septemberSecond.getByRole('link')).toHaveCount(1);
   await expect(septemberFirst.getByRole('link').first()).toHaveAttribute(
     'href',
-    '/w/avery-studio/jobs/avery-morning',
+    `/w/${activeSlug}/jobs/avery-morning`,
   );
   await page.screenshot({ path: testInfo.outputPath('calendar-month.png'), fullPage: true });
   await page.getByRole('button', { name: 'Previous date' }).click();
@@ -2825,7 +2827,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   );
   await expect(page.locator('.timeline-lane').getByRole('link').first()).toHaveAttribute(
     'href',
-    '/w/avery-studio/jobs/avery-morning',
+    `/w/${activeSlug}/jobs/avery-morning`,
   );
   await page.screenshot({ path: testInfo.outputPath('calendar-timeline.png'), fullPage: true });
 
@@ -3126,6 +3128,7 @@ test('refreshes background publication outcomes without replaying historical toa
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  const activeSlug = (await workspacePath(page, 'queue')).split('/')[2] ?? '';
   await page.clock.install();
   let state = 'scheduled';
   let polls = 0;
@@ -3158,7 +3161,7 @@ test('refreshes background publication outcomes without replaying historical toa
       }),
     }),
   );
-  await page.goto('/w/avery/calendar?mode=Week&date=2026-10-01');
+  await page.goto(`/w/${activeSlug}/calendar?mode=Week&date=2026-10-01`);
   await expect(page.getByRole('link', { name: /Avery Editorial, Scheduled/ })).toBeVisible();
   expect(await page.getByText('Published on X').count()).toBe(0);
   state = 'published';
@@ -3181,7 +3184,7 @@ test('refreshes background publication outcomes without replaying historical toa
   await expect(page.locator('.publication-toast')).toHaveCount(0);
 
   state = 'scheduled';
-  await page.goto('/w/avery/queue');
+  await page.goto(`/w/${activeSlug}/queue`);
   await expect(page.locator('.queue-row').getByText('Scheduled')).toBeVisible();
   state = 'retry_wait';
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -3194,7 +3197,7 @@ test('refreshes background publication outcomes without replaying historical toa
   await expect(page.locator('.publication-toast')).toContainText('Post needs attention');
   await expect(
     page.locator('.publication-toast').getByRole('link', { name: 'View details' }),
-  ).toHaveAttribute('href', '/w/avery/jobs/outcome-job');
+  ).toHaveAttribute('href', `/w/${activeSlug}/jobs/outcome-job`);
 });
 
 test('shows published jobs as success across calendar modes after reload', async ({ page }) => {
@@ -3509,6 +3512,7 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
   page,
 }) => {
   await establishWorkspaceSession(page);
+  const activeSlug = (await workspacePath(page, 'queue')).split('/')[2] ?? '';
   await page.route('**/api/workflow/jobs/pending-job', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     await route.fulfill({
@@ -3562,7 +3566,7 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
       }),
     });
   });
-  await page.goto('/w/avery-studio/jobs/pending-job');
+  await page.goto(`/w/${activeSlug}/jobs/pending-job`);
   await expect(page.getByRole('status')).toContainText('Loading publication job');
   await expect(page.getByRole('heading', { name: 'Avery Editorial' })).toBeVisible();
   await expect(page.getByText('Provider processing', { exact: true }).first()).toBeVisible();
@@ -3577,7 +3581,7 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
   );
   await expect(page.getByRole('link', { name: /Back to queue/ })).toHaveAttribute(
     'href',
-    '/w/avery-studio/queue',
+    `/w/${activeSlug}/queue`,
   );
   await expect(page.getByRole('button', { name: 'Retry now' })).toBeHidden();
 
@@ -3593,7 +3597,7 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
   await expect(page.getByRole('alert')).toContainText('Job missing');
   await expect(page.getByRole('link', { name: 'Back to queue' })).toHaveAttribute(
     'href',
-    '/w/avery-studio/queue',
+    `/w/${activeSlug}/queue`,
   );
 });
 

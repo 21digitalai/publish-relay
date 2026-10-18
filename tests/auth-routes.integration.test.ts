@@ -385,6 +385,12 @@ describe('authentication HTTP boundary', () => {
       revokedAt: null,
     });
     vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.findWorkspace).mockResolvedValue({
+      id: 'w1',
+      name: 'Atlas',
+      slug: 'atlas',
+      timezone: 'UTC',
+    });
     const response = await createTestApplication(store).inject({
       method: 'GET',
       url: '/w/atlas/queue',
@@ -393,6 +399,36 @@ describe('authentication HTTP boundary', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('<div id="root"></div>');
     expect(response.body).toContain('/main.tsx');
+  });
+
+  it('redirects a mismatched workspace URL to the session workspace without switching tenants', async () => {
+    const store = createStore();
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId: 'u1',
+      workspaceId: 'w1',
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.findWorkspace).mockResolvedValue({
+      id: 'w1',
+      name: 'Atlas',
+      slug: 'atlas',
+      timezone: 'UTC',
+    });
+    const application = createTestApplication(store);
+    const response = await application.inject({
+      method: 'GET',
+      url: '/w/other/calendar?mode=Week&date=2026-10-25',
+      headers: { cookie: 'publish_relay_session=w1.token' },
+    });
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe('/w/atlas/calendar?mode=Week&date=2026-10-25');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).not.toContain('<div id="root"></div>');
+    expect(store.rotateWorkspaceSession).not.toHaveBeenCalled();
+    expect(store.findWorkspace).toHaveBeenCalledWith('w1', 'u1');
   });
 
   it('denies a session when live membership lookup no longer authorizes it', async () => {

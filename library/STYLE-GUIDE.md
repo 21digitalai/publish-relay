@@ -98,6 +98,7 @@ Desktop uses a 240px left rail with wordmark, workspace switcher, Create post, Q
 The workspace switcher in `src/ui/main.tsx` keeps its Add new workspace link after the searchable workspace list, outside the listbox so filtering to zero matches never hides it. The link uses the active workspace's existing Settings > Workspace creation route; it does not create a second form. It remains keyboard reachable, and Escape from the link closes the menu and restores focus to the switcher.
 
 The rail user identity and active workspace label always render from the authenticated persisted shell profile. Initials derive from the display name. Connection copy must describe only bounded known session/account state; it must never invent a global platform-health claim.
+The workspace switcher and rail links derive the active workspace from that authenticated profile ID, never from the URL slug or the first workspace in a list. Direct deep links to another workspace are redirected to the current session workspace; changing workspaces requires the switcher, which rotates the session before navigating.
 
 Routes:
 

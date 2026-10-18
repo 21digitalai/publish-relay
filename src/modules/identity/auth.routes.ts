@@ -323,6 +323,16 @@ export function registerAuthRoutes(
   const protectedShell = async (request: FastifyRequest, reply: FastifyReply) => {
     const identity = await authorizeRequest(request, auth, 'content:read');
     if (!identity) return reply.redirect('/login');
+    reply.header('Cache-Control', 'no-store');
+    if (request.url.startsWith('/w/')) {
+      const workspace = await auth.getWorkspace(identity);
+      if (!workspace) return reply.code(404).send({ data: null, error: 'Workspace was not found' });
+      const requestedSlug = request.url.split(/[/?#]/, 3)[2] ?? '';
+      if (requestedSlug !== workspace.slug) {
+        const suffix = request.url.slice(`/w/${requestedSlug}`.length);
+        return reply.redirect(`/w/${workspace.slug}${suffix}`);
+      }
+    }
     return reply.type('text/html').send(options.shellHtml);
   };
   application.get('/app', protectedShell);

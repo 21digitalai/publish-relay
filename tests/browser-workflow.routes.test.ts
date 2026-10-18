@@ -110,6 +110,7 @@ describe('browser workflow read contract', () => {
       expect.objectContaining({ workspaceId, limit: 2, states: ['scheduled'] }),
     );
     expect(response.body).not.toContain('must-never-leak');
+    expect(Buffer.byteLength(response.body)).toBeLessThan(4_000);
     expect(response.json()).toMatchObject({
       data: {
         items: [
@@ -302,7 +303,7 @@ describe('browser workflow read contract', () => {
       url: `/api/workflow/jobs/${jobId}`,
     });
 
-    expect(getBrowserJobDetail).toHaveBeenCalledWith(expect.anything(), workspaceId, jobId);
+    expect(getBrowserJobDetail).toHaveBeenCalledWith(expect.anything(), workspaceId, jobId, 'user');
     expect(response.body).not.toContain('must-never-leak');
     expect(response.json()).toMatchObject({ data: { id: jobId, content: { text: 'Hello' } } });
     await application.close();
@@ -398,7 +399,7 @@ describe('browser workflow read contract', () => {
       expect.anything(),
       expect.objectContaining({ workspaceId, jobId, actorId: 'user' }),
     ]);
-    expect(getBrowserJobDetail).toHaveBeenCalledWith(expect.anything(), workspaceId, jobId);
+    expect(getBrowserJobDetail).toHaveBeenCalledWith(expect.anything(), workspaceId, jobId, 'user');
     await application.close();
   });
 

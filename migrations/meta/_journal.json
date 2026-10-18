@@ -470,6 +470,13 @@
       "when": 1792321200000,
       "tag": "0066_page_exposure_target_listing",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1792321800000,
+      "tag": "0067_browser_shared_page_job_account",
+      "breakpoints": true
     }
   ]
 }

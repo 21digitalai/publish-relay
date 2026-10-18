@@ -86,6 +86,12 @@ beforeEach(async () => {
       'utf8',
     ),
   );
+  await database.exec(
+    await readFile(
+      new URL('../migrations/0067_browser_shared_page_job_account.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   db = drizzle(database) as unknown as NodePgDatabase;
 });
 

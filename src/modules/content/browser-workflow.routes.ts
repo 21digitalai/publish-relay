@@ -521,7 +521,9 @@ export function registerBrowserWorkflowRoutes(
     };
     const jobs = await Promise.all(
       (responseBody.data.jobIds ?? []).map(async (jobId) => {
-        const job = await getBrowserJobDetail(dependencies.database, identity.workspaceId, jobId);
+        const job = await getBrowserJobDetail(
+          dependencies.database, identity.workspaceId, jobId, identity.userId,
+        );
         return job
           ? { id: job.id, effectiveProviderSettings: job.effectiveProviderSettings }
           : { id: jobId, effectiveProviderSettings: null };
@@ -667,6 +669,7 @@ export function registerBrowserWorkflowRoutes(
       return reply.code(400).send({ data: null, error: 'Invalid schedule window' });
     const rows = await listBrowserJobSummaries(dependencies.database, {
       workspaceId: identity.workspaceId,
+      userId: identity.userId,
       limit: query.limit + 1,
       ...(query.states ? { states: query.states } : {}),
       ...(query.providerAccountId ? { providerAccountId: query.providerAccountId } : {}),
@@ -699,6 +702,7 @@ export function registerBrowserWorkflowRoutes(
       dependencies.database,
       identity.workspaceId,
       params.data.jobId,
+      identity.userId,
     );
     return job
       ? { data: serializeJob(job), error: null }
@@ -726,6 +730,7 @@ export function registerBrowserWorkflowRoutes(
         dependencies.database,
         identity.workspaceId,
         params.data.jobId,
+        identity.userId,
       );
       if (existing && existing.state !== 'cancelled')
         cancelled = await cancelPendingJob(dependencies.database, {
@@ -765,6 +770,7 @@ export function registerBrowserWorkflowRoutes(
         dependencies.database,
         identity.workspaceId,
         params.data.jobId,
+        identity.userId,
       );
       if (existing && existing.state !== 'retry_wait')
         result = await requestOperatorRetry(

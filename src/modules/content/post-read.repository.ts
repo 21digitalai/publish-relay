@@ -4,8 +4,6 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   postRevisions,
   posts,
-  providerAccounts,
-  providerConnections,
   publicationAttempts,
   publicationJobEvents,
   publicationJobs,
@@ -30,6 +28,7 @@ export type BrowserJobState = (typeof browserJobStates)[number];
 
 export interface BrowserJobFilters {
   workspaceId: string;
+  userId?: string;
   limit: number;
   states?: BrowserJobState[];
   providerAccountId?: string;
@@ -87,10 +86,11 @@ const browserJobProjection = {
       else null end`,
   },
   providerAccount: {
-    id: providerAccounts.id,
-    displayName: providerAccounts.displayName,
-    handle: providerAccounts.providerAccountId,
-    provider: providerConnections.provider,
+    id: sql<string>`browser_account.id`,
+    displayName: sql<string>`browser_account.display_name`,
+    handle: sql<string | null>`browser_account.handle`,
+    provider: sql<string>`browser_account.provider`,
+    originWorkspaceName: sql<string | null>`browser_account.origin_workspace_name`,
   },
 };
 
@@ -110,18 +110,10 @@ function browserJobJoins(database: NodePgDatabase) {
       and(eq(posts.workspaceId, publicationJobs.workspaceId), eq(posts.id, publicationJobs.postId)),
     )
     .innerJoin(
-      providerAccounts,
-      and(
-        eq(providerAccounts.workspaceId, publicationJobs.workspaceId),
-        eq(providerAccounts.id, publicationJobs.providerAccountId),
-      ),
-    )
-    .innerJoin(
-      providerConnections,
-      and(
-        eq(providerConnections.workspaceId, publicationJobs.workspaceId),
-        eq(providerConnections.id, providerAccounts.connectionId),
-      ),
+      sql`LATERAL public.resolve_browser_job_account(
+        ${publicationJobs.workspaceId}, ${publicationJobs.id}
+      ) AS browser_account`,
+      sql`true`,
     );
 }
 
@@ -135,7 +127,10 @@ export async function listBrowserJobSummaries(database: NodePgDatabase, input: B
         ),
       )
     : undefined;
-  return withTenantTransaction(database, { workspaceId: input.workspaceId }, (transaction) =>
+  return withTenantTransaction(database, {
+    workspaceId: input.workspaceId,
+    ...(input.userId ? { userId: input.userId } : {}),
+  }, (transaction) =>
     browserJobJoins(transaction)
       .where(
         and(
@@ -160,8 +155,12 @@ export async function getBrowserJobDetail(
   database: NodePgDatabase,
   workspaceId: string,
   jobId: string,
+  userId?: string,
 ) {
-  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
+  return withTenantTransaction(database, {
+    workspaceId,
+    ...(userId ? { userId } : {}),
+  }, async (transaction) => {
     const rows = await browserJobJoins(transaction)
       .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.id, jobId)))
       .limit(1);
@@ -230,7 +229,7 @@ export async function getBrowserJobDetail(
     ]);
     const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
     const externalUrl = published?.externalPostId
-      ? job.providerAccount.provider === 'x'
+      ? job.providerAccount.provider === 'x' && job.providerAccount.handle
         ? `https://x.com/${job.providerAccount.handle}/status/${published.externalPostId}`
         : job.providerAccount.provider === 'youtube'
           ? `https://www.youtube.com/watch?v=${published.externalPostId}`

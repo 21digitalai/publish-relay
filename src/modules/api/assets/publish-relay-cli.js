@@ -178,6 +178,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'label',
     'providerAccount',
     'displayName',
+    'originWorkspaceName',
     'handle',
     'provider',
     'mediaCount',

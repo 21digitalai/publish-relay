@@ -188,6 +188,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'label',
     'providerAccount',
     'displayName',
+    'originWorkspaceName',
     'handle',
     'provider',
     'mediaCount',

@@ -6,6 +6,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { describe, expect, it } from 'vitest';
 
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
+import {
+  getBrowserJobDetail,
+  listBrowserJobSummaries,
+} from '../src/modules/content/post-read.repository.js';
 import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
 import { listFacebookPageExposureTargets } from '../src/modules/credentials/provider-account-exposure.service.js';
 import {
@@ -57,6 +61,8 @@ describe('provider account exposure migration', () => {
         GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages_page(uuid, text, uuid, integer)
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.list_facebook_page_exposure_targets(uuid, uuid, uuid, integer)
+          TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.resolve_browser_job_account(uuid, uuid)
           TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
@@ -172,6 +178,34 @@ describe('provider account exposure migration', () => {
         );
         expect(result.kind).toBe('executed');
       }
+      const browserDb = drizzle(database) as unknown as NodePgDatabase;
+      const targetJobs = await listBrowserJobSummaries(browserDb, {
+        workspaceId: target,
+        userId: user,
+        limit: 10,
+      });
+      expect(targetJobs).toHaveLength(2);
+      expect(targetJobs[0]?.providerAccount).toMatchObject({
+        id: account,
+        displayName: 'Page',
+        provider: 'meta',
+        originWorkspaceName: 'Origin',
+        handle: null,
+      });
+      const firstTargetJob = targetJobs[0];
+      if (!firstTargetJob) throw new Error('Expected a target-owned Page job');
+      expect(
+        await getBrowserJobDetail(browserDb, target, firstTargetJob.id, user),
+      ).toMatchObject({ id: firstTargetJob.id, providerAccount: { id: account } });
+      expect(await listBrowserJobSummaries(browserDb, {
+        workspaceId: target,
+        userId: outsider,
+        limit: 10,
+      })).toEqual([]);
+      expect(await listBrowserJobSummaries(browserDb, {
+        workspaceId: target,
+        limit: 10,
+      })).toEqual([]);
       for (const actor of [
         { type: 'api-key' as const, id: outsider },
         { type: 'delegated' as const, id: outsider },

@@ -41,7 +41,12 @@ export function registerProviderAccountRoutes(
   application.get('/api/provider-accounts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    const query = z.object({ cursor: z.string().max(1024).optional() }).safeParse(request.query);
+    const query = z
+      .object({
+        cursor: z.string().max(1024).optional(),
+        provider: z.literal('linkedin').optional(),
+      })
+      .safeParse(request.query);
     if (!query.success)
       return reply.code(400).send({ data: null, error: 'Invalid account page cursor' });
     try {
@@ -50,6 +55,7 @@ export function registerProviderAccountRoutes(
         identity.workspaceId,
         identity.userId,
         query.data.cursor,
+        query.data.provider,
       );
       return { data: page, error: null };
     } catch (error) {

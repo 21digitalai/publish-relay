@@ -344,6 +344,15 @@ describe('provider account exposure migration', () => {
           '${target}', '00000000-0000-4000-8000-000000000502', 'local-' || g, 'x',
           'local-' || g, 'Local ' || lpad(g::text, 3, '0')
         FROM generate_series(400, 500) AS g;
+        INSERT INTO provider_connections (id, workspace_id, provider, credential_id, member_urn)
+          VALUES ('00000000-0000-4000-8000-000000000503', '${target}', 'linkedin',
+            '00000000-0000-4000-8000-000000000501', 'urn:li:person:late');
+        INSERT INTO provider_accounts
+          (id, workspace_id, connection_id, provider_account_id, destination_provider,
+            remote_account_id, display_name)
+          VALUES ('00000000-0000-4000-8000-000000000504', '${target}',
+            '00000000-0000-4000-8000-000000000503', 'linkedin-member', 'linkedin',
+            'linkedin-member', 'Late LinkedIn');
         SET ROLE publish_relay_app;
       `);
       const pages = [];
@@ -354,8 +363,17 @@ describe('provider account exposure migration', () => {
         pages.push(...batch.accounts);
         cursor = batch.nextCursor;
       } while (cursor);
-      expect(pages).toHaveLength(203);
-      expect(new Set(pages.map((item) => item.id)).size).toBe(203);
+      expect(pages).toHaveLength(204);
+      expect(new Set(pages.map((item) => item.id)).size).toBe(204);
+      const linkedInPage = await listProviderAccountsPage(
+        pagedDb,
+        target,
+        user,
+        undefined,
+        'linkedin',
+      );
+      expect(linkedInPage.accounts.map((item) => item.displayName)).toEqual(['Late LinkedIn']);
+      expect(linkedInPage.nextCursor).toBeNull();
     } finally {
       await database.close();
     }

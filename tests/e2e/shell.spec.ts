@@ -1110,22 +1110,31 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
   await watchErrorHooks(page);
   await establishWorkspaceSession(page);
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-  await page.route('**/api/provider-accounts', (route) =>
+  await page.route('**/api/provider-accounts*', (route) =>
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         data: {
-          accounts: [
-            {
-              id: '00000000-0000-4000-8000-000000000299',
-              provider: 'linkedin',
-              displayName: 'Member One',
-              status: 'active',
-              expiresAt,
-              updatedAt: new Date().toISOString(),
-              adapterDefaults: {},
-            },
-          ],
+          accounts:
+            route.request().url().includes('provider=linkedin') &&
+            !route.request().url().includes('cursor=')
+              ? []
+              : [
+                  {
+                    id: '00000000-0000-4000-8000-000000000299',
+                    provider: 'linkedin',
+                    displayName: 'Member One',
+                    status: 'active',
+                    expiresAt,
+                    updatedAt: new Date().toISOString(),
+                    adapterDefaults: {},
+                  },
+                ],
+          nextCursor:
+            route.request().url().includes('provider=linkedin') &&
+            !route.request().url().includes('cursor=')
+              ? 'next-linkedin-page'
+              : null,
         },
         error: null,
       }),

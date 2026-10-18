@@ -5,6 +5,22 @@ import { linkedInExpiryWarning, type LinkedInAccount } from './linkedin-expiry.j
 import { beginAdapterConnection } from './posting-adapter-connection.js';
 import { getPostingAdapter } from './posting-adapter-registry.js';
 
+async function loadLinkedInHealthAccounts(): Promise<LinkedInAccount[]> {
+  const accounts: LinkedInAccount[] = [];
+  let cursor: string | null = null;
+  do {
+    const url = `/api/provider-accounts?provider=linkedin${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('LinkedIn connection health could not be loaded.');
+    const result = (await response.json()) as {
+      data: { accounts: LinkedInAccount[]; nextCursor: string | null };
+    };
+    accounts.push(...result.data.accounts);
+    cursor = result.data.nextCursor;
+  } while (cursor);
+  return accounts;
+}
+
 export function LinkedInExpiryNotice() {
   const [accounts, setAccounts] = useState<LinkedInAccount[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -13,15 +29,9 @@ export function LinkedInExpiryNotice() {
   const healthErrorReported = useRef(false);
   useEffect(() => {
     let active = true;
-    void fetch('/api/provider-accounts')
-      .then(async (response) => {
-        if (!response.ok) throw new Error('LinkedIn connection health could not be loaded.');
-        return response.json() as Promise<{
-          data: { accounts: (LinkedInAccount & { provider: string })[] };
-        }>;
-      })
-      .then(({ data }) => {
-        if (active) setAccounts(data.accounts.filter((account) => account.provider === 'linkedin'));
+    void loadLinkedInHealthAccounts()
+      .then((loaded) => {
+        if (active) setAccounts(loaded);
       })
       .catch(() => {
         if (active && !healthErrorReported.current) {

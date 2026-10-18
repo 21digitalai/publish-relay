@@ -78,6 +78,7 @@ export function listProviderAccountsPage(
   workspaceId: string,
   userId?: string,
   cursor?: string,
+  providerFilter?: 'linkedin',
 ): Promise<{ accounts: ProviderAccountSummary[]; nextCursor: string | null }> {
   const after = decodePageCursor(cursor);
   return withTenantTransaction(
@@ -122,6 +123,7 @@ export function listProviderAccountsPage(
                     isNull(providerAccounts.disconnectedAt),
                     eq(providerConnections.provider, 'tiktok'),
                   ),
+                  providerFilter ? eq(providerConnections.provider, providerFilter) : undefined,
                   localAfter
                     ? sql`(${providerConnections.provider}, ${providerAccounts.displayName}, ${providerAccounts.id}) > (${localAfter[1]}, ${localAfter[2]}, ${localAfter[3]}::uuid)`
                     : undefined,
@@ -167,7 +169,7 @@ export function listProviderAccountsPage(
         : null;
       if (rows.length > EXPOSED_PAGE_LIST_LIMIT || local.length === EXPOSED_PAGE_LIST_LIMIT)
         return { accounts: local, nextCursor: localCursor };
-      if (!userId) return { accounts: local, nextCursor: null };
+      if (!userId || providerFilter) return { accounts: local, nextCursor: null };
       const remaining = EXPOSED_PAGE_LIST_LIMIT - local.length;
       const exposedAfter = after?.[0] === 'exposed' ? after : null;
       const result = await transaction.execute<{

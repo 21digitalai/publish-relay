@@ -41,6 +41,12 @@ export interface AuthStore {
   listWorkspaces: (userId: string) => Promise<WorkspaceSummary[]>;
   createWorkspace: (userId: string, name: string, position: number) => Promise<WorkspaceSummary>;
   reorderWorkspaces: (userId: string, workspaceIds: string[]) => Promise<void>;
+  deleteWorkspace: (input: {
+    userId: string;
+    currentWorkspaceId: string;
+    targetWorkspaceId: string;
+    confirmedName: string;
+  }) => Promise<string | null>;
   rotateWorkspaceSession: (input: {
     currentWorkspaceId: string;
     currentTokenHash: string;
@@ -167,6 +173,23 @@ export class AuthService {
     if (workspaceIds.some((workspaceId) => !expected.has(workspaceId)))
       throw new Error('Workspace order contains an unknown workspace');
     await this.store.reorderWorkspaces(identity.userId, workspaceIds);
+  }
+
+  async deleteWorkspace(
+    identity: AuthIdentity,
+    targetWorkspaceId: string,
+    confirmedName: string,
+  ): Promise<string | null> {
+    if (targetWorkspaceId === identity.workspaceId)
+      return 'Switch away before deleting this workspace';
+    const existing = await this.store.listWorkspaces(identity.userId);
+    if (existing.length <= 1) return 'The last workspace cannot be deleted';
+    return this.store.deleteWorkspace({
+      userId: identity.userId,
+      currentWorkspaceId: identity.workspaceId,
+      targetWorkspaceId,
+      confirmedName,
+    });
   }
 
   async switchWorkspace(

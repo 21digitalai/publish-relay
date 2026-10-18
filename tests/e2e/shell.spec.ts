@@ -2722,6 +2722,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   let grantRevokeRequests = 0;
   let workspaceCreateRequests = 0;
   let workspaceOrderRequests = 0;
+  let workspaceDeleteRequests = 0;
   let keys: Record<string, unknown>[] = [];
   let workspaces = [
     { id: 'workspace-1', name: 'Atlas', slug: 'atlas', role: 'owner', position: 0 },
@@ -2779,6 +2780,22 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data: { workspaces }, error: null }),
+    });
+  });
+  await page.route('**/api/workspaces/workspace-3', async (route) => {
+    workspaceDeleteRequests += 1;
+    if (workspaceDeleteRequests === 1) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: '{"data":null,"error":"Workspace has connected accounts or provider data"}',
+      });
+      return;
+    }
+    workspaces = workspaces.filter((item) => item.id !== 'workspace-3');
+    await route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"deleted":true},"error":null}',
     });
   });
   await page.route('**/api/settings/api-keys**', async (route) => {
@@ -2871,6 +2888,37 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   await expect(page.getByRole('button', { name: 'Move New Desk up' })).toBeDisabled();
   await expect(page.getByRole('status')).toContainText('Workspace order saved');
   expect(workspaceOrderRequests).toBe(1);
+  const newDeskRow = page.locator('.workspace-management-row').filter({ hasText: 'New Desk' });
+  await expect(
+    page
+      .locator('.workspace-management-row')
+      .filter({ hasText: 'Atlas' })
+      .getByRole('button', { name: 'Delete' }),
+  ).toBeDisabled();
+  await newDeskRow.getByRole('button', { name: 'Delete' }).click();
+  await page.screenshot({
+    path: testInfo.outputPath('workspace-delete-confirmation.png'),
+    fullPage: true,
+  });
+  await expect(page.getByRole('button', { name: 'Delete workspace' })).toBeDisabled();
+  await page.getByLabel('Type New Desk to confirm').fill('New Desk');
+  await page.getByRole('button', { name: 'Delete workspace' }).click();
+  await expect(page.getByRole('alert')).toContainText(
+    'Workspace has connected accounts or provider data',
+  );
+  await page.screenshot({
+    path: testInfo.outputPath('workspace-delete-blocked.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Delete workspace' }).click();
+  await expect(newDeskRow).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText('New Desk', { exact: true })).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath('workspace-delete-reloaded.png'),
+    fullPage: true,
+  });
+  expect(workspaceDeleteRequests).toBe(2);
   await page.getByLabel('Name', { exact: true }).fill('Atlas Studio');
   await page.getByRole('button', { name: 'Save workspace' }).click();
   await expect(page.getByRole('status')).toContainText('Workspace settings saved');

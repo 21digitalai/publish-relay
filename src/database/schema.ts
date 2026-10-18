@@ -65,6 +65,7 @@ export const workspaces = pgTable('workspaces', {
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   timezone: text('timezone').notNull().default('UTC'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
   ...timestamps,
 });
 

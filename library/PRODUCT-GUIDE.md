@@ -10,6 +10,10 @@ Users can register, connect multiple social accounts, schedule content through t
 
 - Authentication and protected application shell.
 - Multi-tenant workspaces/projects.
+- Owners may delete an empty workspace other than the currently selected or last workspace from
+  Settings after typing its name. Workspaces with members, live sessions, linked accounts/credentials,
+  API keys, OAuth state, posts, jobs, media, or other linked data cannot be deleted. Deletion hides the
+  workspace from navigation and prevents further access while retaining its audit history.
 - Multiple provider accounts per workspace.
 - X as the first complete provider.
 - Connected accounts, queue/list, calendar/day/hour views, job details, pre-dispatch edit/cancel, retry, and external result links.

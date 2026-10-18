@@ -64,6 +64,7 @@ function store(authenticated: boolean): AuthStore {
     rotateWorkspaceSession: vi.fn(),
     createWorkspace: vi.fn(),
     reorderWorkspaces: vi.fn(),
+    deleteWorkspace: vi.fn(),
   };
   if (authenticated) {
     vi.mocked(value.findSession).mockResolvedValue({

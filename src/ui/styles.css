@@ -1467,6 +1467,24 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 2px;
 }
+.workspace-management-row > span:last-child {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.workspace-delete-button:disabled {
+  opacity: 0.45;
+}
+@media (max-width: 480px) {
+  .workspace-management-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .workspace-management-row > span:last-child {
+    justify-content: flex-start;
+  }
+}
 .segmented-control {
   display: flex;
   flex-wrap: wrap;

@@ -233,6 +233,18 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 - A publication target fact is one `publication_jobs` row, including historical rows; multiple jobs aimed at one connected account remain multiple targets. Connected-account facts require both a non-disconnected account and an active parent connection. Deleted media remains visible in lifecycle counts but contributes no retained bytes.
 - Provider capability metadata stays adapter-owned and describes technical content/media shapes, target behavior, dispatch mode, and verified provider limits only. It must not contain plan names, prices, entitlements, or commercial admission rules. Neutral action policy consumes these facts rather than re-querying tables or teaching adapters about commercial policy.
 
+## Empty workspace tombstones
+
+- `DELETE /api/workspaces/:workspaceId` uses the existing browser session and CSRF boundary,
+  requires target owner membership, a non-current/non-last target, and an exact typed name.
+  The repository locks the workspace row before checking members and every FK-linked resource;
+  FK inserts cannot race that lock. Active sessions, other members, and linked resources block
+  deletion. Audit and expired/revoked sessions remain, while user defaults are
+  reassigned or cleared. The target is tombstoned, never cascaded or hard-deleted.
+- `list_user_workspaces`, session/authentication, switch, and API-key lookup exclude tombstoned
+  workspaces. A deletion retry reports the target unavailable. Migration 0058 owns the column,
+  workspace listing filter, and tenant-authorized FK-resource check.
+
 # Agent destination discovery
 
 ## Instagram Login publishing bridge

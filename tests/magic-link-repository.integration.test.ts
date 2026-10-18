@@ -32,6 +32,15 @@ beforeEach(async () => {
   await database.exec(
     await readFile(new URL('../migrations/0042_long_pepper_potts.sql', import.meta.url), 'utf8'),
   );
+  await database.exec(
+    await readFile(
+      new URL('../migrations/0043_workspace_membership_listing.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await database.exec(
+    await readFile(new URL('../migrations/0058_workspace_tombstone.sql', import.meta.url), 'utf8'),
+  );
 });
 
 afterEach(async () => database.close());

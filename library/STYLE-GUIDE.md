@@ -79,6 +79,12 @@ Normal text must meet 4.5:1 contrast and large text/UI boundaries 3:1. Semantic 
 
 ## Information architecture
 
+Workspace Settings uses the existing `confirm-dialog` for deletion of an empty, non-current
+owned workspace. The row action is disabled with a reason for current, last, or non-owned rows;
+the dialog requires the exact displayed name and renders server resource blockers inline.
+The list and switcher remove a deleted workspace after the response and stay absent on reload.
+On narrow screens, row actions wrap below the workspace label.
+
 Desktop uses a 240px left rail with wordmark, workspace switcher, Create post, Queue, Calendar, Accounts, Settings, then help/user/connection health in the footer. Create post remains visible without scrolling. Mobile uses a drawer.
 
 The workspace switcher in `src/ui/main.tsx` keeps its Add new workspace link after the searchable workspace list, outside the listbox so filtering to zero matches never hides it. The link uses the active workspace's existing Settings > Workspace creation route; it does not create a second form. It remains keyboard reachable, and Escape from the link closes the menu and restores focus to the switcher.

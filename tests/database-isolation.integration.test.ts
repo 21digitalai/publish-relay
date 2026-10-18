@@ -23,6 +23,7 @@ const migrationUrls = [
   new URL('../migrations/0023_clear_shocker.sql', import.meta.url),
   new URL('../migrations/0042_long_pepper_potts.sql', import.meta.url),
   new URL('../migrations/0043_workspace_membership_listing.sql', import.meta.url),
+  new URL('../migrations/0058_workspace_tombstone.sql', import.meta.url),
 ];
 let database: PGlite;
 
@@ -36,6 +37,7 @@ beforeEach(async () => {
     GRANT USAGE ON SCHEMA public TO publish_relay_app, publish_relay_worker;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app, publish_relay_worker;
     GRANT EXECUTE ON FUNCTION public.list_user_workspaces(uuid) TO publish_relay_app;
+    GRANT EXECUTE ON FUNCTION public.workspace_deletion_blocker(uuid) TO publish_relay_app;
   `);
 });
 
@@ -348,5 +350,151 @@ describe('PostgreSQL tenant isolation', () => {
         expect(result.rows[0]).toMatchObject({ count: 1 });
       },
     );
+    await database.exec(`UPDATE workspaces SET deleted_at = now() WHERE id = '${workspaceA}'`);
+    await expect(service.authenticate(workspaceA, created.token)).resolves.toBeNull();
+  });
+
+  it('tombstones only an empty owned non-current workspace and invalidates its sessions', async () => {
+    const current = '00000000-0000-4000-8000-000000000081';
+    const target = '00000000-0000-4000-8000-000000000082';
+    const userId = '00000000-0000-4000-8000-000000000083';
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug) VALUES
+        ('${current}', 'Current', 'current-workspace'),
+        ('${target}', 'Empty Test', 'empty-test');
+      INSERT INTO users (id, email, password_hash, default_workspace_id)
+        VALUES ('${userId}', 'delete@example.test', 'hash', '${target}');
+      SELECT set_config('app.workspace_id', '${current}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${current}', '${userId}', 'owner');
+      SELECT set_config('app.workspace_id', '${target}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${target}', '${userId}', 'owner');
+      INSERT INTO sessions (workspace_id, user_id, token_hash, csrf_secret_hash, expires_at)
+        VALUES ('${target}', '${userId}', '${'e'.repeat(64)}', '${'f'.repeat(64)}', now() + interval '1 day');
+      RESET app.workspace_id;
+      SET ROLE publish_relay_app;
+    `);
+    const store = createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase);
+    const deletion = { userId, currentWorkspaceId: current, targetWorkspaceId: target };
+    await expect(store.deleteWorkspace({ ...deletion, confirmedName: 'Wrong' })).resolves.toBe(
+      'Workspace name confirmation does not match',
+    );
+    await withTenantTransaction(
+      drizzle(database) as unknown as NodePgDatabase,
+      { workspaceId: target },
+      async (transaction) => {
+        await transaction.execute(sql`INSERT INTO api_keys
+          (workspace_id, created_by_user_id, label, prefix, secret_hash)
+          VALUES (${target}::uuid, ${userId}::uuid, 'Blocker', 'pr_blocker', 'hash')`);
+      },
+    );
+    await expect(store.deleteWorkspace({ ...deletion, confirmedName: 'Empty Test' })).resolves.toBe(
+      'Workspace has active sessions',
+    );
+    await withTenantTransaction(
+      drizzle(database) as unknown as NodePgDatabase,
+      { workspaceId: target },
+      async (transaction) => {
+        await transaction.execute(sql`UPDATE sessions SET expires_at = now() - interval '1 second'
+          WHERE workspace_id = ${target}::uuid`);
+      },
+    );
+    await expect(store.deleteWorkspace({ ...deletion, confirmedName: 'Empty Test' })).resolves.toBe(
+      'Workspace has API keys',
+    );
+    await withTenantTransaction(
+      drizzle(database) as unknown as NodePgDatabase,
+      { workspaceId: target },
+      async (transaction) => {
+        await transaction.execute(sql`DELETE FROM api_keys WHERE workspace_id = ${target}::uuid`);
+        await transaction.execute(sql`INSERT INTO credentials
+          (workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag,
+           ciphertext, nonce, tag)
+          VALUES (${target}::uuid, 'v1', decode('01','hex'), decode('02','hex'),
+                  decode('03','hex'), decode('04','hex'), decode('05','hex'), decode('06','hex'))`);
+      },
+    );
+    await expect(store.deleteWorkspace({ ...deletion, confirmedName: 'Empty Test' })).resolves.toBe(
+      'Workspace has credentials',
+    );
+    await withTenantTransaction(
+      drizzle(database) as unknown as NodePgDatabase,
+      { workspaceId: target },
+      async (transaction) => {
+        await transaction.execute(
+          sql`DELETE FROM credentials WHERE workspace_id = ${target}::uuid`,
+        );
+      },
+    );
+    await expect(
+      store.deleteWorkspace({ ...deletion, confirmedName: 'Empty Test' }),
+    ).resolves.toBeNull();
+    await expect(store.listWorkspaces(userId)).resolves.toMatchObject([{ id: current }]);
+    await expect(store.findSession(target, 'e'.repeat(64))).resolves.toBeNull();
+    await expect(
+      store.rotateWorkspaceSession({
+        currentWorkspaceId: current,
+        currentTokenHash: 'e'.repeat(64),
+        targetWorkspaceId: target,
+        userId,
+        tokenHash: 'g'.repeat(64),
+        csrfSecretHash: 'h'.repeat(64),
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    ).resolves.toBeNull();
+    await expect(store.deleteWorkspace({ ...deletion, confirmedName: 'Empty Test' })).resolves.toBe(
+      'Workspace was not found',
+    );
+    await database.exec(`RESET ROLE`);
+    const result = await database.query<{ default_workspace_id: string; deleted_at: Date }>(
+      `SELECT "default_workspace_id", (SELECT "deleted_at" FROM workspaces WHERE id = '${target}') AS deleted_at
+       FROM users WHERE id = '${userId}'`,
+    );
+    expect(result.rows[0]?.default_workspace_id).toBe(current);
+    expect(result.rows[0]?.deleted_at).toBeTruthy();
+  });
+
+  it('refuses editor deletion and hides the dependency scanner from other tenants', async () => {
+    const current = '00000000-0000-4000-8000-000000000091';
+    const target = '00000000-0000-4000-8000-000000000092';
+    const userId = '00000000-0000-4000-8000-000000000093';
+    const stranger = '00000000-0000-4000-8000-000000000094';
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug) VALUES
+        ('${current}', 'Current', 'editor-current'), ('${target}', 'Target', 'editor-target');
+      INSERT INTO users (id, email, password_hash) VALUES
+        ('${userId}', 'editor@example.test', 'hash'),
+        ('${stranger}', 'stranger@example.test', 'hash');
+      SELECT set_config('app.workspace_id', '${current}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${current}', '${userId}', 'owner');
+      SELECT set_config('app.workspace_id', '${target}', false);
+      INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${target}', '${userId}', 'editor');
+      RESET app.workspace_id;
+      SET ROLE publish_relay_app;
+    `);
+    const store = createPostgresAuthStore(drizzle(database) as unknown as NodePgDatabase);
+    await expect(
+      store.deleteWorkspace({
+        userId,
+        currentWorkspaceId: current,
+        targetWorkspaceId: target,
+        confirmedName: 'Target',
+      }),
+    ).resolves.toBe('Only an owner can delete this workspace');
+    await expect(
+      store.deleteWorkspace({
+        userId: stranger,
+        currentWorkspaceId: current,
+        targetWorkspaceId: target,
+        confirmedName: 'Target',
+      }),
+    ).resolves.toBe('Workspace was not found');
+    await expect(
+      withTenantTransaction(
+        drizzle(database) as unknown as NodePgDatabase,
+        { workspaceId: target, userId: stranger },
+        (transaction) =>
+          transaction.execute(sql`SELECT public.workspace_deletion_blocker(${target}::uuid)`),
+      ),
+    ).rejects.toThrow('Failed query');
   });
 });

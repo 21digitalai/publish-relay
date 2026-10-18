@@ -1831,7 +1831,7 @@ function SettingsPage() {
   const isAutomation = window.location.pathname.endsWith('/settings/automation');
   const isIntegrations = window.location.pathname.endsWith('/settings/integrations');
   const workspaceBase = window.location.pathname.split('/settings/')[0] ?? '';
-  const [workspace, setWorkspace] = useState({ name: '', slug: '', timezone: 'UTC' });
+  const [workspace, setWorkspace] = useState({ id: '', name: '', slug: '', timezone: 'UTC' });
   const [workspaces, setWorkspaces] = useState<
     { id: string; name: string; slug: string; role: string; position: number }[]
   >([]);
@@ -1850,6 +1850,12 @@ function SettingsPage() {
   const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const [isReorderingWorkspaces, setIsReorderingWorkspaces] = useState(false);
+  const [deletingWorkspace, setDeletingWorkspace] = useState<(typeof workspaces)[number] | null>(
+    null,
+  );
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
   const creatingWorkspaceRef = useRef(false);
   const reorderingWorkspacesRef = useRef(false);
   const [isCreatingKey, setIsCreatingKey] = useState(false);
@@ -1982,6 +1988,31 @@ function SettingsPage() {
     } finally {
       reorderingWorkspacesRef.current = false;
       setIsReorderingWorkspaces(false);
+    }
+  };
+  const deleteWorkspace = async () => {
+    if (!deletingWorkspace || isDeletingWorkspace) return;
+    setIsDeletingWorkspace(true);
+    setDeleteError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${deletingWorkspace.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({ name: deleteConfirmation }),
+      });
+      const result = (await response.json()) as { error: string | null };
+      if (!response.ok) {
+        setDeleteError(result.error ?? 'Workspace could not be deleted');
+        return;
+      }
+      setWorkspaces((current) => current.filter((item) => item.id !== deletingWorkspace.id));
+      setDeletingWorkspace(null);
+      setDeleteConfirmation('');
+      setMessage('Workspace deleted');
+    } catch {
+      setDeleteError('Workspace could not be deleted. Try again.');
+    } finally {
+      setIsDeletingWorkspace(false);
     }
   };
   const createKey = async () => {
@@ -2160,6 +2191,28 @@ function SettingsPage() {
                       }}
                     >
                       ↓
+                    </button>
+                    <button
+                      className="danger-button workspace-delete-button"
+                      disabled={
+                        item.id === workspace.id || item.role !== 'owner' || workspaces.length <= 1
+                      }
+                      title={
+                        item.id === workspace.id
+                          ? 'Switch away before deleting'
+                          : item.role !== 'owner'
+                            ? 'Only an owner can delete'
+                            : workspaces.length <= 1
+                              ? 'The last workspace cannot be deleted'
+                              : undefined
+                      }
+                      onClick={() => {
+                        setDeletingWorkspace(item);
+                        setDeleteConfirmation('');
+                        setDeleteError(null);
+                      }}
+                    >
+                      Delete
                     </button>
                   </span>
                 </div>
@@ -2438,6 +2491,56 @@ function SettingsPage() {
             ))
           )}
         </section>
+      )}
+      {deletingWorkspace && (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog workspace-delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="workspace-delete-title"
+          >
+            <span className="danger-icon">!</span>
+            <h2 id="workspace-delete-title">Delete {deletingWorkspace.name}?</h2>
+            <p>Only an empty workspace can be deleted. Its audit history stays preserved.</p>
+            <label className="field-label">
+              Type {deletingWorkspace.name} to confirm
+              <input
+                className="text-input workspace-delete-confirmation"
+                autoFocus
+                value={deleteConfirmation}
+                onChange={(event) => {
+                  setDeleteConfirmation(event.target.value);
+                }}
+              />
+            </label>
+            {deleteError && (
+              <p className="form-error" role="alert">
+                {deleteError}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <button
+                className="secondary-button"
+                disabled={isDeletingWorkspace}
+                onClick={() => {
+                  setDeletingWorkspace(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                disabled={isDeletingWorkspace || deleteConfirmation !== deletingWorkspace.name}
+                onClick={() => {
+                  void deleteWorkspace();
+                }}
+              >
+                {isDeletingWorkspace ? 'Deleting…' : 'Delete workspace'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </WorkspaceLayout>
   );

@@ -53,7 +53,14 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           workspaceId: users.defaultWorkspaceId,
         })
         .from(users)
-        .where(and(sql`lower(${users.email}) = ${email}`, eq(users.isDisabled, false)))
+        .innerJoin(workspaces, eq(workspaces.id, users.defaultWorkspaceId))
+        .where(
+          and(
+            sql`lower(${users.email}) = ${email}`,
+            eq(users.isDisabled, false),
+            isNull(workspaces.deletedAt),
+          ),
+        )
         .limit(1);
       const workspaceId = user?.workspaceId;
       if (!user || !workspaceId || !user.passwordHash) return null;
@@ -113,6 +120,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             revokedAt: sessions.revokedAt,
           })
           .from(sessions)
+          .innerJoin(workspaces, eq(workspaces.id, sessions.workspaceId))
           .innerJoin(
             memberships,
             and(
@@ -120,7 +128,13 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
               eq(memberships.workspaceId, sessions.workspaceId),
             ),
           )
-          .where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.tokenHash, tokenHash)))
+          .where(
+            and(
+              eq(sessions.workspaceId, workspaceId),
+              eq(sessions.tokenHash, tokenHash),
+              isNull(workspaces.deletedAt),
+            ),
+          )
           .limit(1);
         return row ?? null;
       });
@@ -130,7 +144,14 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
         const [row] = await transaction
           .select({ role: memberships.role })
           .from(memberships)
-          .where(and(eq(memberships.userId, userId), eq(memberships.workspaceId, workspaceId)))
+          .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+          .where(
+            and(
+              eq(memberships.userId, userId),
+              eq(memberships.workspaceId, workspaceId),
+              isNull(workspaces.deletedAt),
+            ),
+          )
           .limit(1);
         return row?.role ?? null;
       });
@@ -150,7 +171,13 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           .from(memberships)
           .innerJoin(users, eq(users.id, memberships.userId))
           .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
-          .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+          .where(
+            and(
+              eq(memberships.workspaceId, workspaceId),
+              eq(memberships.userId, userId),
+              isNull(workspaces.deletedAt),
+            ),
+          )
           .limit(1);
         return profile
           ? {
@@ -176,7 +203,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             timezone: workspaces.timezone,
           })
           .from(workspaces)
-          .where(eq(workspaces.id, workspaceId))
+          .where(and(eq(workspaces.id, workspaceId), isNull(workspaces.deletedAt)))
           .limit(1);
         return workspace ?? null;
       });
@@ -191,7 +218,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             ...(input.timezone ? { timezone: input.timezone } : {}),
             updatedAt: new Date(),
           })
-          .where(eq(workspaces.id, workspaceId))
+          .where(and(eq(workspaces.id, workspaceId), isNull(workspaces.deletedAt)))
           .returning({
             id: workspaces.id,
             name: workspaces.name,
@@ -246,6 +273,12 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           await transaction.execute(
             sql`select set_config('app.workspace_id', ${workspaceId}, true)`,
           );
+          const [active] = await transaction
+            .select({ id: workspaces.id })
+            .from(workspaces)
+            .where(and(eq(workspaces.id, workspaceId), isNull(workspaces.deletedAt)))
+            .limit(1);
+          if (!active) throw new Error('Workspace order contains a deleted workspace');
           const [updated] = await transaction
             .update(memberships)
             .set({ position })
@@ -254,6 +287,99 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           if (!updated) throw new Error('Workspace order contains an unknown workspace');
         }
       });
+    },
+    async deleteWorkspace(input) {
+      if (input.targetWorkspaceId === input.currentWorkspaceId)
+        return 'Switch away before deleting this workspace';
+      return withTenantTransaction(
+        database,
+        { workspaceId: input.targetWorkspaceId, userId: input.userId },
+        async (transaction) => {
+          // Serialize deletions by this owner, including requests from different sessions.
+          await transaction
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.id, input.userId))
+            .for('update')
+            .limit(1);
+          const [workspace] = await transaction
+            .select({ id: workspaces.id, name: workspaces.name })
+            .from(workspaces)
+            .where(and(eq(workspaces.id, input.targetWorkspaceId), isNull(workspaces.deletedAt)))
+            .for('update')
+            .limit(1);
+          if (!workspace) return 'Workspace was not found';
+          const [membership] = await transaction
+            .select({ role: memberships.role })
+            .from(memberships)
+            .where(
+              and(eq(memberships.workspaceId, workspace.id), eq(memberships.userId, input.userId)),
+            )
+            .limit(1);
+          if (!membership) return 'Workspace was not found';
+          if (membership.role !== 'owner') return 'Only an owner can delete this workspace';
+          const active = await transaction.execute<{ count: number }>(
+            sql`SELECT count(*)::integer AS count FROM public.list_user_workspaces(${input.userId}::uuid)`,
+          );
+          if ((active.rows[0]?.count ?? 0) <= 1) return 'The last workspace cannot be deleted';
+          const [current] = await transaction
+            .select({ id: workspaces.id })
+            .from(workspaces)
+            .where(and(eq(workspaces.id, input.currentWorkspaceId), isNull(workspaces.deletedAt)))
+            .limit(1);
+          if (!current) return 'Current workspace is unavailable';
+          if (workspace.name !== input.confirmedName)
+            return 'Workspace name confirmation does not match';
+          const members = await transaction.execute<{ count: number }>(
+            sql`SELECT count(*)::integer AS count FROM public.memberships WHERE workspace_id = ${workspace.id}::uuid`,
+          );
+          if ((members.rows[0]?.count ?? 0) > 1) return 'Workspace has other members';
+          const [activeSession] = await transaction
+            .select({ id: sessions.id })
+            .from(sessions)
+            .where(
+              and(
+                eq(sessions.workspaceId, workspace.id),
+                isNull(sessions.revokedAt),
+                sql`${sessions.expiresAt} > now()`,
+              ),
+            )
+            .limit(1);
+          if (activeSession) return 'Workspace has active sessions';
+          const dependency = await transaction.execute<{ blocker: string | null }>(
+            sql`SELECT public.workspace_deletion_blocker(${workspace.id}::uuid) AS blocker`,
+          );
+          if (dependency.rows[0]?.blocker) return dependency.rows[0].blocker;
+          const now = new Date();
+          await transaction
+            .update(users)
+            .set({ defaultWorkspaceId: input.currentWorkspaceId, updatedAt: now })
+            .where(and(eq(users.id, input.userId), eq(users.defaultWorkspaceId, workspace.id)));
+          await transaction
+            .update(users)
+            .set({ defaultWorkspaceId: null, updatedAt: now })
+            .where(eq(users.defaultWorkspaceId, workspace.id));
+          await transaction
+            .update(sessions)
+            .set({ revokedAt: now })
+            .where(and(eq(sessions.workspaceId, workspace.id), isNull(sessions.revokedAt)));
+          await transaction
+            .update(workspaces)
+            .set({ deletedAt: now, updatedAt: now })
+            .where(eq(workspaces.id, workspace.id));
+          await transaction.insert(auditEvents).values({
+            workspaceId: workspace.id,
+            actorType: 'user',
+            actorId: input.userId,
+            action: 'workspace_deleted',
+            targetType: 'workspace',
+            targetId: workspace.id,
+            requestId: crypto.randomUUID(),
+            metadata: {},
+          });
+          return null;
+        },
+      );
     },
     async rotateWorkspaceSession(input) {
       return database.transaction(async (transaction) => {
@@ -269,6 +395,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             and(
               eq(memberships.workspaceId, input.targetWorkspaceId),
               eq(memberships.userId, input.userId),
+              isNull(workspaces.deletedAt),
             ),
           )
           .limit(1);

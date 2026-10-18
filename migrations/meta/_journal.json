@@ -407,6 +407,13 @@
       "when": 1791544000000,
       "tag": "0057_instagram_login_legacy_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792283000000,
+      "tag": "0058_workspace_tombstone",
+      "breakpoints": true
     }
   ]
 }

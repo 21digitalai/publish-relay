@@ -41,6 +41,7 @@ const workspaceCreateSchema = z.object({ name: z.string().trim().min(1).max(100)
 const workspaceOrderSchema = z.object({
   workspaceIds: z.array(z.uuid()).min(1).max(MAX_WORKSPACES_PER_USER),
 });
+const workspaceDeleteSchema = z.object({ name: z.string().min(1).max(100) });
 
 function parseSessionCookie(
   value: string | undefined,
@@ -266,6 +267,33 @@ export function registerAuthRoutes(
         .code(400)
         .send({ data: null, error: 'Workspace order must include every workspace exactly once' });
     }
+  });
+
+  application.delete('/api/workspaces/:workspaceId', async (request, reply) => {
+    const identity = await authenticateRequest(request, auth);
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!verifyCsrfToken(request.cookies[CSRF_COOKIE], request.headers['x-csrf-token'] as string))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const target = workspaceSwitchSchema.safeParse(request.params);
+    const confirmation = workspaceDeleteSchema.safeParse(request.body);
+    if (!target.success || !confirmation.success)
+      return reply.code(400).send({ data: null, error: 'Confirm the workspace name' });
+    const blocker = await auth.deleteWorkspace(
+      identity,
+      target.data.workspaceId,
+      confirmation.data.name,
+    );
+    if (blocker)
+      return reply
+        .code(
+          blocker === 'Workspace was not found'
+            ? 404
+            : blocker === 'Only an owner can delete this workspace'
+              ? 403
+              : 409,
+        )
+        .send({ data: null, error: blocker });
+    return { data: { deleted: true }, error: null };
   });
 
   application.post('/api/workspaces/:workspaceId/switch', async (request, reply) => {

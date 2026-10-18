@@ -53,6 +53,7 @@ function application(configured: boolean) {
     rotateWorkspaceSession: vi.fn(),
     createWorkspace: vi.fn(),
     reorderWorkspaces: vi.fn(),
+    deleteWorkspace: vi.fn(),
   } as AuthStore;
   const keys: MasterKeyProvider = {
     currentVersion: () => 'v1',

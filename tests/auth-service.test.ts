@@ -22,6 +22,7 @@ function createStore(): AuthStore {
     listWorkspaces: vi.fn(),
     createWorkspace: vi.fn(),
     reorderWorkspaces: vi.fn(),
+    deleteWorkspace: vi.fn(),
     rotateWorkspaceSession: vi.fn(),
   };
 }
@@ -154,5 +155,21 @@ describe('AuthService', () => {
     );
     await expect(service.createWorkspace(identity, 'Overflow')).rejects.toThrow(/at most 100/);
     expect(store.createWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the current and last workspace undeletable', async () => {
+    const store = createStore();
+    const service = new AuthService(store);
+    const identity = { userId: 'u1', workspaceId: 'w1', role: 'owner' as const };
+    await expect(service.deleteWorkspace(identity, 'w1', 'One')).resolves.toBe(
+      'Switch away before deleting this workspace',
+    );
+    vi.mocked(store.listWorkspaces).mockResolvedValue([
+      { id: 'w1', slug: 'one', name: 'One', role: 'owner', position: 0 },
+    ]);
+    await expect(service.deleteWorkspace(identity, 'w2', 'Two')).resolves.toBe(
+      'The last workspace cannot be deleted',
+    );
+    expect(store.deleteWorkspace).not.toHaveBeenCalled();
   });
 });

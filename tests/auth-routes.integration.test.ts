@@ -28,6 +28,7 @@ function createStore(): AuthStore {
     listWorkspaces: vi.fn(),
     createWorkspace: vi.fn(),
     reorderWorkspaces: vi.fn(),
+    deleteWorkspace: vi.fn(),
     rotateWorkspaceSession: vi.fn(),
   };
 }
@@ -490,5 +491,72 @@ describe('authentication HTTP boundary', () => {
       data: { workspace: { id: targetId, slug: 'relay', role: 'editor' } },
       error: null,
     });
+  });
+
+  it('requires a current session and CSRF before deleting a named workspace', async () => {
+    const store = createStore();
+    const currentId = '00000000-0000-4000-8000-000000000001';
+    const targetId = '00000000-0000-4000-8000-000000000002';
+    const userId = '00000000-0000-4000-8000-000000000003';
+    vi.mocked(store.findSession).mockResolvedValue({
+      userId,
+      workspaceId: currentId,
+      role: 'owner',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.listWorkspaces).mockResolvedValue([
+      { id: currentId, slug: 'current', name: 'Current', role: 'owner', position: 0 },
+      { id: targetId, slug: 'test', name: 'Test', role: 'owner', position: 1 },
+    ]);
+    vi.mocked(store.deleteWorkspace).mockResolvedValue(null);
+    const app = createTestApplication(store);
+    const cookie = `publish_relay_session=${currentId}.token; publish_relay_csrf=csrf-token`;
+    const request = {
+      method: 'DELETE' as const,
+      url: `/api/workspaces/${targetId}`,
+      payload: { name: 'Test' },
+    };
+    expect((await app.inject(request)).statusCode).toBe(401);
+    expect((await app.inject({ ...request, headers: { cookie } })).statusCode).toBe(403);
+    const response = await app.inject({
+      ...request,
+      headers: { cookie, 'x-csrf-token': 'csrf-token' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(store.deleteWorkspace).toHaveBeenCalledWith({
+      userId,
+      currentWorkspaceId: currentId,
+      targetWorkspaceId: targetId,
+      confirmedName: 'Test',
+    });
+    vi.mocked(store.deleteWorkspace).mockResolvedValue(
+      'Workspace has connected accounts or provider data',
+    );
+    const blocked = await app.inject({
+      ...request,
+      headers: { cookie, 'x-csrf-token': 'csrf-token' },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json()).toMatchObject({
+      error: 'Workspace has connected accounts or provider data',
+    });
+    const current = await app.inject({
+      ...request,
+      url: `/api/workspaces/${currentId}`,
+      headers: { cookie, 'x-csrf-token': 'csrf-token' },
+    });
+    expect(current.statusCode).toBe(409);
+    vi.mocked(store.deleteWorkspace).mockResolvedValue('Workspace was not found');
+    expect(
+      (await app.inject({ ...request, headers: { cookie, 'x-csrf-token': 'csrf-token' } }))
+        .statusCode,
+    ).toBe(404);
+    vi.mocked(store.deleteWorkspace).mockResolvedValue('Only an owner can delete this workspace');
+    expect(
+      (await app.inject({ ...request, headers: { cookie, 'x-csrf-token': 'csrf-token' } }))
+        .statusCode,
+    ).toBe(403);
   });
 });

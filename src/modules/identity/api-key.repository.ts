@@ -70,7 +70,13 @@ export function createPostgresApiKeyStore(database: NodePgDatabase): ApiKeyStore
           })
           .from(apiKeys)
           .innerJoin(workspaces, eq(workspaces.id, apiKeys.workspaceId))
-          .where(and(eq(apiKeys.workspaceId, workspaceId), eq(apiKeys.prefix, prefix)))
+          .where(
+            and(
+              eq(apiKeys.workspaceId, workspaceId),
+              eq(apiKeys.prefix, prefix),
+              isNull(workspaces.deletedAt),
+            ),
+          )
           .limit(1);
         const row = rows[0];
         return row ? { ...row, capabilities: row.capabilities as never } : null;

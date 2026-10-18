@@ -449,6 +449,13 @@
       "when": 1792319200000,
       "tag": "0063_visible_exposed_facebook_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1792319700000,
+      "tag": "0064_exposed_machine_admission",
+      "breakpoints": true
     }
   ]
 }

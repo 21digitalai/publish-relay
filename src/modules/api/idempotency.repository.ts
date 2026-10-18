@@ -20,6 +20,7 @@ export interface IdempotentMutationInput {
   operation: string;
   idempotencyKey: string;
   requestFingerprint: string;
+  machineCapability?: 'schedules:read' | 'schedules:write';
 }
 
 export async function executeIdempotentMutation(
@@ -29,7 +30,12 @@ export async function executeIdempotentMutation(
 ): Promise<IdempotentMutationResult> {
   return withTenantTransaction(
     database,
-    { workspaceId: input.workspaceId },
+    {
+      workspaceId: input.workspaceId,
+      ...(input.machineCapability
+        ? { machineActor: { ...input.actor, capability: input.machineCapability } }
+        : {}),
+    },
     async (transaction) => {
       const inserted = await transaction
         .insert(apiMutationResults)

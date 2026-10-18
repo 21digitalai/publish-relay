@@ -38,7 +38,15 @@ function validatePostIntent(input: PostRevisionInput): void {
 
 export async function validatePostCandidate(
   database: NodePgDatabase,
-  input: PostRevisionInput & { workspaceId: string; xMediaPresent?: boolean },
+  input: PostRevisionInput & {
+    workspaceId: string;
+    xMediaPresent?: boolean;
+    machineActor?: {
+      type: 'api-key' | 'delegated';
+      id: string;
+      capability: 'schedules:read' | 'schedules:write';
+    };
+  },
 ) {
   validatePostIntent(input);
   if (input.xMediaPresent) {

@@ -310,6 +310,7 @@ export function registerPostRoutes(
       const body = postValidationRequestSchema.parse(request.body);
       const result = await validatePostCandidate(database, {
         workspaceId: principal.workspaceId,
+        machineActor: { type: principal.kind, id: principal.actorId, capability: 'schedules:read' },
         ...normalizeCreatePostRequest(body),
         scheduledAt: new Date(body.scheduledAt),
         ...(body.validationPreview ? { xMediaPresent: true } : {}),
@@ -361,6 +362,7 @@ export function registerPostRoutes(
           workspaceId: principal.workspaceId,
           actor: { type: principal.kind, id: principal.actorId },
           operation: 'posts.create',
+          machineCapability: 'schedules:write',
           idempotencyKey,
           requestFingerprint: mutationFingerprint(body),
         },

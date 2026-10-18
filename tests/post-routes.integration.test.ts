@@ -72,6 +72,7 @@ const migrations = [
   '0060_facebook_page_exposure_edit.sql',
   '0061_cross_workspace_account_job_guard.sql',
   '0062_exposed_account_admission.sql',
+  '0064_exposed_machine_admission.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';
@@ -1571,6 +1572,112 @@ describe('POST /api/v1/posts', () => {
     );
     expect(media.rows[0]?.state).toBe('cleanup_eligible');
     expect(media.rows[0]?.cleanup_eligible_at).not.toBeNull();
+  });
+
+  it('admits exposed Pages for active API-key and delegated principals only', async () => {
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'meta' WHERE workspace_id = '${foreignWorkspaceId}';
+      UPDATE provider_accounts SET destination_provider = 'facebook_page'
+        WHERE id = '${foreignProviderAccountId}';
+      INSERT INTO provider_account_exposures (workspace_id, provider_account_id)
+        VALUES ('${workspaceId}', '${foreignProviderAccountId}');
+      UPDATE api_keys SET capabilities = ARRAY['schedules:read', 'schedules:write']
+        WHERE id = '${apiKeyId}';
+      INSERT INTO registered_clients (id, display_name, client_type, redirect_uris, allowed_scopes)
+        VALUES ('example-client-local', 'Example', 'public', ARRAY['https://example.test/callback'],
+          ARRAY['schedules:read', 'schedules:write']);
+      INSERT INTO delegated_grants (id, workspace_id, user_id, client_id, scopes)
+        VALUES ('${delegatedGrantId}', '${workspaceId}', '${userId}', 'example-client-local',
+          ARRAY['schedules:read', 'schedules:write']);
+    `);
+    const payload = {
+      content: { kind: 'link', text: 'Shared Page', linkUrl: 'https://example.test/post' },
+      mediaIds: [],
+      providerAccountIds: [foreignProviderAccountId],
+      scheduledAt: '2026-09-02T10:00:00.000Z',
+    };
+    const verify = async (label: string, token: string) => {
+      const headers = {
+        authorization: `Bearer ${token}`,
+        'x-publish-relay-workspace': workspaceId,
+        'idempotency-key': `exposed-${label}`,
+      };
+      const validation = await application.inject({
+        method: 'POST',
+        url: '/api/v1/posts/validate',
+        headers,
+        payload,
+      });
+      expect(validation.statusCode).toBe(200);
+      expect(validation.json<{ data: { valid: boolean } }>().data.valid).toBe(true);
+      const created = await application.inject({
+        method: 'POST',
+        url: '/api/v1/posts',
+        headers,
+        payload,
+      });
+      expect(created.statusCode).toBe(201);
+      return headers;
+    };
+    const apiHeaders = await verify('api', 'pr_test.secret');
+    authenticate.mockResolvedValue(null);
+    authenticateDelegated.mockResolvedValue({
+      grantId: delegatedGrantId,
+      workspaceId,
+      userId,
+      clientId: 'example-client-local',
+      scopes: ['schedules:read', 'schedules:write'],
+    });
+    const delegatedHeaders = await verify('delegated', 'delegated-token');
+    const jobs = await database.query<{ workspace_id: string; provider_account_id: string }>(`
+      SELECT workspace_id, provider_account_id FROM publication_jobs
+      WHERE provider_account_id = '${foreignProviderAccountId}'
+        AND workspace_id = '${workspaceId}' ORDER BY id`);
+    expect(jobs.rows).toEqual(
+      Array.from({ length: 2 }, () => ({
+        workspace_id: workspaceId,
+        provider_account_id: foreignProviderAccountId,
+      })),
+    );
+    await database.exec(`UPDATE api_keys SET revoked_at = now() WHERE id = '${apiKeyId}';
+      UPDATE delegated_grants SET revoked_at = now() WHERE id = '${delegatedGrantId}';`);
+    for (const headers of [apiHeaders, delegatedHeaders]) {
+      authenticate.mockResolvedValue(
+        headers === apiHeaders
+          ? {
+              id: apiKeyId,
+              workspaceId,
+              createdByUserId: userId,
+              capabilities: ['schedules:read', 'schedules:write'],
+            }
+          : null,
+      );
+      authenticateDelegated.mockResolvedValue(
+        headers === delegatedHeaders
+          ? {
+              grantId: delegatedGrantId,
+              workspaceId,
+              userId,
+              clientId: 'example-client-local',
+              scopes: ['schedules:read', 'schedules:write'],
+            }
+          : null,
+      );
+      const validation = await application.inject({
+        method: 'POST',
+        url: '/api/v1/posts/validate',
+        headers,
+        payload,
+      });
+      expect(validation.json<{ data: { valid: boolean } }>().data.valid).toBe(false);
+      const denied = await application.inject({
+        method: 'POST',
+        url: '/api/v1/posts',
+        headers: { ...headers, 'idempotency-key': `${headers['idempotency-key']}-revoked` },
+        payload,
+      });
+      expect(denied.statusCode).toBe(400);
+    }
   });
 
   it('creates and replays with delegated grant attribution while enforcing scope and workspace', async () => {

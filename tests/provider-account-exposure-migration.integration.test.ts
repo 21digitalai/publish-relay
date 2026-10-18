@@ -7,7 +7,13 @@ import { describe, expect, it } from 'vitest';
 
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
-import { createPost, editPost } from '../src/modules/content/post.service.js';
+import {
+  createPost,
+  createPostInTransaction,
+  editPost,
+  validatePostCandidate,
+} from '../src/modules/content/post.service.js';
+import { executeIdempotentMutation } from '../src/modules/api/idempotency.repository.js';
 import { disconnectProviderSubject } from '../src/modules/credentials/provider-subject.service.js';
 import { revokeMetaConnection } from '../src/modules/providers/meta-oauth.service.js';
 import { listProviderAccounts } from '../src/modules/credentials/provider-account.service.js';
@@ -22,6 +28,8 @@ const revision = '00000000-0000-4000-8000-000000000107';
 const credential = '00000000-0000-4000-8000-000000000108';
 const nonOwner = '00000000-0000-4000-8000-000000000109';
 const outsider = '00000000-0000-4000-8000-000000000110';
+const apiKey = '00000000-0000-4000-8000-000000000111';
+const delegatedGrant = '00000000-0000-4000-8000-000000000112';
 
 describe('provider account exposure migration', () => {
   it('grants only to a shared owner, guards active jobs, and preserves a revoked row', async () => {
@@ -51,6 +59,16 @@ describe('provider account exposure migration', () => {
         INSERT INTO memberships (workspace_id, user_id, role) VALUES
           ('${origin}', '${user}', 'owner'), ('${target}', '${user}', 'owner'),
           ('${origin}', '${nonOwner}', 'editor'), ('${target}', '${nonOwner}', 'owner');
+        INSERT INTO api_keys
+          (id, workspace_id, created_by_user_id, label, prefix, secret_hash, capabilities)
+          VALUES ('${apiKey}', '${target}', '${outsider}', 'Machine', 'machine-test', 'hash',
+            ARRAY['schedules:read', 'schedules:write']);
+        INSERT INTO registered_clients (id, display_name, client_type, redirect_uris, allowed_scopes)
+          VALUES ('test-client', 'Test', 'public', ARRAY['https://example.test/callback'],
+            ARRAY['schedules:read', 'schedules:write']);
+        INSERT INTO delegated_grants (id, workspace_id, user_id, client_id, scopes)
+          VALUES ('${delegatedGrant}', '${target}', '${outsider}', 'test-client',
+            ARRAY['schedules:read', 'schedules:write']);
         INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce,
           wrapped_key_tag, ciphertext, nonce, tag)
           VALUES ('${credential}', '${origin}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
@@ -93,6 +111,78 @@ describe('provider account exposure migration', () => {
       await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
       expect((await edit(true)).rows[0]?.result).toBe('unchanged');
       await database.exec(`SELECT set_config('app.workspace_id', '${target}', false)`);
+      await database.exec(`SELECT set_config('app.user_id', '', false)`);
+      const machineCandidate = {
+        workspaceId: target,
+        providerAccountIds: [account],
+        mediaIds: [],
+        content: { kind: 'link', text: 'Machine shared Page', linkUrl: 'https://example.test/' },
+        scheduledAt: new Date('2026-10-19T09:00:00Z'),
+      };
+      for (const actor of [
+        { type: 'api-key' as const, id: apiKey },
+        { type: 'delegated' as const, id: delegatedGrant },
+      ]) {
+        const machineActor = { ...actor, capability: 'schedules:read' as const };
+        const validation = await validatePostCandidate(
+          drizzle(database) as unknown as NodePgDatabase,
+          { ...machineCandidate, machineActor },
+        );
+        expect(validation.valid).toBe(true);
+        const result = await executeIdempotentMutation(
+          drizzle(database) as unknown as NodePgDatabase,
+          {
+            workspaceId: target,
+            actor,
+            operation: 'posts.create',
+            idempotencyKey: `machine-${actor.type}`,
+            requestFingerprint: `fingerprint-${actor.type}`,
+            machineCapability: 'schedules:write',
+          },
+          async (transaction) => {
+            const created = await createPostInTransaction(transaction, {
+              ...machineCandidate,
+              userId: outsider,
+              actor,
+            });
+            return { statusCode: 201, body: created };
+          },
+        );
+        expect(result.kind).toBe('executed');
+      }
+      for (const actor of [
+        { type: 'api-key' as const, id: outsider },
+        { type: 'delegated' as const, id: outsider },
+      ]) {
+        await expect(
+          validatePostCandidate(drizzle(database) as unknown as NodePgDatabase, {
+            ...machineCandidate,
+            machineActor: { ...actor, capability: 'schedules:read' },
+          }),
+        ).resolves.toMatchObject({ valid: false });
+        await expect(
+          executeIdempotentMutation(
+            drizzle(database) as unknown as NodePgDatabase,
+            {
+              workspaceId: target,
+              actor,
+              operation: 'posts.create',
+              idempotencyKey: `invalid-${actor.type}`,
+              requestFingerprint: `invalid-${actor.type}`,
+              machineCapability: 'schedules:write',
+            },
+            async (transaction) => ({
+              statusCode: 201,
+              body: await createPostInTransaction(transaction, {
+                ...machineCandidate,
+                userId: outsider,
+                actor,
+              }),
+            }),
+          ),
+        ).rejects.toThrow('do not belong to the workspace');
+      }
+      await database.exec(`SELECT set_config('app.user_id', '${user}', false)`);
       const projection = await database.query<{ scopes: unknown; adapter_defaults: unknown }>(
         `SELECT scopes, adapter_defaults FROM public.resolve_exposed_post_accounts(
           '${target}', ARRAY['${account}']::uuid[], false)`,

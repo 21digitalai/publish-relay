@@ -34,7 +34,11 @@ export function registerProviderAccountRoutes(
   application.get('/api/provider-accounts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    const accounts = await listProviderAccounts(dependencies.database, identity.workspaceId);
+    const accounts = await listProviderAccounts(
+      dependencies.database,
+      identity.workspaceId,
+      identity.userId,
+    );
     return { data: { accounts }, error: null };
   });
 

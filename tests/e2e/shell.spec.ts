@@ -710,6 +710,46 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
   await page.screenshot({ path: testInfo.outputPath('accounts-disconnect.png'), fullPage: true });
 });
 
+test('shows an exposed Page in Accounts and Composer without origin-owned actions', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000309',
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: 'Shared Page',
+              status: 'active',
+              availability: 'active',
+              updatedAt: '2026-10-18T10:00:00Z',
+              adapterDefaults: {},
+              isExposed: true,
+              originWorkspaceName: '21digital',
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(await workspacePath(page, 'accounts'));
+  await expect(page.getByText('Shared from 21digital')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'More actions for Shared Page' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Revoke Meta connection' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('shared-page-accounts.png'), fullPage: true });
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  }
+  await page.getByRole('button', { name: 'Create post' }).click();
+  await expect(page.getByRole('checkbox', { name: /Facebook · Shared Page/ })).toBeVisible();
+});
+
 test('self-declares X long posts per account with persistence and recovery', async ({
   page,
 }, testInfo) => {

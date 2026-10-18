@@ -442,6 +442,13 @@
       "when": 1792318800000,
       "tag": "0062_exposed_account_admission",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1792319200000,
+      "tag": "0063_visible_exposed_facebook_pages",
+      "breakpoints": true
     }
   ]
 }

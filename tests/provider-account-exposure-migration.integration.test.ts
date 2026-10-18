@@ -10,6 +10,7 @@ import { editFacebookPageExposure } from '../src/modules/credentials/provider-ac
 import { createPost, editPost } from '../src/modules/content/post.service.js';
 import { disconnectProviderSubject } from '../src/modules/credentials/provider-subject.service.js';
 import { revokeMetaConnection } from '../src/modules/providers/meta-oauth.service.js';
+import { listProviderAccounts } from '../src/modules/credentials/provider-account.service.js';
 
 const origin = '00000000-0000-4000-8000-000000000101';
 const target = '00000000-0000-4000-8000-000000000102';
@@ -38,6 +39,8 @@ describe('provider account exposure migration', () => {
         GRANT EXECUTE ON FUNCTION public.provider_account_has_active_jobs(uuid, uuid)
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.resolve_exposed_post_accounts(uuid, uuid[], boolean)
+          TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages(uuid)
           TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
@@ -95,6 +98,21 @@ describe('provider account exposure migration', () => {
           '${target}', ARRAY['${account}']::uuid[], false)`,
       );
       expect(projection.rows).toEqual([{ scopes: [], adapter_defaults: {} }]);
+      const visible = await listProviderAccounts(
+        drizzle(database) as unknown as NodePgDatabase,
+        target,
+        user,
+      );
+      expect(visible).toEqual([
+        expect.objectContaining({
+          id: account,
+          destinationProvider: 'facebook_page',
+          originWorkspaceName: 'Origin',
+          isExposed: true,
+        }),
+      ]);
+      expect(JSON.stringify(visible)).not.toContain('pages_manage_posts');
+      expect(JSON.stringify(visible)).not.toContain('originOnly');
       await expect(targetPost(outsider)).rejects.toThrow('do not belong to the workspace');
       const scheduled = await targetPost(user);
       expect(scheduled.jobIds).toHaveLength(1);
@@ -149,6 +167,9 @@ describe('provider account exposure migration', () => {
         SET ROLE publish_relay_app;`);
       expect((await activeJobs()).rows[0]?.active).toBe(false);
       expect((await edit(false)).rows[0]?.result).toBe('updated');
+      expect(
+        await listProviderAccounts(drizzle(database) as unknown as NodePgDatabase, target, user),
+      ).toEqual([]);
       await expect(targetPost(user)).rejects.toThrow('do not belong to the workspace');
       await expect(
         editPost(drizzle(database) as unknown as NodePgDatabase, {
@@ -178,7 +199,7 @@ describe('provider account exposure migration', () => {
     try {
       const folder = new URL('../migrations/', import.meta.url);
       const names = (await readdir(folder))
-        .filter((name) => /^\d{4}_.+\.sql$/.test(name) && !name.startsWith('0059_'))
+        .filter((name) => /^\d{4}_.+\.sql$/.test(name) && Number(name.slice(0, 4)) < 59)
         .sort();
       for (const name of names) await database.exec(await readFile(new URL(name, folder), 'utf8'));
       await database.exec(`

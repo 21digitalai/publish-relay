@@ -44,6 +44,8 @@ interface Account {
     categoryId?: string;
   };
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
+  isExposed?: boolean;
+  originWorkspaceName?: string;
 }
 
 const YOUTUBE_CATEGORIES: [string, string][] = [
@@ -983,6 +985,11 @@ function AccountRow({
         <div>
           <strong>{account.name}</strong>
           <span>{account.handle}</span>
+          {account.isExposed && account.originWorkspaceName && (
+            <span className="account-exposure-label">
+              Shared from {account.originWorkspaceName}
+            </span>
+          )}
         </div>
       </div>
       <div className="account-provider">
@@ -1019,21 +1026,23 @@ function AccountRow({
         </span>
       </div>
       <div className="account-actions">
-        {(needsReconnect || linkedinExpiringSoon) && (
+        {!account.isExposed && (needsReconnect || linkedinExpiringSoon) && (
           <button className="secondary-button reconnect" onClick={onReconnect}>
             Reconnect
           </button>
         )}
-        <button
-          className="icon-button"
-          aria-label={`More actions for ${account.name}`}
-          onClick={() => {
-            onDisconnect(account);
-          }}
-        >
-          •••
-        </button>
-        {account.provider === 'Meta' && (
+        {!account.isExposed && (
+          <button
+            className="icon-button"
+            aria-label={`More actions for ${account.name}`}
+            onClick={() => {
+              onDisconnect(account);
+            }}
+          >
+            •••
+          </button>
+        )}
+        {!account.isExposed && account.provider === 'Meta' && (
           <button
             className="meta-grant-revoke-button secondary-button"
             onClick={() => {
@@ -1315,6 +1324,8 @@ function AccountsPage() {
               updatedAt: string;
               adapterDefaults: Account['adapterDefaults'];
               xLongPosts?: Account['xLongPosts'];
+              isExposed?: boolean;
+              originWorkspaceName?: string;
             }[];
           };
         }>;
@@ -1362,6 +1373,10 @@ function AccountsPage() {
                       verified: false,
                     })
                   : null,
+              ...(account.isExposed ? { isExposed: true } : {}),
+              ...(account.originWorkspaceName
+                ? { originWorkspaceName: account.originWorkspaceName }
+                : {}),
             };
           }),
         );

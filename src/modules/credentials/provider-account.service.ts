@@ -1,4 +1,4 @@
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -10,7 +10,7 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { hasActiveProviderAccountJobs } from './provider-account-exposure.service.js';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
 import {
   capabilityFreshness,
@@ -33,73 +33,127 @@ export interface ProviderAccountSummary {
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
   updatedAt: Date;
   expiresAt?: Date | null;
+  originWorkspaceName?: string;
+  isExposed?: boolean;
 }
 
 export function listProviderAccounts(
   database: NodePgDatabase,
   workspaceId: string,
+  userId?: string,
 ): Promise<ProviderAccountSummary[]> {
-  return withTenantTransaction(database, { workspaceId }, async (transaction) => {
-    const rows = await transaction
-      .select({
-        id: providerAccounts.id,
-        provider: providerConnections.provider,
-        grantFamily: providerConnections.grantFamily,
-        destinationProvider: providerAccounts.destinationProvider,
-        displayName: providerAccounts.displayName,
-        status: providerConnections.status,
-        availability: providerAccounts.availability,
-        remoteParentAccountId: providerAccounts.remoteParentAccountId,
-        capabilitiesCheckedAt: providerAccounts.capabilitiesCheckedAt,
-        adapterDefaults: providerAccounts.adapterDefaults,
-        xLongPostsAllowed: providerAccounts.xLongPostsAllowed,
-        updatedAt: providerAccounts.updatedAt,
-        expiresAt: providerConnections.expiresAt,
-        disconnectedAt: providerAccounts.disconnectedAt,
-        accessExpiresAt: providerConnections.accessExpiresAt,
-        refreshExpiresAt: providerConnections.refreshExpiresAt,
-      })
-      .from(providerAccounts)
-      .innerJoin(
-        providerConnections,
-        and(
-          eq(providerConnections.workspaceId, providerAccounts.workspaceId),
-          eq(providerConnections.id, providerAccounts.connectionId),
-        ),
-      )
-      .where(
-        and(
-          eq(providerAccounts.workspaceId, workspaceId),
-          or(isNull(providerAccounts.disconnectedAt), eq(providerConnections.provider, 'tiktok')),
-        ),
-      )
-      .orderBy(providerConnections.provider, providerAccounts.displayName);
-    return rows.map(
-      ({ accessExpiresAt, refreshExpiresAt, disconnectedAt, xLongPostsAllowed, ...row }) => ({
-        ...row,
-        xLongPosts:
-          row.destinationProvider === 'x'
-            ? {
-                allowed: xLongPostsAllowed,
-                source: 'self_declared' as const,
-                verified: false as const,
-              }
-            : null,
-        status:
-          disconnectedAt && row.provider === 'tiktok'
-            ? 'disconnected'
-            : row.provider === 'tiktok' && row.status === 'active'
-              ? refreshExpiresAt && refreshExpiresAt.getTime() <= Date.now()
-                ? 'renewal_required'
-                : accessExpiresAt && accessExpiresAt.getTime() <= Date.now()
-                  ? 'expired'
-                  : 'active'
-              : row.status,
-        capabilitySnapshot: destinationCapabilities(row.destinationProvider),
-        capabilityFreshness: capabilityFreshness(row.capabilitiesCheckedAt),
-      }),
-    );
-  });
+  return withTenantTransaction(
+    database,
+    { workspaceId, ...(userId ? { userId } : {}) },
+    async (transaction) => {
+      const rows = await transaction
+        .select({
+          id: providerAccounts.id,
+          provider: providerConnections.provider,
+          grantFamily: providerConnections.grantFamily,
+          destinationProvider: providerAccounts.destinationProvider,
+          displayName: providerAccounts.displayName,
+          status: providerConnections.status,
+          availability: providerAccounts.availability,
+          remoteParentAccountId: providerAccounts.remoteParentAccountId,
+          capabilitiesCheckedAt: providerAccounts.capabilitiesCheckedAt,
+          adapterDefaults: providerAccounts.adapterDefaults,
+          xLongPostsAllowed: providerAccounts.xLongPostsAllowed,
+          updatedAt: providerAccounts.updatedAt,
+          expiresAt: providerConnections.expiresAt,
+          disconnectedAt: providerAccounts.disconnectedAt,
+          accessExpiresAt: providerConnections.accessExpiresAt,
+          refreshExpiresAt: providerConnections.refreshExpiresAt,
+        })
+        .from(providerAccounts)
+        .innerJoin(
+          providerConnections,
+          and(
+            eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+            eq(providerConnections.id, providerAccounts.connectionId),
+          ),
+        )
+        .where(
+          and(
+            eq(providerAccounts.workspaceId, workspaceId),
+            or(isNull(providerAccounts.disconnectedAt), eq(providerConnections.provider, 'tiktok')),
+          ),
+        )
+        .orderBy(providerConnections.provider, providerAccounts.displayName);
+      const local = rows.map(
+        ({ accessExpiresAt, refreshExpiresAt, disconnectedAt, xLongPostsAllowed, ...row }) => ({
+          ...row,
+          xLongPosts:
+            row.destinationProvider === 'x'
+              ? {
+                  allowed: xLongPostsAllowed,
+                  source: 'self_declared' as const,
+                  verified: false as const,
+                }
+              : null,
+          status:
+            disconnectedAt && row.provider === 'tiktok'
+              ? 'disconnected'
+              : row.provider === 'tiktok' && row.status === 'active'
+                ? refreshExpiresAt && refreshExpiresAt.getTime() <= Date.now()
+                  ? 'renewal_required'
+                  : accessExpiresAt && accessExpiresAt.getTime() <= Date.now()
+                    ? 'expired'
+                    : 'active'
+                : row.status,
+          capabilitySnapshot: destinationCapabilities(row.destinationProvider),
+          capabilityFreshness: capabilityFreshness(row.capabilitiesCheckedAt),
+        }),
+      );
+      if (!userId) return local;
+      const result = await transaction.execute<{
+        id: string;
+        displayName: string;
+        originWorkspaceName: string;
+        availability: string;
+        connectionStatus: string;
+        updatedAt: Date;
+      }>(sql`
+      SELECT id, display_name AS "displayName",
+        origin_workspace_name AS "originWorkspaceName", availability,
+        connection_status AS "connectionStatus", updated_at AS "updatedAt"
+      FROM public.list_visible_exposed_facebook_pages(${workspaceId}::uuid)
+    `);
+      const rawRows: unknown = Array.isArray(result) ? result : result.rows;
+      const exposed = z
+        .array(
+          z.object({
+            id: z.uuid(),
+            displayName: z.string(),
+            originWorkspaceName: z.string(),
+            availability: z.string(),
+            connectionStatus: z.string(),
+            updatedAt: z.coerce.date(),
+          }),
+        )
+        .parse(rawRows);
+      return [
+        ...local,
+        ...exposed.map((page) => ({
+          id: page.id,
+          provider: 'meta',
+          destinationProvider: 'facebook_page',
+          displayName: page.displayName,
+          status: page.connectionStatus,
+          availability: page.availability,
+          remoteParentAccountId: null,
+          capabilitySnapshot: destinationCapabilities('facebook_page'),
+          capabilitiesCheckedAt: null,
+          capabilityFreshness: 'unknown' as const,
+          adapterDefaults: {},
+          xLongPosts: null,
+          updatedAt: new Date(page.updatedAt),
+          originWorkspaceName: page.originWorkspaceName,
+          isExposed: true,
+        })),
+      ];
+    },
+  );
 }
 
 export async function updateXLongPostDeclaration(

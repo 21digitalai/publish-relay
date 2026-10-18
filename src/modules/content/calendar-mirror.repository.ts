@@ -143,7 +143,8 @@ export function getExposedPageCalendarMedia(
             z.object({
               storageKey: z.string(),
               mimeType: z.string(),
-              byteSize: z.number(),
+              // PostgreSQL bigint values arrive as strings with the native pg driver.
+              byteSize: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
             }),
           )
           .parse(rows)[0] ?? null

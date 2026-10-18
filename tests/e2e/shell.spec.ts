@@ -714,25 +714,41 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
-  await page.route('**/api/provider-accounts', (route) =>
+  await page.route('**/api/provider-accounts*', (route) =>
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         data: {
-          accounts: [
-            {
-              id: '00000000-0000-4000-8000-000000000309',
-              provider: 'meta',
-              destinationProvider: 'facebook_page',
-              displayName: 'Shared Page',
-              status: 'active',
-              availability: 'active',
-              updatedAt: '2026-10-18T10:00:00Z',
-              adapterDefaults: {},
-              isExposed: true,
-              originWorkspaceName: '21digital',
-            },
-          ],
+          accounts: route.request().url().includes('cursor=')
+            ? [
+                {
+                  id: '00000000-0000-4000-8000-000000000310',
+                  provider: 'meta',
+                  destinationProvider: 'facebook_page',
+                  displayName: 'Later Page',
+                  status: 'active',
+                  availability: 'active',
+                  updatedAt: '2026-10-18T10:00:00Z',
+                  adapterDefaults: {},
+                  isExposed: true,
+                  originWorkspaceName: '21digital',
+                },
+              ]
+            : [
+                {
+                  id: '00000000-0000-4000-8000-000000000309',
+                  provider: 'meta',
+                  destinationProvider: 'facebook_page',
+                  displayName: 'Shared Page',
+                  status: 'active',
+                  availability: 'active',
+                  updatedAt: '2026-10-18T10:00:00Z',
+                  adapterDefaults: {},
+                  isExposed: true,
+                  originWorkspaceName: '21digital',
+                },
+              ],
+          nextCursor: route.request().url().includes('cursor=') ? null : 'test-cursor',
         },
         error: null,
       }),
@@ -742,12 +758,16 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
   await expect(page.getByText('Shared from 21digital')).toBeVisible();
   await expect(page.getByRole('button', { name: 'More actions for Shared Page' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Revoke Meta connection' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Load more accounts' }).click();
+  await expect(page.locator('.account-row strong', { hasText: 'Later Page' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('shared-page-accounts.png'), fullPage: true });
   if (testInfo.project.name === 'mobile') {
     await page.getByRole('button', { name: 'Open navigation' }).click();
   }
   await page.getByRole('button', { name: 'Create post' }).click();
   await expect(page.getByRole('checkbox', { name: /Facebook · Shared Page/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Load more accounts' }).click();
+  await expect(page.getByRole('checkbox', { name: /Facebook · Later Page/ })).toBeVisible();
 });
 
 test('self-declares X long posts per account with persistence and recovery', async ({

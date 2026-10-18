@@ -16,7 +16,10 @@ import {
 import { executeIdempotentMutation } from '../src/modules/api/idempotency.repository.js';
 import { disconnectProviderSubject } from '../src/modules/credentials/provider-subject.service.js';
 import { revokeMetaConnection } from '../src/modules/providers/meta-oauth.service.js';
-import { listProviderAccounts } from '../src/modules/credentials/provider-account.service.js';
+import {
+  listProviderAccounts,
+  listProviderAccountsPage,
+} from '../src/modules/credentials/provider-account.service.js';
 
 const origin = '00000000-0000-4000-8000-000000000101';
 const target = '00000000-0000-4000-8000-000000000102';
@@ -49,6 +52,8 @@ describe('provider account exposure migration', () => {
         GRANT EXECUTE ON FUNCTION public.resolve_exposed_post_accounts(uuid, uuid[], boolean)
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages(uuid)
+          TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages_page(uuid, text, uuid, integer)
           TO publish_relay_app;
         INSERT INTO users (id, display_name, email, password_hash)
           VALUES ('${user}', 'Owner', 'owner@example.test', 'hash'),
@@ -279,6 +284,61 @@ describe('provider account exposure migration', () => {
          FROM provider_account_exposures WHERE workspace_id = '${target}'`,
       );
       expect(rows.rows).toEqual([{ count: 1, preference: true }]);
+      await database.exec(`
+        INSERT INTO provider_accounts
+          (id, workspace_id, connection_id, provider_account_id, destination_provider,
+            remote_account_id, display_name)
+        SELECT ('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid,
+          '${origin}', '${connection}', 'page-' || g, 'facebook_page', 'page-' || g,
+          'Page ' || lpad(g::text, 3, '0')
+        FROM generate_series(200, 300) AS g;
+        INSERT INTO provider_account_exposures (workspace_id, provider_account_id)
+        SELECT '${target}', ('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid
+        FROM generate_series(200, 300) AS g;
+        SET ROLE publish_relay_app;
+      `);
+      const pagedDb = drizzle(database) as unknown as NodePgDatabase;
+      const first = await listProviderAccountsPage(pagedDb, target, user);
+      expect(first.accounts).toHaveLength(100);
+      if (!first.nextCursor) throw new Error('Expected a second account page');
+      const second = await listProviderAccountsPage(pagedDb, target, user, first.nextCursor);
+      expect(second.accounts).toHaveLength(2);
+      expect(second.nextCursor).toBeNull();
+      expect(new Set([...first.accounts, ...second.accounts].map((item) => item.id)).size).toBe(
+        102,
+      );
+      expect((await listProviderAccountsPage(pagedDb, target, outsider)).accounts).toEqual([]);
+      expect(JSON.stringify([...first.accounts, ...second.accounts])).not.toContain(
+        'pages_manage_posts',
+      );
+      await database.exec(`
+        RESET ROLE;
+        INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce,
+          wrapped_key_tag, ciphertext, nonce, tag)
+          VALUES ('00000000-0000-4000-8000-000000000501', '${target}', 'v1',
+            '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
+        INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+          VALUES ('00000000-0000-4000-8000-000000000502', '${target}', 'x',
+            '00000000-0000-4000-8000-000000000501');
+        INSERT INTO provider_accounts
+          (id, workspace_id, connection_id, provider_account_id, destination_provider,
+            remote_account_id, display_name)
+        SELECT ('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid,
+          '${target}', '00000000-0000-4000-8000-000000000502', 'local-' || g, 'x',
+          'local-' || g, 'Local ' || lpad(g::text, 3, '0')
+        FROM generate_series(400, 500) AS g;
+        SET ROLE publish_relay_app;
+      `);
+      const pages = [];
+      let cursor: string | null = null;
+      do {
+        const batch = await listProviderAccountsPage(pagedDb, target, user, cursor ?? undefined);
+        expect(batch.accounts.length).toBeLessThanOrEqual(100);
+        pages.push(...batch.accounts);
+        cursor = batch.nextCursor;
+      } while (cursor);
+      expect(pages).toHaveLength(203);
+      expect(new Set(pages.map((item) => item.id)).size).toBe(203);
     } finally {
       await database.close();
     }

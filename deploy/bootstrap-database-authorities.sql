@@ -37,6 +37,15 @@ BEGIN
   IF to_regprocedure('public.provider_account_has_active_jobs(uuid,uuid)') IS NOT NULL THEN
     GRANT EXECUTE ON FUNCTION public.provider_account_has_active_jobs(uuid, uuid) TO publish_relay_web;
   END IF;
+  IF to_regprocedure('public.resolve_exposed_post_accounts(uuid,uuid[],boolean)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.resolve_exposed_post_accounts(uuid, uuid[], boolean) TO publish_relay_web;
+  END IF;
+  IF to_regprocedure('public.list_visible_exposed_facebook_pages(uuid)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages(uuid) TO publish_relay_web;
+  END IF;
+  IF to_regprocedure('public.list_visible_exposed_facebook_pages_page(uuid,text,uuid,integer)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.list_visible_exposed_facebook_pages_page(uuid, text, uuid, integer) TO publish_relay_web;
+  END IF;
 END
 $functions$;
 

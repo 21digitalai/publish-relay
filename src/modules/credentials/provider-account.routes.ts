@@ -15,7 +15,8 @@ import {
 } from '../providers/tiktok-capabilities.service.js';
 import {
   disconnectProviderAccount,
-  listProviderAccounts,
+  listProviderAccountsPage,
+  InvalidAccountPageCursorError,
   updateYouTubeAccountDefaults,
   updateXLongPostDeclaration,
 } from './provider-account.service.js';
@@ -34,12 +35,22 @@ export function registerProviderAccountRoutes(
   application.get('/api/provider-accounts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    const accounts = await listProviderAccounts(
-      dependencies.database,
-      identity.workspaceId,
-      identity.userId,
-    );
-    return { data: { accounts }, error: null };
+    const query = z.object({ cursor: z.string().max(1024).optional() }).safeParse(request.query);
+    if (!query.success)
+      return reply.code(400).send({ data: null, error: 'Invalid account page cursor' });
+    try {
+      const page = await listProviderAccountsPage(
+        dependencies.database,
+        identity.workspaceId,
+        identity.userId,
+        query.data.cursor,
+      );
+      return { data: page, error: null };
+    } catch (error) {
+      if (error instanceof InvalidAccountPageCursorError)
+        return reply.code(400).send({ data: null, error: error.message });
+      throw error;
+    }
   });
 
   application.get(

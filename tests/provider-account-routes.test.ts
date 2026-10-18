@@ -9,6 +9,8 @@ vi.mock('../src/modules/identity/auth.routes.js', () => ({
 vi.mock('../src/modules/credentials/provider-account.service.js', () => ({
   disconnectProviderAccount: vi.fn(),
   listProviderAccounts: vi.fn(() => Promise.resolve([])),
+  listProviderAccountsPage: vi.fn(() => Promise.resolve({ accounts: [], nextCursor: null })),
+  InvalidAccountPageCursorError: class extends Error {},
   updateYouTubeAccountDefaults: vi.fn(() => Promise.resolve('updated')),
   updateXLongPostDeclaration: vi.fn(() => Promise.resolve('updated')),
 }));
@@ -19,7 +21,7 @@ vi.mock('../src/modules/providers/tiktok-capabilities.service.js', () => ({
 
 import { authorizeRequest } from '../src/modules/identity/auth.routes.js';
 import {
-  listProviderAccounts,
+  listProviderAccountsPage,
   updateYouTubeAccountDefaults,
   updateXLongPostDeclaration,
 } from '../src/modules/credentials/provider-account.service.js';
@@ -48,23 +50,26 @@ describe('provider account routes', () => {
   });
 
   it('keeps the account list allowlisted and requests read authorization', async () => {
-    vi.mocked(listProviderAccounts).mockResolvedValue([
-      {
-        id: accountId,
-        provider: 'youtube',
-        destinationProvider: 'youtube',
-        displayName: 'Channel',
-        status: 'active',
-        availability: 'active',
-        remoteParentAccountId: null,
-        capabilitySnapshot: { schemaVersion: 1, contentKinds: ['video'], media: {} },
-        capabilitiesCheckedAt: new Date('2026-09-01T00:00:00Z'),
-        capabilityFreshness: 'fresh',
-        adapterDefaults: { madeForKids: false },
-        xLongPosts: null,
-        updatedAt: new Date('2026-09-01T00:00:00Z'),
-      },
-    ]);
+    vi.mocked(listProviderAccountsPage).mockResolvedValue({
+      accounts: [
+        {
+          id: accountId,
+          provider: 'youtube',
+          destinationProvider: 'youtube',
+          displayName: 'Channel',
+          status: 'active',
+          availability: 'active',
+          remoteParentAccountId: null,
+          capabilitySnapshot: { schemaVersion: 1, contentKinds: ['video'], media: {} },
+          capabilitiesCheckedAt: new Date('2026-09-01T00:00:00Z'),
+          capabilityFreshness: 'fresh',
+          adapterDefaults: { madeForKids: false },
+          xLongPosts: null,
+          updatedAt: new Date('2026-09-01T00:00:00Z'),
+        },
+      ],
+      nextCursor: null,
+    });
     const response = await (
       await application()
     ).inject({ method: 'GET', url: '/api/provider-accounts' });

@@ -499,6 +499,8 @@ function normalizeComposerDestination(
 function Composer({ onClose }: { onClose: () => void }) {
   const draftId = /\/drafts\/([^/]+)$/.exec(window.location.pathname)?.[1] ?? null;
   const [accounts, setAccounts] = useState<ComposerDestination[]>([]);
+  const [nextAccountCursor, setNextAccountCursor] = useState<string | null>(null);
+  const [loadingMoreAccounts, setLoadingMoreAccounts] = useState(false);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<QueueJobDto[]>([]);
   const [collisionGuidance, setCollisionGuidance] = useState<'loading' | 'ready' | 'unavailable'>(
@@ -761,12 +763,14 @@ function Composer({ onClose }: { onClose: () => void }) {
         return response.json() as Promise<{
           data: {
             accounts: ComposerDestination[];
+            nextCursor: string | null;
           };
         }>;
       })
       .then(({ data }) => {
         const destinations = data.accounts.map(normalizeComposerDestination);
         setAccounts(destinations);
+        setNextAccountCursor(data.nextCursor);
         setSelectedAccounts(
           destinations.some((destination) => destination.provider === 'meta')
             ? []
@@ -794,6 +798,37 @@ function Composer({ onClose }: { onClose: () => void }) {
         setAccountLoadState('error');
       });
   }, [accountLoadAttempt]);
+  const loadMoreAccounts = () => {
+    if (!nextAccountCursor || loadingMoreAccounts) return;
+    setLoadingMoreAccounts(true);
+    void fetch(`/api/provider-accounts?cursor=${encodeURIComponent(nextAccountCursor)}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error('More shared Pages could not be loaded.');
+        return response.json() as Promise<{
+          data: { accounts: ComposerDestination[]; nextCursor: string | null };
+        }>;
+      })
+      .then(({ data }) => {
+        setAccounts((current) => {
+          const known = new Set(current.map((account) => account.id));
+          return [
+            ...current,
+            ...data.accounts
+              .map(normalizeComposerDestination)
+              .filter((account) => !known.has(account.id)),
+          ];
+        });
+        setNextAccountCursor(data.nextCursor);
+      })
+      .catch((reason: unknown) => {
+        setError(
+          reason instanceof Error ? reason.message : 'More shared Pages could not be loaded.',
+        );
+      })
+      .finally(() => {
+        setLoadingMoreAccounts(false);
+      });
+  };
   useEffect(() => {
     if (selectedAccounts.length === 0 || scheduledAtMillis === null) {
       setScheduledJobs([]);
@@ -1148,6 +1183,16 @@ function Composer({ onClose }: { onClose: () => void }) {
                     )}
                 </label>
               ))}
+              {nextAccountCursor && (
+                <button
+                  className="secondary-button composer-load-more-accounts"
+                  type="button"
+                  disabled={loadingMoreAccounts}
+                  onClick={loadMoreAccounts}
+                >
+                  {loadingMoreAccounts ? 'Loading accounts…' : 'Load more accounts'}
+                </button>
+              )}
             </fieldset>
             {selected.length > 0 && !isYouTube && !isTikTok && (
               <fieldset className="content-kind-picker" inert={hasUncertainPost}>

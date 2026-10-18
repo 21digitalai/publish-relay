@@ -48,6 +48,69 @@ interface Account {
   originWorkspaceName?: string;
 }
 
+interface AccountDto {
+  id: string;
+  provider: string;
+  destinationProvider?: string;
+  grantFamily?: 'facebook_pages' | 'instagram' | null;
+  displayName: string;
+  status: string;
+  expiresAt?: string | null;
+  availability?: string;
+  capabilityFreshness?: 'fresh' | 'stale' | 'unknown';
+  capabilitySnapshot?: { contentKinds: string[] };
+  adapterDefaults: Account['adapterDefaults'];
+  xLongPosts?: Account['xLongPosts'];
+  isExposed?: boolean;
+  originWorkspaceName?: string;
+}
+
+interface AccountPageResponse {
+  data: { accounts: AccountDto[]; nextCursor: string | null };
+}
+
+function mapAccountDto(account: AccountDto): Account {
+  const handleMatch = /\(@([^)]*)\)$/.exec(account.displayName);
+  return {
+    id: account.id,
+    provider:
+      account.provider.toLowerCase() === 'x'
+        ? 'X'
+        : account.provider.toLowerCase() === 'youtube'
+          ? 'YouTube'
+          : account.provider.toLowerCase() === 'linkedin'
+            ? 'LinkedIn'
+            : account.provider.toLowerCase() === 'instagram_login'
+              ? 'Instagram'
+              : account.provider.toLowerCase() === 'meta'
+                ? 'Meta'
+                : account.provider,
+    destinationProvider: account.destinationProvider ?? account.provider,
+    ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
+    name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
+    handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
+    health:
+      account.provider.toLowerCase() === 'linkedin' &&
+      account.status === 'active' &&
+      linkedInExpiringSoon(account, Date.now())
+        ? 'Needs attention'
+        : destinationHealth(account.availability ?? 'active', account.status),
+    ...(account.expiresAt !== undefined ? { expiresAt: account.expiresAt } : {}),
+    availability: account.availability ?? 'active',
+    capabilityFreshness: account.capabilityFreshness ?? 'unknown',
+    capabilitySnapshot: account.capabilitySnapshot ?? {
+      contentKinds: inferredContentKinds(account.destinationProvider ?? account.provider),
+    },
+    adapterDefaults: account.adapterDefaults,
+    xLongPosts:
+      account.destinationProvider === 'x'
+        ? (account.xLongPosts ?? { allowed: false, source: 'self_declared', verified: false })
+        : null,
+    ...(account.isExposed ? { isExposed: true } : {}),
+    ...(account.originWorkspaceName ? { originWorkspaceName: account.originWorkspaceName } : {}),
+  };
+}
+
 const YOUTUBE_CATEGORIES: [string, string][] = [
   ['', 'No category'],
   ['1', 'Film & Animation'],
@@ -1300,6 +1363,8 @@ function AccountsPage() {
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [nextAccountCursor, setNextAccountCursor] = useState<string | null>(null);
+  const [loadingMoreAccounts, setLoadingMoreAccounts] = useState(false);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [workspaceName, setWorkspaceName] = useState('your active workspace');
   const loadAccounts = useCallback(() => {
@@ -1308,78 +1373,11 @@ function AccountsPage() {
     void fetch('/api/provider-accounts')
       .then(async (response) => {
         if (!response.ok) throw new Error('Accounts could not be loaded');
-        return response.json() as Promise<{
-          data: {
-            accounts: {
-              id: string;
-              provider: string;
-              destinationProvider?: string;
-              grantFamily?: 'facebook_pages' | 'instagram' | null;
-              displayName: string;
-              status: string;
-              expiresAt?: string | null;
-              availability?: string;
-              capabilityFreshness?: 'fresh' | 'stale' | 'unknown';
-              capabilitySnapshot?: { contentKinds: string[] };
-              updatedAt: string;
-              adapterDefaults: Account['adapterDefaults'];
-              xLongPosts?: Account['xLongPosts'];
-              isExposed?: boolean;
-              originWorkspaceName?: string;
-            }[];
-          };
-        }>;
+        return response.json() as Promise<AccountPageResponse>;
       })
       .then(({ data }) => {
-        setAccounts(
-          data.accounts.map((account) => {
-            const handleMatch = /\(@([^)]*)\)$/.exec(account.displayName);
-            return {
-              id: account.id,
-              provider:
-                account.provider.toLowerCase() === 'x'
-                  ? 'X'
-                  : account.provider.toLowerCase() === 'youtube'
-                    ? 'YouTube'
-                    : account.provider.toLowerCase() === 'linkedin'
-                      ? 'LinkedIn'
-                      : account.provider.toLowerCase() === 'instagram_login'
-                        ? 'Instagram'
-                        : account.provider.toLowerCase() === 'meta'
-                          ? 'Meta'
-                          : account.provider,
-              destinationProvider: account.destinationProvider ?? account.provider,
-              ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
-              name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
-              handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
-              health:
-                account.provider.toLowerCase() === 'linkedin' &&
-                account.status === 'active' &&
-                linkedInExpiringSoon(account, Date.now())
-                  ? 'Needs attention'
-                  : destinationHealth(account.availability ?? 'active', account.status),
-              ...(account.expiresAt !== undefined ? { expiresAt: account.expiresAt } : {}),
-              availability: account.availability ?? 'active',
-              capabilityFreshness: account.capabilityFreshness ?? 'unknown',
-              capabilitySnapshot: account.capabilitySnapshot ?? {
-                contentKinds: inferredContentKinds(account.destinationProvider ?? account.provider),
-              },
-              adapterDefaults: account.adapterDefaults,
-              xLongPosts:
-                account.destinationProvider === 'x'
-                  ? (account.xLongPosts ?? {
-                      allowed: false,
-                      source: 'self_declared',
-                      verified: false,
-                    })
-                  : null,
-              ...(account.isExposed ? { isExposed: true } : {}),
-              ...(account.originWorkspaceName
-                ? { originWorkspaceName: account.originWorkspaceName }
-                : {}),
-            };
-          }),
-        );
+        setAccounts(data.accounts.map(mapAccountDto));
+        setNextAccountCursor(data.nextCursor);
         setLoadState('ready');
       })
       .catch((error: unknown) => {
@@ -1392,6 +1390,33 @@ function AccountsPage() {
         setLoadState('error');
       });
   }, []);
+  const loadMoreAccounts = useCallback(() => {
+    if (!nextAccountCursor || loadingMoreAccounts) return;
+    setLoadingMoreAccounts(true);
+    void fetch(`/api/provider-accounts?cursor=${encodeURIComponent(nextAccountCursor)}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error('More shared Pages could not be loaded');
+        return response.json() as Promise<AccountPageResponse>;
+      })
+      .then(({ data }) => {
+        setAccounts((current) => {
+          const known = new Set(current.map((account) => account.id));
+          return [
+            ...current,
+            ...data.accounts.map(mapAccountDto).filter((account) => !known.has(account.id)),
+          ];
+        });
+        setNextAccountCursor(data.nextCursor);
+      })
+      .catch((error: unknown) => {
+        setActionError(
+          error instanceof Error ? error.message : 'More shared Pages could not be loaded',
+        );
+      })
+      .finally(() => {
+        setLoadingMoreAccounts(false);
+      });
+  }, [nextAccountCursor, loadingMoreAccounts]);
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
@@ -1653,6 +1678,16 @@ function AccountsPage() {
                 </section>
               );
             })}
+          {renderedState === 'ready' && nextAccountCursor && (
+            <button
+              className="secondary-button accounts-load-more"
+              type="button"
+              disabled={loadingMoreAccounts}
+              onClick={loadMoreAccounts}
+            >
+              {loadingMoreAccounts ? 'Loading accounts…' : 'Load more accounts'}
+            </button>
+          )}
           {renderedState === 'ready' && accounts.length > 0 && !visible.length && (
             <div className="filter-empty">
               <h2>No accounts match these filters</h2>

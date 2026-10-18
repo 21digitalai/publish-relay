@@ -39,50 +39,102 @@ export interface ProviderAccountSummary {
 
 const EXPOSED_PAGE_LIST_LIMIT = 100;
 
-export function listProviderAccounts(
+export class InvalidAccountPageCursorError extends Error {}
+
+type AccountCursor = ['local', string, string, string] | ['exposed', string, string];
+
+function decodePageCursor(cursor?: string): AccountCursor | null {
+  if (!cursor) return null;
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    return z
+      .union([
+        z.tuple([z.literal('local'), z.string(), z.string(), z.uuid()]),
+        z.tuple([z.literal('exposed'), z.string(), z.uuid()]),
+      ])
+      .parse(decoded);
+  } catch {
+    throw new InvalidAccountPageCursorError('Invalid account page cursor');
+  }
+}
+
+export async function listProviderAccounts(
   database: NodePgDatabase,
   workspaceId: string,
   userId?: string,
 ): Promise<ProviderAccountSummary[]> {
+  const accounts: ProviderAccountSummary[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await listProviderAccountsPage(database, workspaceId, userId, cursor ?? undefined);
+    accounts.push(...page.accounts);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return accounts;
+}
+
+export function listProviderAccountsPage(
+  database: NodePgDatabase,
+  workspaceId: string,
+  userId?: string,
+  cursor?: string,
+): Promise<{ accounts: ProviderAccountSummary[]; nextCursor: string | null }> {
+  const after = decodePageCursor(cursor);
   return withTenantTransaction(
     database,
     { workspaceId, ...(userId ? { userId } : {}) },
     async (transaction) => {
-      const rows = await transaction
-        .select({
-          id: providerAccounts.id,
-          provider: providerConnections.provider,
-          grantFamily: providerConnections.grantFamily,
-          destinationProvider: providerAccounts.destinationProvider,
-          displayName: providerAccounts.displayName,
-          status: providerConnections.status,
-          availability: providerAccounts.availability,
-          remoteParentAccountId: providerAccounts.remoteParentAccountId,
-          capabilitiesCheckedAt: providerAccounts.capabilitiesCheckedAt,
-          adapterDefaults: providerAccounts.adapterDefaults,
-          xLongPostsAllowed: providerAccounts.xLongPostsAllowed,
-          updatedAt: providerAccounts.updatedAt,
-          expiresAt: providerConnections.expiresAt,
-          disconnectedAt: providerAccounts.disconnectedAt,
-          accessExpiresAt: providerConnections.accessExpiresAt,
-          refreshExpiresAt: providerConnections.refreshExpiresAt,
-        })
-        .from(providerAccounts)
-        .innerJoin(
-          providerConnections,
-          and(
-            eq(providerConnections.workspaceId, providerAccounts.workspaceId),
-            eq(providerConnections.id, providerAccounts.connectionId),
-          ),
-        )
-        .where(
-          and(
-            eq(providerAccounts.workspaceId, workspaceId),
-            or(isNull(providerAccounts.disconnectedAt), eq(providerConnections.provider, 'tiktok')),
-          ),
-        )
-        .orderBy(providerConnections.provider, providerAccounts.displayName);
-      const local = rows.map(
+      const localAfter = after?.[0] === 'local' ? after : null;
+      const rows =
+        after?.[0] === 'exposed'
+          ? []
+          : await transaction
+              .select({
+                id: providerAccounts.id,
+                provider: providerConnections.provider,
+                grantFamily: providerConnections.grantFamily,
+                destinationProvider: providerAccounts.destinationProvider,
+                displayName: providerAccounts.displayName,
+                status: providerConnections.status,
+                availability: providerAccounts.availability,
+                remoteParentAccountId: providerAccounts.remoteParentAccountId,
+                capabilitiesCheckedAt: providerAccounts.capabilitiesCheckedAt,
+                adapterDefaults: providerAccounts.adapterDefaults,
+                xLongPostsAllowed: providerAccounts.xLongPostsAllowed,
+                updatedAt: providerAccounts.updatedAt,
+                expiresAt: providerConnections.expiresAt,
+                disconnectedAt: providerAccounts.disconnectedAt,
+                accessExpiresAt: providerConnections.accessExpiresAt,
+                refreshExpiresAt: providerConnections.refreshExpiresAt,
+              })
+              .from(providerAccounts)
+              .innerJoin(
+                providerConnections,
+                and(
+                  eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+                  eq(providerConnections.id, providerAccounts.connectionId),
+                ),
+              )
+              .where(
+                and(
+                  eq(providerAccounts.workspaceId, workspaceId),
+                  or(
+                    isNull(providerAccounts.disconnectedAt),
+                    eq(providerConnections.provider, 'tiktok'),
+                  ),
+                  localAfter
+                    ? sql`(${providerConnections.provider}, ${providerAccounts.displayName}, ${providerAccounts.id}) > (${localAfter[1]}, ${localAfter[2]}, ${localAfter[3]}::uuid)`
+                    : undefined,
+                ),
+              )
+              .orderBy(
+                providerConnections.provider,
+                providerAccounts.displayName,
+                providerAccounts.id,
+              )
+              .limit(EXPOSED_PAGE_LIST_LIMIT + 1);
+      const localRows = rows.slice(0, EXPOSED_PAGE_LIST_LIMIT);
+      const local = localRows.map(
         ({ accessExpiresAt, refreshExpiresAt, disconnectedAt, xLongPostsAllowed, ...row }) => ({
           ...row,
           xLongPosts:
@@ -107,7 +159,17 @@ export function listProviderAccounts(
           capabilityFreshness: capabilityFreshness(row.capabilitiesCheckedAt),
         }),
       );
-      if (!userId) return local;
+      const lastLocal = localRows.at(-1);
+      const localCursor = lastLocal
+        ? Buffer.from(
+            JSON.stringify(['local', lastLocal.provider, lastLocal.displayName, lastLocal.id]),
+          ).toString('base64url')
+        : null;
+      if (rows.length > EXPOSED_PAGE_LIST_LIMIT || local.length === EXPOSED_PAGE_LIST_LIMIT)
+        return { accounts: local, nextCursor: localCursor };
+      if (!userId) return { accounts: local, nextCursor: null };
+      const remaining = EXPOSED_PAGE_LIST_LIMIT - local.length;
+      const exposedAfter = after?.[0] === 'exposed' ? after : null;
       const result = await transaction.execute<{
         id: string;
         displayName: string;
@@ -119,8 +181,10 @@ export function listProviderAccounts(
       SELECT id, display_name AS "displayName",
         origin_workspace_name AS "originWorkspaceName", availability,
         connection_status AS "connectionStatus", updated_at AS "updatedAt"
-      FROM public.list_visible_exposed_facebook_pages(${workspaceId}::uuid)
-      LIMIT ${EXPOSED_PAGE_LIST_LIMIT}
+      FROM public.list_visible_exposed_facebook_pages_page(
+        ${workspaceId}::uuid, ${exposedAfter?.[1] ?? null}::text,
+        ${exposedAfter?.[2] ?? null}::uuid, ${remaining + 1}
+      )
     `);
       const rawRows: unknown = Array.isArray(result) ? result : result.rows;
       const exposed = z
@@ -135,26 +199,36 @@ export function listProviderAccounts(
           }),
         )
         .parse(rawRows);
-      return [
-        ...local,
-        ...exposed.map((page) => ({
-          id: page.id,
-          provider: 'meta',
-          destinationProvider: 'facebook_page',
-          displayName: page.displayName,
-          status: page.connectionStatus,
-          availability: page.availability,
-          remoteParentAccountId: null,
-          capabilitySnapshot: destinationCapabilities('facebook_page'),
-          capabilitiesCheckedAt: null,
-          capabilityFreshness: 'unknown' as const,
-          adapterDefaults: {},
-          xLongPosts: null,
-          updatedAt: new Date(page.updatedAt),
-          originWorkspaceName: page.originWorkspaceName,
-          isExposed: true,
-        })),
-      ];
+      const page = exposed.slice(0, remaining);
+      const last = page.at(-1);
+      return {
+        accounts: [
+          ...local,
+          ...page.map((page) => ({
+            id: page.id,
+            provider: 'meta',
+            destinationProvider: 'facebook_page',
+            displayName: page.displayName,
+            status: page.connectionStatus,
+            availability: page.availability,
+            remoteParentAccountId: null,
+            capabilitySnapshot: destinationCapabilities('facebook_page'),
+            capabilitiesCheckedAt: null,
+            capabilityFreshness: 'unknown' as const,
+            adapterDefaults: {},
+            xLongPosts: null,
+            updatedAt: new Date(page.updatedAt),
+            originWorkspaceName: page.originWorkspaceName,
+            isExposed: true,
+          })),
+        ],
+        nextCursor:
+          exposed.length > remaining && last
+            ? Buffer.from(JSON.stringify(['exposed', last.displayName, last.id])).toString(
+                'base64url',
+              )
+            : null,
+      };
     },
   );
 }

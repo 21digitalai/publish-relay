@@ -80,6 +80,12 @@ beforeEach(async () => {
     INSERT INTO publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at)
       VALUES ('${jobId}', '${workspaceId}', '00000000-0000-4000-8000-000000000306', '00000000-0000-4000-8000-000000000308', '00000000-0000-4000-8000-000000000305', '2026-08-31T15:00:00Z');
   `);
+  await database.exec(
+    await readFile(
+      new URL('../migrations/0059_provider_account_exposures.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   db = drizzle(database) as unknown as NodePgDatabase;
 });
 

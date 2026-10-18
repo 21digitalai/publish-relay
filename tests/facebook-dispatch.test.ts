@@ -44,6 +44,7 @@ import {
   dispatchDueFacebookJobs,
   reconcileFacebookJobs,
 } from '../src/modules/providers/facebook-dispatch.service.js';
+import { getActiveCredential } from '../src/modules/credentials/credential.repository.js';
 import {
   claimDueJobs,
   claimReconciliationJobs,
@@ -64,6 +65,7 @@ function job(id: string, providerAccountId = `account-${id}`) {
 function context(availability = 'active') {
   return {
     accountRemoteId: 'page-1',
+    originWorkspaceId: 'workspace-1',
     availability,
     credentialId: 'credential-1',
     effectivePayload: {
@@ -160,6 +162,30 @@ describe('Facebook dispatch and reconciliation', () => {
     expect(finishDispatchAttempt).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ jobId: sibling.id, outcome: 'published' }),
+    );
+  });
+
+  it('uses the origin credential for a target-workspace job', async () => {
+    vi.mocked(claimDueJobs).mockResolvedValue([job('shared')] as never);
+    vi.mocked(startDispatchAttempt).mockResolvedValue({ attemptId: 'attempt-shared' } as never);
+    databaseQuery.limit.mockResolvedValueOnce([
+      { ...context(), originWorkspaceId: 'origin-workspace' },
+    ]);
+    publish.mockResolvedValue({ status: 'published', externalPostId: 'page_post_shared' });
+
+    await expect(dispatchDueFacebookJobs(runtime, now)).resolves.toBe(1);
+    expect(getActiveCredential).toHaveBeenCalledWith(
+      databaseQuery,
+      'origin-workspace',
+      'credential-1',
+    );
+    expect(finishDispatchAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        jobId: 'shared',
+        outcome: 'published',
+      }),
     );
   });
 

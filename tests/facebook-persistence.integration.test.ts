@@ -121,6 +121,12 @@ beforeEach(async () => {
       ('${facebookJobId}', '${workspaceA}', '00000000-0000-4000-8000-000000000708', '00000000-0000-4000-8000-000000000711', '00000000-0000-4000-8000-000000000706', now()),
       ('${instagramJobId}', '${workspaceA}', '00000000-0000-4000-8000-000000000708', '00000000-0000-4000-8000-000000000711', '00000000-0000-4000-8000-000000000707', now());
   `);
+  await database.exec(
+    await readFile(
+      new URL('../migrations/0059_provider_account_exposures.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   db = drizzle(database) as unknown as NodePgDatabase;
 });
 

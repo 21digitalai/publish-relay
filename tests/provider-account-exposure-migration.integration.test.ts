@@ -1,7 +1,11 @@
 import { readFile, readdir } from 'node:fs/promises';
 
 import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { describe, expect, it } from 'vitest';
+
+import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 
 const origin = '00000000-0000-4000-8000-000000000101';
 const target = '00000000-0000-4000-8000-000000000102';
@@ -104,6 +108,17 @@ describe('provider account exposure migration', () => {
       expect(exposures.rows).toEqual([{ workspace_id: target, show_other_workspace_posts: true }]);
       expect((await database.query('SELECT id FROM provider_accounts')).rows).toEqual([]);
       expect((await database.query('SELECT id FROM publication_jobs')).rows).toHaveLength(1);
+      await database.exec('RESET ROLE');
+      const claimed = await claimDueJobs(drizzle(database) as unknown as NodePgDatabase, {
+        workerId: 'exposure-test',
+        now: new Date('2026-10-20T10:00:00Z'),
+        leaseMs: 30_000,
+        limit: 1,
+        destinationProvider: 'facebook_page',
+      });
+      expect(claimed).toHaveLength(1);
+      expect(claimed[0]?.workspaceId).toBe(target);
+      await database.exec('SET ROLE publish_relay_app');
       await expect(
         database.exec(`INSERT INTO provider_account_exposures
         (workspace_id, provider_account_id) VALUES ('${target}', '${account}')`),
@@ -111,8 +126,19 @@ describe('provider account exposure migration', () => {
       await database.exec(`RESET ROLE;
         UPDATE provider_account_exposures SET revoked_at = now()
           WHERE workspace_id = '${target}' AND provider_account_id = '${account}';
+        UPDATE publication_jobs SET state = 'scheduled', lease_owner = NULL, lease_expires_at = NULL
+          WHERE workspace_id = '${target}';
         SET ROLE publish_relay_app;`);
       expect((await database.query('SELECT id FROM publication_jobs')).rows).toHaveLength(1);
+      await database.exec('RESET ROLE');
+      const revokedClaims = await claimDueJobs(drizzle(database) as unknown as NodePgDatabase, {
+        workerId: 'exposure-test-again',
+        now: new Date('2026-10-20T10:00:00Z'),
+        leaseMs: 30_000,
+        limit: 1,
+        destinationProvider: 'facebook_page',
+      });
+      expect(revokedClaims).toEqual([]);
     } finally {
       await database.close();
     }

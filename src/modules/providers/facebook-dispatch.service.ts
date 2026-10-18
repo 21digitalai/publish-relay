@@ -1,10 +1,11 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import {
   mediaObjects,
   providerAccounts,
+  providerAccountExposures,
   publicationJobs,
   revisionMedia,
 } from '../../database/schema.js';
@@ -69,16 +70,19 @@ async function loadContext(database: NodePgDatabase, workspaceId: string, jobId:
     const [base] = await tx
       .select({
         accountRemoteId: providerAccounts.remoteAccountId,
+        originWorkspaceId: providerAccounts.workspaceId,
         availability: providerAccounts.availability,
         credentialId: providerAccounts.credentialId,
         effectivePayload: publicationJobs.effectivePayload,
       })
       .from(publicationJobs)
+      .innerJoin(providerAccounts, eq(providerAccounts.id, publicationJobs.providerAccountId))
       .innerJoin(
-        providerAccounts,
+        providerAccountExposures,
         and(
-          eq(providerAccounts.workspaceId, publicationJobs.workspaceId),
-          eq(providerAccounts.id, publicationJobs.providerAccountId),
+          eq(providerAccountExposures.workspaceId, publicationJobs.workspaceId),
+          eq(providerAccountExposures.providerAccountId, providerAccounts.id),
+          isNull(providerAccountExposures.revokedAt),
         ),
       )
       .where(
@@ -159,9 +163,10 @@ async function createAdapter(
   runtime: FacebookDispatchRuntime,
   job: FacebookJob,
   credentialId: string,
+  originWorkspaceId: string,
   now: Date,
 ) {
-  const accessToken = await readToken(runtime, job.workspaceId, credentialId);
+  const accessToken = await readToken(runtime, originWorkspaceId, credentialId);
   return new FacebookPublishingAdapter({
     client: runtime.client,
     artifacts: new PostgresFacebookArtifactStore(runtime.database, {
@@ -239,7 +244,13 @@ async function dispatchJob(runtime: FacebookDispatchRuntime, job: FacebookJob, n
   }
   let adapter: FacebookPublishingAdapter;
   try {
-    adapter = await createAdapter(runtime, job, context.credentialId, now);
+    adapter = await createAdapter(
+      runtime,
+      job,
+      context.credentialId,
+      context.originWorkspaceId,
+      now,
+    );
   } catch {
     await failPreflight(runtime, job, attempt.attemptId, now, 'Facebook credential is unavailable');
     return false;
@@ -251,7 +262,7 @@ async function dispatchJob(runtime: FacebookDispatchRuntime, job: FacebookJob, n
   if (outcome.status === 'failed' && outcome.code === 'auth')
     await markUnavailable(
       runtime,
-      job.workspaceId,
+      context.originWorkspaceId,
       job.providerAccountId,
       outcome.message.includes('(permission,') ? 'permission_lost' : 'reauth_required',
     );
@@ -323,7 +334,13 @@ export async function reconcileFacebookJobs(
         .limit(1);
       if (!job) continue;
       const context = await loadContext(runtime.database, job.workspaceId, job.id);
-      const adapter = await createAdapter(runtime, job, context.credentialId, now);
+      const adapter = await createAdapter(
+        runtime,
+        job,
+        context.credentialId,
+        context.originWorkspaceId,
+        now,
+      );
       const fingerprint = deriveJobIdempotencyKey({
         jobId: job.id,
         revisionId: job.revisionId,

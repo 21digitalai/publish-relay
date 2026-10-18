@@ -74,8 +74,11 @@ export async function claimDueJobs(
       )
       AND (${input.destinationProvider ?? null}::text IS NULL OR EXISTS (
         SELECT 1 FROM provider_accounts account
+        JOIN provider_account_exposures exposure
+          ON exposure.provider_account_id = account.id
+          AND exposure.workspace_id = publication_jobs.workspace_id
+          AND exposure.revoked_at IS NULL
         WHERE account.id = publication_jobs.provider_account_id
-          AND account.workspace_id = publication_jobs.workspace_id
           AND account.destination_provider = ${input.destinationProvider ?? null}
       ))
       AND (${input.requireMedia ?? false} = false OR EXISTS (
@@ -168,8 +171,11 @@ export async function claimReconciliationJobs(
         AND (lease_expires_at IS NULL OR lease_expires_at <= ${input.now})
         AND (${input.destinationProvider ?? null}::text IS NULL OR EXISTS (
           SELECT 1 FROM provider_accounts account
+          JOIN provider_account_exposures exposure
+            ON exposure.provider_account_id = account.id
+            AND exposure.workspace_id = publication_jobs.workspace_id
+            AND exposure.revoked_at IS NULL
           WHERE account.id = publication_jobs.provider_account_id
-            AND account.workspace_id = publication_jobs.workspace_id
             AND account.destination_provider = ${input.destinationProvider ?? null}
         ))
       ORDER BY updated_at, id

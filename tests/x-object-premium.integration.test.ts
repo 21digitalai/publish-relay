@@ -86,6 +86,12 @@ it('publishes persisted media root plus separate linked reply and records each e
           '00000000-0000-4000-8000-000000000507',
           '00000000-0000-4000-8000-000000000505', '2026-09-01T00:00:00Z');
     `);
+    await database.exec(
+      await readFile(
+        new URL('../migrations/0059_provider_account_exposures.sql', import.meta.url),
+        'utf8',
+      ),
+    );
     const db = drizzle(database) as unknown as NodePgDatabase;
     const createPost = vi
       .fn()

@@ -85,6 +85,12 @@ beforeEach(async () => {
     INSERT INTO revision_media (workspace_id, revision_id, media_id, position) VALUES
       ('${workspaceA}', '00000000-0000-4000-8000-000000000408', '${mediaId}', 0);
   `);
+  await database.exec(
+    await readFile(
+      new URL('../migrations/0059_provider_account_exposures.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   db = drizzle(database) as unknown as NodePgDatabase;
 });
 

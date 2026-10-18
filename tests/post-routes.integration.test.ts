@@ -74,6 +74,7 @@ const migrations = [
   '0062_exposed_account_admission.sql',
   '0064_exposed_machine_admission.sql',
   '0067_browser_shared_page_job_account.sql',
+  '0068_browser_shared_page_machine_job_read.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';

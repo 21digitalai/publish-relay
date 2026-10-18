@@ -189,7 +189,11 @@ export function registerPostRoutes(
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
       if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
       const { jobId } = z.object({ jobId: z.uuid() }).parse(request.params);
-      const job = await getJobDetail(database, principal.workspaceId, jobId);
+      const job = await getJobDetail(database, principal.workspaceId, jobId, {
+        type: principal.kind,
+        id: principal.actorId,
+        capability: 'schedules:read',
+      });
       if (!job)
         return await reply.code(404).send(errorEnvelope('not_found', 'Job not found', request.id));
       return await reply.send(

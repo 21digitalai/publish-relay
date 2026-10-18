@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
 import {
   getBrowserJobDetail,
+  getJobDetail,
   listBrowserJobSummaries,
 } from '../src/modules/content/post-read.repository.js';
 import { editFacebookPageExposure } from '../src/modules/credentials/provider-account-exposure.service.js';
@@ -206,6 +207,24 @@ describe('provider account exposure migration', () => {
         workspaceId: target,
         limit: 10,
       })).toEqual([]);
+      for (const actor of [
+        { type: 'api-key' as const, id: apiKey },
+        { type: 'delegated' as const, id: delegatedGrant },
+      ]) {
+        const detail = await getJobDetail(browserDb, target, firstTargetJob.id, {
+          ...actor,
+          capability: 'schedules:read',
+        });
+        expect(detail?.providerAccount).toMatchObject({
+          id: account,
+          originWorkspaceName: 'Origin',
+          handle: null,
+        });
+        expect(JSON.stringify(detail)).not.toMatch(/credentialId|remoteAccountId|accessToken/);
+      }
+      expect(await getJobDetail(browserDb, target, firstTargetJob.id, {
+        type: 'api-key', id: outsider, capability: 'schedules:read',
+      })).toBeNull();
       for (const actor of [
         { type: 'api-key' as const, id: outsider },
         { type: 'delegated' as const, id: outsider },

@@ -156,10 +156,12 @@ export async function getBrowserJobDetail(
   workspaceId: string,
   jobId: string,
   userId?: string,
+  machineActor?: { type: 'api-key' | 'delegated'; id: string; capability: 'schedules:read' },
 ) {
   return withTenantTransaction(database, {
     workspaceId,
     ...(userId ? { userId } : {}),
+    ...(machineActor ? { machineActor } : {}),
   }, async (transaction) => {
     const rows = await browserJobJoins(transaction)
       .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.id, jobId)))
@@ -309,6 +311,11 @@ export async function getPostDetail(database: NodePgDatabase, workspaceId: strin
   });
 }
 
-export async function getJobDetail(database: NodePgDatabase, workspaceId: string, jobId: string) {
-  return getBrowserJobDetail(database, workspaceId, jobId);
+export async function getJobDetail(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+  machineActor?: { type: 'api-key' | 'delegated'; id: string; capability: 'schedules:read' },
+) {
+  return getBrowserJobDetail(database, workspaceId, jobId, undefined, machineActor);
 }

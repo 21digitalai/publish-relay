@@ -21,6 +21,7 @@ import {
   getExposedPageCalendarMedia,
   listExposedPageCalendarJobs,
 } from './calendar-mirror.repository.js';
+import { listFacebookPageOccupancy } from './page-occupancy.repository.js';
 import {
   getExternalDraftForWorkspace,
   transitionExternalDraft,
@@ -68,8 +69,15 @@ const calendarMirrorQuerySchema = z.object({
   afterScheduledAt: z.iso.datetime().optional(),
   afterId: z.uuid().optional(),
 });
+const pageOccupancyQuerySchema = z.object({
+  startsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  beforeScheduledAt: z.iso.datetime().optional(),
+});
 const MAX_CALENDAR_MIRROR_WINDOW_MS = 45 * 24 * 60 * 60_000;
 const jobParamsSchema = z.object({ jobId: z.uuid() });
+const accountParamsSchema = z.object({ accountId: z.uuid() });
 const postParamsSchema = z.object({ postId: z.uuid() });
 const mediaParamsSchema = z.object({ mediaId: z.uuid() });
 const mirrorMediaParamsSchema = z.object({ jobId: z.uuid(), mediaId: z.uuid() });
@@ -699,6 +707,43 @@ export function registerBrowserWorkflowRoutes(
         next:
           rows.length > query.limit && last
             ? { afterScheduledAt: last.scheduledAt.toISOString(), afterId: last.id }
+            : null,
+      },
+      error: null,
+    };
+  });
+
+  application.get('/api/workflow/accounts/:accountId/occupancy', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const params = accountParamsSchema.safeParse(request.params);
+    const parsed = pageOccupancyQuerySchema.safeParse(request.query);
+    if (!params.success || !parsed.success)
+      return reply.code(400).send({ data: null, error: 'Invalid Page occupancy query' });
+    const query = parsed.data;
+    const startsAt = new Date(query.startsAt);
+    const endsAt = new Date(query.endsAt);
+    if (
+      endsAt.getTime() <= startsAt.getTime() ||
+      endsAt.getTime() - startsAt.getTime() > MAX_SCHEDULE_GUIDANCE_WINDOW_MS
+    )
+      return reply.code(400).send({ data: null, error: 'Invalid Page occupancy window' });
+    const rows = await listFacebookPageOccupancy(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      userId: identity.userId,
+      accountId: params.data.accountId,
+      startsAt,
+      endsAt,
+      limit: query.limit + 1,
+      ...(query.beforeScheduledAt ? { beforeScheduledAt: new Date(query.beforeScheduledAt) } : {}),
+    });
+    const items = rows.slice(0, query.limit);
+    return {
+      data: {
+        items,
+        next:
+          rows.length > query.limit && items.length > 0
+            ? { beforeScheduledAt: items[items.length - 1]?.scheduledAt.toISOString() }
             : null,
       },
       error: null,

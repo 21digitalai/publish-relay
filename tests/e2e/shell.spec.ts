@@ -2893,6 +2893,43 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
   await expect(page.getByText('Shared caption')).toHaveCount(0);
 });
 
+test('uses Page-wide occupancy only as advisory Composer guidance', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-10-18T05:00:00.000Z'));
+  await establishWorkspaceSession(page);
+  await mockMetaDestinations(page);
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[],"next":null},"error":null}',
+    }),
+  );
+  const occupancyCalls: string[] = [];
+  await page.route(
+    '**/api/workflow/accounts/00000000-0000-4000-8000-000000000212/occupancy?*',
+    (route) => {
+      occupancyCalls.push(route.request().url());
+      return route.fulfill({
+        contentType: 'application/json',
+        body: '{"data":{"items":[{"scheduledAt":"2026-10-19T05:30:00.000Z","jobCount":2}],"next":null},"error":null}',
+      });
+    },
+  );
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByText('Facebook · Mira Studio').click();
+  await page.getByLabel('Post body').fill('Intentional shared Page slot');
+  await page.getByLabel('HTTPS link').fill('https://example.test/page');
+  await page.getByLabel('Date', { exact: true }).fill('2026-10-19');
+  await page.getByLabel('Time', { exact: true }).fill('08:30');
+  await expect(page.getByText('2 nearby publications detected')).toBeVisible();
+  await expect(page.getByText('keep the exact minute intentionally')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+  expect(occupancyCalls.length).toBeGreaterThan(0);
+  expect(new URL(occupancyCalls.at(-1) ?? '').searchParams.get('startsAt')).toBe(
+    '2026-10-19T05:15:00.000Z',
+  );
+});
+
 test('refreshes background publication outcomes without replaying historical toasts', async ({
   page,
 }, testInfo) => {

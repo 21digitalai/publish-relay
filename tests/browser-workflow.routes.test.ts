@@ -8,6 +8,7 @@ import { PostValidationError } from '../src/modules/content/post.errors.js';
 const authorizeRequest = vi.fn();
 const listBrowserJobSummaries = vi.fn();
 const listExposedPageCalendarJobs = vi.fn();
+const listFacebookPageOccupancy = vi.fn();
 const getExposedPageCalendarJob = vi.fn();
 const getExposedPageCalendarMedia = vi.fn();
 const getBrowserJobDetail = vi.fn();
@@ -60,6 +61,9 @@ vi.mock('../src/modules/content/calendar-mirror.repository.js', () => ({
   listExposedPageCalendarJobs,
   getExposedPageCalendarJob,
   getExposedPageCalendarMedia,
+}));
+vi.mock('../src/modules/content/page-occupancy.repository.js', () => ({
+  listFacebookPageOccupancy,
 }));
 
 const { registerBrowserWorkflowRoutes } =
@@ -140,6 +144,44 @@ describe('browser workflow read contract', () => {
     });
     expect(invalid.statusCode).toBe(400);
     await application.close();
+  });
+
+  it('returns only bounded Page-wide occupancy counts and instants', async () => {
+    const scheduledAt = new Date('2026-10-25T01:30:00.000Z');
+    listFacebookPageOccupancy.mockResolvedValue([
+      { scheduledAt, jobCount: 2 },
+      { scheduledAt: new Date('2026-10-25T00:30:00.000Z'), jobCount: 1 },
+    ]);
+    const app = Fastify();
+    registerBrowserWorkflowRoutes(app, { auth: {} as AuthService, database: {} as never });
+    const path = `/api/workflow/accounts/${job().providerAccount.id}/occupancy`;
+    const response = await app.inject({
+      method: 'GET',
+      url: `${path}?startsAt=2026-10-25T00%3A00%3A00Z&endsAt=2026-10-26T00%3A00%3A00Z&limit=1`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      data: {
+        items: [{ scheduledAt: scheduledAt.toISOString(), jobCount: 2 }],
+        next: { beforeScheduledAt: scheduledAt.toISOString() },
+      },
+      error: null,
+    });
+    expect(response.body).not.toMatch(/workspaceId|jobId|content|credential/);
+    expect(Buffer.byteLength(response.body)).toBeLessThan(300);
+    expect(listFacebookPageOccupancy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workspaceId, userId: 'user', limit: 2 }),
+    );
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `${path}?startsAt=2026-10-25T00%3A00%3A00Z&endsAt=2026-11-02T00%3A00%3A00Z`,
+        })
+      ).statusCode,
+    ).toBe(400);
+    await app.close();
   });
 
   it('uses a separate read-only target detail contract for mirrored Page jobs', async () => {

@@ -10,6 +10,7 @@ import {
   getExposedPageCalendarJob,
   getExposedPageCalendarMedia,
 } from '../src/modules/content/calendar-mirror.repository.js';
+import { listFacebookPageOccupancy } from '../src/modules/content/page-occupancy.repository.js';
 import {
   getBrowserJobDetail,
   getJobDetail,
@@ -72,6 +73,9 @@ describe('provider account exposure migration', () => {
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.list_exposed_page_calendar_jobs(
           uuid, timestamptz, timestamptz, timestamptz, uuid, integer)
+          TO publish_relay_app;
+        GRANT EXECUTE ON FUNCTION public.list_facebook_page_occupancy(
+          uuid, uuid, timestamptz, timestamptz, timestamptz, integer)
           TO publish_relay_app;
         GRANT EXECUTE ON FUNCTION public.set_exposed_page_calendar_visibility(uuid, uuid, boolean)
           TO publish_relay_app;
@@ -376,6 +380,56 @@ describe('provider account exposure migration', () => {
         mimeType: 'image/jpeg',
         byteSize: 10,
       });
+      const occupancy = (viewer: string, workspaceId = target) =>
+        listFacebookPageOccupancy(browserDb, {
+          workspaceId,
+          userId: viewer,
+          accountId: account,
+          startsAt: new Date('2026-10-19T00:00:00Z'),
+          endsAt: new Date('2026-10-20T00:00:00Z'),
+          limit: 100,
+        });
+      const targetOccupancy = await occupancy(user);
+      expect(targetOccupancy).toEqual(
+        expect.arrayContaining([
+          { scheduledAt: new Date('2026-10-19T10:00:00Z'), jobCount: 1 },
+          { scheduledAt: new Date('2026-10-19T11:00:00Z'), jobCount: 1 },
+        ]),
+      );
+      expect(await occupancy(user, origin)).toEqual(targetOccupancy);
+      expect(JSON.stringify(targetOccupancy)).not.toMatch(/jobId|workspaceId|caption|credential/);
+      const firstOccupancyPage = await listFacebookPageOccupancy(browserDb, {
+        workspaceId: target,
+        userId: user,
+        accountId: account,
+        startsAt: new Date('2026-10-19T00:00:00Z'),
+        endsAt: new Date('2026-10-20T00:00:00Z'),
+        limit: 1,
+      });
+      expect(firstOccupancyPage).toHaveLength(1);
+      const nextOccupancyPage = await listFacebookPageOccupancy(browserDb, {
+        workspaceId: target,
+        userId: user,
+        accountId: account,
+        startsAt: new Date('2026-10-19T00:00:00Z'),
+        endsAt: new Date('2026-10-20T00:00:00Z'),
+        beforeScheduledAt: firstOccupancyPage[0]?.scheduledAt,
+        limit: 1,
+      });
+      expect(nextOccupancyPage).toHaveLength(1);
+      expect(nextOccupancyPage[0]?.scheduledAt.getTime()).toBeLessThan(
+        firstOccupancyPage[0]?.scheduledAt.getTime() ?? 0,
+      );
+      expect(
+        await listFacebookPageOccupancy(browserDb, {
+          workspaceId: target,
+          userId: user,
+          accountId: apiKey,
+          startsAt: new Date('2026-10-19T00:00:00Z'),
+          endsAt: new Date('2026-10-20T00:00:00Z'),
+          limit: 100,
+        }),
+      ).toEqual([]);
       expect(
         await getExposedPageCalendarMedia(browserDb, {
           workspaceId: target,
@@ -386,8 +440,10 @@ describe('provider account exposure migration', () => {
       ).toBeNull();
       await database.exec(`SELECT set_config('app.user_id', '${nonOwner}', false)`);
       expect(await mirror()).toHaveLength(1);
+      expect(await occupancy(nonOwner)).toEqual(targetOccupancy);
       await database.exec(`SELECT set_config('app.user_id', '${outsider}', false)`);
       expect(await mirror()).toEqual([]);
+      expect(await occupancy(outsider)).toEqual([]);
       expect(
         await getExposedPageCalendarJob(browserDb, {
           workspaceId: target,
@@ -415,6 +471,7 @@ describe('provider account exposure migration', () => {
       expect(await setVisibility(outsider, false)).toBe(false);
       expect(await setVisibility(user, false)).toBe(true);
       expect(await mirror()).toEqual([]);
+      expect(await occupancy(user)).toEqual(targetOccupancy);
       expect(await mirroredDetail()).toBeNull();
       expect(await mirroredMedia()).toBeNull();
       expect(

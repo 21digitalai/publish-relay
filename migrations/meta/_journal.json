@@ -512,6 +512,13 @@
       "when": 1792326000000,
       "tag": "0072_exposed_page_calendar_media",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792326600000,
+      "tag": "0073_facebook_page_occupancy",
+      "breakpoints": true
     }
   ]
 }

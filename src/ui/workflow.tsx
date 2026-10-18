@@ -228,9 +228,15 @@ interface QueueCursor {
   beforeId: string;
 }
 
+interface ScheduleOccupancy {
+  providerAccountId: string;
+  scheduledAt: string;
+  jobCount: number;
+}
+
 function nextCollisionFreeSchedule(
   candidate: Date,
-  jobs: QueueJobDto[],
+  jobs: ScheduleOccupancy[],
   windowEnd: Date,
 ): Date | null {
   let next = candidate.getTime();
@@ -247,14 +253,43 @@ function nextCollisionFreeSchedule(
 async function loadScheduledJobsForAccounts(
   accountIds: string[],
   candidate: Date,
-): Promise<{ jobs: QueueJobDto[]; windowEnd: Date }> {
+  accounts: ComposerDestination[],
+): Promise<{ jobs: ScheduleOccupancy[]; windowEnd: Date }> {
   const windowStart = new Date(candidate.getTime() - COLLISION_SPACING_MS);
   const windowEnd = new Date(windowStart.getTime() + COLLISION_WINDOW_MS);
   const pages = await Promise.all(
     accountIds.map(async (accountId) => {
-      const items: QueueJobDto[] = [];
+      const items: ScheduleOccupancy[] = [];
+      const isSharedPage = accounts.some(
+        (account) => account.id === accountId && account.destinationProvider === 'facebook_page',
+      );
       let next: QueueCursor | null = null;
+      let pageBeforeAt: string | null = null;
       for (let page = 0; page < COLLISION_MAX_PAGES_PER_ACCOUNT; page += 1) {
+        if (isSharedPage) {
+          const query = new URLSearchParams({
+            startsAt: windowStart.toISOString(),
+            endsAt: windowEnd.toISOString(),
+            limit: String(COLLISION_PAGE_LIMIT),
+          });
+          if (pageBeforeAt) query.set('beforeScheduledAt', pageBeforeAt);
+          const response = await fetch(
+            `/api/workflow/accounts/${encodeURIComponent(accountId)}/occupancy?${query}`,
+          );
+          if (!response.ok) throw new Error('Page-wide schedule guidance could not be loaded.');
+          const envelope = (await response.json()) as {
+            data: {
+              items: { scheduledAt: string; jobCount: number }[];
+              next: { beforeScheduledAt: string } | null;
+            };
+          };
+          items.push(
+            ...envelope.data.items.map((item) => ({ ...item, providerAccountId: accountId })),
+          );
+          pageBeforeAt = envelope.data.next?.beforeScheduledAt ?? null;
+          if (!pageBeforeAt) return items;
+          continue;
+        }
         const query = new URLSearchParams({
           limit: String(COLLISION_PAGE_LIMIT),
           states: 'scheduled',
@@ -271,7 +306,13 @@ async function loadScheduledJobsForAccounts(
         const envelope = (await response.json()) as {
           data: { items: QueueJobDto[]; next: QueueCursor | null };
         };
-        items.push(...envelope.data.items);
+        items.push(
+          ...envelope.data.items.map((item) => ({
+            providerAccountId: item.providerAccount.id ?? accountId,
+            scheduledAt: item.scheduledAt,
+            jobCount: 1,
+          })),
+        );
         next = envelope.data.next;
         if (!next) return items;
       }
@@ -531,7 +572,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [nextAccountCursor, setNextAccountCursor] = useState<string | null>(null);
   const [loadingMoreAccounts, setLoadingMoreAccounts] = useState(false);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
-  const [scheduledJobs, setScheduledJobs] = useState<QueueJobDto[]>([]);
+  const [scheduledJobs, setScheduledJobs] = useState<ScheduleOccupancy[]>([]);
   const [collisionGuidance, setCollisionGuidance] = useState<'loading' | 'ready' | 'unavailable'>(
     'loading',
   );
@@ -673,8 +714,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const collisions = scheduledAt
     ? scheduledJobs.filter(
         (job) =>
-          Boolean(job.providerAccount.id) &&
-          selectedAccounts.includes(job.providerAccount.id ?? '') &&
+          selectedAccounts.includes(job.providerAccountId) &&
           new Date(job.scheduledAt).getTime() >= Date.now() &&
           Math.abs(new Date(job.scheduledAt).getTime() - scheduledAt.getTime()) <
             COLLISION_SPACING_MS,
@@ -866,7 +906,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     }
     let active = true;
     setCollisionGuidance('loading');
-    void loadScheduledJobsForAccounts(selectedAccounts, new Date(scheduledAtMillis))
+    void loadScheduledJobsForAccounts(selectedAccounts, new Date(scheduledAtMillis), accounts)
       .then((result) => {
         if (!active) return;
         setScheduledJobs(result.jobs);
@@ -881,7 +921,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     return () => {
       active = false;
     };
-  }, [scheduledAtMillis, selectedAccounts]);
+  }, [scheduledAtMillis, selectedAccounts, accounts]);
   useEffect(() => {
     intentKey.current = crypto.randomUUID();
   }, [
@@ -1680,8 +1720,11 @@ function Composer({ onClose }: { onClose: () => void }) {
             {scheduled && scheduledAt && collisions.length > 0 && (
               <div className="schedule-collision-guidance" role="status" inert={hasUncertainPost}>
                 <strong>
-                  {collisions.length}{' '}
-                  {collisions.length === 1 ? 'nearby publication' : 'nearby publications'} detected
+                  {collisions.reduce((total, item) => total + item.jobCount, 0)}{' '}
+                  {collisions.reduce((total, item) => total + item.jobCount, 0) === 1
+                    ? 'nearby publication'
+                    : 'nearby publications'}{' '}
+                  detected
                 </strong>
                 <p>Leave breathing room for this account or keep the exact minute intentionally.</p>
                 <button

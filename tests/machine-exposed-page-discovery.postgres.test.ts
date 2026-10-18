@@ -86,12 +86,39 @@ run('machine exposed Page discovery on PostgreSQL', () => {
       const headers = { authorization: 'Bearer test', 'x-publish-relay-workspace': target };
       const response = await app.inject({ method: 'GET', url: '/api/v1/destinations', headers });
       expect(response.statusCode).toBe(200);
-      const body = response.json<{ data: { items: { id: string }[] } }>();
-      expect(body.data.items).toHaveLength(101);
-      expect(new Set(body.data.items.map((item) => item.id)).size).toBe(101);
+      const body = response.json<{
+        data: { items: { id: string }[]; nextCursor: string | null };
+      }>();
+      expect(body.data.items).toHaveLength(100);
+      expect(body.data.nextCursor).toEqual(expect.any(String));
+      expect(Buffer.byteLength(response.body)).toBeLessThan(128 * 1024);
       expect(JSON.stringify(body)).not.toMatch(
         /credential|originWorkspace|adapterDefaults|secret/i,
       );
+      const next = await app.inject({
+        method: 'GET',
+        url: `/api/v1/destinations?cursor=${encodeURIComponent(body.data.nextCursor ?? '')}`,
+        headers,
+      });
+      expect(next.statusCode).toBe(200);
+      const second = next.json<{ data: { items: { id: string }[]; nextCursor: string | null } }>();
+      expect(second.data.items).toHaveLength(1);
+      expect(second.data.nextCursor).toBeNull();
+      expect(Buffer.byteLength(next.body)).toBeLessThan(8 * 1024);
+      expect(new Set([...body.data.items, ...second.data.items].map((item) => item.id)).size).toBe(
+        101,
+      );
+      expect(JSON.stringify(second)).not.toMatch(
+        /credential|originWorkspace|adapterDefaults|secret/i,
+      );
+      for (const cursor of ['', 'invalid']) {
+        const invalid = await app.inject({
+          method: 'GET',
+          url: `/api/v1/destinations?cursor=${cursor}`,
+          headers,
+        });
+        expect(invalid.statusCode).toBe(400);
+      }
       const first = await listProviderAccountsPage(db, target, undefined, undefined, undefined, {
         type: 'api-key',
         id: key,

@@ -33,6 +33,7 @@ const accountSchema = z.union([
   }),
 ]);
 const destinationCollectionSchema = z.object({
+  nextCursor: z.string().nullable(),
   items: z.array(
     z.object({
       id: z.uuid(),
@@ -276,6 +277,9 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         get: {
           operationId: 'listDestinations',
           security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 1024 } },
+          ],
           responses: {
             '200': {
               description: 'Connected destination summaries',

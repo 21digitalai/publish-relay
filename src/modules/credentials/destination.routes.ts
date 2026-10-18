@@ -6,7 +6,10 @@ import type { ApiRateLimiter } from '../api/rate-limit.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
 import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
 import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
-import { listProviderAccounts } from './provider-account.service.js';
+import {
+  InvalidAccountPageCursorError,
+  listProviderAccountsPage,
+} from './provider-account.service.js';
 import type { MasterKeyProvider } from './envelope.js';
 import type { TikTokHttpClient } from '../providers/tiktok-http-client.js';
 import { TikTokRequestError } from '../providers/tiktok-http-client.js';
@@ -17,6 +20,7 @@ import {
 import { z } from 'zod';
 
 const capabilityParams = z.object({ accountId: z.uuid() });
+const destinationQuery = z.object({ cursor: z.string().min(1).max(1024).optional() });
 
 export function registerDestinationRoutes(
   application: FastifyInstance,
@@ -102,6 +106,11 @@ export function registerDestinationRoutes(
         return await reply
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      const query = destinationQuery.safeParse(request.query);
+      if (!query.success)
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_cursor', 'Invalid destination page cursor', request.id));
       const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
       void reply.header('X-RateLimit-Limit', decision.limit);
       void reply.header('X-RateLimit-Remaining', decision.remaining);
@@ -111,15 +120,18 @@ export function registerDestinationRoutes(
           .code(429)
           .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
       }
-      const accounts = await listProviderAccounts(database, principal.workspaceId, undefined, {
-        type: principal.kind,
-        id: principal.actorId,
-        capability: 'destinations:read',
-      });
+      const page = await listProviderAccountsPage(
+        database,
+        principal.workspaceId,
+        undefined,
+        query.data.cursor,
+        undefined,
+        { type: principal.kind, id: principal.actorId, capability: 'destinations:read' },
+      );
       return await reply.send(
         successEnvelope(
           {
-            items: accounts.map((account) => ({
+            items: page.accounts.map((account) => ({
               id: account.id,
               provider: account.provider,
               destinationProvider: account.destinationProvider,
@@ -132,11 +144,16 @@ export function registerDestinationRoutes(
               capabilityFreshness: account.capabilityFreshness,
               updatedAt: account.updatedAt.toISOString(),
             })),
+            nextCursor: page.nextCursor,
           },
           request.id,
         ),
       );
     } catch (error) {
+      if (error instanceof InvalidAccountPageCursorError)
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_cursor', error.message, request.id));
       if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
         return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
       throw error;

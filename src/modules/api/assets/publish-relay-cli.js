@@ -57,6 +57,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   'destinations:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'items',
+    'nextCursor',
     'provider',
     'destinationProvider',
     'displayName',
@@ -391,9 +392,10 @@ function jobState(body) {
 }
 function routePath(route, command, id, flags) {
   const path = route.path.replace(':id', encodeURIComponent(id ?? ''));
-  if (command !== 'posts:list') return path;
+  if (command !== 'posts:list' && command !== 'destinations:list') return path;
   const query = new URLSearchParams();
-  for (const name of ['cursor', 'limit']) {
+  const names = command === 'destinations:list' ? ['cursor'] : ['cursor', 'limit'];
+  for (const name of names) {
     const value = flags[name];
     if (typeof value === 'string') query.set(name, value);
   }

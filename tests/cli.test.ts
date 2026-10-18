@@ -24,8 +24,14 @@ afterEach(async () =>
   ),
 );
 
-async function fixture(status: number, body: unknown, workspace = 'workspace-one') {
+async function fixture(
+  status: number,
+  body: unknown,
+  workspace = 'workspace-one',
+  paths?: string[],
+) {
   const server = createServer((request, response) => {
+    if (request.url !== '/api/v1/account') paths?.push(request.url ?? '');
     if (request.headers['x-publish-relay-workspace'] !== workspace) {
       response.writeHead(401, { 'content-type': 'application/json' });
       response.end(
@@ -339,37 +345,45 @@ describe('Publish Relay CLI', () => {
   });
 
   it('lists destination summaries while redacting unexpected provider fields', async () => {
-    const baseUrl = await fixture(200, {
-      success: true,
-      data: {
-        items: [
-          {
-            id: 'destination-1',
-            provider: 'meta',
-            destinationProvider: 'instagram',
-            displayName: '@studio',
-            status: 'active',
-            availability: 'active',
-            remoteParentAccountId: 'page-one',
-            capabilitySnapshot: {
-              schemaVersion: 1,
-              contentKinds: ['single_image', 'carousel'],
-              media: { minImages: 1, maxImages: 10 },
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      {
+        success: true,
+        data: {
+          nextCursor: 'page-two',
+          items: [
+            {
+              id: 'destination-1',
+              provider: 'meta',
+              destinationProvider: 'instagram',
+              displayName: '@studio',
+              status: 'active',
+              availability: 'active',
+              remoteParentAccountId: 'page-one',
+              capabilitySnapshot: {
+                schemaVersion: 1,
+                contentKinds: ['single_image', 'carousel'],
+                media: { minImages: 1, maxImages: 10 },
+              },
+              capabilitiesCheckedAt: '2026-09-07T20:00:00.000Z',
+              capabilityFreshness: 'fresh',
+              updatedAt: '2026-09-07T20:00:00.000Z',
+              credentialId: 'private',
             },
-            capabilitiesCheckedAt: '2026-09-07T20:00:00.000Z',
-            capabilityFreshness: 'fresh',
-            updatedAt: '2026-09-07T20:00:00.000Z',
-            credentialId: 'private',
-          },
-        ],
+          ],
+        },
+        meta: { requestId: 'request-destinations' },
       },
-      meta: { requestId: 'request-destinations' },
-    });
+      'workspace-one',
+      paths,
+    );
     const result = await cli(['destinations', 'list', '--base-url', baseUrl], {
       PUBLISH_RELAY_API_KEY: 'test-key',
     });
     expect(result.code).toBe(0);
-    const output = JSON.parse(result.stdout) as { data: { items: unknown[] } };
+    const output = JSON.parse(result.stdout) as { data: { items: unknown[]; nextCursor: string } };
+    expect(output.data.nextCursor).toBe('page-two');
     expect(output.data.items[0]).toEqual({
       id: 'destination-1',
       provider: 'meta',
@@ -388,6 +402,15 @@ describe('Publish Relay CLI', () => {
       updatedAt: '2026-09-07T20:00:00.000Z',
       credentialId: '[REDACTED]',
     });
+    const next = await cli(
+      ['destinations', 'list', '--base-url', baseUrl, '--cursor', 'page-two'],
+      {
+        PUBLISH_RELAY_API_KEY: 'test-key',
+      },
+    );
+    expect(next.code).toBe(0);
+    expect(JSON.parse(next.stdout)).toMatchObject({ data: { nextCursor: 'page-two' } });
+    expect(paths).toEqual(['/api/v1/destinations', '/api/v1/destinations?cursor=page-two']);
   });
 
   it('returns exit 10 and the durable job ID when bounded polling times out', async () => {

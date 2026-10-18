@@ -414,6 +414,13 @@
       "when": 1792283000000,
       "tag": "0058_workspace_tombstone",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792316400000,
+      "tag": "0059_provider_account_exposures",
+      "breakpoints": true
     }
   ]
 }

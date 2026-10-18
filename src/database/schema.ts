@@ -543,6 +543,27 @@ export const providerAccounts = pgTable(
   ],
 );
 
+// Exposure grants selectability without moving the canonical account or credential.
+export const providerAccountExposures = pgTable(
+  'provider_account_exposures',
+  {
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'restrict' }),
+    providerAccountId: uuid('provider_account_id')
+      .notNull()
+      .references(() => providerAccounts.id, { onDelete: 'restrict' }),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    showOtherWorkspacePosts: boolean('show_other_workspace_posts').notNull().default(true),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.providerAccountId] }),
+    index('provider_account_exposures_account_idx').on(table.providerAccountId),
+  ],
+);
+
 export const providerCapabilitySnapshots = pgTable(
   'provider_capability_snapshots',
   {
@@ -920,8 +941,11 @@ export const publicationJobs = pgTable(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.workspaceId, table.providerAccountId],
-      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
-      name: 'publication_jobs_workspace_provider_account_fk',
+      foreignColumns: [
+        providerAccountExposures.workspaceId,
+        providerAccountExposures.providerAccountId,
+      ],
+      name: 'publication_jobs_workspace_exposure_fk',
     }).onDelete('restrict'),
   ],
 );

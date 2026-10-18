@@ -109,6 +109,7 @@ export function listProviderAccountsPage(
                 disconnectedAt: providerAccounts.disconnectedAt,
                 accessExpiresAt: providerConnections.accessExpiresAt,
                 refreshExpiresAt: providerConnections.refreshExpiresAt,
+                showOtherWorkspacePosts: providerAccountExposures.showOtherWorkspacePosts,
               })
               .from(providerAccounts)
               .innerJoin(
@@ -116,6 +117,13 @@ export function listProviderAccountsPage(
                 and(
                   eq(providerConnections.workspaceId, providerAccounts.workspaceId),
                   eq(providerConnections.id, providerAccounts.connectionId),
+                ),
+              )
+              .leftJoin(
+                providerAccountExposures,
+                and(
+                  eq(providerAccountExposures.workspaceId, workspaceId),
+                  eq(providerAccountExposures.providerAccountId, providerAccounts.id),
                 ),
               )
               .where(
@@ -139,8 +147,18 @@ export function listProviderAccountsPage(
               .limit(EXPOSED_PAGE_LIST_LIMIT + 1);
       const localRows = rows.slice(0, EXPOSED_PAGE_LIST_LIMIT);
       const local = localRows.map(
-        ({ accessExpiresAt, refreshExpiresAt, disconnectedAt, xLongPostsAllowed, ...row }) => ({
+        ({
+          accessExpiresAt,
+          refreshExpiresAt,
+          disconnectedAt,
+          xLongPostsAllowed,
+          showOtherWorkspacePosts,
+          ...row
+        }) => ({
           ...row,
+          ...(row.destinationProvider === 'facebook_page'
+            ? { showOtherWorkspacePosts: showOtherWorkspacePosts !== false }
+            : {}),
           xLongPosts:
             row.destinationProvider === 'x'
               ? {

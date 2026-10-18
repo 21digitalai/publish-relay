@@ -483,6 +483,39 @@ describe('provider account exposure migration', () => {
       ).toBe(false);
       expect(await setVisibility(user, true)).toBe(true);
       expect(await mirror()).toHaveLength(1);
+      const originMirrorDetail = () =>
+        getExposedPageCalendarJob(browserDb, {
+          workspaceId: origin,
+          userId: user,
+          jobId: firstTargetJob.id,
+        });
+      expect(await originMirrorDetail()).toMatchObject({
+        id: firstTargetJob.id,
+        originWorkspaceName: 'Target',
+      });
+      expect(
+        await setExposedPageCalendarVisibility(browserDb, {
+          workspaceId: origin,
+          userId: user,
+          accountId: account,
+          showPosts: false,
+        }),
+      ).toBe(true);
+      expect(await originMirrorDetail()).toBeNull();
+      expect(
+        (await listProviderAccountsPage(browserDb, origin, user)).accounts.find(
+          (item) => item.id === account,
+        )?.showOtherWorkspacePosts,
+      ).toBe(false);
+      expect(
+        await setExposedPageCalendarVisibility(browserDb, {
+          workspaceId: origin,
+          userId: user,
+          accountId: account,
+          showPosts: true,
+        }),
+      ).toBe(true);
+      expect(await originMirrorDetail()).not.toBeNull();
       expect(
         (await database.query('SELECT provider_account_id FROM provider_account_exposures')).rows,
       ).toEqual([{ provider_account_id: account }]);

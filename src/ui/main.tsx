@@ -112,7 +112,7 @@ function mapAccountDto(account: AccountDto): Account {
         : null,
     ...(account.isExposed ? { isExposed: true } : {}),
     ...(account.originWorkspaceName ? { originWorkspaceName: account.originWorkspaceName } : {}),
-    ...(account.isExposed
+    ...(account.destinationProvider === 'facebook_page'
       ? { showOtherWorkspacePosts: account.showOtherWorkspacePosts !== false }
       : {}),
   };
@@ -1139,7 +1139,7 @@ function AccountRow({
             originWorkspaceId={originWorkspaceId}
           />
         )}
-      {account.isExposed && originWorkspaceId && (
+      {account.destinationProvider === 'facebook_page' && originWorkspaceId && (
         <div className="account-calendar-visibility x-long-post-setting">
           <button
             type="button"

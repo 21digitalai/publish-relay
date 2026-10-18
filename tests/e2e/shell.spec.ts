@@ -813,6 +813,50 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
   await expect(page.getByRole('checkbox', { name: /Facebook · Later Page/ })).toBeVisible();
 });
 
+test('lets the origin Page owner hide other-workspace calendar posts', async ({ page }) => {
+  await establishWorkspaceSession(page);
+  let showPosts = true;
+  const accountId = '00000000-0000-4000-8000-000000000391';
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: accountId,
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: 'Origin Page',
+              status: 'active',
+              availability: 'active',
+              updatedAt: '2026-10-18T10:00:00Z',
+              adapterDefaults: {},
+              showOtherWorkspacePosts: showPosts,
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/calendar-visibility`, (route) => {
+    showPosts = (route.request().postDataJSON() as { showPosts: boolean }).showPosts;
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { showPosts }, error: null }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'accounts'));
+  const visibility = page.getByRole('switch', { name: 'Show posts from other workspaces' });
+  await expect(visibility).toHaveAttribute('aria-checked', 'true');
+  await visibility.click();
+  await expect(visibility).toHaveAttribute('aria-checked', 'false');
+  await page.reload();
+  await expect(visibility).toHaveAttribute('aria-checked', 'false');
+});
+
 test('owner shares one Page with workspace checkboxes and sees revoke guard', async ({
   page,
 }, testInfo) => {

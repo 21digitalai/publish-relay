@@ -498,6 +498,13 @@
       "when": 1792324800000,
       "tag": "0070_exposed_page_calendar_preference",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1792325400000,
+      "tag": "0071_exposed_page_calendar_detail",
+      "breakpoints": true
     }
   ]
 }

@@ -16,7 +16,10 @@ import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
-import { listExposedPageCalendarJobs } from './calendar-mirror.repository.js';
+import {
+  getExposedPageCalendarJob,
+  listExposedPageCalendarJobs,
+} from './calendar-mirror.repository.js';
 import {
   getExternalDraftForWorkspace,
   transitionExternalDraft,
@@ -698,6 +701,21 @@ export function registerBrowserWorkflowRoutes(
       },
       error: null,
     };
+  });
+
+  application.get('/api/workflow/calendar/exposed-pages/:jobId', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const params = jobParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid job' });
+    const job = await getExposedPageCalendarJob(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      userId: identity.userId,
+      jobId: params.data.jobId,
+    });
+    return job
+      ? { data: job, error: null }
+      : reply.code(404).send({ data: null, error: 'Job was not found' });
   });
 
   application.get('/api/workflow/jobs', async (request, reply) => {

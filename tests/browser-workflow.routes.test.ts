@@ -8,6 +8,7 @@ import { PostValidationError } from '../src/modules/content/post.errors.js';
 const authorizeRequest = vi.fn();
 const listBrowserJobSummaries = vi.fn();
 const listExposedPageCalendarJobs = vi.fn();
+const getExposedPageCalendarJob = vi.fn();
 const getBrowserJobDetail = vi.fn();
 const cancelPendingJob = vi.fn();
 const requestOperatorRetry = vi.fn();
@@ -56,6 +57,7 @@ vi.mock('../src/modules/content/post-read.repository.js', async (importOriginal)
 }));
 vi.mock('../src/modules/content/calendar-mirror.repository.js', () => ({
   listExposedPageCalendarJobs,
+  getExposedPageCalendarJob,
 }));
 
 const { registerBrowserWorkflowRoutes } =
@@ -136,6 +138,35 @@ describe('browser workflow read contract', () => {
     });
     expect(invalid.statusCode).toBe(400);
     await application.close();
+  });
+
+  it('uses a separate read-only target detail contract for mirrored Page jobs', async () => {
+    getExposedPageCalendarJob.mockResolvedValue({
+      id: jobId,
+      caption: 'Shared caption',
+      originWorkspaceName: 'Origin',
+      media: [{ id: postId, mimeType: 'image/jpeg', byteSize: 10, position: 0, ready: true }],
+    });
+    const app = Fastify();
+    registerBrowserWorkflowRoutes(app, { auth: {} as AuthService, database: {} as never });
+    const path = `/api/workflow/calendar/exposed-pages/${jobId}`;
+    const response = await app.inject({ method: 'GET', url: path });
+    expect(response.statusCode).toBe(200);
+    expect(getExposedPageCalendarJob).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId,
+      userId: 'user',
+      jobId,
+    });
+    expect(response.json()).toMatchObject({
+      data: {
+        caption: 'Shared caption',
+        originWorkspaceName: 'Origin',
+      },
+    });
+    expect(response.body).not.toMatch(/credential|storageKey|remoteAccount/);
+    getExposedPageCalendarJob.mockResolvedValueOnce(null);
+    expect((await app.inject({ method: 'GET', url: path })).statusCode).toBe(404);
+    await app.close();
   });
 
   it('uses live session tenancy and returns an allowlisted paginated summary', async () => {

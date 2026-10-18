@@ -14,6 +14,7 @@ import { TikTokComposerForm, type ImportedDraftMedia } from './tiktok-composer.j
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 import { useCalendarMirror, type CalendarMirrorJob } from './calendar-mirror.js';
 import { calendarDateKey, calendarTime, calendarZonedMidnight } from './calendar-time.js';
+import { layoutCalendarBlocks } from './calendar-layout.js';
 
 type JobState =
   | 'scheduled'
@@ -2422,27 +2423,33 @@ function TimeCalendar({
         </div>
         {dates.map((date) => (
           <div className="time-day" key={date.toISOString()}>
-            {jobs
-              .filter((job) => calendarDayMatches(job.scheduledAt, date, timeZone))
-              .map((job) => {
+            {layoutCalendarBlocks(
+              jobs.filter((job) => calendarDayMatches(job.scheduledAt, date, timeZone)),
+              (job) => {
                 const scheduled = calendarTime(job.scheduledAt, timeZone);
-                const top =
-                  ((scheduled.hour - hourStart) * 60 + scheduled.minute) * (pixelsPerHour / 60);
                 return (
-                  <a
-                    className={`calendar-block ${job.state}`}
-                    style={{ top: `${String(Math.max(0, top))}px` }}
-                    href={jobPath(job)}
-                    key={job.id}
-                    aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
-                  >
-                    <strong>{job.account}</strong>
-                    {job.originWorkspaceName && <span>From {job.originWorkspaceName}</span>}
-                    <span>{job.text}</span>
-                    {job.state === 'published' && <CalendarPublishedMark />}
-                  </a>
+                  ((scheduled.hour - hourStart) * 60 + scheduled.minute) * (pixelsPerHour / 60)
                 );
-              })}
+              },
+              62,
+            ).map(({ item: job, top, column, columns }) => (
+              <a
+                className={`calendar-block ${job.state}`}
+                style={{
+                  top: `${String(top)}px`,
+                  left: `calc(${String(column)} * (100% / ${String(columns)}) + 3px)`,
+                  width: `calc(100% / ${String(columns)} - 6px)`,
+                }}
+                href={jobPath(job)}
+                key={job.id}
+                aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
+              >
+                <strong>{job.account}</strong>
+                {job.originWorkspaceName && <span>From {job.originWorkspaceName}</span>}
+                <span>{job.text}</span>
+                {job.state === 'published' && <CalendarPublishedMark />}
+              </a>
+            ))}
           </div>
         ))}
       </div>
@@ -2462,7 +2469,7 @@ function TimelineCalendar({
   const visibleJobs = jobs.filter((job) => calendarDayMatches(job.scheduledAt, anchor, timeZone));
   const lanes = Array.from(
     visibleJobs.reduce((grouped, job) => {
-      const key = `${job.provider}:${job.handle}`;
+      const key = job.providerAccountId ?? `${job.provider}:${job.handle}`;
       grouped.set(key, [...(grouped.get(key) ?? []), job]);
       return grouped;
     }, new Map<string, Job[]>()),

@@ -2839,6 +2839,16 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
               contentPreview: 'Shared caption',
               mediaCount: 1,
             },
+            {
+              id: '00000000-0000-4000-8000-000000000713',
+              providerAccountId: '00000000-0000-4000-8000-000000000714',
+              providerAccountName: 'Second Page',
+              originWorkspaceName: 'Other workspace',
+              state: 'scheduled',
+              scheduledAt: '2026-10-25T02:00:00.000Z',
+              contentPreview: 'Another Page post',
+              mediaCount: 0,
+            },
           ],
           next: null,
         },
@@ -2867,6 +2877,12 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
       }),
   );
   await page.goto('/w/ai-influencer/calendar?mode=Day&date=2026-10-25');
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await expect(page.locator('.timeline-lane')).toHaveCount(2);
+  await expect(page.locator('.timeline-lane').nth(0)).toContainText('Sneji Eli Geri');
+  await expect(page.locator('.timeline-lane').nth(1)).toContainText('Second Page');
+  await page.getByRole('button', { name: 'Day', exact: true }).click();
+  await expect(page.getByRole('link', { name: /Second Page, Scheduled/ })).toBeVisible();
   const card = page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ });
   await expect(card).toHaveCount(1);
   await expect(card).toHaveAttribute(

@@ -407,13 +407,15 @@ describe('provider account exposure migration', () => {
         limit: 1,
       });
       expect(firstOccupancyPage).toHaveLength(1);
+      const firstOccupiedInstant = firstOccupancyPage[0];
+      if (!firstOccupiedInstant) throw new Error('Expected Page occupancy');
       const nextOccupancyPage = await listFacebookPageOccupancy(browserDb, {
         workspaceId: target,
         userId: user,
         accountId: account,
         startsAt: new Date('2026-10-19T00:00:00Z'),
         endsAt: new Date('2026-10-20T00:00:00Z'),
-        beforeScheduledAt: firstOccupancyPage[0]?.scheduledAt,
+        beforeScheduledAt: firstOccupiedInstant.scheduledAt,
         limit: 1,
       });
       expect(nextOccupancyPage).toHaveLength(1);

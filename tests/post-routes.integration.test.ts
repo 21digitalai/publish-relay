@@ -1619,9 +1619,30 @@ describe('POST /api/v1/posts', () => {
         payload,
       });
       expect(created.statusCode).toBe(201);
-      return headers;
+      const jobPath = created.json<{ data: { links: { jobs: string[] } } }>().data.links.jobs[0];
+      if (!jobPath) throw new Error('Create response omitted the shared Page job link');
+      const detail = await application.inject({ method: 'GET', url: jobPath, headers });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({
+        data: {
+          providerAccount: {
+            id: foreignProviderAccountId,
+            displayName: 'Foreign',
+            provider: 'meta',
+            originWorkspaceName: 'Foreign',
+            handle: null,
+          },
+          links: { self: jobPath },
+        },
+      });
+      const serialized = JSON.stringify(detail.json());
+      for (const privateValue of ['wrappedKey', 'ciphertext', 'credentialId', 'remoteAccountId']) {
+        expect(serialized).not.toContain(privateValue);
+      }
+      expect(Buffer.byteLength(serialized)).toBeLessThan(4096);
+      return { headers, jobPath };
     };
-    const apiHeaders = await verify('api', 'pr_test.secret');
+    const { headers: apiHeaders, jobPath: apiJobPath } = await verify('api', 'pr_test.secret');
     authenticate.mockResolvedValue(null);
     authenticateDelegated.mockResolvedValue({
       grantId: delegatedGrantId,
@@ -1630,7 +1651,48 @@ describe('POST /api/v1/posts', () => {
       clientId: 'example-client-local',
       scopes: ['schedules:read', 'schedules:write'],
     });
-    const delegatedHeaders = await verify('delegated', 'delegated-token');
+    const { headers: delegatedHeaders, jobPath: delegatedJobPath } = await verify(
+      'delegated',
+      'delegated-token',
+    );
+    const outsider = await application.inject({
+      method: 'GET',
+      url: delegatedJobPath,
+      headers: { ...delegatedHeaders, 'x-publish-relay-workspace': foreignWorkspaceId },
+    });
+    expect(outsider.statusCode).toBe(401);
+    const foreignJob = await application.inject({
+      method: 'GET',
+      url: `/api/v1/jobs/${foreignJobId}`,
+      headers: delegatedHeaders,
+    });
+    expect(foreignJob.statusCode).toBe(404);
+    expect(JSON.stringify(foreignJob.json())).not.toContain('Foreign tenant secret');
+    const foreignApiKeyId = '00000000-0000-4000-8000-000000000819';
+    await database.exec(`
+      INSERT INTO api_keys
+        (id, workspace_id, created_by_user_id, label, prefix, secret_hash, capabilities)
+      VALUES ('${foreignApiKeyId}', '${foreignWorkspaceId}', '${userId}', 'Foreign agent',
+        'pr_foreign', 'redacted', ARRAY['schedules:read']);
+    `);
+    authenticate.mockResolvedValue({
+      id: foreignApiKeyId,
+      workspaceId: foreignWorkspaceId,
+      createdByUserId: userId,
+      capabilities: ['schedules:read'],
+    });
+    authenticateDelegated.mockResolvedValue(null);
+    const foreignPrincipal = await application.inject({
+      method: 'GET',
+      url: delegatedJobPath,
+      headers: {
+        authorization: 'Bearer pr_foreign.secret',
+        'x-publish-relay-workspace': foreignWorkspaceId,
+      },
+    });
+    expect(foreignPrincipal.statusCode).toBe(404);
+    expect(JSON.stringify(foreignPrincipal.json())).not.toContain('Shared Page');
+    expect(apiJobPath).not.toBe(delegatedJobPath);
     const jobs = await database.query<{ workspace_id: string; provider_account_id: string }>(`
       SELECT workspace_id, provider_account_id FROM publication_jobs
       WHERE provider_account_id = '${foreignProviderAccountId}'

@@ -116,6 +116,8 @@ async function validateTargetOwnership(
     throw new PostValidationError('One or more provider accounts do not belong to the workspace');
   if (accounts.some((account) => account.destinationProvider === 'tiktok'))
     throw new PostValidationError('TikTok publishing is not available in this release');
+  if (accounts.some((account) => account.destinationProvider === 'snapchat'))
+    throw new PostValidationError('Snapchat publishing is not available in this release');
   if (
     input.selectedDestination &&
     accounts.some((account) => account.destinationProvider !== input.selectedDestination)

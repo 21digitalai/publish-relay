@@ -5,6 +5,7 @@ import {
   TIKTOK_CAPTION_MAX_LENGTH,
   tiktokCommercialContentSchema,
 } from '../providers/tiktok-publication-options.js';
+import { snapchatSpotlightContentSchema } from '../providers/snapchat-spotlight-content.js';
 
 const accountId = z.uuid();
 const mediaId = z.uuid();
@@ -96,6 +97,12 @@ export const publicationTargetSchema = z.discriminatedUnion('provider', [
     providerAccountId: accountId,
     content: linkedinContent,
   }),
+  // Fixture-only until Snap allowlisting and a dedicated admission route exist.
+  z.object({
+    provider: z.literal('snapchat'),
+    providerAccountId: accountId,
+    content: snapchatSpotlightContentSchema,
+  }),
 ]);
 
 export type PublicationTarget = z.infer<typeof publicationTargetSchema>;
@@ -109,7 +116,11 @@ export interface NormalizedPublicationTarget {
 
 export function normalizePublicationTarget(target: PublicationTarget): NormalizedPublicationTarget {
   const content = target.content;
-  if (target.provider === 'youtube' || target.provider === 'tiktok') {
+  if (
+    target.provider === 'youtube' ||
+    target.provider === 'tiktok' ||
+    target.provider === 'snapchat'
+  ) {
     const mediaId = target.content.mediaId;
     return {
       provider: target.provider,

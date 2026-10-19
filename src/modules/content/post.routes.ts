@@ -29,7 +29,7 @@ import {
   browserJobStates,
   getJobDetail,
   getPostDetail,
-  listBrowserJobSummaries,
+  listMachineJobSummaries,
   listPostSummaries,
 } from './post-read.repository.js';
 import { createPostInTransaction, validatePostCandidate } from './post.service.js';
@@ -247,7 +247,7 @@ export function registerPostRoutes(
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
       if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
       const { query, states, filters, before } = parseJobListQuery(request.query, cursorCodec);
-      const rows = await listBrowserJobSummaries(database, {
+      const rows = await listMachineJobSummaries(database, {
         workspaceId: principal.workspaceId,
         machineActor: { type: principal.kind, id: principal.actorId, capability: 'schedules:read' },
         limit: query.limit + 1,

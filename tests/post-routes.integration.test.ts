@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import { CursorCodec } from '../src/modules/api/contract.js';
 import { registerPostRoutes } from '../src/modules/content/post.routes.js';
+import { buildMachineJobListQuery } from '../src/modules/content/post-read.repository.js';
 import { registerMediaRoutes } from '../src/modules/content/media.routes.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { registerBrowserWorkflowRoutes } from '../src/modules/content/browser-workflow.routes.js';
@@ -2081,6 +2082,19 @@ describe('POST /api/v1/posts', () => {
 });
 
 describe('GET /api/v1/posts and jobs', () => {
+  it('selects only the bounded machine job summary fields', () => {
+    const query = buildMachineJobListQuery(drizzle(database) as unknown as NodePgDatabase, {
+      workspaceId,
+      limit: 20,
+    }).toSQL().sql;
+    expect(query).toContain('"publication_jobs"."post_id"');
+    expect(query).toContain('browser_account.display_name');
+    expect(query).toContain('resolve_browser_job_account');
+    expect(query).not.toMatch(
+      /effective_payload|effective_provider_settings|revision_media|post_revisions|created_actor|last_mutator|origin_workspace_name/i,
+    );
+  });
+
   it('lists past and future jobs with tenant hiding, filters, stable cursors and bounded output', async () => {
     const headers = {
       authorization: 'Bearer pr_test.secret',

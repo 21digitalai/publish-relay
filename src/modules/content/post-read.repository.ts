@@ -95,6 +95,19 @@ const browserJobProjection = {
   },
 };
 
+const machineJobProjection = {
+  id: publicationJobs.id,
+  postId: publicationJobs.postId,
+  state: publicationJobs.state,
+  scheduledAt: publicationJobs.scheduledAt,
+  updatedAt: publicationJobs.updatedAt,
+  providerAccount: {
+    id: sql<string>`browser_account.id`,
+    displayName: sql<string>`browser_account.display_name`,
+    provider: sql<string>`browser_account.provider`,
+  },
+};
+
 function browserJobJoins(database: NodePgDatabase) {
   return database
     .select(browserJobProjection)
@@ -118,7 +131,19 @@ function browserJobJoins(database: NodePgDatabase) {
     );
 }
 
-export async function listBrowserJobSummaries(database: NodePgDatabase, input: BrowserJobFilters) {
+function machineJobJoins(database: NodePgDatabase) {
+  return database
+    .select(machineJobProjection)
+    .from(publicationJobs)
+    .innerJoin(
+      sql`LATERAL public.resolve_browser_job_account(
+        ${publicationJobs.workspaceId}, ${publicationJobs.id}
+      ) AS browser_account`,
+      sql`true`,
+    );
+}
+
+function jobListConditions(input: BrowserJobFilters) {
   const cursor = input.before
     ? or(
         lt(publicationJobs.scheduledAt, input.before.scheduledAt),
@@ -128,34 +153,46 @@ export async function listBrowserJobSummaries(database: NodePgDatabase, input: B
         ),
       )
     : undefined;
-  return withTenantTransaction(
-    database,
-    {
-      workspaceId: input.workspaceId,
-      ...(input.userId ? { userId: input.userId } : {}),
-      ...(input.machineActor ? { machineActor: input.machineActor } : {}),
-    },
-    (transaction) =>
-      browserJobJoins(transaction)
-        .where(
-          and(
-            eq(publicationJobs.workspaceId, input.workspaceId),
-            input.states?.length ? inArray(publicationJobs.state, input.states) : undefined,
-            input.providerAccountId
-              ? eq(publicationJobs.providerAccountId, input.providerAccountId)
-              : undefined,
-            input.scheduledAfter
-              ? gte(publicationJobs.scheduledAt, input.scheduledAfter)
-              : undefined,
-            input.scheduledBefore
-              ? lte(publicationJobs.scheduledAt, input.scheduledBefore)
-              : undefined,
-            cursor,
-          ),
-        )
-        .orderBy(desc(publicationJobs.scheduledAt), desc(publicationJobs.id))
-        .limit(input.limit),
+  return and(
+    eq(publicationJobs.workspaceId, input.workspaceId),
+    input.states?.length ? inArray(publicationJobs.state, input.states) : undefined,
+    input.providerAccountId
+      ? eq(publicationJobs.providerAccountId, input.providerAccountId)
+      : undefined,
+    input.scheduledAfter ? gte(publicationJobs.scheduledAt, input.scheduledAfter) : undefined,
+    input.scheduledBefore ? lte(publicationJobs.scheduledAt, input.scheduledBefore) : undefined,
+    cursor,
   );
+}
+
+function jobListTenant(input: BrowserJobFilters) {
+  return {
+    workspaceId: input.workspaceId,
+    ...(input.userId ? { userId: input.userId } : {}),
+    ...(input.machineActor ? { machineActor: input.machineActor } : {}),
+  };
+}
+
+export function listBrowserJobSummaries(database: NodePgDatabase, input: BrowserJobFilters) {
+  return withTenantTransaction(database, jobListTenant(input), (transaction) =>
+    browserJobJoins(transaction)
+      .where(jobListConditions(input))
+      .orderBy(desc(publicationJobs.scheduledAt), desc(publicationJobs.id))
+      .limit(input.limit),
+  );
+}
+
+export function listMachineJobSummaries(database: NodePgDatabase, input: BrowserJobFilters) {
+  return withTenantTransaction(database, jobListTenant(input), (transaction) =>
+    buildMachineJobListQuery(transaction, input),
+  );
+}
+
+export function buildMachineJobListQuery(database: NodePgDatabase, input: BrowserJobFilters) {
+  return machineJobJoins(database)
+    .where(jobListConditions(input))
+    .orderBy(desc(publicationJobs.scheduledAt), desc(publicationJobs.id))
+    .limit(input.limit);
 }
 
 export async function getBrowserJobDetail(

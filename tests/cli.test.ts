@@ -27,7 +27,7 @@ afterEach(async () =>
 async function fixture(
   status: number,
   body: unknown,
-  workspace = 'workspace-one',
+  workspace = '00000000-0000-4000-8000-000000000201',
   paths?: string[],
 ) {
   const server = createServer((request, response) => {
@@ -73,7 +73,11 @@ async function cli(args: string[], env: Record<string, string> = {}) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     const child = spawn(process.execPath, ['--import', 'tsx', 'src/entrypoints/cli.ts', ...args], {
       cwd: process.cwd(),
-      env: { ...process.env, PUBLISH_RELAY_WORKSPACE: 'workspace-one', ...env },
+      env: {
+        ...process.env,
+        PUBLISH_RELAY_WORKSPACE: '00000000-0000-4000-8000-000000000201',
+        ...env,
+      },
     });
     let stdout = '';
     let stderr = '';
@@ -94,7 +98,7 @@ describe('Publish Relay CLI', () => {
     const application = Fastify();
     registerApiKeyRoutes(application, {
       authenticate: (workspaceId: string, secret: string) => {
-        expect(workspaceId).toBe('workspace-one');
+        expect(workspaceId).toBe('00000000-0000-4000-8000-000000000201');
         expect(secret).toBe('test-key');
         return Promise.resolve({
           id: '00000000-0000-4000-8000-000000000001',
@@ -122,7 +126,7 @@ describe('Publish Relay CLI', () => {
       success: true,
       data: {
         id: '00000000-0000-4000-8000-000000000001',
-        workspaceId: 'workspace-one',
+        workspaceId: '00000000-0000-4000-8000-000000000201',
         workspaceLabel: 'Atlas',
         prefix: 'pr_public',
         capabilities: ['schedules:read'],
@@ -275,7 +279,7 @@ describe('Publish Relay CLI', () => {
         },
         meta: { requestId: 'list' },
       },
-      'workspace-one',
+      '00000000-0000-4000-8000-000000000201',
       paths,
     );
     const result = await cli(
@@ -364,7 +368,7 @@ describe('Publish Relay CLI', () => {
         '--base-url',
         baseUrl,
         '--require-workspace',
-        'workspace-one',
+        '00000000-0000-4000-8000-000000000201',
         '--idempotency-key',
         'idem-1',
         '--body-file',
@@ -429,7 +433,7 @@ describe('Publish Relay CLI', () => {
         },
         meta: { requestId: 'request-destinations' },
       },
-      'workspace-one',
+      '00000000-0000-4000-8000-000000000201',
       paths,
     );
     const result = await cli(['destinations', 'list', '--base-url', baseUrl], {

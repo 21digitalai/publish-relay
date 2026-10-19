@@ -2010,11 +2010,11 @@ textarea:focus-visible {
 }
 .time-grid {
   position: relative;
-  min-height: 430px;
+  min-height: 1140px;
 }
 .time-labels {
   display: grid;
-  grid-template-rows: repeat(5, 1fr);
+  grid-template-rows: repeat(12, 86px);
   color: var(--text-faint);
   font-size: 11px;
 }

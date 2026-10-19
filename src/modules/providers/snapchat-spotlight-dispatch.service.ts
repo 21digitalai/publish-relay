@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -128,18 +128,42 @@ async function reserveArtifact(
   input: {
     workspaceId: string;
     jobId: string;
+    attemptNumber: number;
     mediaId: string;
     now: Date;
   },
 ) {
   return withTenantTransaction(runtime.database, input, async (tx) => {
+    if (input.attemptNumber > 1)
+      await tx
+        .update(providerStagingArtifacts)
+        .set({ deletedAt: input.now, updatedAt: input.now })
+        .where(
+          and(
+            eq(providerStagingArtifacts.workspaceId, input.workspaceId),
+            eq(providerStagingArtifacts.jobId, input.jobId),
+            eq(providerStagingArtifacts.mediaId, input.mediaId),
+            eq(
+              providerStagingArtifacts.artifactKey,
+              `snapchat:spotlight:${String(input.attemptNumber - 1)}`,
+            ),
+            isNull(providerStagingArtifacts.deletedAt),
+            isNull(providerStagingArtifacts.externalObjectId),
+            sql`EXISTS (SELECT 1 FROM publication_attempts attempt
+              WHERE attempt.workspace_id = ${input.workspaceId}
+                AND attempt.job_id = ${input.jobId}
+                AND attempt.attempt_number = ${input.attemptNumber - 1}
+                AND attempt.outcome = 'permanent'
+                AND attempt.reconciliation_key IS NULL)`,
+          ),
+        );
     const rows = await tx
       .insert(providerStagingArtifacts)
       .values({
         workspaceId: input.workspaceId,
         jobId: input.jobId,
         mediaId: input.mediaId,
-        artifactKey: 'snapchat:spotlight',
+        artifactKey: `snapchat:spotlight:${String(input.attemptNumber)}`,
         artifactKind: 'snapchat_spotlight',
         providerReference: 'snapchat:spotlight',
         expiresAt: new Date(input.now.getTime() + MEDIA_LIFETIME_MS),
@@ -216,6 +240,7 @@ async function dispatchJob(
     const artifactId = await reserveArtifact(runtime, {
       workspaceId: job.workspaceId,
       jobId: job.id,
+      attemptNumber: attempt.attemptNumber,
       mediaId: context.mediaId,
       now,
     });
@@ -322,6 +347,10 @@ export async function reconcileSnapchatSpotlights(
           and(
             eq(providerStagingArtifacts.workspaceId, publicationJobs.workspaceId),
             eq(providerStagingArtifacts.jobId, publicationJobs.id),
+            eq(
+              providerStagingArtifacts.artifactKey,
+              sql`'snapchat:spotlight:' || ${publicationJobs.attemptNumber}::text`,
+            ),
           ),
         )
         .where(eq(publicationJobs.id, jobId))

@@ -13,6 +13,7 @@ vi.mock('../src/modules/providers/snapchat-spotlight-upload.js', () => ({
 }));
 
 import { dispatchDueSnapchatSpotlights } from '../src/modules/providers/snapchat-spotlight-dispatch.service.js';
+import { requestOperatorRetry } from '../src/modules/scheduler/job.repository.js';
 import { stageAndPostSnapchatSpotlight } from '../src/modules/providers/snapchat-spotlight-upload.js';
 
 const migrations = [
@@ -181,6 +182,55 @@ it('fails a source error before POST without an unresolvable reconciliation key'
   expect(attempt.rows[0]).toEqual({ outcome: 'permanent', reconciliation_key: null });
 });
 
+it('can safely retry a proven pre-POST failure with a fresh per-attempt staging artifact', async () => {
+  vi.mocked(stageAndPostSnapchatSpotlight)
+    .mockImplementationOnce(async (input) => {
+      await input.onMediaCreated?.('first-upload');
+      throw new Error('source failed before Spotlight POST');
+    })
+    .mockImplementationOnce(async (input) => {
+      await input.onMediaCreated?.('second-upload');
+      await input.onBeforeSpotlightPost?.();
+      await input.onSpotlightPosted?.('spotlight-retry');
+      return { mediaId: 'second-upload', spotlightId: 'spotlight-retry' };
+    });
+  const firstTime = new Date('2026-10-19T20:00:00Z');
+  expect(await dispatchDueSnapchatSpotlights(runtime(), firstTime)).toBe(0);
+  expect(
+    await requestOperatorRetry(db, {
+      workspaceId,
+      jobId,
+      actorId: userId,
+      now: new Date('2026-10-19T20:01:00Z'),
+    }),
+  ).toBe('scheduled');
+  expect(await dispatchDueSnapchatSpotlights(runtime(), new Date('2026-10-19T20:02:00Z'))).toBe(1);
+  const artifacts = await pg.query<{
+    artifact_key: string;
+    external_object_id: string | null;
+    deleted_at: Date | null;
+  }>(
+    'select artifact_key, external_object_id, deleted_at from provider_staging_artifacts where job_id = $1 order by artifact_key',
+    [jobId],
+  );
+  expect(
+    artifacts.rows.map(({ artifact_key, external_object_id }) => ({
+      artifact_key,
+      external_object_id,
+    })),
+  ).toEqual([
+    { artifact_key: 'snapchat:spotlight:1', external_object_id: null },
+    { artifact_key: 'snapchat:spotlight:2', external_object_id: 'spotlight-retry' },
+  ]);
+  expect(artifacts.rows[0]?.deleted_at).not.toBeNull();
+  expect(artifacts.rows[1]?.deleted_at).toBeNull();
+  expect(stageAndPostSnapchatSpotlight).toHaveBeenCalledTimes(2);
+  expect(
+    (await pg.query<{ state: string }>('select state from publication_jobs where id = $1', [jobId]))
+      .rows[0]?.state,
+  ).toBe('accepted_pending');
+});
+
 it('keeps a possibly sent POST unknown without a blind retry', async () => {
   vi.mocked(stageAndPostSnapchatSpotlight).mockImplementationOnce(async (input) => {
     await input.onBeforeSpotlightPost?.();
@@ -197,4 +247,12 @@ it('keeps a possibly sent POST unknown without a blind retry', async () => {
     [jobId],
   );
   expect(attempt.rows[0]).toEqual({ outcome: 'unknown', reconciliation_key: `snapchat:${jobId}` });
+  expect(
+    await requestOperatorRetry(db, {
+      workspaceId,
+      jobId,
+      actorId: userId,
+      now: new Date('2026-10-19T20:01:00Z'),
+    }),
+  ).toBe('conflict');
 });

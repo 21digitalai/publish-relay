@@ -41,6 +41,7 @@ const migrations = [
   '0044_x_thread_reply_link.sql',
   '0045_meta_destination_foundation.sql',
   '0050_instagram_staging_artifacts.sql',
+  '0077_publication_attempt_external_url.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000501';
 const jobId = '00000000-0000-4000-8000-000000000508';

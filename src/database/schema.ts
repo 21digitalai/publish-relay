@@ -967,6 +967,7 @@ export const publicationAttempts = pgTable(
     outcome: publicationAttemptOutcome('outcome'),
     providerRequestId: text('provider_request_id'),
     externalPostId: text('external_post_id'),
+    externalUrl: text('external_url'),
     reconciliationKey: text('reconciliation_key'),
     retryAt: timestamp('retry_at', { withTimezone: true }),
     redactedError: text('redacted_error'),

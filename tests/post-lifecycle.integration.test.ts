@@ -68,6 +68,7 @@ const migrations = [
   '0061_cross_workspace_account_job_guard.sql',
   '0062_exposed_account_admission.sql',
   '0064_exposed_machine_admission.sql',
+  '0077_publication_attempt_external_url.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';

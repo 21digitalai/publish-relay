@@ -278,7 +278,9 @@ async function dispatchJob(runtime: FacebookDispatchRuntime, job: FacebookJob, n
           : outcome.code,
     now,
     ...(retryAt ? { retryAt } : {}),
-    ...(outcome.status === 'published' ? { externalPostId: outcome.externalPostId } : {}),
+    ...(outcome.status === 'published'
+      ? { externalPostId: outcome.externalPostId, externalUrl: outcome.externalUrl }
+      : {}),
     ...(outcome.status === 'unknown' ? { reconciliationKey: outcome.reconciliationKey } : {}),
     ...(outcome.status === 'failed' ? { redactedError: outcome.message } : {}),
   });
@@ -358,6 +360,7 @@ export async function reconcileFacebookJobs(
           outcome: 'published',
           now,
           externalPostId: outcome.externalPostId,
+          externalUrl: outcome.externalUrl,
         })
       )
         resolved += 1;

@@ -261,7 +261,9 @@ async function dispatchJob(
           : outcome.code,
     now,
     ...(retryAt ? { retryAt } : {}),
-    ...(outcome.status === 'published' ? { externalPostId: outcome.externalPostId } : {}),
+    ...(outcome.status === 'published'
+      ? { externalPostId: outcome.externalPostId, externalUrl: outcome.externalUrl }
+      : {}),
     ...(outcome.status === 'unknown'
       ? { reconciliationKey: outcome.reconciliationKey }
       : outcome.status === 'accepted_pending'
@@ -365,7 +367,9 @@ export async function reconcileInstagramJobs(
           outcome: state,
           now,
           ...(retryAt ? { retryAt } : {}),
-          ...(outcome.status === 'published' ? { externalPostId: outcome.externalPostId } : {}),
+          ...(outcome.status === 'published'
+            ? { externalPostId: outcome.externalPostId, externalUrl: outcome.externalUrl }
+            : {}),
         })
       )
         resolved += 1;

@@ -51,6 +51,7 @@ const migrations = [
   '0048_reconcile_linkedin_connections.sql',
   '0049_meta_effective_payload.sql',
   '0051_provider_subject_lifecycle.sql',
+  '0077_publication_attempt_external_url.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';
@@ -429,6 +430,45 @@ describe('scheduler repository', () => {
       id: 'youtube-video-1',
       url: 'https://www.youtube.com/watch?v=youtube-video-1',
     });
+  });
+
+  it('persists a Facebook permalink, falls back for history, and keeps tenant detail isolated', async () => {
+    const now = new Date('2026-08-31T16:00:00Z');
+    await database.exec(`UPDATE provider_accounts SET destination_provider = 'facebook_page'
+      WHERE id = '00000000-0000-4000-8000-000000000305'`);
+    await database.exec(`UPDATE provider_connections SET provider = 'facebook_page'
+      WHERE id = '00000000-0000-4000-8000-000000000304'`);
+    await claimDueJobs(db, { workerId: 'publisher', now, leaseMs: 30_000, limit: 1 });
+    const attempt = await startDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      workerId: 'publisher',
+      fingerprint: 'facebook-post',
+      now,
+    });
+    if (!attempt) throw new Error('Expected dispatch attempt');
+    await finishDispatchAttempt(db, {
+      workspaceId,
+      jobId,
+      attemptId: attempt.attemptId,
+      outcome: 'published',
+      externalPostId: 'page_123',
+      externalUrl: 'https://www.facebook.com/page/posts/123',
+      now,
+    });
+    const detail = await getBrowserJobDetail(db, workspaceId, jobId);
+    expect(detail?.providerResult).toEqual({
+      id: 'page_123',
+      url: 'https://www.facebook.com/page/posts/123',
+    });
+    expect(detail?.attempts[0]).not.toHaveProperty('externalUrl');
+    expect(await getBrowserJobDetail(db, '00000000-0000-4000-8000-000000000399', jobId)).toBeNull();
+    await database.exec(
+      `UPDATE publication_attempts SET external_url = NULL WHERE job_id = '${jobId}'`,
+    );
+    expect((await getBrowserJobDetail(db, workspaceId, jobId))?.providerResult?.url).toBe(
+      'https://www.facebook.com/page_123',
+    );
   });
 
   it('makes accepted-pending jobs eligible for reconciliation', async () => {

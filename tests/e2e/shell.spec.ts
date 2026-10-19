@@ -3635,9 +3635,31 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
   await expect(page.getByText('API key · Editorial agent')).toBeVisible();
   await expect(page.getByText(/Media 1 unavailable/)).toBeVisible();
   await expect(page.getByText('Delivery attempt 1')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'View on X' })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'View post' })).toBeHidden();
+  await page.route('**/api/workflow/jobs/published-fb', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: 'published-fb',
+          postId: 'facebook-post',
+          state: 'published',
+          scheduledAt: '2026-09-01T09:30:00+03:00',
+          content: { kind: 'text', text: 'Facebook Page post' },
+          media: [],
+          activity: [],
+          attempts: [],
+          providerResult: { id: 'page_123', url: 'https://www.facebook.com/page/posts/123' },
+          providerAccount: { displayName: 'Avery Page', provider: 'facebook_page' },
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(`/w/${activeSlug}/jobs/published-fb`);
+  await expect(page.getByRole('link', { name: 'View post' })).toHaveAttribute(
     'href',
-    'https://x.com/averyeditorial/status/post-1',
+    'https://www.facebook.com/page/posts/123',
   );
   await expect(page.getByRole('link', { name: /Back to queue/ })).toHaveAttribute(
     'href',
@@ -3653,7 +3675,7 @@ test('renders truthful job-detail loading, alternate state, workspace routing, a
       body: '{"data":null,"error":"Job missing"}',
     }),
   );
-  await page.reload();
+  await page.goto(`/w/${activeSlug}/jobs/pending-job`);
   await expect(page.getByRole('alert')).toContainText('Job missing');
   await expect(page.getByRole('link', { name: 'Back to queue' })).toHaveAttribute(
     'href',

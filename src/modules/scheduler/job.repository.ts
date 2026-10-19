@@ -9,6 +9,7 @@ import {
   publicationJobs,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { validatedPostUrl } from '../providers/post-url.js';
 import {
   allowAllActionPolicy,
   enforceWorkspaceAction,
@@ -268,6 +269,7 @@ export async function finishDispatchAttempt(
     retryAt?: Date;
     providerRequestId?: string;
     externalPostId?: string;
+    externalUrl?: string;
     reconciliationKey?: string;
     redactedError?: string;
   },
@@ -284,6 +286,7 @@ export async function finishDispatchAttempt(
           retryAt: input.retryAt,
           providerRequestId: input.providerRequestId,
           externalPostId: input.externalPostId,
+          externalUrl: input.outcome === 'published' ? validatedPostUrl(input.externalUrl) : null,
           reconciliationKey: input.reconciliationKey,
           redactedError: input.redactedError,
         })
@@ -406,6 +409,7 @@ export async function resolveReconciliation(
     now: Date;
     retryAt?: Date;
     externalPostId?: string;
+    externalUrl?: string;
   },
 ): Promise<boolean> {
   if (input.outcome === 'retry_wait' && !input.retryAt)
@@ -441,11 +445,9 @@ export async function resolveReconciliation(
         const attempts = await transaction.execute(sql`
           UPDATE publication_attempts
           SET external_post_id = ${input.externalPostId},
+              external_url = ${validatedPostUrl(input.externalUrl)},
               finished_at = COALESCE(finished_at, ${input.now}),
-              outcome = CASE
-                WHEN finished_at IS NULL THEN 'published'::publication_attempt_outcome
-                ELSE outcome
-              END
+              outcome = 'published'::publication_attempt_outcome
           WHERE id = (
             SELECT attempt.id
             FROM publication_attempts AS attempt

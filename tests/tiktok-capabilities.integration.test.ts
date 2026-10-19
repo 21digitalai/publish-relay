@@ -37,6 +37,7 @@ const migrations = [
   '0051_provider_subject_lifecycle.sql',
   '0052_provider_capability_snapshots.sql',
   '0053_publication_consents.sql',
+  '0077_publication_attempt_external_url.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000201';

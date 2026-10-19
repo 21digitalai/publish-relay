@@ -177,6 +177,7 @@ async function dispatchJob(
       attemptId: attempt.attemptId,
       outcome: 'published',
       externalPostId,
+      externalUrl: `https://www.linkedin.com/feed/update/${encodeURIComponent(externalPostId)}/`,
       now,
     });
     return true;

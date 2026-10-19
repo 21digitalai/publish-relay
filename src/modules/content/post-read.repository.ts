@@ -11,6 +11,7 @@ import {
   revisionMedia,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { providerPostUrl } from '../providers/post-url.js';
 
 export const browserJobStates = [
   'scheduled',
@@ -248,6 +249,7 @@ export async function getBrowserJobDetail(
             finishedAt: publicationAttempts.finishedAt,
             outcome: publicationAttempts.outcome,
             externalPostId: publicationAttempts.externalPostId,
+            externalUrl: publicationAttempts.externalUrl,
             retryAt: publicationAttempts.retryAt,
             error: publicationAttempts.redactedError,
           })
@@ -276,15 +278,16 @@ export async function getBrowserJobDetail(
           )
           .orderBy(asc(publicationJobEvents.createdAt), asc(publicationJobEvents.id)),
       ]);
-      const published = [...attempts].reverse().find((attempt) => attempt.externalPostId);
+      const published = [...attempts]
+        .reverse()
+        .find((attempt) => attempt.outcome === 'published' && attempt.externalPostId);
       const externalUrl = published?.externalPostId
-        ? job.providerAccount.provider === 'x' && job.providerAccount.handle
-          ? `https://x.com/${job.providerAccount.handle}/status/${published.externalPostId}`
-          : job.providerAccount.provider === 'youtube'
-            ? `https://www.youtube.com/watch?v=${published.externalPostId}`
-            : job.providerAccount.provider === 'linkedin'
-              ? `https://www.linkedin.com/feed/update/${encodeURIComponent(published.externalPostId)}/`
-              : null
+        ? providerPostUrl({
+            provider: job.providerAccount.provider,
+            id: published.externalPostId,
+            storedUrl: published.externalUrl,
+            handle: job.providerAccount.handle,
+          })
         : null;
       return {
         ...job,
@@ -292,7 +295,16 @@ export async function getBrowserJobDetail(
           ...item,
           previewUrl: item.state === 'ready' ? `/api/workflow/media/${item.id}` : null,
         })),
-        attempts,
+        attempts: attempts.map((attempt) => ({
+          id: attempt.id,
+          attemptNumber: attempt.attemptNumber,
+          startedAt: attempt.startedAt,
+          finishedAt: attempt.finishedAt,
+          outcome: attempt.outcome,
+          externalPostId: attempt.externalPostId,
+          retryAt: attempt.retryAt,
+          error: attempt.error,
+        })),
         activity,
         providerResult: published ? { id: published.externalPostId, url: externalUrl } : null,
       };

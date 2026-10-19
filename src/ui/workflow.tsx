@@ -2882,9 +2882,9 @@ export function JobDetailPage() {
               </ol>
             </aside>
           </div>
-          {detail?.providerResult?.url && (
+          {job.state === 'published' && detail?.providerResult?.url && (
             <a className="primary-button external-result-link" href={detail.providerResult.url}>
-              View on X
+              View post
             </a>
           )}
           {job.state === 'failed' && (

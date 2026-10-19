@@ -169,6 +169,7 @@ async function uploadClaimedJob(
       attemptId: attempt.attemptId,
       outcome: 'published',
       externalPostId: uploaded.videoId,
+      externalUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(uploaded.videoId)}`,
       now,
     });
     return 'published';
@@ -274,6 +275,7 @@ export async function reconcileYouTubeJobs(
           workerId: runtime.workerId,
           outcome: 'published',
           externalPostId: uploaded.videoId,
+          externalUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(uploaded.videoId)}`,
           now,
         })
       )

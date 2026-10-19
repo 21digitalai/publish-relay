@@ -382,7 +382,9 @@ export async function dispatchDueXJobs(
         outcome: outcome.status === 'failed' ? outcome.code : outcome.status,
         now,
         ...(retryAt ? { retryAt } : {}),
-        ...(outcome.status === 'published' ? { externalPostId: outcome.externalPostId } : {}),
+        ...(outcome.status === 'published'
+          ? { externalPostId: outcome.externalPostId, externalUrl: outcome.externalUrl }
+          : {}),
         ...(outcome.status === 'accepted_pending'
           ? { reconciliationKey: outcome.providerJobId }
           : {}),
@@ -482,6 +484,9 @@ export async function reconcileXJobs(runtime: XDispatchRuntime, now = new Date()
           outcome: state,
           now,
           ...(retryAt ? { retryAt } : {}),
+          ...(outcome.status === 'published'
+            ? { externalPostId: outcome.externalPostId, externalUrl: outcome.externalUrl }
+            : {}),
         })
       )
         resolved += 1;

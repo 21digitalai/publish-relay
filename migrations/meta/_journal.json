@@ -540,6 +540,13 @@
       "when": 1792401000000,
       "tag": "0076_api_key_capability_version",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1792433100000,
+      "tag": "0077_publication_attempt_external_url",
+      "breakpoints": true
     }
   ]
 }

@@ -1963,11 +1963,6 @@ textarea:focus-visible {
 .timeline-job .calendar-origin-badge {
   margin-right: 5px;
 }
-.calendar-block .calendar-origin-badge {
-  margin-top: 2px;
-  white-space: normal;
-  line-height: 13px;
-}
 .calendar-job.failed {
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 14%, transparent);
@@ -2040,6 +2035,9 @@ textarea:focus-visible {
   text-decoration: none;
   overflow: hidden;
 }
+.calendar-block.mirrored {
+  padding-inline: 4px;
+}
 .calendar-block strong,
 .calendar-block span {
   display: block;
@@ -2050,6 +2048,17 @@ textarea:focus-visible {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+.calendar-block .calendar-origin-badge {
+  margin-top: 2px;
+  padding: 1px 3px;
+  color: var(--brand-ink);
+  font-size: 10px;
+  line-height: 13px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  overflow: visible;
 }
 .calendar-block.failed {
   border-color: var(--danger);

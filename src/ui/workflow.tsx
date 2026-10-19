@@ -10,7 +10,17 @@ import { Rail } from './main.js';
 import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
-import { TikTokComposerForm, type ImportedDraftMedia } from './tiktok-composer.js';
+import {
+  TikTokComposerForm,
+  type ImportedDraftMedia,
+  type TikTokSubmission,
+} from './tiktok-composer.js';
+import {
+  createTikTokAttempt,
+  submitTikTokAttempt,
+  tikTokAttemptMatches,
+  type TikTokAttempt,
+} from './tiktok-submit.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
 import { useCalendarMirror, type CalendarMirrorJob } from './calendar-mirror.js';
 import { calendarDateKey, calendarTime, calendarZonedMidnight } from './calendar-time.js';
@@ -673,6 +683,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [accountLoadAttempt, setAccountLoadAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [hasUncertainPost, setHasUncertainPost] = useState(false);
+  const [tiktokSubmission, setTikTokSubmission] = useState<TikTokSubmission | null>(null);
+  const tiktokAttempt = useRef<TikTokAttempt | null>(null);
   const intentKey = useRef(crypto.randomUUID());
   const mediaBatchKey = useRef(crypto.randomUUID());
   const uploadedMediaIds = useRef<string[]>([]);
@@ -704,7 +716,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   };
   const closeComposer = async () => {
     if (state === 'saving') return;
-    if (uncertainPost.current) {
+    if (uncertainPost.current || tiktokAttempt.current) {
       showAnalyticsError(
         setError,
         'The previous schedule request has an uncertain outcome. Retry it unchanged before closing.',
@@ -758,7 +770,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const isLinkedInOnly =
     selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
-  const textLimit = isLinkedInOnly ? 3000 : 280;
+  const textLimit = isTikTok ? 2200 : isLinkedInOnly ? 3000 : 280;
   const bodyTooLong = includesX
     ? xWeightedLength > xLimit || (!isX && body.length > textLimit)
     : body.length > textLimit;
@@ -787,14 +799,15 @@ function Composer({ onClose }: { onClose: () => void }) {
       )
     : [];
   const invalid =
-    isTikTok ||
-    (isYouTube
-      ? mediaFiles.length !== 1 ||
-        !videoTitle.trim() ||
-        (!youtubeHasMadeForKids && madeForKids === 'default')
-      : !body.trim() || bodyTooLong) ||
+    (isTikTok
+      ? !tiktokSubmission?.ready || mediaFiles.length + draftMediaIds.length !== 1
+      : isYouTube
+        ? mediaFiles.length !== 1 ||
+          !videoTitle.trim() ||
+          (!youtubeHasMadeForKids && madeForKids === 'default')
+        : !body.trim() || bodyTooLong) ||
     (includesYouTube && !isYouTube) ||
-    (mediaFiles.length > 0 && !isYouTube && !isX && !includesMeta) ||
+    (mediaFiles.length > 0 && !isYouTube && !isTikTok && !isX && !includesMeta) ||
     (includesMeta && !allowedKinds.includes(contentKind)) ||
     (includesMeta &&
       contentKind === 'single_image' &&
@@ -1005,6 +1018,51 @@ function Composer({ onClose }: { onClose: () => void }) {
     videoDescription,
     videoTitle,
   ]);
+  const resolveMediaIds = async (files: File[], importedIds: string[]): Promise<string[]> => {
+    let mediaIds = [...importedIds];
+    if (files.length === 0) {
+      if (!(await discardUpload()))
+        throw new Error('Previous media cleanup is still pending. Try again.');
+      return mediaIds;
+    }
+    const sameFiles =
+      uploadedIntentKey.current === mediaBatchKey.current &&
+      uploadedFiles.current.length === files.length &&
+      uploadedFiles.current.every((file, index) => file === files[index]);
+    if (sameFiles && uploadedMediaIds.current.length === files.length)
+      return [...mediaIds, ...uploadedMediaIds.current];
+    if (!sameFiles) {
+      if (!(await discardUpload()))
+        throw new Error('Previous media cleanup is still pending. Try again.');
+      mediaBatchKey.current = crypto.randomUUID();
+      uploadedIntentKey.current = mediaBatchKey.current;
+      uploadedFiles.current = [...files];
+    }
+    mediaIds = [...mediaIds, ...uploadedMediaIds.current];
+    for (let index = uploadedMediaIds.current.length; index < files.length; index += 1) {
+      const file = files[index];
+      if (!file) continue;
+      const uploadResponse = await fetch('/api/workflow/media', {
+        method: 'POST',
+        headers: {
+          'content-type': file.type,
+          'x-file-name': file.name,
+          'x-csrf-token': cookieValue('publish_relay_csrf'),
+          'idempotency-key': `${mediaBatchKey.current}-media-${String(index)}`,
+        },
+        body: file,
+      });
+      const upload = (await uploadResponse.json()) as {
+        data?: { id: string };
+        error?: string | null;
+      };
+      if (!uploadResponse.ok || !upload.data)
+        throw new Error(upload.error ?? 'The media could not be uploaded.');
+      mediaIds = [...mediaIds, upload.data.id];
+      uploadedMediaIds.current.push(upload.data.id);
+    }
+    return mediaIds;
+  };
   const submit = async () => {
     if (draftState !== 'ready') return;
     const pending = uncertainPost.current;
@@ -1030,44 +1088,9 @@ function Composer({ onClose }: { onClose: () => void }) {
     let postResponseStatus: number | null = null;
     let requestSnapshot: typeof pending = pending;
     try {
-      let mediaIds: string[] = draftMediaIds;
-      if (!pending && mediaFiles.length === 0 && !(await discardUpload()))
-        throw new Error('Previous media cleanup is still pending. Try again.');
-      if (!pending && mediaFiles.length > 0) {
-        if (
-          uploadedIntentKey.current === mediaBatchKey.current &&
-          uploadedMediaIds.current.length === mediaFiles.length &&
-          uploadedFiles.current.every((file, index) => file === mediaFiles[index])
-        ) {
-          mediaIds = [...mediaIds, ...uploadedMediaIds.current];
-        } else {
-          if (!(await discardUpload()))
-            throw new Error('Previous media cleanup is still pending. Try again.');
-          mediaBatchKey.current = crypto.randomUUID();
-          uploadedIntentKey.current = mediaBatchKey.current;
-          uploadedFiles.current = [...mediaFiles];
-          for (const [index, file] of mediaFiles.entries()) {
-            const uploadResponse = await fetch('/api/workflow/media', {
-              method: 'POST',
-              headers: {
-                'content-type': file.type,
-                'x-file-name': file.name,
-                'x-csrf-token': cookieValue('publish_relay_csrf'),
-                'idempotency-key': `${mediaBatchKey.current}-media-${String(index)}`,
-              },
-              body: file,
-            });
-            const upload = (await uploadResponse.json()) as {
-              data?: { id: string };
-              error?: string | null;
-            };
-            if (!uploadResponse.ok || !upload.data)
-              throw new Error(upload.error ?? 'The media could not be uploaded.');
-            mediaIds = [...mediaIds, upload.data.id];
-            uploadedMediaIds.current.push(upload.data.id);
-          }
-        }
-      }
+      const mediaIds = pending
+        ? [...draftMediaIds, ...uploadedMediaIds.current]
+        : await resolveMediaIds(mediaFiles, draftMediaIds);
       const youtubeOverrides = {
         schemaVersion: 1,
         title: videoTitle.trim(),
@@ -1156,6 +1179,61 @@ function Composer({ onClose }: { onClose: () => void }) {
       setState('ready');
     }
   };
+  const submitTikTok = async () => {
+    const existing = tiktokAttempt.current;
+    if (!isTikTok || (!existing && !tiktokSubmission?.ready)) return;
+    if (existing && !tikTokAttemptMatches(existing, formSnapshot, mediaFiles, tiktokSubmission)) {
+      setError(
+        'The previous TikTok request may have succeeded. Confirm it unchanged before editing.',
+      );
+      return;
+    }
+    const targetTime = scheduled ? scheduledAt : new Date(Date.now() + 2 * 60_000);
+    if (!existing && (!targetTime || targetTime <= new Date())) {
+      setError('Choose a future publishing time.');
+      return;
+    }
+    const accountId = selected[0]?.id;
+    if (!accountId) return;
+    let attempt = existing;
+    if (!attempt) {
+      if (!tiktokSubmission || !targetTime) return;
+      attempt = createTikTokAttempt({
+        form: formSnapshot,
+        files: mediaFiles,
+        submission: tiktokSubmission,
+        scheduledAt: targetTime.toISOString(),
+      });
+    }
+    tiktokAttempt.current = attempt;
+    setState('saving');
+    setError(null);
+    try {
+      await submitTikTokAttempt({
+        attempt,
+        accountId,
+        caption: body,
+        csrfToken: cookieValue('publish_relay_csrf'),
+        resolveMediaId: async () => {
+          const ids = await resolveMediaIds(mediaFiles, draftMediaIds);
+          const mediaId = ids[0];
+          if (ids.length !== 1 || !mediaId) throw new Error('Choose exactly one MP4 video.');
+          return mediaId;
+        },
+      });
+      tiktokAttempt.current = null;
+      setHasUncertainPost(false);
+      uploadedMediaIds.current = [];
+      setReceipt({ count: 1, scheduledAt: attempt.scheduledAt, effectiveProviderSettings: [] });
+    } catch (reason) {
+      setHasUncertainPost(true);
+      setError(
+        `${reason instanceof Error ? reason.message : 'TikTok scheduling failed.'} The outcome may be uncertain; confirm the same request before editing or closing.`,
+      );
+    } finally {
+      setState('ready');
+    }
+  };
   return (
     <div
       className="sheet-backdrop"
@@ -1187,8 +1265,11 @@ function Composer({ onClose }: { onClose: () => void }) {
         {receipt ? (
           <div className="composer-receipt" role="status">
             <span aria-hidden="true">✓</span>
-            <h3>{receipt.count} posts scheduled</h3>
+            <h3>
+              {receipt.count} {receipt.count === 1 ? 'post' : 'posts'} scheduled
+            </h3>
             <p>{formatTime(receipt.scheduledAt)}</p>
+            {isTikTok && <p>TikTok may take several minutes to process this video.</p>}
             {receipt.effectiveProviderSettings.map((settings, index) => (
               <dl key={index} className="receipt-settings" aria-label="YouTube settings">
                 <div>
@@ -1281,6 +1362,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     checked={selectedAccounts.includes(account.id)}
                     onChange={() => {
                       setMediaFiles([]);
+                      setTikTokSubmission(null);
                       setSelectedAccounts((current) =>
                         current.includes(account.id)
                           ? current.filter((id) => id !== account.id)
@@ -1658,6 +1740,8 @@ function Composer({ onClose }: { onClose: () => void }) {
                 importedMedia={importedMedia}
                 scheduled={scheduled}
                 scheduledAt={scheduledAt}
+                frozen={hasUncertainPost}
+                onSubmissionChange={setTikTokSubmission}
               />
             )}
             {includesYouTube && !isYouTube && (
@@ -1853,15 +1937,17 @@ function Composer({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 className="primary-button"
-                disabled={isTikTok || state === 'saving' || (invalid && !hasUncertainPost)}
-                onClick={() => void submit()}
+                disabled={state === 'saving' || (invalid && !hasUncertainPost)}
+                onClick={() => void (isTikTok ? submitTikTok() : submit())}
               >
-                {isTikTok
-                  ? 'TikTok scheduling unavailable'
-                  : state === 'saving'
-                    ? 'Scheduling…'
-                    : hasUncertainPost
-                      ? 'Confirm previous request'
+                {state === 'saving'
+                  ? 'Scheduling…'
+                  : hasUncertainPost
+                    ? 'Confirm previous request'
+                    : isTikTok
+                      ? scheduled
+                        ? 'Confirm and schedule'
+                        : 'Confirm and publish'
                       : `Schedule ${String(selectedAccounts.length)} posts`}
               </button>
             </footer>

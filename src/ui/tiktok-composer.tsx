@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
@@ -36,6 +36,21 @@ export interface ImportedDraftMedia {
   previewUrl: string | null;
 }
 
+export interface TikTokSubmission {
+  ready: boolean;
+  capabilitySnapshotId: string | null;
+  options: {
+    privacyLevel: string;
+    allowComment: boolean;
+    allowDuet: boolean;
+    allowStitch: boolean;
+    commercialContent: 'none' | 'own_brand' | 'branded' | 'both';
+    aiGenerated: boolean;
+  };
+  musicUsageConfirmed: boolean;
+  brandedContentPolicyConfirmed: boolean;
+}
+
 export function TikTokComposerForm({
   accountId,
   caption,
@@ -44,6 +59,8 @@ export function TikTokComposerForm({
   importedMedia,
   scheduled,
   scheduledAt,
+  frozen,
+  onSubmissionChange,
 }: {
   accountId: string;
   caption: string;
@@ -52,6 +69,8 @@ export function TikTokComposerForm({
   importedMedia: ImportedDraftMedia[];
   scheduled: boolean;
   scheduledAt: Date | undefined;
+  frozen: boolean;
+  onSubmissionChange: (submission: TikTokSubmission) => void;
 }) {
   const [capability, setCapability] = useState<CapabilitySnapshot | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -185,6 +204,69 @@ export function TikTokComposerForm({
     brandedUnavailable,
     brandedVisibilityConflict,
   };
+  const submission = useMemo<TikTokSubmission>(
+    () => ({
+      ready:
+        loadState === 'ready' &&
+        Boolean(capability) &&
+        !expired &&
+        !privacyMissing &&
+        !interactionConflict &&
+        !brandedVisibilityConflict &&
+        (!branded || !brandedUnavailable) &&
+        !captionTooLong &&
+        !videoTooLong &&
+        !previewError &&
+        Boolean(privacy) &&
+        Boolean(aiGenerated) &&
+        musicConfirmed &&
+        (!branded || brandedConfirmed) &&
+        (!commercialEnabled || commercial !== 'none') &&
+        (Boolean(video) || importedVideoReady) &&
+        importedMedia.length <= 1 &&
+        effectiveDuration !== null,
+      capabilitySnapshotId: capability?.id ?? null,
+      options: {
+        privacyLevel: privacy,
+        allowComment: comment,
+        allowDuet: duet,
+        allowStitch: stitch,
+        commercialContent: commercial,
+        aiGenerated: aiGenerated === 'yes',
+      },
+      musicUsageConfirmed: musicConfirmed,
+      brandedContentPolicyConfirmed: branded ? brandedConfirmed : false,
+    }),
+    [
+      loadState,
+      capability,
+      expired,
+      privacyMissing,
+      interactionConflict,
+      brandedVisibilityConflict,
+      brandedUnavailable,
+      captionTooLong,
+      videoTooLong,
+      previewError,
+      privacy,
+      aiGenerated,
+      musicConfirmed,
+      branded,
+      brandedConfirmed,
+      commercialEnabled,
+      commercial,
+      video,
+      importedVideoReady,
+      importedMedia.length,
+      effectiveDuration,
+      comment,
+      duet,
+      stitch,
+    ],
+  );
+  useEffect(() => {
+    onSubmissionChange(submission);
+  }, [onSubmissionChange, submission]);
   const previousValidation = useRef<Record<string, boolean>>({});
   useEffect(() => {
     for (const [name, visible] of Object.entries(visibleValidation)) {
@@ -199,7 +281,7 @@ export function TikTokComposerForm({
   });
 
   return (
-    <div className="tiktok-composer-options">
+    <div className="tiktok-composer-options" inert={frozen}>
       <p className="composer-provider-notice">TikTok Direct Post · one account and one MP4 video</p>
       {loadState === 'loading' && <p role="status">Loading current TikTok options…</p>}
       {loadState === 'error' && (
@@ -534,8 +616,7 @@ export function TikTokComposerForm({
         </p>
       </section>
       <p className="composer-provider-notice">
-        TikTok may take several minutes to process a video after scheduling. Scheduling is not yet
-        available in this integration slice.
+        TikTok may take several minutes to process a video after scheduling.
       </p>
     </div>
   );

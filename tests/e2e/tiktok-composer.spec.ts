@@ -120,7 +120,7 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
   await page.getByRole('checkbox', { name: /TikTok One/ }).check();
   await expect(page.getByText('This draft has multiple media items')).toBeVisible();
   await expect(page.getByText('Imported image 1')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Confirm and schedule' })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath('imported-mixed.png'), fullPage: true });
   await page.locator('.tiktok-video-preview').screenshot({
     path: testInfo.outputPath('imported-mixed-detail.png'),
@@ -213,7 +213,7 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
   );
 });
 
-test('TikTok uses one explicit account, fresh options, and an unavailable final action', async ({
+test('TikTok uses one explicit account and blocks confirmation until choices are valid', async ({
   page,
 }, testInfo) => {
   const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
@@ -304,7 +304,7 @@ test('TikTok uses one explicit account, fresh options, and an unavailable final 
   await expect(
     page.getByRole('checkbox', { name: 'Commercial content', exact: true }),
   ).not.toBeChecked();
-  await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Confirm and schedule' })).toBeDisabled();
   await page.getByRole('button', { name: 'Visibility' }).click();
   await page.getByRole('option', { name: 'Everyone' }).click();
   await page.locator('#composer-media-upload').setInputFiles({
@@ -460,7 +460,7 @@ test('TikTok creator failure and expiry remain visible and recoverable without p
     type: 'user_error_shown',
     properties: { area: 'composer', category: 'provider' },
   });
-  await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Confirm and schedule' })).toBeDisabled();
   failed = false;
   await page.getByRole('button', { name: 'Refresh TikTok options' }).click();
   await expect(page.getByText('TikTok options expired')).toBeVisible();
@@ -473,5 +473,186 @@ test('TikTok creator failure and expiry remain visible and recoverable without p
     properties: { area: 'composer', category: 'provider' },
   });
   await expect(page.getByRole('button', { name: 'Visibility' })).toContainText('Choose visibility');
-  await expect(page.getByRole('button', { name: 'TikTok scheduling unavailable' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Confirm and schedule' })).toBeDisabled();
+});
+
+test('TikTok confirmation uses one exact draft and consent with stable schedule replay', async ({
+  page,
+}) => {
+  const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
+  const registration = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Relay Owner',
+      email: `tiktok-submit-${suffix}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: `TikTok submit ${suffix}`,
+    },
+  });
+  expect(registration.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: TIKTOK_ONE,
+              provider: 'tiktok',
+              displayName: 'TikTok One',
+              status: 'active',
+              availability: 'active',
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/provider-accounts/*/tiktok-capabilities', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: '00000000-0000-4000-8000-000000000399',
+          nickname: 'Fresh Creator',
+          privacyOptions: ['SELF_ONLY'],
+          commentDisabled: false,
+          duetDisabled: false,
+          stitchDisabled: false,
+          maxVideoDurationSeconds: 60,
+          fetchedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 900000).toISOString(),
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/workflow/drafts/${IMPORTED_DRAFT}`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          label: 'Imported campaign',
+          mediaIds: [IMPORTED_VIDEO],
+          media: [
+            {
+              id: IMPORTED_VIDEO,
+              mimeType: 'video/mp4',
+              byteSize: 3500,
+              durationMs: 1000,
+              ready: true,
+              previewUrl: `/api/workflow/media/${IMPORTED_VIDEO}`,
+            },
+          ],
+          postId: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/workflow/media/${IMPORTED_VIDEO}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'video/mp4',
+      body: readFileSync(new URL('../fixtures/tiktok-preview.mp4', import.meta.url)),
+    }),
+  );
+  await page.route('**/api/workflow/jobs?**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[],"next":null},"error":null}',
+    }),
+  );
+  const stages: { path: string; key: string | null; body: Record<string, unknown> }[] = [];
+  const uploadKeys: (string | null)[] = [];
+  await page.route('**/api/workflow/media', (route) => {
+    uploadKeys.push(route.request().headers()['idempotency-key'] ?? null);
+    if (uploadKeys.length === 1) return route.abort('failed');
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: `{"data":{"id":"${IMPORTED_VIDEO}"},"error":null}`,
+    });
+  });
+  await page.route('**/api/workflow/tiktok-drafts', (route) => {
+    stages.push({
+      path: 'draft',
+      key: route.request().headers()['idempotency-key'] ?? null,
+      body: route.request().postDataJSON() as Record<string, unknown>,
+    });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"postId":"00000000-0000-4000-8000-000000000401","revisionId":"00000000-0000-4000-8000-000000000402"},"error":null}',
+    });
+  });
+  await page.route('**/api/workflow/tiktok-consents', (route) => {
+    stages.push({
+      path: 'consent',
+      key: route.request().headers()['idempotency-key'] ?? null,
+      body: route.request().postDataJSON() as Record<string, unknown>,
+    });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"id":"00000000-0000-4000-8000-000000000403"},"error":null}',
+    });
+  });
+  await page.route('**/api/workflow/tiktok-schedules', (route) => {
+    stages.push({
+      path: 'schedule',
+      key: route.request().headers()['idempotency-key'] ?? null,
+      body: route.request().postDataJSON() as Record<string, unknown>,
+    });
+    if (stages.filter((stage) => stage.path === 'schedule').length === 1)
+      return route.abort('failed');
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobId":"00000000-0000-4000-8000-000000000404"},"error":null}',
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/drafts/${IMPORTED_DRAFT}`);
+  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await page.getByRole('button', { name: 'Remove from post' }).click();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'confirmed.mp4',
+    mimeType: 'video/mp4',
+    buffer: readFileSync(new URL('../fixtures/tiktok-preview.mp4', import.meta.url)),
+  });
+  await page.getByRole('button', { name: 'Visibility' }).click();
+  await page.getByRole('option', { name: 'Only me' }).click();
+  await page.getByRole('textbox', { name: 'Caption' }).fill('Exact TikTok caption');
+  await page.getByRole('radio', { name: 'No' }).check();
+  await page.getByRole('checkbox', { name: /Music Usage Confirmation/ }).check();
+  const confirm = page.getByRole('button', { name: 'Confirm and schedule' });
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(page.getByRole('button', { name: 'Confirm previous request' })).toBeVisible();
+  expect(stages).toHaveLength(0);
+  await page.getByRole('button', { name: 'Confirm previous request' }).click();
+  await expect.poll(() => stages.length).toBe(3);
+  await expect(page.getByRole('button', { name: 'Confirm previous request' })).toBeVisible();
+  await expect(page.locator('.tiktok-composer-options')).toHaveAttribute('inert');
+  await page.getByRole('button', { name: 'Confirm previous request' }).click();
+  await expect(page.getByText('1 post scheduled')).toBeVisible();
+  expect(stages.map((stage) => stage.path)).toEqual(['draft', 'consent', 'schedule', 'schedule']);
+  expect(stages[0]?.body).toMatchObject({
+    accountId: TIKTOK_ONE,
+    content: { caption: 'Exact TikTok caption', mediaId: IMPORTED_VIDEO },
+  });
+  expect(stages[1]?.body).toMatchObject({
+    postId: '00000000-0000-4000-8000-000000000401',
+    revisionId: '00000000-0000-4000-8000-000000000402',
+    accountId: TIKTOK_ONE,
+    musicUsageConfirmed: true,
+  });
+  expect(stages[2]?.body).toEqual(stages[3]?.body);
+  expect(stages[2]?.key).toBe(stages[3]?.key);
+  expect(stages[0]?.key).toBeTruthy();
+  expect(uploadKeys).toHaveLength(2);
+  expect(uploadKeys[0]).toBe(uploadKeys[1]);
 });

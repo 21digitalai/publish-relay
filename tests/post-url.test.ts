@@ -27,6 +27,15 @@ describe('provider post links', () => {
   it('preserves provider-specific links across the supported destinations', () => {
     expect(
       providerPostUrl({
+        provider: 'snapchat',
+        id: 'story-id',
+        storedUrl: 'https://www.snapchat.com/p/story-id',
+      }),
+    ).toBe('https://www.snapchat.com/p/story-id');
+    expect(providerPostUrl({ provider: 'snapchat', id: 'story-id' })).toBeNull();
+    expect(validatedPostUrl('https://snapchat.com.evil.test/p/story-id', 'snapchat')).toBeNull();
+    expect(
+      providerPostUrl({
         provider: 'instagram',
         id: 'media-id',
         storedUrl: 'https://www.instagram.com/p/permalink/',

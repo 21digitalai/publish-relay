@@ -235,6 +235,8 @@ Ship Month, Week, Day, and Timeline/hour modes. Preserve date and filters betwee
 
 ## Job detail and recovery
 
+An unresolved Snapchat Story send uses the shared Queue and detail status renderer with `Needs attention`, appears in the existing Needs attention view rather than Upcoming, and shows a persistent no-blind-retry explanation in the existing recovery panel. The provider request reference is available only under Technical details; it is correlation, not a Story link or published state. Retry controls stay absent while outcome is unknown. This fixture-only presentation does not enable customer Story admission or manual resolution.
+
 Publication trust surfaces keep normalized server truth visible: `.queue-media` is the bounded media summary inside the canonical queue row; `.detail-content-parts` preserves provider-ready thread order; `.detail-media-gallery` renders ordered media and `.missing-media` makes unavailable assets explicit. `.external-result-link` is rendered only from the server-provided canonical provider URL—the browser never constructs provider links.
 
 Job detail is a route-backed drawer on desktop and a page on mobile. Sections: status, account/provider, content/media, schedule/timezone, execution timeline, provider result, audit metadata, actions.

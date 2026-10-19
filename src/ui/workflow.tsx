@@ -20,6 +20,7 @@ type JobState =
   | 'scheduled'
   | 'leased'
   | 'dispatching'
+  | 'needs_attention'
   | 'accepted_pending'
   | 'failed'
   | 'retrying'
@@ -64,6 +65,7 @@ interface AttemptDto {
   outcome: string | null;
   retryAt: string | null;
   error: string | null;
+  providerRequestId?: string | null;
 }
 
 interface ActivityDto {
@@ -82,6 +84,7 @@ const STATE_LABELS: Record<JobState, string> = {
   cancelled: 'Cancelled',
   leased: 'Preparing',
   dispatching: 'Dispatching',
+  needs_attention: 'Needs attention',
   accepted_pending: 'Provider processing',
   superseded: 'Superseded',
 };
@@ -90,6 +93,7 @@ interface QueueJobDto {
   id: string;
   postId?: string;
   state: string;
+  needsAttention: boolean;
   scheduledAt: string;
   contentPreview: string;
   providerAccount: { id?: string; displayName: string; handle: string; provider: string };
@@ -395,8 +399,9 @@ function toJob(dto: QueueJobDto): Job {
     'cancelled',
     'superseded',
   ];
-  const state: JobState =
-    dto.state === 'retry_wait'
+  const state: JobState = dto.needsAttention
+    ? 'needs_attention'
+    : dto.state === 'retry_wait'
       ? 'retrying'
       : knownStates.includes(dto.state as JobState)
         ? (dto.state as JobState)
@@ -425,6 +430,7 @@ function detailToJob(dto: JobDetailDto): Job {
     id: dto.id,
     ...(dto.postId ? { postId: dto.postId } : {}),
     state: dto.state,
+    needsAttention: dto.needsAttention,
     scheduledAt: dto.scheduledAt,
     contentPreview: contentParts(dto.content).join('\n\n'),
     providerAccount: dto.providerAccount,
@@ -2035,7 +2041,7 @@ export function QueuePage() {
             `${job.text} ${job.account}`.toLowerCase().includes(query.toLowerCase()) &&
             (view === 'All' ||
               (view === 'Needs attention'
-                ? ['failed', 'retrying'].includes(job.state)
+                ? ['failed', 'retrying', 'needs_attention'].includes(job.state)
                 : view === 'Upcoming'
                   ? ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
                   : STATE_LABELS[job.state] === view)) &&
@@ -2051,7 +2057,7 @@ export function QueuePage() {
           if (sort === 'oldest') return time;
           if (sort === 'newest') return -time;
           const group = (job: Job) =>
-            ['failed', 'retrying'].includes(job.state)
+            ['failed', 'retrying', 'needs_attention'].includes(job.state)
               ? 0
               : ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
                 ? 1
@@ -2896,6 +2902,30 @@ export function JobDetailPage() {
             <a className="primary-button external-result-link" href={detail.providerResult.url}>
               View post
             </a>
+          )}
+          {job.state === 'needs_attention' && (
+            <div className="recovery-panel story-needs-attention" role="alert">
+              <div>
+                <strong>Snapchat Story outcome needs verification</strong>
+                <p>
+                  Snapchat accepted or may have received this request, but has not confirmed a
+                  published Story. Do not retry: that could publish a duplicate. This stays open
+                  until authoritative provider evidence resolves the outcome.
+                </p>
+                {detail?.attempts?.some((attempt) => attempt.providerRequestId) && (
+                  <details>
+                    <summary>Technical details</summary>
+                    <p>
+                      Provider request reference:{' '}
+                      {
+                        detail.attempts.find((attempt) => attempt.providerRequestId)
+                          ?.providerRequestId
+                      }
+                    </p>
+                  </details>
+                )}
+              </div>
+            </div>
           )}
           {job.state === 'failed' && (
             <div className="recovery-panel" role="alert">

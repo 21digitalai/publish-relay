@@ -1825,6 +1825,9 @@ textarea:focus-visible {
 .job-status.retrying {
   color: var(--warning);
 }
+.job-status.needs_attention {
+  color: var(--warning);
+}
 .job-status.published {
   color: var(--success);
 }

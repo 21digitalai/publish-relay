@@ -18,6 +18,10 @@ import {
 } from '../src/modules/providers/tiktok-direct-post-dispatch.service.js';
 import { TikTokHttpClient } from '../src/modules/providers/tiktok-http-client.js';
 import { TikTokMediaGrantService } from '../src/modules/providers/tiktok-media-grant.service.js';
+import {
+  reconcileTikTokDirectPosts,
+  revokeExpiredTerminalTikTokGrants,
+} from '../src/modules/providers/tiktok-status-reconciliation.service.js';
 import { scheduleTikTokDraft } from '../src/modules/providers/tiktok-schedule.service.js';
 
 const migrations = [
@@ -329,6 +333,11 @@ it('recovers a crash after durable init_sending as reconciliation, never a secon
   });
   expect(attempt?.attemptId).toBeTruthy();
   expect(await recoverExpiredDispatches(db, new Date(Date.now() + 120_000))).toEqual([jobId]);
+  const statusCalls = vi.fn<typeof fetch>(() => Promise.reject(new Error('Must not call TikTok')));
+  expect(
+    await reconcileTikTokDirectPosts(runtime(statusCalls), new Date(Date.now() + 120_000)),
+  ).toBe(0);
+  expect(statusCalls).not.toHaveBeenCalled();
   const rows = await pg.query<{ state: string; reconciliation_required: boolean }>(
     'select state, reconciliation_required from publication_jobs where id = $1',
     [jobId],
@@ -338,4 +347,151 @@ it('recovers a crash after durable init_sending as reconciliation, never a secon
   expect(
     (await pg.query('select id from publication_attempts where job_id = $1', [jobId])).rows,
   ).toHaveLength(1);
+});
+
+it('polls accepted Direct Post through processing to a verified published link and delayed grant cleanup', async () => {
+  let status = 'PROCESSING_UPLOAD';
+  const calls = vi.fn<typeof fetch>((url) => {
+    const path = requestUrl(url);
+    if (path.endsWith('/creator_info/query/')) return Promise.resolve(creatorResponse());
+    if (path.endsWith('/status/fetch/'))
+      return Promise.resolve(
+        response({
+          status,
+          ...(status === 'PUBLISH_COMPLETE'
+            ? { publicaly_available_post_id: ['7333862123456789012'] }
+            : {}),
+        }),
+      );
+    return Promise.resolve(response({ publish_id: 'publish-fixture' }));
+  });
+  const fixture = runtime(calls);
+  expect(await dispatchDueTikTokJobs(fixture)).toBe(1);
+  expect(await reconcileTikTokDirectPosts(runtime(calls))).toBe(1); // fresh worker runtime
+  expect(
+    (await pg.query<{ state: string }>('select state from publication_jobs where id = $1', [jobId]))
+      .rows[0]?.state,
+  ).toBe('accepted_pending');
+  status = 'PUBLISH_COMPLETE';
+  expect(await reconcileTikTokDirectPosts(fixture)).toBe(1);
+  const terminal = await pg.query<{
+    state: string;
+    reconciliation_required: boolean;
+    outcome: string;
+    external_post_id: string;
+    external_url: string;
+    revoked_at: Date | null;
+  }>(
+    `select job.state, job.reconciliation_required, attempt.outcome,
+      attempt.external_post_id, attempt.external_url, grant_row.revoked_at
+      from publication_jobs job join publication_attempts attempt on attempt.job_id = job.id
+      join provider_media_grants grant_row on grant_row.id = attempt.tiktok_media_grant_id
+      where job.id = $1`,
+    [jobId],
+  );
+  expect(terminal.rows[0]).toEqual({
+    state: 'published',
+    reconciliation_required: false,
+    outcome: 'published',
+    external_post_id: '7333862123456789012',
+    external_url: 'https://www.tiktok.com/@one/video/7333862123456789012',
+    revoked_at: null,
+  });
+  expect(await revokeExpiredTerminalTikTokGrants(db)).toBe(0);
+  const afterGrantExpiry = new Date(Date.now() + 92 * 60_000);
+  expect(await revokeExpiredTerminalTikTokGrants(db, afterGrantExpiry)).toBe(1);
+  expect(await revokeExpiredTerminalTikTokGrants(db, afterGrantExpiry)).toBe(0);
+  expect(
+    calls.mock.calls.filter(([url]) => requestUrl(url).endsWith('/publish/video/init/')),
+  ).toHaveLength(1);
+});
+
+it('records provider failure without inventing a post ID or re-initializing', async () => {
+  const calls = vi.fn<typeof fetch>((url) => {
+    const path = requestUrl(url);
+    if (path.endsWith('/creator_info/query/')) return Promise.resolve(creatorResponse());
+    if (path.endsWith('/status/fetch/'))
+      return Promise.resolve(response({ status: 'FAILED', fail_reason: 'provider-private-code' }));
+    return Promise.resolve(response({ publish_id: 'publish-fixture' }));
+  });
+  const fixture = runtime(calls);
+  expect(await dispatchDueTikTokJobs(fixture)).toBe(1);
+  expect(await reconcileTikTokDirectPosts(fixture)).toBe(1);
+  const rows = await pg.query<{
+    state: string;
+    reconciliation_required: boolean;
+    outcome: string;
+    external_post_id: string | null;
+    redacted_error: string;
+  }>(
+    `select job.state, job.reconciliation_required, attempt.outcome,
+      attempt.external_post_id, attempt.redacted_error from publication_jobs job
+      join publication_attempts attempt on attempt.job_id = job.id where job.id = $1`,
+    [jobId],
+  );
+  expect(rows.rows[0]).toEqual({
+    state: 'failed',
+    reconciliation_required: false,
+    outcome: 'permanent',
+    external_post_id: null,
+    redacted_error: 'TikTok reported Direct Post failure',
+  });
+  expect(
+    calls.mock.calls.filter(([url]) => requestUrl(url).endsWith('/publish/video/init/')),
+  ).toHaveLength(1);
+});
+
+it('leaves unknown init without publish ID in needs-attention and does not status-poll', async () => {
+  const calls = vi.fn<typeof fetch>((url) => {
+    if (requestUrl(url).endsWith('/creator_info/query/')) return Promise.resolve(creatorResponse());
+    throw new Error('Lost init response');
+  });
+  const fixture = runtime(calls);
+  expect(await dispatchDueTikTokJobs(fixture)).toBe(0);
+  expect(await reconcileTikTokDirectPosts(fixture)).toBe(0);
+  const rows = await pg.query<{ state: string; reconciliation_required: boolean }>(
+    'select state, reconciliation_required from publication_jobs where id = $1',
+    [jobId],
+  );
+  expect(rows.rows[0]).toEqual({ state: 'dispatching', reconciliation_required: true });
+  expect(calls).toHaveBeenCalledTimes(2);
+});
+
+it('does not poll an accepted publish ID after account authority is revoked', async () => {
+  const calls = vi.fn<typeof fetch>((url) => {
+    if (requestUrl(url).endsWith('/creator_info/query/')) return Promise.resolve(creatorResponse());
+    return Promise.resolve(response({ publish_id: 'publish-fixture' }));
+  });
+  const fixture = runtime(calls);
+  expect(await dispatchDueTikTokJobs(fixture)).toBe(1);
+  await pg.query(
+    "update provider_connections set status = 'revoked', revoked_at = now() where id = $1",
+    [connectionId],
+  );
+  expect(await reconcileTikTokDirectPosts(fixture)).toBe(0);
+  expect(calls).toHaveBeenCalledTimes(2);
+  const rows = await pg.query<{ state: string; reconciliation_required: boolean }>(
+    'select state, reconciliation_required from publication_jobs where id = $1',
+    [jobId],
+  );
+  expect(rows.rows[0]).toEqual({ state: 'accepted_pending', reconciliation_required: true });
+});
+
+it('keeps reconciliation ledger tenant-scoped under PostgreSQL forced RLS', async () => {
+  const calls = vi.fn<typeof fetch>((url) => {
+    if (requestUrl(url).endsWith('/creator_info/query/')) return Promise.resolve(creatorResponse());
+    return Promise.resolve(response({ publish_id: 'publish-fixture' }));
+  });
+  expect(await dispatchDueTikTokJobs(runtime(calls))).toBe(1);
+  await pg.exec(`create role tiktok_reconciliation_reader nologin nobypassrls;
+    grant select on publication_jobs, publication_attempts, provider_media_grants
+      to tiktok_reconciliation_reader;`);
+  await pg.exec(`begin; set local role tiktok_reconciliation_reader;
+    select set_config('app.workspace_id', '00000000-0000-4000-8000-000000000999', true);`);
+  for (const table of ['publication_jobs', 'publication_attempts', 'provider_media_grants'])
+    expect((await pg.query(`select id from ${table}`)).rows).toHaveLength(0);
+  await pg.exec(`select set_config('app.workspace_id', '${workspaceId}', true);`);
+  for (const table of ['publication_jobs', 'publication_attempts', 'provider_media_grants'])
+    expect((await pg.query(`select id from ${table}`)).rows).toHaveLength(1);
+  await pg.exec('rollback');
 });

@@ -170,6 +170,14 @@ export async function claimReconciliationJobs(
       WHERE reconciliation_required = true
         AND state IN ('dispatching', 'accepted_pending')
         AND (lease_expires_at IS NULL OR lease_expires_at <= ${input.now})
+        AND (COALESCE(${input.destinationProvider ?? null}::text, '') <> 'tiktok' OR EXISTS (
+          SELECT 1 FROM publication_attempts attempt
+          WHERE attempt.workspace_id = publication_jobs.workspace_id
+            AND attempt.job_id = publication_jobs.id
+            AND attempt.attempt_number = publication_jobs.attempt_number
+            AND attempt.tiktok_init_phase = 'accepted_pending'
+            AND attempt.provider_request_id IS NOT NULL
+        ))
         AND (${input.destinationProvider ?? null}::text IS NULL OR EXISTS (
           SELECT 1 FROM provider_accounts account
           JOIN provider_account_exposures exposure
@@ -424,12 +432,25 @@ export async function resolveReconciliation(
     retryAt?: Date;
     externalPostId?: string;
     externalUrl?: string;
+    terminalAttempt?: {
+      providerRequestId: string;
+      outcome: 'published' | 'permanent';
+      redactedError?: string;
+    };
   },
 ): Promise<boolean> {
   if (input.outcome === 'retry_wait' && !input.retryAt)
     throw new Error('retryAt is required for a reconciliation retry');
   if (input.externalPostId && input.outcome !== 'published')
     throw new Error('An external post ID requires a published reconciliation outcome');
+  if (
+    input.terminalAttempt &&
+    !(
+      (input.terminalAttempt.outcome === 'published' && input.outcome === 'published') ||
+      (input.terminalAttempt.outcome === 'permanent' && input.outcome === 'failed')
+    )
+  )
+    throw new Error('Terminal attempt outcome must match the job outcome');
   return withTenantTransaction(
     database,
     { workspaceId: input.workspaceId },
@@ -455,7 +476,27 @@ export async function resolveReconciliation(
     `);
       const job = resultRows(result)[0];
       if (!job) return false;
-      if (input.externalPostId) {
+      if (input.terminalAttempt) {
+        const attempts = await transaction.execute(sql`
+          UPDATE publication_attempts AS attempt
+          SET external_post_id = ${input.externalPostId ?? null},
+              external_url = ${validatedPostUrl(input.externalUrl, 'tiktok')},
+              finished_at = COALESCE(attempt.finished_at, ${input.now}),
+              outcome = ${input.terminalAttempt.outcome}::publication_attempt_outcome,
+              redacted_error = ${input.terminalAttempt.redactedError ?? null}
+          WHERE attempt.workspace_id = ${input.workspaceId}
+            AND attempt.job_id = ${input.jobId}
+            AND attempt.provider_request_id = ${input.terminalAttempt.providerRequestId}
+            AND attempt.tiktok_init_phase = 'accepted_pending'
+            AND attempt.attempt_number = (
+              SELECT attempt_number FROM publication_jobs
+              WHERE workspace_id = ${input.workspaceId} AND id = ${input.jobId}
+            )
+          RETURNING attempt.id
+        `);
+        if (resultRows(attempts).length !== 1)
+          throw new Error('TikTok accepted attempt was not available for terminal status');
+      } else if (input.externalPostId) {
         const attempts = await transaction.execute(sql`
           UPDATE publication_attempts
           SET external_post_id = ${input.externalPostId},

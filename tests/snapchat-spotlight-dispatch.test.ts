@@ -111,7 +111,10 @@ it('keeps a provider-accepted Spotlight pending; never calls it published at SUB
 });
 
 it('preserves an ambiguous post outcome without a blind second POST', async () => {
-  vi.mocked(stageAndPostSnapchatSpotlight).mockRejectedValue(new Error('network response lost'));
+  vi.mocked(stageAndPostSnapchatSpotlight).mockImplementation(async (input) => {
+    await input.onBeforeSpotlightPost?.();
+    throw new Error('network response lost');
+  });
   expect(await dispatchDueSnapchatSpotlights(runtime, now)).toBe(0);
   expect(stageAndPostSnapchatSpotlight).toHaveBeenCalledTimes(1);
   expect(finishDispatchAttempt).toHaveBeenCalledWith(

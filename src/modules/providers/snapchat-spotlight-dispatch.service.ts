@@ -201,6 +201,7 @@ async function dispatchJob(
     now,
   });
   if (!attempt) return false;
+  const publicationBoundary = { postMayHaveStarted: false };
   try {
     const context = await loadJob(runtime, job.workspaceId, job.id);
     const token = await getFreshSnapchatToken(runtime.database, runtime.keys, runtime.oauthClient, {
@@ -239,6 +240,10 @@ async function dispatchJob(
         },
       },
       onMediaCreated: (id) => recordArtifact(runtime, job.workspaceId, artifactId, 'media', id),
+      onBeforeSpotlightPost: () => {
+        publicationBoundary.postMayHaveStarted = true;
+        return Promise.resolve();
+      },
       onSpotlightPosted: (id) => recordArtifact(runtime, job.workspaceId, artifactId, 'posted', id),
     });
     await finishDispatchAttempt(runtime.database, {
@@ -253,7 +258,11 @@ async function dispatchJob(
     return true;
   } catch (error) {
     const requestError = error instanceof SnapchatSpotlightRequestError ? error : null;
-    const kind = requestError?.kind ?? 'unknown';
+    const kind =
+      requestError?.kind === 'unknown' && !publicationBoundary.postMayHaveStarted
+        ? 'permanent'
+        : (requestError?.kind ??
+          (publicationBoundary.postMayHaveStarted ? 'unknown' : 'permanent'));
     await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,
@@ -261,7 +270,10 @@ async function dispatchJob(
       outcome: kind,
       now,
       ...(kind === 'unknown' ? { reconciliationKey: `snapchat:${job.id}` } : {}),
-      redactedError: requestError?.message ?? 'Snapchat dispatch outcome needs reconciliation',
+      redactedError:
+        kind === 'unknown'
+          ? 'Snapchat publication outcome needs reconciliation'
+          : 'Snapchat dispatch failed before publication acceptance',
     });
     return false;
   }

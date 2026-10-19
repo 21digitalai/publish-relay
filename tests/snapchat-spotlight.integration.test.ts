@@ -155,5 +155,46 @@ it('refuses a changed owner-profile binding before any provider call', async () 
   expect(
     (await pg.query<{ state: string }>('select state from publication_jobs where id = $1', [jobId]))
       .rows[0]?.state,
-  ).toBe('dispatching');
+  ).toBe('failed');
+  expect(
+    (
+      await pg.query<{ reconciliation_required: boolean }>(
+        'select reconciliation_required from publication_jobs where id = $1',
+        [jobId],
+      )
+    ).rows[0]?.reconciliation_required,
+  ).toBe(false);
+});
+
+it('fails a source error before POST without an unresolvable reconciliation key', async () => {
+  vi.mocked(stageAndPostSnapchatSpotlight).mockRejectedValueOnce(new Error('source unavailable'));
+  expect(await dispatchDueSnapchatSpotlights(runtime(), new Date('2026-10-19T20:00:00Z'))).toBe(0);
+  const job = await pg.query<{ state: string; reconciliation_required: boolean }>(
+    'select state, reconciliation_required from publication_jobs where id = $1',
+    [jobId],
+  );
+  expect(job.rows[0]).toEqual({ state: 'failed', reconciliation_required: false });
+  const attempt = await pg.query<{ outcome: string; reconciliation_key: string | null }>(
+    'select outcome, reconciliation_key from publication_attempts where job_id = $1',
+    [jobId],
+  );
+  expect(attempt.rows[0]).toEqual({ outcome: 'permanent', reconciliation_key: null });
+});
+
+it('keeps a possibly sent POST unknown without a blind retry', async () => {
+  vi.mocked(stageAndPostSnapchatSpotlight).mockImplementationOnce(async (input) => {
+    await input.onBeforeSpotlightPost?.();
+    throw new Error('connection lost after POST began');
+  });
+  expect(await dispatchDueSnapchatSpotlights(runtime(), new Date('2026-10-19T20:00:00Z'))).toBe(0);
+  const job = await pg.query<{ state: string; reconciliation_required: boolean }>(
+    'select state, reconciliation_required from publication_jobs where id = $1',
+    [jobId],
+  );
+  expect(job.rows[0]).toEqual({ state: 'dispatching', reconciliation_required: true });
+  const attempt = await pg.query<{ outcome: string; reconciliation_key: string }>(
+    'select outcome, reconciliation_key from publication_attempts where job_id = $1',
+    [jobId],
+  );
+  expect(attempt.rows[0]).toEqual({ outcome: 'unknown', reconciliation_key: `snapchat:${jobId}` });
 });

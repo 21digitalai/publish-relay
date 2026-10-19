@@ -28,6 +28,7 @@ export async function stageAndPostSnapchatSpotlight(input: {
     height: number | null;
   };
   onMediaCreated?: (mediaId: string) => Promise<void>;
+  onBeforeSpotlightPost?: () => Promise<void>;
   onSpotlightPosted?: (spotlightId: string) => Promise<void>;
 }): Promise<{ spotlightId: string; mediaId: string }> {
   const content = snapchatSpotlightContentSchema.parse(input.content);
@@ -57,6 +58,7 @@ export async function stageAndPostSnapchatSpotlight(input: {
       input.media.byteSize,
     );
     await input.client.finalize(staged.finalizeUrl, input.accessToken);
+    await input.onBeforeSpotlightPost?.();
     const spotlightId = await input.client.post({
       profileId: input.profileId,
       accessToken: input.accessToken,

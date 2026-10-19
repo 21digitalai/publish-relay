@@ -13,7 +13,11 @@ vi.mock('../src/modules/providers/snapchat-spotlight-upload.js', () => ({
 }));
 
 import { dispatchDueSnapchatSpotlights } from '../src/modules/providers/snapchat-spotlight-dispatch.service.js';
-import { requestOperatorRetry } from '../src/modules/scheduler/job.repository.js';
+import {
+  claimDueJobs,
+  claimReconciliationJobs,
+  requestOperatorRetry,
+} from '../src/modules/scheduler/job.repository.js';
 import { stageAndPostSnapchatSpotlight } from '../src/modules/providers/snapchat-spotlight-upload.js';
 
 const migrations = [
@@ -146,6 +150,61 @@ it('persists the owner-profile Spotlight as pending with an attempt and staging 
       )
     ).rows[0]?.external_object_id,
   ).toBe('spotlight-one');
+});
+
+it('leaves Story jobs for their own claimer and excludes them from Spotlight reconciliation', async () => {
+  const storyJobId = '00000000-0000-4000-8000-000000000116';
+  await pg.exec(`
+    insert into posts (id, workspace_id, created_by_user_id)
+      values ('00000000-0000-4000-8000-000000000114', '${workspaceId}', '${userId}');
+    insert into post_revisions (id, workspace_id, post_id, revision_number, content)
+      values ('00000000-0000-4000-8000-000000000115', '${workspaceId}',
+        '00000000-0000-4000-8000-000000000114', 1, '{}');
+    insert into revision_media (workspace_id, revision_id, media_id, position)
+      values ('${workspaceId}', '00000000-0000-4000-8000-000000000115', '${mediaId}', 0);
+    insert into publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id,
+      effective_payload, scheduled_at)
+      values ('${storyJobId}', '${workspaceId}', '00000000-0000-4000-8000-000000000114',
+        '00000000-0000-4000-8000-000000000115', '${accountId}',
+        '{"schemaVersion":1,"kind":"story_video","mediaId":"${mediaId}"}',
+        '2026-10-19T18:00:00Z');
+  `);
+  vi.mocked(stageAndPostSnapchatSpotlight).mockResolvedValue({
+    spotlightId: 'spotlight-one',
+    mediaId: 'remote-media',
+  });
+  const now = new Date('2026-10-19T20:00:00Z');
+  expect(await dispatchDueSnapchatSpotlights(runtime(), now)).toBe(1);
+  expect(
+    (
+      await pg.query<{ state: string }>('select state from publication_jobs where id = $1', [
+        storyJobId,
+      ])
+    ).rows[0]?.state,
+  ).toBe('scheduled');
+  const storyClaims = await claimDueJobs(db, {
+    workerId: 'story-fixture',
+    now,
+    leaseMs: 60_000,
+    limit: 10,
+    destinationProvider: 'snapchat',
+    contentKinds: ['story_image', 'story_video'],
+    requireMedia: true,
+  });
+  expect(storyClaims.map((job) => job.id)).toEqual([storyJobId]);
+  await pg.exec(`update publication_jobs set state = 'dispatching',
+    reconciliation_required = true, lease_owner = null, lease_expires_at = null
+    where id = '${storyJobId}'`);
+  expect(
+    await claimReconciliationJobs(db, {
+      workerId: 'spotlight-fixture',
+      now,
+      leaseMs: 60_000,
+      limit: 10,
+      destinationProvider: 'snapchat',
+      contentKinds: ['spotlight_video'],
+    }),
+  ).toEqual([jobId]);
 });
 
 it('refuses a changed owner-profile binding before any provider call', async () => {

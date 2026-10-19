@@ -59,11 +59,15 @@ export async function claimDueJobs(
     leaseMs: number;
     limit: number;
     destinationProvider?: string;
+    contentKinds?: string[];
     requireMedia?: boolean;
   },
 ): Promise<ClaimedJob[]> {
   if (input.limit < 1) return [];
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
+  const kindFilter = input.contentKinds
+    ? sql`AND publication_jobs.effective_payload->>'kind' = ANY(string_to_array(${input.contentKinds.join(',')}, ','))`
+    : sql``;
   const result = await database.execute<ClaimedJob>(sql`
     WITH candidates AS (
       SELECT id, state AS from_state
@@ -82,6 +86,7 @@ export async function claimDueJobs(
         WHERE account.id = publication_jobs.provider_account_id
           AND account.destination_provider = ${input.destinationProvider ?? null}
       ))
+      ${kindFilter}
       AND (${input.requireMedia ?? false} = false OR EXISTS (
         SELECT 1 FROM revision_media media
         WHERE media.revision_id = publication_jobs.revision_id
@@ -161,9 +166,13 @@ export async function claimReconciliationJobs(
     leaseMs: number;
     limit: number;
     destinationProvider?: string;
+    contentKinds?: string[];
   },
 ): Promise<string[]> {
   const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
+  const kindFilter = input.contentKinds
+    ? sql`AND publication_jobs.effective_payload->>'kind' = ANY(string_to_array(${input.contentKinds.join(',')}, ','))`
+    : sql``;
   const result = await database.execute<{ id: string }>(sql`
     WITH candidates AS (
       SELECT id FROM publication_jobs
@@ -179,6 +188,7 @@ export async function claimReconciliationJobs(
           WHERE account.id = publication_jobs.provider_account_id
             AND account.destination_provider = ${input.destinationProvider ?? null}
         ))
+        ${kindFilter}
       ORDER BY updated_at, id
       FOR UPDATE SKIP LOCKED
       LIMIT ${input.limit}

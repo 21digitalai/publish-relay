@@ -315,6 +315,7 @@ export async function dispatchDueSnapchatSpotlights(
     leaseMs: runtime.leaseMs,
     limit: 10,
     destinationProvider: 'snapchat',
+    contentKinds: ['spotlight_video'],
     requireMedia: true,
   });
   let accepted = 0;
@@ -332,6 +333,7 @@ export async function reconcileSnapchatSpotlights(
     leaseMs: runtime.leaseMs,
     limit: 10,
     destinationProvider: 'snapchat',
+    contentKinds: ['spotlight_video'],
   });
   let resolved = 0;
   for (const jobId of jobIds) {

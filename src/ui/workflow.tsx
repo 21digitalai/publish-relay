@@ -1313,7 +1313,8 @@ function Composer({ onClose }: { onClose: () => void }) {
                     </small>
                   </span>
                   {account.destinationProvider === 'tiktok' &&
-                    account.availability !== 'active' && (
+                    account.availability !== 'active' &&
+                    account.availability !== 'publishing_unavailable' && (
                       <a href={`${workspacePath()}/accounts`}>Reconnect</a>
                     )}
                 </label>

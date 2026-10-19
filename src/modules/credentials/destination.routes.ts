@@ -9,6 +9,7 @@ import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/
 import {
   InvalidAccountPageCursorError,
   listProviderAccountsPage,
+  availableWithTikTokRuntime,
 } from './provider-account.service.js';
 import type { MasterKeyProvider } from './envelope.js';
 import type { TikTokHttpClient } from '../providers/tiktok-http-client.js';
@@ -131,19 +132,22 @@ export function registerDestinationRoutes(
       return await reply.send(
         successEnvelope(
           {
-            items: page.accounts.map((account) => ({
-              id: account.id,
-              provider: account.provider,
-              destinationProvider: account.destinationProvider,
-              displayName: account.displayName,
-              status: account.status,
-              availability: account.availability,
-              remoteParentAccountId: account.remoteParentAccountId,
-              capabilitySnapshot: account.capabilitySnapshot,
-              capabilitiesCheckedAt: account.capabilitiesCheckedAt?.toISOString() ?? null,
-              capabilityFreshness: account.capabilityFreshness,
-              updatedAt: account.updatedAt.toISOString(),
-            })),
+            items: page.accounts.map((item) => {
+              const account = availableWithTikTokRuntime(item, Boolean(tiktok));
+              return {
+                id: account.id,
+                provider: account.provider,
+                destinationProvider: account.destinationProvider,
+                displayName: account.displayName,
+                status: account.status,
+                availability: account.availability,
+                remoteParentAccountId: account.remoteParentAccountId,
+                capabilitySnapshot: account.capabilitySnapshot,
+                capabilitiesCheckedAt: account.capabilitiesCheckedAt?.toISOString() ?? null,
+                capabilityFreshness: account.capabilityFreshness,
+                updatedAt: account.updatedAt.toISOString(),
+              };
+            }),
             nextCursor: page.nextCursor,
           },
           request.id,

@@ -1,6 +1,7 @@
 import cookie from '@fastify/cookie';
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderAccountSummary } from '../src/modules/credentials/provider-account.service.js';
 
 vi.mock('../src/modules/identity/auth.routes.js', () => ({
   authorizeRequest: vi.fn(),
@@ -10,6 +11,11 @@ vi.mock('../src/modules/credentials/provider-account.service.js', () => ({
   disconnectProviderAccount: vi.fn(),
   listProviderAccounts: vi.fn(() => Promise.resolve([])),
   listProviderAccountsPage: vi.fn(() => Promise.resolve({ accounts: [], nextCursor: null })),
+  availableWithTikTokRuntime: vi.fn((account: ProviderAccountSummary, enabled: boolean) =>
+    account.destinationProvider === 'tiktok' && !enabled
+      ? { ...account, availability: 'publishing_unavailable' }
+      : account,
+  ),
   InvalidAccountPageCursorError: class extends Error {},
   updateYouTubeAccountDefaults: vi.fn(() => Promise.resolve('updated')),
   updateXLongPostDeclaration: vi.fn(() => Promise.resolve('updated')),
@@ -95,6 +101,43 @@ describe('provider account routes', () => {
     expect(response.body).toContain('adapterDefaults');
     expect(response.body).not.toContain('credentialId');
     expect(response.body).not.toContain('connectionId');
+  });
+
+  it('does not offer a connected TikTok destination without enabled runtime', async () => {
+    vi.mocked(listProviderAccountsPage).mockResolvedValue({
+      accounts: [
+        {
+          id: accountId,
+          provider: 'tiktok',
+          destinationProvider: 'tiktok',
+          displayName: 'Creator',
+          status: 'active',
+          availability: 'active',
+          remoteParentAccountId: null,
+          capabilitySnapshot: { schemaVersion: 1, contentKinds: [], media: {} },
+          capabilitiesCheckedAt: null,
+          capabilityFreshness: 'unknown',
+          adapterDefaults: null,
+          xLongPosts: null,
+          updatedAt: new Date('2026-10-20T00:00:00Z'),
+        },
+      ],
+      nextCursor: null,
+    });
+    const disabled = await (
+      await application()
+    ).inject({ method: 'GET', url: '/api/provider-accounts' });
+    expect(
+      disabled.json<{ data: { accounts: ProviderAccountSummary[] } }>().data.accounts[0]
+        ?.availability,
+    ).toBe('publishing_unavailable');
+    const enabled = await (
+      await application(true)
+    ).inject({ method: 'GET', url: '/api/provider-accounts' });
+    expect(
+      enabled.json<{ data: { accounts: ProviderAccountSummary[] } }>().data.accounts[0]
+        ?.availability,
+    ).toBe('active');
   });
 
   it('requires owner capability and CSRF for the Page exposure checkbox mutation', async () => {

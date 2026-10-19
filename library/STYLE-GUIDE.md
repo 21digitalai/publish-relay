@@ -203,6 +203,8 @@ This extends the canonical Composer for the operator-approved destination-first 
 
 Implementation anchors: `workflow.tsx` retains the one Composer sheet and media picker; `tiktok-composer.tsx` owns only TikTok's capability-bound form and review, keyed by selected account so account switching cannot carry declarations across subjects. `.composer-sheet-tiktok`, `.tiktok-options-group`, `.tiktok-video-preview`, and `.tiktok-review` extend the existing sheet tokens, not a second shell. The final action remains visibly unavailable until exact-revision scheduling/dispatch is integrated; a form-only UI never issues a consent receipt or claims a scheduled post.
 
+E5 picker admission: `posting-adapter-registry.ts` remains the single Add Posting Adapter list for onboarding and Accounts. It exposes TikTok only when the server shell marks its reviewed runtime enabled; there is no dead selectable OAuth choice under incomplete configuration. Connected TikTok rows remain visible for recovery, but Composer renders them disabled with `Connected · publishing is not yet available` when runtime is absent. With runtime enabled, selection fetches creator options in `TikTokComposerForm`; loading, error, stale or invalid options never imply a publishable destination. The same Composer account-picker markup is used for every provider; no second TikTok picker is introduced.
+
 ## Queue
 
 Use a dense data list, not cards. Toolbar: search; status/provider/account/workspace/date filters; sort; All, Needs attention, Upcoming, and Published views.

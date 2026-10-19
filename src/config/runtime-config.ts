@@ -42,6 +42,10 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_META_APP_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_INSTAGRAM_APP_ID: z.string().min(1).optional(),
     PUBLISH_RELAY_INSTAGRAM_APP_SECRET: z.string().min(1).optional(),
+    PUBLISH_RELAY_TIKTOK_CLIENT_KEY: z.string().min(1).optional(),
+    PUBLISH_RELAY_TIKTOK_CLIENT_SECRET: z.string().min(1).optional(),
+    PUBLISH_RELAY_TIKTOK_VERIFIED_MEDIA_ORIGIN: z.url().optional(),
+    PUBLISH_RELAY_TIKTOK_PUBLISHING_ENABLED: z.enum(['true', 'false']).optional(),
     PUBLISH_RELAY_META_GRAPH_VERSION: z
       .string()
       .regex(/^v\d+\.\d+$/)
@@ -115,6 +119,46 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env):
 
 export function resolveHumanAuthMode(config: RuntimeConfig): 'password' | 'magic_link' {
   return config.PUBLISH_RELAY_HUMAN_AUTH_MODE ?? 'password';
+}
+
+export function resolveTikTokProviderConfig(config: RuntimeConfig): {
+  clientKey: string;
+  clientSecret: string;
+  publicOrigin: string;
+  verifiedMediaOrigin: string;
+} | null {
+  const clientKey = config.PUBLISH_RELAY_TIKTOK_CLIENT_KEY;
+  const clientSecret = config.PUBLISH_RELAY_TIKTOK_CLIENT_SECRET;
+  const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
+  const verifiedMediaOrigin = config.PUBLISH_RELAY_TIKTOK_VERIFIED_MEDIA_ORIGIN;
+  if (config.PUBLISH_RELAY_TIKTOK_PUBLISHING_ENABLED !== 'true') return null;
+  if (
+    !clientKey ||
+    !clientSecret ||
+    !publicOrigin ||
+    !verifiedMediaOrigin ||
+    !config.CURSOR_SIGNING_SECRET
+  )
+    return null;
+  const publicUrl = new URL(publicOrigin);
+  const verifiedUrl = new URL(verifiedMediaOrigin);
+  if (
+    publicUrl.protocol !== 'https:' ||
+    verifiedUrl.protocol !== 'https:' ||
+    publicUrl.origin !== verifiedUrl.origin ||
+    publicUrl.pathname !== '/' ||
+    verifiedUrl.pathname !== '/' ||
+    publicUrl.search ||
+    publicUrl.hash ||
+    verifiedUrl.search ||
+    verifiedUrl.hash ||
+    publicUrl.username ||
+    publicUrl.password ||
+    verifiedUrl.username ||
+    verifiedUrl.password
+  )
+    return null;
+  return { clientKey, clientSecret, publicOrigin, verifiedMediaOrigin };
 }
 
 export function resolveWorkerDatabaseUrl(config: RuntimeConfig): string {

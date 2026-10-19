@@ -17,7 +17,12 @@ import {
 
 export function registerTikTokScheduleRoutes(
   application: FastifyInstance,
-  dependencies: { auth: AuthService; database: NodePgDatabase; actionPolicy: ActionPolicy },
+  dependencies: {
+    auth: AuthService;
+    database: NodePgDatabase;
+    actionPolicy: ActionPolicy;
+    enabled?: boolean;
+  },
 ): void {
   application.post('/api/workflow/tiktok-schedules', async (request, reply) => {
     void reply.header('Cache-Control', 'no-store');
@@ -25,6 +30,10 @@ export function registerTikTokScheduleRoutes(
       const identity = await authorizeRequest(request, dependencies.auth, 'content:write');
       if (!identity)
         return await reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (dependencies.enabled === false)
+        return await reply
+          .code(503)
+          .send({ data: null, error: 'TikTok publishing is unavailable' });
       if (
         !verifyCsrfToken(
           request.cookies[CSRF_COOKIE],

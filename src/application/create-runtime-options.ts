@@ -2,7 +2,11 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
 import type { RuntimeConfig } from '../config/runtime-config.js';
-import { resolveHumanAuthMode, resolveXProviderCredentials } from '../config/runtime-config.js';
+import {
+  resolveHumanAuthMode,
+  resolveTikTokProviderConfig,
+  resolveXProviderCredentials,
+} from '../config/runtime-config.js';
 import { RuntimeMasterKeyProvider } from '../config/runtime-master-keys.js';
 import { LocalMediaStorage } from '../modules/content/local-media-storage.js';
 import { createPostgresDelegatedAuthorizationStore } from '../modules/delegated-authorization/delegated-authorization.repository.js';
@@ -22,6 +26,7 @@ import {
   parseMetaFamilyPermissions,
 } from '../modules/providers/meta-http-client.js';
 import { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
+import { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import type { CoreApplicationOptions } from './create-application.js';
 
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
@@ -38,6 +43,7 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
     throw new Error('Master key and media storage configuration are required for the web process');
 
   const xCredentials = resolveXProviderCredentials(config);
+  const tiktokCredentials = resolveTikTokProviderConfig(config);
   const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
   if (
     (xCredentials ||
@@ -158,6 +164,18 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                 graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
               }),
               callbackUrl: new URL('/api/oauth/instagram/callback', publicOrigin).toString(),
+            },
+          }
+        : {}),
+      ...(tiktokCredentials
+        ? {
+            tiktokOauth: {
+              keys: masterKeys,
+              client: new TikTokHttpClient(tiktokCredentials),
+              callbackUrl: new URL(
+                '/api/oauth/tiktok/callback',
+                tiktokCredentials.publicOrigin,
+              ).toString(),
             },
           }
         : {}),

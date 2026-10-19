@@ -252,7 +252,12 @@ function registerBrowserRoutes(
     });
     registerTikTokConsentRoutes(application, { auth, database });
     registerTikTokDraftRoutes(application, { auth, database, actionPolicy });
-    registerTikTokScheduleRoutes(application, { auth, database, actionPolicy });
+    registerTikTokScheduleRoutes(application, {
+      auth,
+      database,
+      actionPolicy,
+      enabled: Boolean(tiktokOauth),
+    });
     registerBrowserWorkflowRoutes(application, {
       auth,
       database,
@@ -307,7 +312,7 @@ export function registerCoreApplication(
   const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
     .replace(
       '<body>',
-      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}">`,
+      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}">`,
     )
     .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
     .replace('href="/favicon.svg"', `href="${uiPrefix === '/' ? '/' : uiPrefix}favicon.svg"`);

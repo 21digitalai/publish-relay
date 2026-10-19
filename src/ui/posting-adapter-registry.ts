@@ -1,4 +1,5 @@
-export type PostingAdapterId = 'x' | 'youtube' | 'linkedin' | 'facebook_page' | 'instagram';
+export type PostingAdapterId =
+  'x' | 'youtube' | 'linkedin' | 'facebook_page' | 'instagram' | 'tiktok';
 
 export interface PostingAdapterIcon {
   readonly viewBox: string;
@@ -81,6 +82,18 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
     auth: { kind: 'oauth', startPath: '/api/oauth/instagram' },
     configuration: { requiredBeforeConnect: [] },
   },
+  {
+    id: 'tiktok',
+    label: 'TikTok',
+    description: 'Publish a video with creator-reviewed options to a TikTok account.',
+    icon: {
+      viewBox: '0 0 24 24',
+      paths: ['M14 2v12.5a4.5 4.5 0 1 1-4.5-4.5', 'M14 2c1 3 3 5 6 5'],
+    },
+    enabled: true,
+    auth: { kind: 'oauth', startPath: '/api/oauth/tiktok' },
+    configuration: { requiredBeforeConnect: [] },
+  },
 ] as const;
 
 export function getEnabledPostingAdapters(
@@ -90,7 +103,9 @@ export function getEnabledPostingAdapters(
     (adapter) =>
       adapter.enabled &&
       (adapter.id !== 'linkedin' ||
-        (typeof document !== 'undefined' && document.body.dataset.linkedinEnabled === 'true')),
+        (typeof document !== 'undefined' && document.body.dataset.linkedinEnabled === 'true')) &&
+      (adapter.id !== 'tiktok' ||
+        (typeof document !== 'undefined' && document.body.dataset.tiktokEnabled === 'true')),
   );
 }
 

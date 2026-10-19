@@ -16,6 +16,7 @@ import {
 import {
   disconnectProviderAccount,
   listProviderAccountsPage,
+  availableWithTikTokRuntime,
   InvalidAccountPageCursorError,
   updateYouTubeAccountDefaults,
   updateXLongPostDeclaration,
@@ -59,7 +60,15 @@ export function registerProviderAccountRoutes(
         query.data.cursor,
         query.data.provider,
       );
-      return { data: page, error: null };
+      return {
+        data: {
+          ...page,
+          accounts: page.accounts.map((account) =>
+            availableWithTikTokRuntime(account, Boolean(dependencies.tiktok)),
+          ),
+        },
+        error: null,
+      };
     } catch (error) {
       if (error instanceof InvalidAccountPageCursorError)
         return reply.code(400).send({ data: null, error: error.message });

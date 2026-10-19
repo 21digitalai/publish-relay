@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   loadRuntimeConfig,
   resolveWorkerDatabaseUrl,
+  resolveTikTokProviderConfig,
   resolveXProviderCredentials,
 } from '../src/config/runtime-config.js';
 import {
@@ -128,6 +129,45 @@ describe('production runtime secret configuration', () => {
         PUBLISH_RELAY_META_GRAPH_VERSION: 'v23.0',
       }),
     ).toMatchObject({ PUBLISH_RELAY_INSTAGRAM_APP_ID: 'instagram-app' });
+  });
+
+  it('enables TikTok only with complete credentials and an exact verified HTTPS media origin', () => {
+    const base = loadRuntimeConfig({
+      NODE_ENV: 'test',
+      PUBLISH_RELAY_PUBLIC_ORIGIN: 'https://relay.example.test',
+      CURSOR_SIGNING_SECRET: 'x'.repeat(32),
+    });
+    expect(resolveTikTokProviderConfig(base)).toBeNull();
+    const withKeys = {
+      ...base,
+      PUBLISH_RELAY_TIKTOK_CLIENT_KEY: 'key',
+      PUBLISH_RELAY_TIKTOK_CLIENT_SECRET: 'secret',
+    };
+    expect(resolveTikTokProviderConfig(withKeys)).toBeNull();
+    const enabled = { ...withKeys, PUBLISH_RELAY_TIKTOK_PUBLISHING_ENABLED: 'true' as const };
+    expect(
+      resolveTikTokProviderConfig({
+        ...enabled,
+        PUBLISH_RELAY_TIKTOK_VERIFIED_MEDIA_ORIGIN: 'https://other.example.test',
+      }),
+    ).toBeNull();
+    expect(
+      resolveTikTokProviderConfig({
+        ...enabled,
+        PUBLISH_RELAY_TIKTOK_VERIFIED_MEDIA_ORIGIN: 'http://relay.example.test',
+      }),
+    ).toBeNull();
+    expect(
+      resolveTikTokProviderConfig({
+        ...enabled,
+        PUBLISH_RELAY_TIKTOK_VERIFIED_MEDIA_ORIGIN: 'https://relay.example.test',
+      }),
+    ).toMatchObject({
+      clientKey: 'key',
+      clientSecret: 'secret',
+      publicOrigin: 'https://relay.example.test',
+      verifiedMediaOrigin: 'https://relay.example.test',
+    });
   });
 
   it('requires a distinct worker database URL in production', () => {

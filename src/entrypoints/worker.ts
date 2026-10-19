@@ -4,6 +4,7 @@ import pg from 'pg';
 import {
   loadRuntimeConfig,
   resolveHumanAuthMode,
+  resolveTikTokProviderConfig,
   resolveWorkerDatabaseUrl,
 } from '../config/runtime-config.js';
 import { resolveWorkerSecurityRuntime } from '../config/runtime-master-keys.js';
@@ -42,6 +43,10 @@ import {
   reconcileYouTubeJobs,
 } from '../modules/providers/youtube-media-dispatch.service.js';
 import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
+import { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
+import { TikTokMediaGrantService } from '../modules/providers/tiktok-media-grant.service.js';
+import { dispatchDueTikTokJobs } from '../modules/providers/tiktok-direct-post-dispatch.service.js';
+import { reconcileTikTokDirectPosts } from '../modules/providers/tiktok-status-reconciliation.service.js';
 import {
   dispatchDueFacebookJobs,
   reconcileFacebookJobs,
@@ -155,6 +160,20 @@ const facebookRuntime =
         client: new FacebookHttpClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
       }
     : null;
+const tiktokConfig = resolveTikTokProviderConfig(config);
+const tiktokRuntime =
+  tiktokConfig && config.CURSOR_SIGNING_SECRET
+    ? {
+        database,
+        keys,
+        client: new TikTokHttpClient(tiktokConfig),
+        grants: new TikTokMediaGrantService(database, Buffer.from(config.CURSOR_SIGNING_SECRET)),
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+        publicOrigin: tiktokConfig.publicOrigin,
+        verifiedMediaOrigin: tiktokConfig.verifiedMediaOrigin,
+      }
+    : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
@@ -174,6 +193,10 @@ if (!instagramRuntime)
 if (!facebookRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'facebook_page', reason: 'missing_configuration' })}\n`,
+  );
+if (!tiktokRuntime)
+  process.stdout.write(
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'tiktok', reason: 'missing_configuration' })}\n`,
   );
 
 const destinationDispatchAdapters: DestinationDispatchAdapter[] = [];
@@ -206,6 +229,12 @@ if (facebookRuntime)
     destinationProvider: 'facebook_page',
     dispatch: () => dispatchDueFacebookJobs(facebookRuntime),
     reconcile: () => reconcileFacebookJobs(facebookRuntime),
+  });
+if (tiktokRuntime)
+  destinationDispatchAdapters.push({
+    destinationProvider: 'tiktok',
+    dispatch: () => dispatchDueTikTokJobs(tiktokRuntime),
+    reconcile: () => reconcileTikTokDirectPosts(tiktokRuntime),
   });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

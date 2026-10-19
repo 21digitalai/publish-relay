@@ -42,6 +42,15 @@ export interface ProviderAccountSummary {
   showOtherWorkspacePosts?: boolean;
 }
 
+export function availableWithTikTokRuntime(
+  account: ProviderAccountSummary,
+  enabled: boolean,
+): ProviderAccountSummary {
+  if (account.destinationProvider !== 'tiktok' || account.availability !== 'active' || enabled)
+    return account;
+  return { ...account, availability: 'publishing_unavailable' };
+}
+
 const EXPOSED_PAGE_LIST_LIMIT = 100;
 
 export class InvalidAccountPageCursorError extends Error {}

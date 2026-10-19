@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -10,6 +10,7 @@ import {
 } from '../src/ui/posting-adapter-registry.js';
 
 describe('posting adapter registry', () => {
+  afterEach(() => vi.unstubAllGlobals());
   it('defines unique, self-rendering posting adapters', () => {
     expect(POSTING_ADAPTERS.map((adapter) => adapter.id)).toEqual([
       'x',
@@ -17,6 +18,7 @@ describe('posting adapter registry', () => {
       'linkedin',
       'facebook_page',
       'instagram',
+      'tiktok',
     ]);
     expect(new Set(POSTING_ADAPTERS.map((adapter) => adapter.id)).size).toBe(
       POSTING_ADAPTERS.length,
@@ -27,6 +29,13 @@ describe('posting adapter registry', () => {
       expect(adapter.auth.startPath).toMatch(/^\/api\/oauth\//);
       expect(adapter.configuration.requiredBeforeConnect).toEqual([]);
     }
+  });
+
+  it('shows TikTok only when the server marked its provider runtime enabled', () => {
+    expect(getEnabledPostingAdapters().some((adapter) => adapter.id === 'tiktok')).toBe(false);
+    vi.stubGlobal('document', { body: { dataset: { tiktokEnabled: 'true' } } });
+    expect(getEnabledPostingAdapters().some((adapter) => adapter.id === 'tiktok')).toBe(true);
+    expect(getPostingAdapter('tiktok')?.auth.startPath).toBe('/api/oauth/tiktok');
   });
 
   it('removes disabled adapters without picker-specific filtering', () => {

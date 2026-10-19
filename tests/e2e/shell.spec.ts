@@ -2853,7 +2853,9 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await page.screenshot({ path: testInfo.outputPath('calendar-error.png'), fullPage: true });
 });
 
-test('shows a shared Page once in the calendar with read-only origin detail', async ({ page }) => {
+test('shows a shared Page once in the calendar with read-only origin detail', async ({
+  page,
+}, testInfo) => {
   await establishWorkspaceSession(page);
   await page.route('**/api/workspaces/current', (route) =>
     route.fulfill({
@@ -2934,6 +2936,13 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
   await expect(
     page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
   ).toHaveCount(1);
+  await expect(page.locator('.calendar-block.mirrored .calendar-origin-badge').first()).toHaveText(
+    'From 21digital',
+  );
+  await expect(page.locator('.calendar-block.mirrored .calendar-origin-badge').first()).toHaveCSS(
+    'background-color',
+    'rgb(163, 255, 79)',
+  );
   expect(sawDstDayWindow).toBe(true);
   await page.getByRole('button', { name: 'Month', exact: true }).click();
   await expect(
@@ -2941,11 +2950,33 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
       .getByRole('gridcell', { name: /Sunday, October 25, 2026/ })
       .getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
   ).toHaveCount(1);
+  const monthCard = page
+    .getByRole('gridcell', { name: /Sunday, October 25, 2026/ })
+    .getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ });
+  await expect(monthCard).toHaveClass(/mirrored/);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await expect(monthCard).toHaveCSS('border-left-color', 'rgb(163, 255, 79)');
+  } else {
+    await expect(monthCard.locator('.calendar-origin-badge')).toBeVisible();
+  }
   await page.getByRole('button', { name: 'Week', exact: true }).click();
   await expect(
     page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ }),
   ).toHaveCount(1);
+  await expect(page.locator('.calendar-block.mirrored .calendar-origin-badge').first()).toHaveText(
+    'From 21digital',
+  );
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.locator('.calendar-block.mirrored').first().scrollIntoViewIfNeeded();
+  }
+  await page.screenshot({
+    path: testInfo.outputPath('mirrored-calendar-week.png'),
+    fullPage: true,
+  });
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await expect(page.locator('.timeline-job.mirrored .calendar-origin-badge').first()).toHaveText(
+    'From 21digital',
+  );
   await expect(page.locator('.timeline-lane')).toHaveCount(2);
   await expect(page.locator('.timeline-lane').nth(0)).toContainText('Sneji Eli Geri');
   await expect(page.locator('.timeline-lane').nth(1)).toContainText('Second Page');
@@ -2953,6 +2984,8 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
   await expect(page.getByRole('link', { name: /Second Page, Scheduled/ })).toBeVisible();
   const card = page.getByRole('link', { name: /Sneji Eli Geri, Scheduled.*from 21digital/ });
   await expect(card).toHaveCount(1);
+  await card.focus();
+  await expect(card).toBeFocused();
   await expect(card).toHaveAttribute(
     'href',
     /calendar\/exposed-pages\/00000000-0000-4000-8000-000000000711/,

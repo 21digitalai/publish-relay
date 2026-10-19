@@ -1943,6 +1943,31 @@ textarea:focus-visible {
 .calendar-job strong {
   margin-right: 5px;
 }
+.calendar-origin-badge,
+.calendar-block .calendar-origin-badge {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 5px;
+  border-radius: 6px;
+  color: var(--brand-ink);
+  background: var(--brand);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.calendar-job .calendar-origin-badge,
+.timeline-job .calendar-origin-badge {
+  margin-right: 5px;
+}
+.calendar-block .calendar-origin-badge {
+  margin-top: 2px;
+  white-space: normal;
+  line-height: 13px;
+}
 .calendar-job.failed {
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 14%, transparent);
@@ -2777,6 +2802,18 @@ textarea:focus-visible {
     height: 18px;
     padding: 0;
     background: color-mix(in srgb, var(--success) 24%, var(--surface-2));
+  }
+  .calendar-job.mirrored {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--brand);
+    background: var(--surface-2);
+  }
+  .calendar-job.mirrored.published {
+    background: color-mix(in srgb, var(--success) 24%, var(--surface-2));
+  }
+  .calendar-job.mirrored .calendar-origin-badge {
+    display: none;
   }
   .calendar-job.published .calendar-published-mark {
     display: block;

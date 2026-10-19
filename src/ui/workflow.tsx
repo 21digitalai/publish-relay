@@ -560,6 +560,10 @@ function CalendarPublishedMark() {
   );
 }
 
+function CalendarOriginBadge({ name }: { name: string }) {
+  return <span className="calendar-origin-badge">From {name}</span>;
+}
+
 type ComposerContentKind = 'text' | 'video' | 'single_image' | 'carousel' | 'link';
 
 interface ComposerDestination {
@@ -2430,14 +2434,16 @@ function MonthCalendar({
               <time dateTime={date.toISOString()}>{date.getDate()}</time>
               {dayJobs.slice(0, 3).map((job) => (
                 <a
-                  className={`calendar-job ${job.state}`}
+                  className={`calendar-job ${job.state}${job.originWorkspaceName ? ' mirrored' : ''}`}
                   href={jobPath(job)}
                   key={job.id}
                   aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
                 >
                   <strong>{formatTime(job.scheduledAt, timeZone).split(', ').at(-1)}</strong>
+                  {job.originWorkspaceName && (
+                    <CalendarOriginBadge name={job.originWorkspaceName} />
+                  )}
                   {job.account}
-                  {job.originWorkspaceName && <span> · {job.originWorkspaceName}</span>}
                   {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               ))}
@@ -2498,7 +2504,7 @@ function TimeCalendar({
               62,
             ).map(({ item: job, top, column, columns }) => (
               <a
-                className={`calendar-block ${job.state}`}
+                className={`calendar-block ${job.state}${job.originWorkspaceName ? ' mirrored' : ''}`}
                 style={{
                   top: `${String(top)}px`,
                   left: `calc(${String(column)} * (100% / ${String(columns)}) + 3px)`,
@@ -2508,8 +2514,8 @@ function TimeCalendar({
                 key={job.id}
                 aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
               >
+                {job.originWorkspaceName && <CalendarOriginBadge name={job.originWorkspaceName} />}
                 <strong>{job.account}</strong>
-                {job.originWorkspaceName && <span>From {job.originWorkspaceName}</span>}
                 <span>{job.text}</span>
                 {job.state === 'published' && <CalendarPublishedMark />}
               </a>
@@ -2561,7 +2567,7 @@ function TimelineCalendar({
               const column = Math.max(2, Math.min(25, 2 + Math.floor(minuteOffset / 15)));
               return (
                 <a
-                  className={`timeline-job ${job.state}`}
+                  className={`timeline-job ${job.state}${job.originWorkspaceName ? ' mirrored' : ''}`}
                   href={jobPath(job)}
                   style={{
                     gridColumn: `${String(column)} / span 2`,
@@ -2570,8 +2576,10 @@ function TimelineCalendar({
                   key={job.id}
                   aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
                 >
+                  {job.originWorkspaceName && (
+                    <CalendarOriginBadge name={job.originWorkspaceName} />
+                  )}
                   {job.text}
-                  {job.originWorkspaceName && <span> · From {job.originWorkspaceName}</span>}
                   {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               );

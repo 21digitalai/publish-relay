@@ -2913,8 +2913,8 @@ export function JobDetailPage() {
                   until authoritative provider evidence resolves the outcome.
                 </p>
                 {detail?.attempts?.some((attempt) => attempt.providerRequestId) && (
-                  <details>
-                    <summary>Technical details</summary>
+                  <details className="story-attention-details">
+                    <summary className="story-attention-details-toggle">Technical details</summary>
                     <p>
                       Provider request reference:{' '}
                       {

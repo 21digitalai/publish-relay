@@ -2968,11 +2968,35 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
   );
   if ((page.viewportSize()?.width ?? 0) < 768) {
     await page.locator('.calendar-block.mirrored').first().scrollIntoViewIfNeeded();
+    for (const badge of await page
+      .locator('.calendar-block.mirrored .calendar-origin-badge')
+      .all()) {
+      const geometry = await badge.evaluate((element) => ({
+        visibleWidth: element.clientWidth,
+        contentWidth: element.scrollWidth,
+        visibleHeight: element.clientHeight,
+        contentHeight: element.scrollHeight,
+      }));
+      expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.visibleWidth);
+      expect(geometry.contentHeight).toBeLessThanOrEqual(geometry.visibleHeight);
+    }
   }
   await page.screenshot({
     path: testInfo.outputPath('mirrored-calendar-week.png'),
     fullPage: true,
   });
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    const secondBadge = page.locator('.calendar-block.mirrored .calendar-origin-badge').nth(1);
+    await secondBadge.scrollIntoViewIfNeeded();
+    const rightEdge = await secondBadge.evaluate(
+      (element) => element.getBoundingClientRect().right,
+    );
+    expect(rightEdge).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
+    await page.screenshot({
+      path: testInfo.outputPath('mirrored-calendar-week-scrolled.png'),
+      fullPage: true,
+    });
+  }
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   await expect(page.locator('.timeline-job.mirrored .calendar-origin-badge').first()).toHaveText(
     'From 21digital',

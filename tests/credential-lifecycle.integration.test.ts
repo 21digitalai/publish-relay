@@ -67,6 +67,11 @@ import {
   completeTikTokOauthConnection,
 } from '../src/modules/providers/tiktok-oauth.service.js';
 import { getFreshTikTokToken } from '../src/modules/providers/tiktok-credential.service.js';
+import {
+  beginSnapchatOauthConnection,
+  completeSnapchatOauthConnection,
+} from '../src/modules/providers/snapchat-oauth.service.js';
+import { getFreshSnapchatToken } from '../src/modules/providers/snapchat-credential.service.js';
 import { registerDestinationRoutes } from '../src/modules/credentials/destination.routes.js';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import { apiV1OpenApiDocument } from '../src/modules/api/openapi.js';
@@ -142,6 +147,103 @@ beforeEach(async () => {
     SELECT set_config('app.workspace_id', '${workspaceId}', false);
     INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${workspaceId}', '${userId}', 'owner');
   `);
+});
+
+it('keeps Snapchat owner OAuth and refresh tenant-bound and subject-specific', async () => {
+  const db = drizzle(database) as unknown as NodePgDatabase;
+  const keys: MasterKeyProvider = {
+    currentVersion: () => 'v1',
+    getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+  };
+  const firstProfile = '00000000-0000-4000-8000-000000000801';
+  const secondProfile = '00000000-0000-4000-8000-000000000802';
+  let owner = firstProfile;
+  const client = {
+    authorizationUrl: ({ state }: { state: string }) =>
+      `https://accounts.snapchat.com/?state=${state}`,
+    exchangeCode: () =>
+      Promise.resolve({
+        access_token: `access-${owner}`,
+        refresh_token: `refresh-${owner}`,
+        scope: 'snapchat-profile-api',
+        token_type: 'Bearer' as const,
+        expires_in: 3600,
+      }),
+    discoverOwnerProfile: () => Promise.resolve({ id: owner, display_name: `Owner ${owner}` }),
+    refreshToken: () =>
+      Promise.resolve({
+        access_token: 'rotated-access',
+        refresh_token: 'rotated-refresh',
+        scope: 'snapchat-profile-api',
+        token_type: 'Bearer' as const,
+        expires_in: 3600,
+      }),
+  };
+  const connect = async () => {
+    const started = await beginSnapchatOauthConnection(db, keys, client as never, {
+      workspaceId,
+      userId,
+      callbackUrl: 'https://relay.test/api/oauth/snapchat/callback',
+      requestId: 'start',
+    });
+    const state = oauthState(started.authorizationUrl);
+    const completed = await completeSnapchatOauthConnection(db, keys, client as never, {
+      workspaceId,
+      userId,
+      state,
+      code: 'fixture-code',
+      requestId: 'callback',
+    });
+    expect(completed?.accounts).toEqual([
+      { providerAccountId: owner, displayName: `Owner ${owner}` },
+    ]);
+    expect(
+      await completeSnapchatOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        state,
+        code: 'fixture-code',
+        requestId: 'replay',
+      }),
+    ).toBeNull();
+  };
+  await connect();
+  owner = secondProfile;
+  await connect();
+  await database.query(
+    "UPDATE provider_connections SET access_expires_at = '2026-09-30T00:00:00Z' WHERE provider = 'snapchat'",
+  );
+  await expect(
+    getFreshSnapchatToken(db, keys, client as never, {
+      workspaceId: '00000000-0000-4000-8000-000000000899',
+      profileId: firstProfile,
+      requestId: 'wrong-tenant',
+    }),
+  ).rejects.toThrow('requires reconnection');
+  owner = firstProfile;
+  const refreshed = await getFreshSnapchatToken(db, keys, client as never, {
+    workspaceId,
+    profileId: firstProfile,
+    requestId: 'refresh',
+    now: new Date('2026-10-01T00:00:00Z'),
+  });
+  expect(refreshed.access_token).toBe('rotated-access');
+  const versions = await database.query<{ external_subject_id: string; version: number }>(
+    "SELECT connection.external_subject_id, credential.version FROM provider_connections connection JOIN credentials credential ON credential.id = connection.credential_id WHERE connection.provider = 'snapchat' ORDER BY connection.external_subject_id",
+  );
+  expect(versions.rows).toEqual([
+    { external_subject_id: firstProfile, version: 2 },
+    { external_subject_id: secondProfile, version: 1 },
+  ]);
+  owner = secondProfile;
+  await expect(
+    getFreshSnapchatToken(db, keys, client as never, {
+      workspaceId,
+      profileId: firstProfile,
+      requestId: 'wrong-owner',
+      now: new Date('2026-11-01T00:00:00Z'),
+    }),
+  ).rejects.toThrow('different owner profile');
 });
 
 it('serves bounded Meta destination variants and a live LinkedIn destination through the machine route', async () => {

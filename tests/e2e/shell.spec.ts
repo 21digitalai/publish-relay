@@ -682,6 +682,9 @@ test('registers, persists the first workspace update, and reloads the protected 
   await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
   await expect(page.getByRole('button', { name: /X Publish posts and threads/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /YouTube Publish videos/ })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Add Posting Adapter' })).not.toContainText(
+    'Snapchat',
+  );
   await expect(page.getByRole('button', { name: /^Instagram Connect an Instagram/ })).toBeVisible();
   await expect(
     page.getByRole('button', { name: /^Facebook Pages Connect a Facebook Page/ }),

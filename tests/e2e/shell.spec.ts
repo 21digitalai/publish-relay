@@ -3242,6 +3242,60 @@ test('shows published jobs as success across calendar modes after reload', async
   await expect(page.locator('.timeline-job.published')).toHaveCount(1);
 });
 
+test('keeps late immediate publications inside the Week and Day calendar grid', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: 'late-published-job',
+              state: 'published',
+              scheduledAt: '2026-10-19T21:15:00Z',
+              contentPreview: 'Evening Facebook post',
+              providerAccount: { displayName: 'Evening Page', handle: '', provider: 'meta' },
+            },
+            {
+              id: 'last-minute-published-job',
+              state: 'published',
+              scheduledAt: '2026-10-19T23:59:00Z',
+              contentPreview: 'Last-minute Facebook post',
+              providerAccount: { displayName: 'Night Page', handle: '', provider: 'meta' },
+            },
+          ],
+          next: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(await workspacePath(page, 'calendar?mode=Week&date=2026-10-19'));
+  for (const mode of ['Week', 'Day'] as const) {
+    if (mode === 'Day') await page.getByRole('button', { name: 'Day', exact: true }).click();
+    const gridBox = await page.locator('.time-grid').boundingBox();
+    if (!gridBox) throw new Error('Time grid is missing');
+    const published = page.locator('.calendar-block.published');
+    await expect(published).toHaveCount(2);
+    await expect(published.nth(0)).toHaveAttribute(
+      'aria-label',
+      /Evening Page, Published.*09:15 PM UTC/,
+    );
+    await expect(published.nth(1)).toHaveAttribute(
+      'aria-label',
+      /Night Page, Published.*11:59 PM UTC/,
+    );
+    for (const block of await published.all()) {
+      const blockBox = await block.boundingBox();
+      if (!blockBox) throw new Error('Published block is missing');
+      expect(blockBox.y + blockBox.height).toBeLessThanOrEqual(gridBox.y + gridBox.height);
+    }
+  }
+});
+
 test('navigates calendar months across month-end and leap-year boundaries', async ({ page }) => {
   await establishWorkspaceSession(page);
   await page.route('**/api/workflow/jobs?*', (route) =>

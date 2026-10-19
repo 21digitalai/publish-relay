@@ -2465,7 +2465,7 @@ function TimeCalendar({
 }) {
   const firstDay = dayOnly ? anchor : startOfWeek(anchor);
   const dates = Array.from({ length: dayOnly ? 1 : 7 }, (_, index) => addDays(firstDay, index));
-  const hourStart = 8;
+  const hourStart = 0;
   const pixelsPerHour = 43;
   return (
     <div className={`time-calendar ${dayOnly ? 'day-only' : 'week-view'}`}>
@@ -2479,9 +2479,11 @@ function TimeCalendar({
       </div>
       <div className="time-grid">
         <div className="time-labels">
-          {['08:00', '10:00', '12:00', '14:00', '16:00'].map((time) => (
-            <span key={time}>{time}</span>
-          ))}
+          {Array.from({ length: 12 }, (_, index) => `${String(index * 2).padStart(2, '0')}:00`).map(
+            (time) => (
+              <span key={time}>{time}</span>
+            ),
+          )}
         </div>
         {dates.map((date) => (
           <div className="time-day" key={date.toISOString()}>

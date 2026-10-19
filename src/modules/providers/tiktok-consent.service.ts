@@ -10,6 +10,7 @@ import {
   TIKTOK_CAPTION_MAX_LENGTH,
   tiktokCommercialContentSchema,
 } from './tiktok-publication-options.js';
+import type { TikTokCreatorInfo } from './tiktok-http-client.js';
 
 const privacySchema = z.enum([
   'PUBLIC_TO_EVERYONE',
@@ -183,6 +184,7 @@ function validateSource(
   source: ConsentSource,
   input: Omit<TikTokConsentCommand, 'actor'>,
   now: Date,
+  creator?: TikTokCreatorInfo,
 ) {
   const content = tiktokRevisionContentSchema.safeParse(source.content);
   if (!content.success || source.currentRevisionId !== input.revisionId)
@@ -199,7 +201,7 @@ function validateSource(
     !source.fetchedAt ||
     source.fetchedAt > now ||
     !source.expiresAt ||
-    source.expiresAt <= now ||
+    (!creator && source.expiresAt <= now) ||
     !source.mediaId ||
     source.mediaId !== content.data.mediaId ||
     !source.mediaSha256 ||
@@ -207,18 +209,21 @@ function validateSource(
     source.mediaMimeType !== 'video/mp4' ||
     source.mediaDurationMs === null ||
     source.mediaDurationMs <= 0 ||
-    !source.maxVideoDurationSeconds ||
-    source.mediaDurationMs > source.maxVideoDurationSeconds * 1000
+    !(creator?.max_video_post_duration_sec ?? source.maxVideoDurationSeconds) ||
+    source.mediaDurationMs >
+      (creator?.max_video_post_duration_sec ?? source.maxVideoDurationSeconds ?? 0) * 1000
   )
     throw new TikTokConsentInvalidError();
   if (JSON.stringify(content.data.options) !== JSON.stringify(input.options))
     throw new TikTokConsentInvalidError();
   if (
-    !Array.isArray(source.privacyOptions) ||
-    !source.privacyOptions.includes(input.options.privacyLevel) ||
-    (source.commentDisabled && input.options.allowComment) ||
-    (source.duetDisabled && input.options.allowDuet) ||
-    (source.stitchDisabled && input.options.allowStitch)
+    !Array.isArray(creator?.privacy_level_options ?? source.privacyOptions) ||
+    !(creator?.privacy_level_options ?? (source.privacyOptions as string[])).includes(
+      input.options.privacyLevel,
+    ) ||
+    ((creator?.comment_disabled ?? source.commentDisabled) && input.options.allowComment) ||
+    ((creator?.duet_disabled ?? source.duetDisabled) && input.options.allowDuet) ||
+    ((creator?.stitch_disabled ?? source.stitchDisabled) && input.options.allowStitch)
   )
     throw new TikTokConsentInvalidError();
   const branded =
@@ -320,7 +325,8 @@ export async function verifyTikTokPublicationConsent(
     revisionId: string;
     accountId: string;
     receiptId: string;
-    actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
+    actor: { type: 'user' | 'api-key' | 'delegated' | 'worker'; id: string };
+    creator?: TikTokCreatorInfo;
   },
 ): Promise<z.infer<typeof receiptPayloadSchema>> {
   return withTenantTransaction(database, input, (transaction) =>
@@ -336,7 +342,8 @@ export async function verifyTikTokPublicationConsentInTransaction(
     revisionId: string;
     accountId: string;
     receiptId: string;
-    actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
+    actor: { type: 'user' | 'api-key' | 'delegated' | 'worker'; id: string };
+    creator?: TikTokCreatorInfo;
   },
 ): Promise<z.infer<typeof receiptPayloadSchema>> {
   await lockAccountGrant(transaction, input.workspaceId, input.accountId);
@@ -382,7 +389,7 @@ export async function verifyTikTokPublicationConsentInTransaction(
   });
   // Admission must use the current creator capability and grant state, not
   // the time at which the human made the declaration.
-  const content = validateSource(source, parsed.data, new Date());
+  const content = validateSource(source, parsed.data, new Date(), input.creator);
   if (
     source.mediaSha256 !== row.mediaSha256 ||
     source.credentialVersion !== row.credentialVersion ||

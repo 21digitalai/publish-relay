@@ -43,7 +43,9 @@ const migrations = [
   '0049_meta_effective_payload',
   '0050_instagram_staging_artifacts',
   '0051_provider_subject_lifecycle',
+  '0054_tiktok_media_grants',
   '0077_publication_attempt_external_url',
+  '0078_tiktok_one_shot_init',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

@@ -10,6 +10,12 @@ import {
   verifyTikTokPublicationConsent,
 } from '../src/modules/providers/tiktok-consent.service.js';
 import { scheduleTikTokDraft } from '../src/modules/providers/tiktok-schedule.service.js';
+import {
+  claimExactDueJob,
+  recoverExpiredDispatches,
+  startDispatchAttempt,
+} from '../src/modules/scheduler/job.repository.js';
+import { TikTokMediaGrantService } from '../src/modules/providers/tiktok-media-grant.service.js';
 
 const connectionString = process.env.POSTGRES_CONSENT_TEST_URL;
 
@@ -182,6 +188,59 @@ describe.skipIf(!connectionString)('TikTok consent on PostgreSQL', () => {
         (await pool.query('select id from publication_jobs where id = $1', [admitted.jobId])).rows,
       ).toHaveLength(1);
       await expect(scheduleTikTokDraft(db, schedule)).rejects.toThrow('already scheduled');
+      await pool.query('update media_objects set retained_at = now() where id = $1', [mediaId]);
+      await pool.query(
+        "update publication_jobs set scheduled_at = now() - interval '1 second' where id = $1",
+        [admitted.jobId],
+      );
+      const now = new Date();
+      const claimed = await claimExactDueJob(db, {
+        workspaceId,
+        jobId: admitted.jobId,
+        workerId: 'postgres-fixture',
+        now,
+        leaseMs: 60_000,
+      });
+      expect(claimed?.id).toBe(admitted.jobId);
+      const grant = await new TikTokMediaGrantService(db, Buffer.alloc(32, 7)).issue({
+        workspaceId,
+        accountId,
+        mediaId,
+        publicOrigin: 'https://media.example.test',
+        now,
+      });
+      const attempt = await startDispatchAttempt(db, {
+        workspaceId,
+        jobId: admitted.jobId,
+        workerId: 'postgres-fixture',
+        fingerprint: 'exact-init-request',
+        tiktokMediaGrantId: grant.id,
+        now,
+      });
+      expect(attempt?.attemptId).toBeTruthy();
+      const reserved = await pool.query<{
+        tiktok_init_phase: string;
+        tiktok_media_grant_id: string;
+      }>(
+        'select tiktok_init_phase, tiktok_media_grant_id from publication_attempts where job_id = $1',
+        [admitted.jobId],
+      );
+      expect(reserved.rows[0]).toEqual({
+        tiktok_init_phase: 'init_sending',
+        tiktok_media_grant_id: grant.id,
+      });
+      expect(await recoverExpiredDispatches(db, new Date(Date.now() + 120_000))).toEqual([
+        admitted.jobId,
+      ]);
+      expect(
+        await claimExactDueJob(db, {
+          workspaceId,
+          jobId: admitted.jobId,
+          workerId: 'postgres-fixture',
+          now: new Date(Date.now() + 120_000),
+          leaseMs: 60_000,
+        }),
+      ).toBeNull();
       await pool.query(
         `create role consent_reader_${receipt.id.replaceAll('-', '')} nologin nobypassrls`,
       );

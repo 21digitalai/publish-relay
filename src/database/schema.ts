@@ -962,6 +962,8 @@ export const publicationAttempts = pgTable(
     attemptNumber: integer('attempt_number').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
     requestFingerprint: text('request_fingerprint').notNull(),
+    tiktokInitPhase: text('tiktok_init_phase'),
+    tiktokMediaGrantId: uuid('tiktok_media_grant_id'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     outcome: publicationAttemptOutcome('outcome'),
@@ -976,6 +978,9 @@ export const publicationAttempts = pgTable(
   (table) => [
     uniqueIndex('publication_attempts_workspace_id_unique').on(table.workspaceId, table.id),
     uniqueIndex('publication_attempts_job_number_unique').on(table.jobId, table.attemptNumber),
+    uniqueIndex('publication_attempts_tiktok_grant_unique')
+      .on(table.tiktokMediaGrantId)
+      .where(sql`${table.tiktokMediaGrantId} IS NOT NULL`),
     index('publication_attempts_idempotency_idx').on(table.workspaceId, table.idempotencyKey),
     index('publication_attempts_reconciliation_idx').on(table.workspaceId, table.reconciliationKey),
     foreignKey({
@@ -983,6 +988,11 @@ export const publicationAttempts = pgTable(
       foreignColumns: [publicationJobs.workspaceId, publicationJobs.id],
       name: 'publication_attempts_workspace_job_fk',
     }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.tiktokMediaGrantId],
+      foreignColumns: [providerMediaGrants.workspaceId, providerMediaGrants.id],
+      name: 'publication_attempts_tiktok_grant_fk',
+    }).onDelete('restrict'),
   ],
 );
 

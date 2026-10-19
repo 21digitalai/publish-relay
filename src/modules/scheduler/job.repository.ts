@@ -193,7 +193,15 @@ export async function claimReconciliationJobs(
 
 export async function startDispatchAttempt(
   database: NodePgDatabase,
-  input: { workspaceId: string; jobId: string; workerId: string; fingerprint: string; now: Date },
+  input: {
+    workspaceId: string;
+    jobId: string;
+    workerId: string;
+    fingerprint: string;
+    now: Date;
+    tiktokMediaGrantId?: string;
+    preflight?: (transaction: NodePgDatabase) => Promise<void>;
+  },
 ): Promise<{ attemptId: string; attemptNumber: number; idempotencyKey: string } | null> {
   return withTenantTransaction(
     database,
@@ -218,6 +226,7 @@ export async function startDispatchAttempt(
         });
       const job = jobs[0];
       if (!job) return null;
+      if (input.preflight) await input.preflight(transaction);
       const idempotencyKey = deriveJobIdempotencyKey({
         jobId: input.jobId,
         revisionId: job.revisionId,
@@ -231,6 +240,9 @@ export async function startDispatchAttempt(
           attemptNumber: job.attemptNumber,
           idempotencyKey,
           requestFingerprint: input.fingerprint,
+          ...(input.tiktokMediaGrantId
+            ? { tiktokInitPhase: 'init_sending', tiktokMediaGrantId: input.tiktokMediaGrantId }
+            : {}),
           startedAt: input.now,
         })
         .returning({ id: publicationAttempts.id });
@@ -272,6 +284,7 @@ export async function finishDispatchAttempt(
     externalUrl?: string;
     reconciliationKey?: string;
     redactedError?: string;
+    tiktokInitPhase?: 'accepted_pending' | 'outcome_unknown' | 'failed';
   },
 ): Promise<boolean> {
   return withTenantTransaction(
@@ -289,6 +302,7 @@ export async function finishDispatchAttempt(
           externalUrl: input.outcome === 'published' ? validatedPostUrl(input.externalUrl) : null,
           reconciliationKey: input.reconciliationKey,
           redactedError: input.redactedError,
+          tiktokInitPhase: input.tiktokInitPhase,
         })
         .where(
           and(

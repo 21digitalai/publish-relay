@@ -10,12 +10,14 @@ import {
 const {
   authorizeRequest,
   verifyCsrfToken,
-  issueTikTokPublicationConsent,
+  issueTikTokPublicationConsentInTransaction,
+  executeBrowserMutation,
   getTikTokPublicationConsent,
 } = vi.hoisted(() => ({
   authorizeRequest: vi.fn(),
   verifyCsrfToken: vi.fn(),
-  issueTikTokPublicationConsent: vi.fn(),
+  issueTikTokPublicationConsentInTransaction: vi.fn(),
+  executeBrowserMutation: vi.fn(),
   getTikTokPublicationConsent: vi.fn(),
 }));
 
@@ -24,9 +26,12 @@ vi.mock('../src/modules/identity/auth.routes.js', () => ({
   CSRF_COOKIE: 'publish_relay_csrf',
 }));
 vi.mock('../src/modules/identity/session.js', () => ({ verifyCsrfToken }));
+vi.mock('../src/modules/content/browser-idempotency.repository.js', () => ({
+  executeBrowserMutation,
+}));
 vi.mock('../src/modules/providers/tiktok-consent.service.js', async (importOriginal) => ({
   ...(await importOriginal()),
-  issueTikTokPublicationConsent,
+  issueTikTokPublicationConsentInTransaction,
   getTikTokPublicationConsent,
 }));
 
@@ -69,11 +74,21 @@ describe('human TikTok consent HTTP boundary', () => {
     vi.clearAllMocks();
     authorizeRequest.mockResolvedValue({ workspaceId, userId, role: 'editor' });
     verifyCsrfToken.mockReturnValue(true);
-    issueTikTokPublicationConsent.mockResolvedValue({
+    issueTikTokPublicationConsentInTransaction.mockResolvedValue({
       id: receiptId,
       payloadHash: 'a'.repeat(64),
       consentedAt: '2026-10-02T00:00:00.000Z',
     });
+    executeBrowserMutation.mockImplementation(
+      async (
+        _database: unknown,
+        _input: unknown,
+        mutation: (transaction: unknown) => Promise<{ statusCode: number; body: unknown }>,
+      ) => ({
+        kind: 'executed',
+        response: await mutation({}),
+      }),
+    );
   });
 
   it('derives human tenant identity from session and exposes only receipt metadata', async () => {
@@ -81,7 +96,11 @@ describe('human TikTok consent HTTP boundary', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/workflow/tiktok-consents',
-      headers: { cookie: 'publish_relay_csrf=token', 'x-csrf-token': 'token' },
+      headers: {
+        cookie: 'publish_relay_csrf=token',
+        'x-csrf-token': 'token',
+        'idempotency-key': 'consent-one',
+      },
       payload: body,
     });
     expect(response.statusCode).toBe(201);
@@ -90,7 +109,7 @@ describe('human TikTok consent HTTP boundary', () => {
       expect.anything(),
       'content:write',
     );
-    expect(issueTikTokPublicationConsent).toHaveBeenCalledWith(expect.anything(), {
+    expect(issueTikTokPublicationConsentInTransaction).toHaveBeenCalledWith(expect.anything(), {
       ...body,
       workspaceId,
       userId,
@@ -126,16 +145,19 @@ describe('human TikTok consent HTTP boundary', () => {
         (await app.inject({ method: 'POST', url: '/api/workflow/tiktok-consents', payload }))
           .statusCode,
       ).toBe(400);
-    expect(issueTikTokPublicationConsent).not.toHaveBeenCalled();
+    expect(issueTikTokPublicationConsentInTransaction).not.toHaveBeenCalled();
     await app.close();
   });
 
   it('maps stale exact-revision consent to actionable conflict', async () => {
     const app = await application();
-    issueTikTokPublicationConsent.mockRejectedValueOnce(new TikTokConsentInvalidError());
+    issueTikTokPublicationConsentInTransaction.mockRejectedValueOnce(
+      new TikTokConsentInvalidError(),
+    );
     const response = await app.inject({
       method: 'POST',
       url: '/api/workflow/tiktok-consents',
+      headers: { 'idempotency-key': 'stale-consent' },
       payload: body,
     });
     expect(response.statusCode).toBe(409);

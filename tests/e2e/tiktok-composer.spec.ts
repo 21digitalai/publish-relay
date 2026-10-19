@@ -595,6 +595,8 @@ test('TikTok confirmation uses one exact draft and consent with stable schedule 
       key: route.request().headers()['idempotency-key'] ?? null,
       body: route.request().postDataJSON() as Record<string, unknown>,
     });
+    if (stages.filter((stage) => stage.path === 'consent').length === 1)
+      return route.abort('failed');
     return route.fulfill({
       status: 201,
       contentType: 'application/json',
@@ -634,12 +636,20 @@ test('TikTok confirmation uses one exact draft and consent with stable schedule 
   await expect(page.getByRole('button', { name: 'Confirm previous request' })).toBeVisible();
   expect(stages).toHaveLength(0);
   await page.getByRole('button', { name: 'Confirm previous request' }).click();
-  await expect.poll(() => stages.length).toBe(3);
+  await expect.poll(() => stages.length).toBe(2);
   await expect(page.getByRole('button', { name: 'Confirm previous request' })).toBeVisible();
   await expect(page.locator('.tiktok-composer-options')).toHaveAttribute('inert');
   await page.getByRole('button', { name: 'Confirm previous request' }).click();
+  await expect.poll(() => stages.length).toBe(4);
+  await page.getByRole('button', { name: 'Confirm previous request' }).click();
   await expect(page.getByText('1 post scheduled')).toBeVisible();
-  expect(stages.map((stage) => stage.path)).toEqual(['draft', 'consent', 'schedule', 'schedule']);
+  expect(stages.map((stage) => stage.path)).toEqual([
+    'draft',
+    'consent',
+    'consent',
+    'schedule',
+    'schedule',
+  ]);
   expect(stages[0]?.body).toMatchObject({
     accountId: TIKTOK_ONE,
     content: { caption: 'Exact TikTok caption', mediaId: IMPORTED_VIDEO },
@@ -650,8 +660,10 @@ test('TikTok confirmation uses one exact draft and consent with stable schedule 
     accountId: TIKTOK_ONE,
     musicUsageConfirmed: true,
   });
-  expect(stages[2]?.body).toEqual(stages[3]?.body);
-  expect(stages[2]?.key).toBe(stages[3]?.key);
+  expect(stages[1]?.body).toEqual(stages[2]?.body);
+  expect(stages[1]?.key).toBe(stages[2]?.key);
+  expect(stages[3]?.body).toEqual(stages[4]?.body);
+  expect(stages[3]?.key).toBe(stages[4]?.key);
   expect(stages[0]?.key).toBeTruthy();
   expect(uploadKeys).toHaveLength(2);
   expect(uploadKeys[0]).toBe(uploadKeys[1]);

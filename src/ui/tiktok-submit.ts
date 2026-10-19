@@ -6,6 +6,7 @@ export interface TikTokAttempt {
   submission: string;
   scheduledAt: string;
   draftKey: string;
+  consentKey: string;
   scheduleKey: string;
   mediaId: string | null;
   postId: string | null;
@@ -25,6 +26,7 @@ export function createTikTokAttempt(input: {
     submission: JSON.stringify(input.submission),
     scheduledAt: input.scheduledAt,
     draftKey: crypto.randomUUID(),
+    consentKey: crypto.randomUUID(),
     scheduleKey: crypto.randomUUID(),
     mediaId: null,
     postId: null,
@@ -118,6 +120,7 @@ export async function submitTikTokAttempt(input: {
         brandedContentPolicyConfirmed: submission.brandedContentPolicyConfirmed,
       },
       csrfToken,
+      attempt.consentKey,
     );
     attempt.receiptId = consent.id;
   }

@@ -387,6 +387,7 @@ describe('revision-bound TikTok consent', () => {
     const headers = {
       cookie: `publish_relay_session=${workspaceId}.token; publish_relay_csrf=csrf`,
       'x-csrf-token': 'csrf',
+      'idempotency-key': 'exact-consent-route',
     };
     expect(
       (
@@ -413,6 +414,24 @@ describe('revision-bound TikTok consent', () => {
     expect(response.headers['cache-control']).toBe('no-store');
     expect(Buffer.byteLength(response.body)).toBeLessThan(512);
     const receipt = response.json<{ data: { id: string } }>().data;
+    const replay = await app.inject({ method: 'POST', url, headers, payload: request });
+    expect(replay.statusCode).toBe(201);
+    expect(replay.headers['idempotency-replayed']).toBe('true');
+    expect(replay.json<{ data: { id: string } }>().data.id).toBe(receipt.id);
+    expect(
+      (
+        await pg.query<{ count: number }>(
+          'select count(*)::integer as count from publication_consents',
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+    expect(
+      (
+        await pg.query<{ count: number }>(
+          "select count(*)::integer as count from audit_events where action = 'publication.consent'",
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
     const readUrl = `${url}/${receipt.id}`;
     const read = await app.inject({ method: 'GET', url: readUrl, headers });
     expect(read.statusCode).toBe(200);

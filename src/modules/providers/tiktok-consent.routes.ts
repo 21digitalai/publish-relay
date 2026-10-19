@@ -2,13 +2,15 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { mutationFingerprint, validateIdempotencyKey } from '../api/idempotency.js';
+import { executeBrowserMutation } from '../content/browser-idempotency.repository.js';
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import {
   getTikTokPublicationConsent,
-  issueTikTokPublicationConsent,
+  issueTikTokPublicationConsentInTransaction,
   TikTokConsentInvalidError,
   TikTokConsentNotFoundError,
   tiktokConsentRequestSchema,
@@ -40,13 +42,37 @@ export function registerTikTokConsentRoutes(
         return await reply
           .code(400)
           .send({ data: null, error: 'Explicit TikTok consent fields are required' });
-      const receipt = await issueTikTokPublicationConsent(dependencies.database, {
-        ...parsed.data,
-        workspaceId: identity.workspaceId,
-        userId: identity.userId,
-        actor: { type: 'user', id: identity.userId },
-      });
-      return await reply.code(201).send({ data: receipt, error: null });
+      let key: string;
+      try {
+        key = validateIdempotencyKey(request.headers['idempotency-key'] as string | undefined);
+      } catch {
+        return await reply.code(400).send({ data: null, error: 'Idempotency-Key is required' });
+      }
+      const result = await executeBrowserMutation(
+        dependencies.database,
+        {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          operation: 'consent-tiktok-draft',
+          idempotencyKey: key,
+          requestFingerprint: mutationFingerprint(parsed.data),
+        },
+        async (transaction) => {
+          const receipt = await issueTikTokPublicationConsentInTransaction(transaction, {
+            ...parsed.data,
+            workspaceId: identity.workspaceId,
+            userId: identity.userId,
+            actor: { type: 'user', id: identity.userId },
+          });
+          return { statusCode: 201, body: { data: receipt, error: null } };
+        },
+      );
+      if (result.kind === 'conflict')
+        return await reply
+          .code(409)
+          .send({ data: null, error: 'Idempotency key was already used' });
+      if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');
+      return await reply.code(result.response.statusCode).send(result.response.body);
     } catch (error) {
       if (error instanceof WorkspaceAuthorizationError)
         return await reply

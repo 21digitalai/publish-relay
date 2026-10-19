@@ -243,46 +243,56 @@ export async function issueTikTokPublicationConsent(
   now = new Date(),
 ): Promise<{ id: string; payloadHash: string; consentedAt: string }> {
   const input = tiktokConsentCommandSchema.parse(rawInput);
+  return withTenantTransaction(database, input, (transaction) =>
+    issueTikTokPublicationConsentInTransaction(transaction, input, now),
+  );
+}
+
+export async function issueTikTokPublicationConsentInTransaction(
+  transaction: NodePgDatabase,
+  rawInput: TikTokConsentCommand,
+  now = new Date(),
+): Promise<{ id: string; payloadHash: string; consentedAt: string }> {
+  const input = tiktokConsentCommandSchema.parse(rawInput);
   if (input.actor.type !== 'user' || input.actor.id !== input.userId)
     throw new TikTokConsentInvalidError();
-  return withTenantTransaction(database, input, async (transaction) => {
-    // Post mutations lock the workspace first; retain that order across consent issuance.
-    const workspace = await transaction.execute(
-      sql`select id from workspaces where id = ${input.workspaceId} for update`,
-    );
-    if (workspace.rows.length !== 1) throw new TikTokConsentInvalidError();
-    const member =
-      await transaction.execute(sql`select 1 from memberships where workspace_id = ${input.workspaceId}
+  // Post mutations lock the workspace first; retain that order across consent issuance.
+  const workspace = await transaction.execute(
+    sql`select id from workspaces where id = ${input.workspaceId} for update`,
+  );
+  if (workspace.rows.length !== 1) throw new TikTokConsentInvalidError();
+  const member =
+    await transaction.execute(sql`select 1 from memberships where workspace_id = ${input.workspaceId}
       and user_id = ${input.userId} and role in ('owner', 'admin', 'editor')`);
-    if (member.rows.length !== 1) throw new TikTokConsentInvalidError();
-    await lockAccountGrant(transaction, input.workspaceId, input.accountId);
-    const source = await readConsentSource(transaction, {
-      workspaceId: input.workspaceId,
-      postId: input.postId,
-      revisionId: input.revisionId,
-      accountId: input.accountId,
-      snapshotId: input.capabilitySnapshotId,
-    });
-    const content = validateSource(source, input, now);
-    const payload = {
-      schemaVersion: 1,
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      postId: input.postId,
-      revisionId: input.revisionId,
-      accountId: input.accountId,
-      mediaId: source.mediaId,
-      mediaSha256: source.mediaSha256,
-      capabilitySnapshotId: input.capabilitySnapshotId,
-      credentialVersion: source.credentialVersion,
-      caption: content.caption,
-      options: content.options,
-      musicUsageConfirmed: true,
-      brandedContentPolicyConfirmed: input.brandedContentPolicyConfirmed,
-      declarationVersion: 1,
-    };
-    const payloadHash = hashPayload(payload);
-    const saved = await transaction.execute<{ id: string; consentedAt: Date }>(sql`
+  if (member.rows.length !== 1) throw new TikTokConsentInvalidError();
+  await lockAccountGrant(transaction, input.workspaceId, input.accountId);
+  const source = await readConsentSource(transaction, {
+    workspaceId: input.workspaceId,
+    postId: input.postId,
+    revisionId: input.revisionId,
+    accountId: input.accountId,
+    snapshotId: input.capabilitySnapshotId,
+  });
+  const content = validateSource(source, input, now);
+  const payload = {
+    schemaVersion: 1,
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    postId: input.postId,
+    revisionId: input.revisionId,
+    accountId: input.accountId,
+    mediaId: source.mediaId,
+    mediaSha256: source.mediaSha256,
+    capabilitySnapshotId: input.capabilitySnapshotId,
+    credentialVersion: source.credentialVersion,
+    caption: content.caption,
+    options: content.options,
+    musicUsageConfirmed: true,
+    brandedContentPolicyConfirmed: input.brandedContentPolicyConfirmed,
+    declarationVersion: 1,
+  };
+  const payloadHash = hashPayload(payload);
+  const saved = await transaction.execute<{ id: string; consentedAt: Date }>(sql`
       insert into publication_consents (workspace_id, user_id, post_id, revision_id, account_id,
         media_id, media_sha256, capability_snapshot_id, credential_version,
         declaration_version, payload, payload_hash, consented_at)
@@ -291,29 +301,28 @@ export async function issueTikTokPublicationConsent(
         ${source.credentialVersion}, 1, ${JSON.stringify(payload)}::jsonb, ${payloadHash}, ${now})
       returning id, consented_at as "consentedAt"
     `);
-    const receipt = saved.rows[0];
-    if (!receipt) throw new Error('TikTok consent insert returned no record');
-    await transaction.insert(auditEvents).values({
-      workspaceId: input.workspaceId,
-      actorType: 'user',
-      actorId: input.userId,
-      action: 'publication.consent',
-      targetType: 'publication_consent',
-      targetId: receipt.id,
-      requestId: receipt.id,
-      metadata: {
-        postId: input.postId,
-        revisionId: input.revisionId,
-        accountId: input.accountId,
-        payloadHash,
-      },
-    });
-    return {
-      id: receipt.id,
+  const receipt = saved.rows[0];
+  if (!receipt) throw new Error('TikTok consent insert returned no record');
+  await transaction.insert(auditEvents).values({
+    workspaceId: input.workspaceId,
+    actorType: 'user',
+    actorId: input.userId,
+    action: 'publication.consent',
+    targetType: 'publication_consent',
+    targetId: receipt.id,
+    requestId: receipt.id,
+    metadata: {
+      postId: input.postId,
+      revisionId: input.revisionId,
+      accountId: input.accountId,
       payloadHash,
-      consentedAt: new Date(receipt.consentedAt).toISOString(),
-    };
+    },
   });
+  return {
+    id: receipt.id,
+    payloadHash,
+    consentedAt: new Date(receipt.consentedAt).toISOString(),
+  };
 }
 
 // Scheduling/dispatch must call this server-side. A caller-supplied UUID is never authority.

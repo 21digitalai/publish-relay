@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   createPostRequestSchema,
   jobDetailResponseSchema,
+  jobCollectionResponseSchema,
   postCollectionResponseSchema,
   postDetailResponseSchema,
   postMutationResponseSchema,
@@ -645,6 +646,52 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               description: 'Post not found',
               content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
             },
+          },
+        },
+      },
+      '/api/v1/jobs': {
+        get: {
+          operationId: 'listJobs',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            { name: 'cursor', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
+            },
+            {
+              name: 'states',
+              in: 'query',
+              description: 'Comma-separated publication states',
+              schema: { type: 'string' },
+            },
+            { name: 'providerAccountId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+            {
+              name: 'scheduledAfter',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' },
+            },
+            {
+              name: 'scheduledBefore',
+              in: 'query',
+              schema: { type: 'string', format: 'date-time' },
+            },
+          ],
+          responses: {
+            '200': {
+              description:
+                'Tenant-scoped past and future publication jobs in descending scheduled-time order',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(jobCollectionResponseSchema)),
+                },
+              },
+            },
+            '400': { description: 'Invalid filter or signed cursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing schedules:read capability' },
+            '429': { description: 'Read rate limit exceeded' },
           },
         },
       },

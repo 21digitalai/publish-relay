@@ -2081,6 +2081,81 @@ describe('POST /api/v1/posts', () => {
 });
 
 describe('GET /api/v1/posts and jobs', () => {
+  it('lists past and future jobs with tenant hiding, filters, stable cursors and bounded output', async () => {
+    const headers = {
+      authorization: 'Bearer pr_test.secret',
+      'x-publish-relay-workspace': workspaceId,
+    };
+    const jobIds: string[] = [];
+    for (const [index, text] of ['Past', 'Future'].entries()) {
+      const created = await application.inject({
+        method: 'POST',
+        url: '/api/v1/posts',
+        headers: { ...headers, 'idempotency-key': `jobs-list-${String(index)}` },
+        payload: requestPayload(text),
+      });
+      expect(created.statusCode).toBe(201);
+      const links = created.json<{ data: { links: { jobs: string[] } } }>().data.links.jobs;
+      const id = links[0]?.split('/').at(-1);
+      if (!id) throw new Error('Expected created job');
+      jobIds.push(id);
+    }
+    if (!jobIds[0] || !jobIds[1]) throw new Error('Expected past and future jobs');
+    await database.exec(`UPDATE publication_jobs SET scheduled_at = '2026-01-01T00:00:00Z' WHERE id = '${jobIds[0]}';
+      UPDATE publication_jobs SET scheduled_at = '2027-01-01T00:00:00Z' WHERE id = '${jobIds[1]}';`);
+    await database.exec(`CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
+      GRANT USAGE ON SCHEMA public TO publish_relay_app;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
+      GRANT EXECUTE ON FUNCTION public.resolve_browser_job_account(uuid, uuid) TO publish_relay_app;
+      SET ROLE publish_relay_app;`);
+    const first = await application.inject({ method: 'GET', url: '/api/v1/jobs?limit=1', headers });
+    expect(first.statusCode).toBe(200);
+    const page = first.json<{ data: { items: Record<string, unknown>[]; nextCursor: string } }>()
+      .data;
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({ id: jobIds[1], state: 'scheduled' });
+    expect(page.items[0]).not.toHaveProperty('effectivePayload');
+    expect(page.items[0]).not.toHaveProperty('secretHash');
+    expect(JSON.stringify(first.json())).not.toContain('Foreign tenant secret');
+    expect(Buffer.byteLength(first.body)).toBeLessThan(1500);
+    const second = await application.inject({
+      method: 'GET',
+      url: `/api/v1/jobs?limit=1&cursor=${encodeURIComponent(page.nextCursor)}`,
+      headers,
+    });
+    expect(second.json<{ data: { items: { id: string }[] } }>().data.items[0]?.id).toBe(jobIds[0]);
+    expect(
+      (
+        await application.inject({
+          method: 'GET',
+          url: `/api/v1/jobs?limit=2&cursor=${encodeURIComponent(page.nextCursor)}`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (await application.inject({ method: 'GET', url: '/api/v1/jobs?limit=101', headers }))
+        .statusCode,
+    ).toBe(400);
+    const future = await application.inject({
+      method: 'GET',
+      url: '/api/v1/jobs?scheduledAfter=2026-12-01T00%3A00%3A00.000Z',
+      headers,
+    });
+    expect(
+      future.json<{ data: { items: { id: string }[] } }>().data.items.map((item) => item.id),
+    ).toEqual([jobIds[1]]);
+    const filtered = await application.inject({
+      method: 'GET',
+      url: `/api/v1/jobs?providerAccountId=${foreignProviderAccountId}`,
+      headers,
+    });
+    expect(filtered.json<{ data: { items: unknown[] } }>().data.items).toEqual([]);
+    requireCapability.mockRejectedValueOnce(new ApiKeyAuthorizationError('Missing capability'));
+    expect(
+      (await application.inject({ method: 'GET', url: '/api/v1/jobs', headers })).statusCode,
+    ).toBe(403);
+  });
   it.each(['/api/v1/posts/not-a-uuid', '/api/v1/jobs/not-a-uuid'])(
     'returns the stable validation envelope for invalid detail path %s',
     async (url) => {

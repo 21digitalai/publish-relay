@@ -126,6 +126,23 @@ export const jobDetailResponseSchema = z.object({
   links: z.object({ self: z.string(), post: z.string() }),
 });
 
+export const jobCollectionResponseSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.uuid(),
+        postId: z.uuid(),
+        state: z.string(),
+        scheduledAt: timestampSchema,
+        updatedAt: timestampSchema,
+        destination: z.object({ id: z.uuid(), displayName: z.string(), provider: z.string() }),
+        links: z.object({ self: z.string(), post: z.string() }),
+      }),
+    )
+    .max(100),
+  nextCursor: z.string().nullable(),
+});
+
 export const postDetailResponseSchema = postSummarySchema.extend({
   revisionId: z.uuid(),
   revisionNumber: z.number().int().positive(),

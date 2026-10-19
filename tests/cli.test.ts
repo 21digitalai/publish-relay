@@ -247,6 +247,60 @@ describe('Publish Relay CLI', () => {
     });
   });
 
+  it('routes publication-list filters and redacts unexpected job fields', async () => {
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      {
+        success: true,
+        data: {
+          items: [
+            {
+              id: 'job-1',
+              postId: 'post-1',
+              state: 'scheduled',
+              scheduledAt: '2027-01-01T00:00:00.000Z',
+              updatedAt: '2026-09-01T00:00:00.000Z',
+              destination: {
+                id: 'account-1',
+                displayName: 'Channel',
+                provider: 'x',
+                token: 'private',
+              },
+              links: { self: '/api/v1/jobs/job-1', post: '/api/v1/posts/post-1' },
+              secretHash: 'private',
+            },
+          ],
+          nextCursor: 'next',
+        },
+        meta: { requestId: 'list' },
+      },
+      'workspace-one',
+      paths,
+    );
+    const result = await cli(
+      [
+        'publishes',
+        'list',
+        '--base-url',
+        baseUrl,
+        '--limit',
+        '1',
+        '--states',
+        'scheduled',
+        '--scheduledAfter',
+        '2026-12-01T00:00:00.000Z',
+      ],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(paths).toEqual([
+      '/api/v1/jobs?limit=1&states=scheduled&scheduledAfter=2026-12-01T00%3A00%3A00.000Z',
+    ]);
+    expect(result.stdout).toContain('"nextCursor":"next"');
+    expect(result.stdout).not.toContain('private');
+  });
+
   it('preserves the post detail contract including nested job links', async () => {
     const baseUrl = await fixture(200, {
       success: true,

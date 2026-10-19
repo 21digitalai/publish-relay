@@ -25,7 +25,13 @@ import {
   postValidationRequestSchema,
 } from './post.contract.js';
 import { PostValidationError } from './post.errors.js';
-import { getJobDetail, getPostDetail, listPostSummaries } from './post-read.repository.js';
+import {
+  browserJobStates,
+  getJobDetail,
+  getPostDetail,
+  listBrowserJobSummaries,
+  listPostSummaries,
+} from './post-read.repository.js';
 import { createPostInTransaction, validatePostCandidate } from './post.service.js';
 import { requestOperatorRetryInTransaction } from '../scheduler/job.repository.js';
 
@@ -55,6 +61,45 @@ async function admitRead(
     .code(429)
     .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', requestId));
   return false;
+}
+
+const jobListQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  states: z.string().optional(),
+  providerAccountId: z.uuid().optional(),
+  scheduledAfter: z.iso.datetime().optional(),
+  scheduledBefore: z.iso.datetime().optional(),
+});
+
+function parseJobListQuery(raw: unknown, cursorCodec: CursorCodec) {
+  const query = jobListQuerySchema.parse(raw);
+  const states = query.states
+    ? [
+        ...new Set(
+          query.states
+            .split(',')
+            .filter(Boolean)
+            .map((state) => z.enum(browserJobStates).parse(state)),
+        ),
+      ].sort()
+    : [];
+  if (query.states && states.length === 0) throw new Error('Invalid states filter');
+  if (query.scheduledAfter && query.scheduledBefore && query.scheduledAfter > query.scheduledBefore)
+    throw new Error('Invalid schedule window');
+  const filters = {
+    resource: 'jobs',
+    limit: query.limit,
+    states: states.join(','),
+    providerAccountId: query.providerAccountId ?? null,
+    scheduledAfter: query.scheduledAfter ?? null,
+    scheduledBefore: query.scheduledBefore ?? null,
+  };
+  const position = query.cursor ? cursorCodec.decode(query.cursor, filters).position : undefined;
+  const before = position
+    ? z.object({ scheduledAt: z.iso.datetime(), id: z.uuid() }).parse(JSON.parse(position))
+    : undefined;
+  return { query, states, filters, before };
 }
 
 export function registerPostRoutes(
@@ -172,6 +217,76 @@ export function registerPostRoutes(
       return await reply
         .code(500)
         .send(errorEnvelope('internal_error', 'Internal server error', request.id));
+    }
+  });
+
+  application.get('/api/v1/jobs', async (request, reply) => {
+    try {
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'schedules:read',
+      );
+      if (!principal)
+        return await reply
+          .code(401)
+          .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      if (!(await admitRead(rateLimiter, principal, request.id, reply))) return;
+      const { query, states, filters, before } = parseJobListQuery(request.query, cursorCodec);
+      const rows = await listBrowserJobSummaries(database, {
+        workspaceId: principal.workspaceId,
+        machineActor: { type: principal.kind, id: principal.actorId, capability: 'schedules:read' },
+        limit: query.limit + 1,
+        ...(states.length ? { states } : {}),
+        ...(query.providerAccountId ? { providerAccountId: query.providerAccountId } : {}),
+        ...(query.scheduledAfter ? { scheduledAfter: new Date(query.scheduledAfter) } : {}),
+        ...(query.scheduledBefore ? { scheduledBefore: new Date(query.scheduledBefore) } : {}),
+        ...(before ? { before: { scheduledAt: new Date(before.scheduledAt), id: before.id } } : {}),
+      });
+      const page = rows.slice(0, query.limit);
+      const last = page.at(-1);
+      const nextCursor =
+        rows.length > query.limit && last
+          ? cursorCodec.encode(
+              JSON.stringify({ scheduledAt: last.scheduledAt.toISOString(), id: last.id }),
+              filters,
+            )
+          : null;
+      return await reply.send(
+        successEnvelope(
+          {
+            items: page.map((job) => ({
+              id: job.id,
+              postId: job.postId,
+              state: job.state,
+              scheduledAt: job.scheduledAt,
+              updatedAt: job.updatedAt,
+              destination: {
+                id: job.providerAccount.id,
+                displayName: job.providerAccount.displayName,
+                provider: job.providerAccount.provider,
+              },
+              links: { self: `/api/v1/jobs/${job.id}`, post: `/api/v1/posts/${job.postId}` },
+            })),
+            nextCursor,
+          },
+          request.id,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
+        return await reply.code(403).send(errorEnvelope(error.code, error.message, request.id));
+      if (
+        error instanceof InvalidCursorError ||
+        error instanceof z.ZodError ||
+        error instanceof SyntaxError ||
+        (error instanceof Error && error.message.startsWith('Invalid '))
+      )
+        return await reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', error.message, request.id));
+      throw error;
     }
   });
 

@@ -29,6 +29,7 @@ export type BrowserJobState = (typeof browserJobStates)[number];
 export interface BrowserJobFilters {
   workspaceId: string;
   userId?: string;
+  machineActor?: { type: 'api-key' | 'delegated'; id: string; capability: 'schedules:read' };
   limit: number;
   states?: BrowserJobState[];
   providerAccountId?: string;
@@ -132,6 +133,7 @@ export async function listBrowserJobSummaries(database: NodePgDatabase, input: B
     {
       workspaceId: input.workspaceId,
       ...(input.userId ? { userId: input.userId } : {}),
+      ...(input.machineActor ? { machineActor: input.machineActor } : {}),
     },
     (transaction) =>
       browserJobJoins(transaction)

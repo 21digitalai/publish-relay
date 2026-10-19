@@ -22,6 +22,7 @@ const ROUTES = {
   'posts:validate': { method: 'POST', path: '/api/v1/posts/validate', body: true },
   'posts:list': { method: 'GET', path: '/api/v1/posts' },
   'posts:show': { method: 'GET', path: '/api/v1/posts/:id' },
+  'publishes:list': { method: 'GET', path: '/api/v1/jobs' },
   'media:upload': { method: 'POST', path: '/api/v1/media' },
   'publishes:show': { method: 'GET', path: '/api/v1/jobs/:id' },
   'publishes:poll': { method: 'GET', path: '/api/v1/jobs/:id' },
@@ -142,6 +143,17 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'revisionNumber',
     'scheduledAt',
     'jobs',
+    'self',
+  ]),
+  'publishes:list': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'items',
+    'nextCursor',
+    'scheduledAt',
+    'updatedAt',
+    'destination',
+    'displayName',
+    'provider',
     'self',
   ]),
   'media:upload': new Set([...ENVELOPE_OUTPUT_KEYS, 'mimeType', 'sha256', 'byteSize']),
@@ -392,9 +404,15 @@ function jobState(body) {
 }
 function routePath(route, command, id, flags) {
   const path = route.path.replace(':id', encodeURIComponent(id ?? ''));
-  if (command !== 'posts:list' && command !== 'destinations:list') return path;
+  if (command !== 'posts:list' && command !== 'destinations:list' && command !== 'publishes:list')
+    return path;
   const query = new URLSearchParams();
-  const names = command === 'destinations:list' ? ['cursor'] : ['cursor', 'limit'];
+  const names =
+    command === 'destinations:list'
+      ? ['cursor']
+      : command === 'publishes:list'
+        ? ['cursor', 'limit', 'states', 'providerAccountId', 'scheduledAfter', 'scheduledBefore']
+        : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
     if (typeof value === 'string') query.set(name, value);

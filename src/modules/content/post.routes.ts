@@ -73,7 +73,16 @@ const jobListQuerySchema = z.object({
 });
 
 function parseJobListQuery(raw: unknown, cursorCodec: CursorCodec) {
-  const query = jobListQuerySchema.parse(raw);
+  const parsed = jobListQuerySchema.parse(raw);
+  const query = {
+    ...parsed,
+    scheduledAfter: parsed.scheduledAfter
+      ? new Date(parsed.scheduledAfter).toISOString()
+      : undefined,
+    scheduledBefore: parsed.scheduledBefore
+      ? new Date(parsed.scheduledBefore).toISOString()
+      : undefined,
+  };
   const states = query.states
     ? [
         ...new Set(
@@ -85,7 +94,11 @@ function parseJobListQuery(raw: unknown, cursorCodec: CursorCodec) {
       ].sort()
     : [];
   if (query.states && states.length === 0) throw new Error('Invalid states filter');
-  if (query.scheduledAfter && query.scheduledBefore && query.scheduledAfter > query.scheduledBefore)
+  if (
+    query.scheduledAfter &&
+    query.scheduledBefore &&
+    Date.parse(query.scheduledAfter) > Date.parse(query.scheduledBefore)
+  )
     throw new Error('Invalid schedule window');
   const filters = {
     resource: 'jobs',

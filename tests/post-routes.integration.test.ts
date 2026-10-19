@@ -2145,6 +2145,40 @@ describe('GET /api/v1/posts and jobs', () => {
     expect(
       future.json<{ data: { items: { id: string }[] } }>().data.items.map((item) => item.id),
     ).toEqual([jobIds[1]]);
+    const narrowWindow = await application.inject({
+      method: 'GET',
+      url: '/api/v1/jobs?scheduledAfter=2027-01-01T00%3A00%3A00Z&scheduledBefore=2027-01-01T00%3A00%3A00.100Z',
+      headers,
+    });
+    expect(narrowWindow.statusCode).toBe(200);
+    expect(
+      narrowWindow.json<{ data: { items: { id: string }[] } }>().data.items.map((item) => item.id),
+    ).toEqual([jobIds[1]]);
+    expect(
+      (
+        await application.inject({
+          method: 'GET',
+          url: '/api/v1/jobs?scheduledAfter=2027-01-01T00%3A00%3A00.100Z&scheduledBefore=2027-01-01T00%3A00%3A00Z',
+          headers,
+        })
+      ).statusCode,
+    ).toBe(400);
+    const canonicalCursorPage = await application.inject({
+      method: 'GET',
+      url: '/api/v1/jobs?limit=1&scheduledAfter=2025-01-01T00%3A00%3A00Z',
+      headers,
+    });
+    const canonicalCursor = canonicalCursorPage.json<{ data: { nextCursor: string } }>().data
+      .nextCursor;
+    const equivalentFilterPage = await application.inject({
+      method: 'GET',
+      url: `/api/v1/jobs?limit=1&scheduledAfter=2025-01-01T00%3A00%3A00.000Z&cursor=${encodeURIComponent(canonicalCursor)}`,
+      headers,
+    });
+    expect(equivalentFilterPage.statusCode).toBe(200);
+    expect(
+      equivalentFilterPage.json<{ data: { items: { id: string }[] } }>().data.items[0]?.id,
+    ).toBe(jobIds[0]);
     const filtered = await application.inject({
       method: 'GET',
       url: `/api/v1/jobs?providerAccountId=${foreignProviderAccountId}`,

@@ -41,5 +41,10 @@ describe('provider post links', () => {
     expect(providerPostUrl({ provider: 'linkedin', id: 'urn:li:share:42' })).toBe(
       'https://www.linkedin.com/feed/update/urn%3Ali%3Ashare%3A42/',
     );
+    expect(providerPostUrl({ provider: 'tiktok', id: '7333862123456789012', handle: 'one' })).toBe(
+      'https://www.tiktok.com/@one/video/7333862123456789012',
+    );
+    expect(providerPostUrl({ provider: 'tiktok', id: 'unverified', handle: 'one' })).toBeNull();
+    expect(providerPostUrl({ provider: 'tiktok', id: '7333862123456789012' })).toBeNull();
   });
 });

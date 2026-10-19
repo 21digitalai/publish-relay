@@ -4,6 +4,7 @@ const providerHosts: Record<string, readonly string[]> = {
   instagram: ['instagram.com'],
   youtube: ['youtube.com', 'youtu.be'],
   linkedin: ['linkedin.com'],
+  tiktok: ['tiktok.com'],
 };
 
 export function validatedPostUrl(url: string | null | undefined, provider?: string): string | null {
@@ -38,6 +39,8 @@ export function providerPostUrl(input: {
   if (input.provider === 'facebook_page') return `https://www.facebook.com/${id}`;
   if (input.provider === 'youtube') return `https://www.youtube.com/watch?v=${id}`;
   if (input.provider === 'linkedin') return `https://www.linkedin.com/feed/update/${id}/`;
+  if (input.provider === 'tiktok' && input.handle && /^\d+$/.test(input.id))
+    return `https://www.tiktok.com/@${encodeURIComponent(input.handle)}/video/${id}`;
   if (input.provider === 'x' && input.handle)
     return `https://x.com/${encodeURIComponent(input.handle)}/status/${id}`;
   return null;

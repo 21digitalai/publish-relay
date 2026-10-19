@@ -40,6 +40,8 @@ import type { MetaHttpClient, MetaPermission } from '../modules/providers/meta-h
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
+import type { SnapchatHttpClient } from '../modules/providers/snapchat-http-client.js';
+import { registerSnapchatOauthRoutes } from '../modules/providers/snapchat-oauth.routes.js';
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
@@ -85,6 +87,11 @@ interface TikTokOauthOptions {
   client: TikTokHttpClient;
   callbackUrl: string;
 }
+interface SnapchatOauthOptions {
+  keys: MasterKeyProvider;
+  client: SnapchatHttpClient;
+  callbackUrl: string;
+}
 
 export interface CoreApplicationOptions {
   config: RuntimeConfig;
@@ -101,6 +108,7 @@ export interface CoreApplicationOptions {
   metaOauth?: MetaOauthOptions;
   instagramOauth?: InstagramOauthOptions;
   tiktokOauth?: TikTokOauthOptions;
+  snapchatOauth?: SnapchatOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
   magicLinks?: MagicLinkService;
   publicAuthShells?: boolean;
@@ -220,6 +228,7 @@ function registerBrowserRoutes(
     metaOauth,
     instagramOauth,
     tiktokOauth,
+    snapchatOauth,
     delegatedAuthorization,
   } = options;
   if (database && mediaStorage && config.CURSOR_SIGNING_SECRET) {
@@ -272,6 +281,8 @@ function registerBrowserRoutes(
     });
   if (auth && database && tiktokOauth)
     registerTikTokOauthRoutes(application, { auth, database, actionPolicy, ...tiktokOauth });
+  if (auth && database && snapchatOauth)
+    registerSnapchatOauthRoutes(application, { auth, database, actionPolicy, ...snapchatOauth });
   if (auth && delegatedAuthorization)
     registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
 }

@@ -296,7 +296,8 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Snapchat Public Profile transport (fixture-only)
 
-- `snapchat-http-client.ts` owns the isolated Snap OAuth authorization/code/refresh transport and owner-authorized `my_profile` projection. It pins the Accounts and Business API origins, requests only `snapchat-profile-api`, refuses redirects, bounds time, requires a successful token scope and a UUID profile identity, and returns only owner profile ID/label/username. A public profile lookup is never proof of posting authority. This module does not wire production credentials, expose a picker, persist grants, or enable publishing. The later connection slice must use the existing one-use OAuth state, session/CSRF, encrypted subject-keyed connection, and version-CAS refresh boundaries; Snap allowlisting and a controlled live proof remain separate gates.
+- `snapchat-http-client.ts` owns the isolated Snap OAuth authorization/code/refresh transport and owner-authorized `my_profile` projection. It pins the Accounts and Business API origins, requests only `snapchat-profile-api`, refuses redirects, bounds time, requires a successful token scope and a UUID profile identity, and returns only owner profile ID/label/username. A public profile lookup is never proof of posting authority.
+- Optional fixture-only `snapchatOauth` composition installs session/CSRF start and callback routes using Core's existing encrypted one-use OAuth transaction and subject-keyed `connectProvider` boundary. Only the returned owner `my_profile` UUID becomes the grant subject/destination identity. `getFreshSnapchatToken` uses the canonical version-CAS rotation and rechecks owner profile identity after refresh; a sibling grant is not replaced. Production does not supply this optional composition, expose a picker, or enable publishing until Snap allowlisting and controlled live proof are reviewed.
 
 ## Shared Page target-owned job reads
 

@@ -34,6 +34,7 @@ function normalizeDestination(
     meta: ['instagram', 'facebook_page'],
     instagram_login: ['instagram'],
     tiktok: ['tiktok'],
+    snapchat: ['snapchat'],
   };
   const allowed = allowedDestinations[connectionFamily];
   if (allowed && !allowed.includes(destinationProvider))
@@ -119,6 +120,13 @@ export async function replaceProviderConnection(
       input.accounts[0]?.providerAccountId !== input.externalSubjectId)
   )
     throw new Error('TikTok connection must identify exactly one stable provider subject');
+  if (
+    input.provider === 'snapchat' &&
+    (!input.externalSubjectId ||
+      input.accounts.length !== 1 ||
+      input.accounts[0]?.providerAccountId !== input.externalSubjectId)
+  )
+    throw new Error('Snapchat connection must identify exactly one owner profile');
   const subjectId = input.externalSubjectId ?? memberUrn;
   if (!subjectId || subjectId.startsWith('legacy:'))
     throw new Error('Provider connection requires a verified principal subject');

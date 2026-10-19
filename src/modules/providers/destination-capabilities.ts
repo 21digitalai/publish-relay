@@ -24,6 +24,8 @@ const CAPABILITIES: Partial<Record<DestinationProvider, DestinationCapabilitySna
   },
   // C2 may discover accounts, but creator capabilities and posting remain unimplemented.
   tiktok: { schemaVersion: 1, contentKinds: [], media: {} },
+  // Owner discovery is not proof of Public Profile posting access.
+  snapchat: { schemaVersion: 1, contentKinds: [], media: {} },
 };
 
 export function destinationCapabilities(provider: string): DestinationCapabilitySnapshot {

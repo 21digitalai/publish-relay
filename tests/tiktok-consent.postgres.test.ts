@@ -9,6 +9,7 @@ import {
   issueTikTokPublicationConsent,
   verifyTikTokPublicationConsent,
 } from '../src/modules/providers/tiktok-consent.service.js';
+import { scheduleTikTokDraft } from '../src/modules/providers/tiktok-schedule.service.js';
 
 const connectionString = process.env.POSTGRES_CONSENT_TEST_URL;
 
@@ -162,6 +163,25 @@ describe.skipIf(!connectionString)('TikTok consent on PostgreSQL', () => {
           workspaceId: otherWorkspaceId,
         }),
       ).rejects.toThrow('invalid');
+      const schedule = {
+        workspaceId,
+        userId,
+        postId,
+        revisionId,
+        accountId,
+        receiptId: receipt.id,
+        scheduledAt: new Date(Date.now() + 3600_000).toISOString(),
+        requestId: 'postgres-schedule',
+        idempotencyKey: 'postgres-schedule',
+      };
+      await expect(
+        scheduleTikTokDraft(db, { ...schedule, workspaceId: otherWorkspaceId }),
+      ).rejects.toThrow('invalid');
+      const admitted = await scheduleTikTokDraft(db, schedule);
+      expect(
+        (await pool.query('select id from publication_jobs where id = $1', [admitted.jobId])).rows,
+      ).toHaveLength(1);
+      await expect(scheduleTikTokDraft(db, schedule)).rejects.toThrow('already scheduled');
       await pool.query(
         `create role consent_reader_${receipt.id.replaceAll('-', '')} nologin nobypassrls`,
       );

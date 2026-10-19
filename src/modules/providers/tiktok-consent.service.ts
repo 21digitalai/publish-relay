@@ -380,7 +380,9 @@ export async function verifyTikTokPublicationConsentInTransaction(
     accountId: input.accountId,
     snapshotId: parsed.data.capabilitySnapshotId,
   });
-  const content = validateSource(source, parsed.data, new Date(row.consentedAt));
+  // Admission must use the current creator capability and grant state, not
+  // the time at which the human made the declaration.
+  const content = validateSource(source, parsed.data, new Date());
   if (
     source.mediaSha256 !== row.mediaSha256 ||
     source.credentialVersion !== row.credentialVersion ||

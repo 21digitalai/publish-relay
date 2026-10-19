@@ -18,6 +18,8 @@ import { createPost } from '../src/modules/content/post.service.js';
 import { registerTikTokConsentRoutes } from '../src/modules/providers/tiktok-consent.routes.js';
 import { prepareTikTokDraft } from '../src/modules/providers/tiktok-draft.service.js';
 import { registerTikTokDraftRoutes } from '../src/modules/providers/tiktok-draft.routes.js';
+import { registerTikTokScheduleRoutes } from '../src/modules/providers/tiktok-schedule.routes.js';
+import { scheduleTikTokDraft } from '../src/modules/providers/tiktok-schedule.service.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
 import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 import { withTenantTransaction } from '../src/database/tenant-transaction.js';
@@ -230,6 +232,122 @@ it('prepares a draft through session, CSRF and idempotent browser admission', as
         method: 'POST',
         url,
         payload: { ...payload, content: { ...payload.content, caption: 'Changed' } },
+        headers,
+      })
+    ).statusCode,
+  ).toBe(409);
+  await app.close();
+});
+
+it('admits one consent-bound TikTok job through the tenant application boundary', async () => {
+  const receipt = await issueTikTokPublicationConsent(db, command());
+  const input = {
+    workspaceId,
+    userId,
+    postId,
+    revisionId,
+    accountId,
+    receiptId: receipt.id,
+    scheduledAt: new Date(Date.now() + 3600_000).toISOString(),
+    requestId: 'schedule-fixture',
+    idempotencyKey: 'schedule-fixture',
+  };
+  await expect(
+    scheduleTikTokDraft(db, { ...input, workspaceId: otherWorkspaceId }),
+  ).rejects.toThrow('invalid');
+  const scheduled = await scheduleTikTokDraft(db, input);
+  const rows = await pg.query<{ id: string; effective_payload: Record<string, unknown> }>(
+    'select id, effective_payload from publication_jobs where post_id = $1',
+    [postId],
+  );
+  expect(rows.rows).toHaveLength(1);
+  expect(rows.rows[0]?.id).toBe(scheduled.jobId);
+  expect(rows.rows[0]?.effective_payload).toMatchObject({
+    destinationProvider: 'tiktok',
+    consentReceiptId: receipt.id,
+    mediaSha256: mediaHash,
+    caption: 'Exact caption',
+    options: command().options,
+  });
+  await expect(scheduleTikTokDraft(db, { ...input, idempotencyKey: 'another' })).rejects.toThrow(
+    'already scheduled',
+  );
+});
+
+it('rejects stale revision, creator capability and rotated grant before job admission', async () => {
+  const receipt = await issueTikTokPublicationConsent(db, command());
+  const input = {
+    workspaceId,
+    userId,
+    postId,
+    revisionId,
+    accountId,
+    receiptId: receipt.id,
+    scheduledAt: new Date(Date.now() + 3600_000).toISOString(),
+    requestId: 'stale-fixture',
+    idempotencyKey: 'stale-fixture',
+  };
+  await pg.exec(`update provider_capability_snapshots set expires_at = now() - interval '1 second'
+    where id = '${snapshotId}'`);
+  await expect(scheduleTikTokDraft(db, input)).rejects.toThrow('invalid');
+  await pg.exec(`update provider_capability_snapshots set expires_at = now() + interval '14 minutes'
+    where id = '${snapshotId}'; update credentials set version = 2 where id = '${credentialId}'`);
+  await expect(scheduleTikTokDraft(db, input)).rejects.toThrow('invalid');
+  await pg.exec(`update credentials set version = 1 where id = '${credentialId}';
+    insert into post_revisions (workspace_id, post_id, revision_number, content)
+      values ('${workspaceId}', '${postId}', 2, '${content()}')`);
+  await expect(scheduleTikTokDraft(db, input)).rejects.toThrow('invalid');
+  expect(
+    (await pg.query('select id from publication_jobs where post_id = $1', [postId])).rows,
+  ).toHaveLength(0);
+});
+
+it('requires browser session, CSRF and stable idempotency for TikTok schedule admission', async () => {
+  const receipt = await issueTikTokPublicationConsent(db, command());
+  const app = Fastify();
+  await app.register(cookie);
+  const auth = {
+    authenticate: (tenant: string) =>
+      Promise.resolve(tenant === workspaceId ? { workspaceId, userId, role: 'owner' } : null),
+  } as unknown as AuthService;
+  registerTikTokScheduleRoutes(app, { auth, database: db, actionPolicy: allowAllActionPolicy });
+  const url = '/api/workflow/tiktok-schedules';
+  const payload = {
+    postId,
+    revisionId,
+    accountId,
+    receiptId: receipt.id,
+    scheduledAt: new Date(Date.now() + 3600_000).toISOString(),
+  };
+  const headers = {
+    cookie: `publish_relay_session=${workspaceId}.token; publish_relay_csrf=csrf`,
+    'x-csrf-token': 'csrf',
+    'idempotency-key': 'schedule-browser-fixture',
+  };
+  expect((await app.inject({ method: 'POST', url, payload })).statusCode).toBe(401);
+  expect(
+    (await app.inject({ method: 'POST', url, payload, headers: { cookie: headers.cookie } }))
+      .statusCode,
+  ).toBe(403);
+  expect(
+    (await app.inject({ method: 'POST', url, payload: { ...payload, userId }, headers }))
+      .statusCode,
+  ).toBe(400);
+  const first = await app.inject({ method: 'POST', url, payload, headers });
+  expect(first.statusCode, first.body).toBe(201);
+  expect(Buffer.byteLength(first.body)).toBeLessThan(256);
+  const replay = await app.inject({ method: 'POST', url, payload, headers });
+  expect(replay.json()).toEqual(first.json());
+  expect(replay.headers['idempotency-replayed']).toBe('true');
+  expect(
+    (
+      await app.inject({
+        method: 'POST',
+        url,
+        payload: {
+          ...payload,
+          scheduledAt: new Date(Date.now() + 7200_000).toISOString(),
+        },
         headers,
       })
     ).statusCode,

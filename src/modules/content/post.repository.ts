@@ -442,6 +442,58 @@ export async function createUnscheduledPostRevision(
   return { postId, revisionId };
 }
 
+export async function schedulePreparedTikTokRevision(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    postId: string;
+    revisionId: string;
+    accountId: string;
+    scheduledAt: Date;
+    effectivePayload: Record<string, unknown>;
+    actorId: string;
+  },
+): Promise<string> {
+  const existing = await database.execute(sql`
+    select p.id from posts p where p.workspace_id = ${input.workspaceId}
+      and p.id = ${input.postId} for update
+  `);
+  if (existing.rows.length !== 1) throw new PostValidationError('TikTok draft is unavailable');
+  const revision = await database.execute(sql`
+    select id from post_revisions where workspace_id = ${input.workspaceId}
+      and post_id = ${input.postId} order by revision_number desc limit 1
+  `);
+  if (revision.rows[0]?.id !== input.revisionId)
+    throw new PostValidationError('TikTok draft revision changed');
+  const jobs = await database.execute(sql`
+    select id from publication_jobs where workspace_id = ${input.workspaceId}
+      and post_id = ${input.postId} limit 1
+  `);
+  if (jobs.rows.length) throw new PostValidationError('TikTok draft is already scheduled');
+  const inserted = await database
+    .insert(publicationJobs)
+    .values({
+      workspaceId: input.workspaceId,
+      postId: input.postId,
+      revisionId: input.revisionId,
+      providerAccountId: input.accountId,
+      effectivePayload: input.effectivePayload,
+      scheduledAt: input.scheduledAt,
+    })
+    .returning({ id: publicationJobs.id });
+  await database
+    .update(posts)
+    .set({
+      updatedAt: new Date(),
+      lastMutatorType: 'user',
+      lastMutatorId: input.actorId,
+    })
+    .where(and(eq(posts.workspaceId, input.workspaceId), eq(posts.id, input.postId)));
+  const id = inserted[0]?.id;
+  if (!id) throw new Error('TikTok schedule returned no job');
+  return id;
+}
+
 async function revisePostIntentInternal(
   database: NodePgDatabase,
   input: PostRevisionInput & {

@@ -16,6 +16,11 @@ import {
   startDispatchAttempt,
 } from '../src/modules/scheduler/job.repository.js';
 import { TikTokMediaGrantService } from '../src/modules/providers/tiktok-media-grant.service.js';
+import {
+  getPreparedTikTokDraft,
+  revisePreparedTikTokDraftInTransaction,
+} from '../src/modules/providers/tiktok-draft.service.js';
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 
 const connectionString = process.env.POSTGRES_CONSENT_TEST_URL;
 
@@ -278,6 +283,181 @@ describe.skipIf(!connectionString)('TikTok consent on PostgreSQL', () => {
       } finally {
         await client.query('rollback');
         client.release();
+      }
+      const preparedPostId = randomUUID();
+      const preparedRevisionId = randomUUID();
+      await pool.query(
+        'insert into posts (id, workspace_id, created_by_user_id) values ($1, $2, $3)',
+        [preparedPostId, workspaceId, userId],
+      );
+      const preparedContent = {
+        schemaVersion: 1 as const,
+        kind: 'video' as const,
+        caption: 'Prepared',
+        mediaId,
+        options,
+      };
+      await pool.query(
+        `insert into post_revisions (id, workspace_id, post_id, revision_number, content)
+        values ($1, $2, $3, 1, $4)`,
+        [preparedRevisionId, workspaceId, preparedPostId, JSON.stringify(preparedContent)],
+      );
+      await pool.query(
+        `insert into revision_media (workspace_id, revision_id, media_id, position)
+        values ($1, $2, $3, 0)`,
+        [workspaceId, preparedRevisionId, mediaId],
+      );
+      const detail = await getPreparedTikTokDraft(db, {
+        workspaceId,
+        userId,
+        postId: preparedPostId,
+      });
+      expect(detail.media.previewUrl).toBe(`/api/workflow/media/${mediaId}`);
+      expect(JSON.stringify(detail)).not.toMatch(/storageKey|sha256|credential|fixture\.mp4/);
+      expect(JSON.stringify(detail).length).toBeLessThan(6000);
+      await expect(
+        getPreparedTikTokDraft(db, { workspaceId, userId: randomUUID(), postId: preparedPostId }),
+      ).rejects.toThrow();
+      await expect(
+        getPreparedTikTokDraft(db, {
+          workspaceId: otherWorkspaceId,
+          userId,
+          postId: preparedPostId,
+        }),
+      ).rejects.toThrow();
+      const revised = await withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+        revisePreparedTikTokDraftInTransaction(transaction, {
+          workspaceId,
+          userId,
+          postId: preparedPostId,
+          content: { ...preparedContent, caption: 'Corrected' },
+          requestId: 'postgres-corrected',
+        }),
+      );
+      expect(revised.changed).toBe(true);
+      const replay = await withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+        revisePreparedTikTokDraftInTransaction(transaction, {
+          workspaceId,
+          userId,
+          postId: preparedPostId,
+          content: { ...preparedContent, caption: 'Corrected' },
+          requestId: 'postgres-replay',
+        }),
+      );
+      expect(replay).toEqual({ ...revised, changed: false });
+      const concurrentContent = { ...preparedContent, caption: 'Concurrent correction' };
+      const concurrent = await Promise.all(
+        [1, 2].map((number) =>
+          withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+            revisePreparedTikTokDraftInTransaction(transaction, {
+              workspaceId,
+              userId,
+              postId: preparedPostId,
+              content: concurrentContent,
+              requestId: `concurrent-${String(number)}`,
+            }),
+          ),
+        ),
+      );
+      expect(concurrent[0]?.revisionId).toBe(concurrent[1]?.revisionId);
+      expect(concurrent.map((result) => result.changed).sort()).toEqual([false, true]);
+      expect(
+        (
+          await pool.query<{ count: number }>(
+            'select count(*)::int as count from revision_media where media_id = $1',
+            [mediaId],
+          )
+        ).rows[0]?.count,
+      ).toBe(4);
+      await pool.query(
+        `insert into publication_jobs (workspace_id, post_id, revision_id,
+        provider_account_id, effective_payload, scheduled_at)
+        values ($1, $2, $3, $4, '{}', now() + interval '1 day')`,
+        [workspaceId, preparedPostId, concurrent[0]?.revisionId, accountId],
+      );
+      await expect(
+        withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+          revisePreparedTikTokDraftInTransaction(transaction, {
+            workspaceId,
+            userId,
+            postId: preparedPostId,
+            content: preparedContent,
+            requestId: 'job-guard',
+          }),
+        ),
+      ).rejects.toThrow('already scheduled');
+      await pool.query(`grant usage on schema public to ${role}`);
+      await pool.query(`grant select on posts, post_revisions, revision_media, media_objects,
+        publication_jobs, memberships, provider_accounts, provider_connections to ${role}`);
+      const rlsClient = await pool.connect();
+      try {
+        await rlsClient.query('begin');
+        await rlsClient.query(`set local role ${role}`);
+        await rlsClient.query(`select set_config('app.workspace_id', $1, true)`, [
+          otherWorkspaceId,
+        ]);
+        expect(
+          (await rlsClient.query('select id from posts where id = $1', [preparedPostId])).rows,
+        ).toHaveLength(0);
+        await rlsClient.query(`select set_config('app.workspace_id', $1, true)`, [workspaceId]);
+        expect(
+          (await rlsClient.query('select id from posts where id = $1', [preparedPostId])).rows,
+        ).toHaveLength(1);
+      } finally {
+        await rlsClient.query('rollback');
+        rlsClient.release();
+      }
+      const rolePostId = randomUUID();
+      const roleRevisionId = randomUUID();
+      await pool.query(
+        'insert into posts (id, workspace_id, created_by_user_id) values ($1, $2, $3)',
+        [rolePostId, workspaceId, userId],
+      );
+      await pool.query(
+        `insert into post_revisions (id, workspace_id, post_id, revision_number, content)
+        values ($1, $2, $3, 1, $4)`,
+        [roleRevisionId, workspaceId, rolePostId, JSON.stringify(preparedContent)],
+      );
+      await pool.query(
+        `insert into revision_media (workspace_id, revision_id, media_id, position)
+        values ($1, $2, $3, 0)`,
+        [workspaceId, roleRevisionId, mediaId],
+      );
+      await pool.query(`grant insert on post_revisions, revision_media to ${role}`);
+      await pool.query(`grant update on posts, media_objects to ${role}`);
+      const actorClient = await pool.connect();
+      try {
+        await actorClient.query(`set role ${role}`);
+        const actorDb = drizzle(actorClient);
+        const roleDetail = await getPreparedTikTokDraft(actorDb, {
+          workspaceId,
+          userId,
+          postId: rolePostId,
+        });
+        expect(roleDetail.revisionId).toBe(roleRevisionId);
+        const roleRevision = await withTenantTransaction(
+          actorDb,
+          { workspaceId, userId },
+          (transaction) =>
+            revisePreparedTikTokDraftInTransaction(transaction, {
+              workspaceId,
+              userId,
+              postId: rolePostId,
+              content: { ...preparedContent, caption: 'Role correction' },
+              requestId: 'forced-rls-role',
+            }),
+        );
+        expect(roleRevision.changed).toBe(true);
+        await expect(
+          getPreparedTikTokDraft(actorDb, {
+            workspaceId: otherWorkspaceId,
+            userId,
+            postId: rolePostId,
+          }),
+        ).rejects.toThrow();
+      } finally {
+        await actorClient.query('reset role');
+        actorClient.release();
       }
     } finally {
       await pool.end();

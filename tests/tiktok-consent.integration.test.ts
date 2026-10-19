@@ -16,7 +16,12 @@ import {
 } from '../src/modules/providers/tiktok-consent.service.js';
 import { createPost } from '../src/modules/content/post.service.js';
 import { registerTikTokConsentRoutes } from '../src/modules/providers/tiktok-consent.routes.js';
-import { prepareTikTokDraft } from '../src/modules/providers/tiktok-draft.service.js';
+import {
+  getPreparedTikTokDraft,
+  listPreparedTikTokDrafts,
+  prepareTikTokDraft,
+  revisePreparedTikTokDraftInTransaction,
+} from '../src/modules/providers/tiktok-draft.service.js';
 import { registerTikTokDraftRoutes } from '../src/modules/providers/tiktok-draft.routes.js';
 import { registerTikTokScheduleRoutes } from '../src/modules/providers/tiktok-schedule.routes.js';
 import { scheduleTikTokDraft } from '../src/modules/providers/tiktok-schedule.service.js';
@@ -141,6 +146,77 @@ beforeEach(async () => {
 });
 afterEach(async () => pg.close());
 
+it('reads only bounded prepared-draft fields and revises immutably with exact replay', async () => {
+  const preparedContent = {
+    schemaVersion: 1 as const,
+    kind: 'video' as const,
+    caption: 'Exact caption',
+    mediaId,
+    options: command().options,
+  };
+  const initial = await getPreparedTikTokDraft(db, { workspaceId, userId, postId });
+  expect(initial).toMatchObject({ postId, revisionId, media: { id: mediaId, ready: true } });
+  expect(JSON.stringify(initial)).not.toMatch(/storageKey|sha256|credential|fixture\.mp4/);
+  expect(await listPreparedTikTokDrafts(db, { workspaceId, userId, limit: 1 })).toHaveLength(1);
+  await expect(
+    getPreparedTikTokDraft(db, { workspaceId: otherWorkspaceId, userId, postId }),
+  ).rejects.toThrow();
+  const same = await withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+    revisePreparedTikTokDraftInTransaction(transaction, {
+      workspaceId,
+      userId,
+      postId,
+      content: preparedContent,
+      requestId: 'same',
+    }),
+  );
+  expect(same).toEqual({ postId, revisionId, changed: false });
+  const changed = await withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+    revisePreparedTikTokDraftInTransaction(transaction, {
+      workspaceId,
+      userId,
+      postId,
+      content: { ...preparedContent, caption: 'Corrected caption' },
+      requestId: 'changed',
+    }),
+  );
+  expect(changed.changed).toBe(true);
+  expect(changed.revisionId).not.toBe(revisionId);
+  const replay = await withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+    revisePreparedTikTokDraftInTransaction(transaction, {
+      workspaceId,
+      userId,
+      postId,
+      content: { ...preparedContent, caption: 'Corrected caption' },
+      requestId: 'replay',
+    }),
+  );
+  expect(replay).toEqual({ ...changed, changed: false });
+  const rows = await pg.query<{ revision_count: number; media_count: number }>(
+    `select (select count(*)::int from post_revisions where post_id = $1) as revision_count,
+      (select count(*)::int from revision_media where media_id = $2) as media_count`,
+    [postId, mediaId],
+  );
+  expect(rows.rows[0]).toEqual({ revision_count: 2, media_count: 2 });
+  await pg.query(
+    `insert into publication_jobs (workspace_id, post_id, revision_id, provider_account_id,
+    scheduled_at, effective_payload) values ($1, $2, $3, $4, now() + interval '1 day', '{}')`,
+    [workspaceId, postId, changed.revisionId, accountId],
+  );
+  await expect(getPreparedTikTokDraft(db, { workspaceId, userId, postId })).rejects.toThrow();
+  await expect(
+    withTenantTransaction(db, { workspaceId, userId }, (transaction) =>
+      revisePreparedTikTokDraftInTransaction(transaction, {
+        workspaceId,
+        userId,
+        postId,
+        content: preparedContent,
+        requestId: 'after-job',
+      }),
+    ),
+  ).rejects.toThrow('already scheduled');
+});
+
 it('prepares one canonical unscheduled TikTok revision before human consent', async () => {
   const draft = {
     workspaceId,
@@ -222,6 +298,72 @@ it('prepares a draft through session, CSRF and idempotent browser admission', as
   expect(second.headers['idempotency-replayed']).toBe('true');
   expect(second.json()).toEqual(first.json());
   const prepared = first.json<{ data: { postId: string } }>().data;
+  const detailUrl = `${url}/${prepared.postId}`;
+  const detail = await app.inject({ method: 'GET', url: detailUrl, headers });
+  expect(detail.statusCode).toBe(200);
+  expect(detail.json<{ data: { content: { caption: string } } }>().data.content.caption).toBe(
+    'Exact caption',
+  );
+  expect(JSON.stringify(detail.json())).not.toMatch(/storageKey|sha256|credential|fixture\.mp4/);
+  const listed = await app.inject({ method: 'GET', url: `${url}?limit=1`, headers });
+  expect(listed.statusCode).toBe(200);
+  const listData = listed.json<{
+    data: { postId: string; createdAt: string; captionPreview: string; content?: unknown }[];
+  }>().data;
+  expect(listData).toHaveLength(1);
+  expect(listData[0]?.content).toBeUndefined();
+  expect(listData[0]?.captionPreview).toBeTruthy();
+  expect(JSON.stringify(listData).length).toBeLessThan(1000);
+  expect(
+    (await app.inject({ method: 'GET', url: `${url}?beforeId=${postId}`, headers })).statusCode,
+  ).toBe(400);
+  const firstItem = listData[0];
+  if (!firstItem) throw new Error('Expected a prepared item');
+  const olderPage = await app.inject({
+    method: 'GET',
+    url: `${url}?limit=1&before=${encodeURIComponent(firstItem.createdAt)}&beforeId=${firstItem.postId}`,
+    headers,
+  });
+  expect(olderPage.statusCode, olderPage.body).toBe(200);
+  expect(olderPage.json<{ data: unknown[] }>().data).toHaveLength(1);
+  const patchHeaders = { ...headers, 'idempotency-key': 'draft-revision-key' };
+  const patchPayload = { content: { ...payload.content, caption: 'Corrected caption' } };
+  expect(
+    (
+      await app.inject({
+        method: 'PATCH',
+        url: detailUrl,
+        payload: patchPayload,
+        headers: { cookie: headers.cookie },
+      })
+    ).statusCode,
+  ).toBe(403);
+  const revision = await app.inject({
+    method: 'PATCH',
+    url: detailUrl,
+    payload: patchPayload,
+    headers: patchHeaders,
+  });
+  expect(revision.statusCode, revision.body).toBe(200);
+  const revisionReplay = await app.inject({
+    method: 'PATCH',
+    url: detailUrl,
+    payload: patchPayload,
+    headers: patchHeaders,
+  });
+  expect(revisionReplay.statusCode).toBe(200);
+  expect(revisionReplay.headers['idempotency-replayed']).toBe('true');
+  expect(revisionReplay.json()).toEqual(revision.json());
+  expect(
+    (
+      await app.inject({
+        method: 'PATCH',
+        url: detailUrl,
+        payload: { content: { ...payload.content, caption: 'Conflicting' } },
+        headers: patchHeaders,
+      })
+    ).statusCode,
+  ).toBe(409);
   expect(
     (await pg.query('select count(*)::int as count from posts where id = $1', [prepared.postId]))
       .rows[0],

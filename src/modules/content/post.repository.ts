@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
@@ -442,6 +443,76 @@ export async function createUnscheduledPostRevision(
     position: 0,
   });
   return { postId, revisionId };
+}
+
+export async function reviseUnscheduledTikTokPost(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    userId: string;
+    postId: string;
+    content: Record<string, unknown>;
+    mediaId: string;
+  },
+): Promise<{ postId: string; revisionId: string; changed: boolean }> {
+  const locked = await database.execute(sql`
+    select id from posts where workspace_id = ${input.workspaceId} and id = ${input.postId} for update
+  `);
+  if (locked.rows.length !== 1) throw new PostNotFoundError('Prepared TikTok post was not found');
+  const jobs = await database.execute(sql`
+    select id from publication_jobs where workspace_id = ${input.workspaceId}
+      and post_id = ${input.postId} limit 1
+  `);
+  if (jobs.rows.length) throw new PostValidationError('Prepared TikTok post is already scheduled');
+  const current = await database.execute<{
+    id: string;
+    revisionNumber: number;
+    content: unknown;
+    mediaId: string;
+  }>(sql`
+    select r.id, r.revision_number as "revisionNumber", r.content, rm.media_id as "mediaId"
+    from post_revisions r
+    left join revision_media rm on rm.workspace_id = r.workspace_id and rm.revision_id = r.id
+    where r.workspace_id = ${input.workspaceId} and r.post_id = ${input.postId}
+    order by r.revision_number desc limit 1
+  `);
+  const revision = current.rows[0];
+  if (
+    !revision?.content ||
+    typeof revision.content !== 'object' ||
+    (revision.content as Record<string, unknown>).schemaVersion !== 1 ||
+    (revision.content as Record<string, unknown>).kind !== 'video'
+  )
+    throw new PostValidationError('Prepared TikTok post is unavailable');
+  if (isDeepStrictEqual(revision.content, input.content) && revision.mediaId === input.mediaId)
+    return { postId: input.postId, revisionId: revision.id, changed: false };
+  const media = await database.execute(sql`
+    select id from media_objects where workspace_id = ${input.workspaceId}
+      and id = ${input.mediaId} and state = 'ready' and deleted_at is null
+      and mime_type = 'video/mp4' and duration_ms > 0 for update
+  `);
+  if (media.rows.length !== 1) throw new PostValidationError('TikTok media is unavailable');
+  const inserted = await database
+    .insert(postRevisions)
+    .values({
+      workspaceId: input.workspaceId,
+      postId: input.postId,
+      revisionNumber: revision.revisionNumber + 1,
+      content: input.content,
+      createdActorType: 'user',
+      createdActorId: input.userId,
+    })
+    .returning({ id: postRevisions.id });
+  const revisionId = inserted[0]?.id;
+  if (!revisionId) throw new Error('Post revision write returned no record');
+  await database
+    .insert(revisionMedia)
+    .values({ workspaceId: input.workspaceId, revisionId, mediaId: input.mediaId, position: 0 });
+  await database
+    .update(posts)
+    .set({ updatedAt: new Date(), lastMutatorType: 'user', lastMutatorId: input.userId })
+    .where(and(eq(posts.workspaceId, input.workspaceId), eq(posts.id, input.postId)));
+  return { postId: input.postId, revisionId, changed: true };
 }
 
 export async function schedulePreparedTikTokRevision(

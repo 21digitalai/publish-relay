@@ -3,7 +3,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import { createUnscheduledPostRevision } from '../content/post.repository.js';
+import {
+  createUnscheduledPostRevision,
+  reviseUnscheduledTikTokPost,
+} from '../content/post.repository.js';
 import {
   allowAllActionPolicy,
   enforceWorkspaceAction,
@@ -28,6 +31,132 @@ export const tiktokDraftRequestSchema = draftSchema.omit({
   userId: true,
   requestId: true,
 });
+
+export const tiktokDraftRevisionSchema = z.strictObject({ content: tiktokRevisionContentSchema });
+
+export class TikTokDraftUnavailableError extends Error {}
+
+async function requireEditor(transaction: NodePgDatabase, workspaceId: string, userId: string) {
+  const member = await transaction.execute(sql`
+    select 1 from memberships where workspace_id = ${workspaceId} and user_id = ${userId}
+      and role in ('owner', 'admin', 'editor')
+  `);
+  if (member.rows.length !== 1) throw new TikTokDraftUnavailableError();
+}
+
+interface PreparedRow extends Record<string, unknown> {
+  postId: string;
+  revisionId: string;
+  content: unknown;
+  mediaId: string;
+  mimeType: string;
+  byteSize: number;
+  durationMs: number | null;
+  ready: boolean;
+  createdAt: Date;
+}
+
+function preparedSummary(row: PreparedRow, detail = false) {
+  const content = tiktokRevisionContentSchema.safeParse(row.content);
+  if (!content.success || content.data.mediaId !== row.mediaId)
+    throw new TikTokDraftUnavailableError();
+  return {
+    postId: row.postId,
+    revisionId: row.revisionId,
+    ...(detail
+      ? { content: content.data }
+      : { captionPreview: content.data.caption.slice(0, 160) }),
+    createdAt: new Date(row.createdAt).toISOString(),
+    media: {
+      id: row.mediaId,
+      mimeType: row.mimeType,
+      byteSize: row.byteSize,
+      durationMs: row.durationMs,
+      ready: row.ready,
+      previewUrl: row.ready ? `/api/workflow/media/${row.mediaId}` : null,
+    },
+  };
+}
+
+const preparedQuery = sql`
+  from posts p
+  join lateral (select id, content from post_revisions where workspace_id = p.workspace_id
+    and post_id = p.id order by revision_number desc limit 1) r on true
+  join revision_media rm on rm.workspace_id = p.workspace_id and rm.revision_id = r.id
+    and rm.position = 0
+  join media_objects m on m.workspace_id = rm.workspace_id and m.id = rm.media_id
+  where p.workspace_id = `;
+
+export async function listPreparedTikTokDrafts(
+  database: NodePgDatabase,
+  input: { workspaceId: string; userId: string; limit: number; before?: Date; beforeId?: string },
+) {
+  return withTenantTransaction(database, input, async (transaction) => {
+    await transaction.execute(sql`set transaction read only`);
+    await requireEditor(transaction, input.workspaceId, input.userId);
+    const rows = await transaction.execute<PreparedRow>(sql`
+      select p.id as "postId", r.id as "revisionId", r.content,
+        m.id as "mediaId", m.mime_type as "mimeType", m.byte_size as "byteSize",
+        m.duration_ms as "durationMs", (m.state = 'ready' and m.deleted_at is null) as ready,
+        p.created_at as "createdAt"
+      ${preparedQuery} ${input.workspaceId}
+        and not exists (select 1 from publication_jobs j where j.workspace_id = p.workspace_id and j.post_id = p.id)
+        and r.content->>'kind' = 'video' and r.content->>'schemaVersion' = '1'
+        and (${input.before ?? null}::timestamptz is null or
+          (p.created_at, p.id) < (${input.before ?? null}::timestamptz, ${input.beforeId ?? null}::uuid))
+      order by p.created_at desc, p.id desc limit ${input.limit}
+    `);
+    return rows.rows.map((row) => preparedSummary(row));
+  });
+}
+
+export async function getPreparedTikTokDraft(
+  database: NodePgDatabase,
+  input: { workspaceId: string; userId: string; postId: string },
+) {
+  return withTenantTransaction(database, input, async (transaction) => {
+    await transaction.execute(sql`set transaction read only`);
+    await requireEditor(transaction, input.workspaceId, input.userId);
+    const rows = await transaction.execute<PreparedRow>(sql`
+      select p.id as "postId", r.id as "revisionId", r.content,
+        m.id as "mediaId", m.mime_type as "mimeType", m.byte_size as "byteSize",
+        m.duration_ms as "durationMs", (m.state = 'ready' and m.deleted_at is null) as ready,
+        p.created_at as "createdAt"
+      ${preparedQuery} ${input.workspaceId} and p.id = ${input.postId}
+        and not exists (select 1 from publication_jobs j where j.workspace_id = p.workspace_id and j.post_id = p.id)
+    `);
+    const row = rows.rows[0];
+    if (rows.rows.length !== 1 || !row) throw new TikTokDraftUnavailableError();
+    return preparedSummary(row, true);
+  });
+}
+
+export async function revisePreparedTikTokDraftInTransaction(
+  transaction: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    userId: string;
+    postId: string;
+    content: z.infer<typeof tiktokRevisionContentSchema>;
+    requestId: string;
+  },
+  policy: ActionPolicy = allowAllActionPolicy,
+) {
+  await requireEditor(transaction, input.workspaceId, input.userId);
+  await enforceWorkspaceAction(transaction, policy, {
+    workspaceId: input.workspaceId,
+    actor: { type: 'user', id: input.userId },
+    action: 'publication.revise',
+    request: { provider: 'tiktok', requestId: input.requestId },
+  });
+  return reviseUnscheduledTikTokPost(transaction, {
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    postId: input.postId,
+    content: input.content,
+    mediaId: input.content.mediaId,
+  });
+}
 
 export async function prepareTikTokDraft(
   database: NodePgDatabase,

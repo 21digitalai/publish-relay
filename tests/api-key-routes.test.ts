@@ -43,7 +43,7 @@ describe('API key HTTP boundary', () => {
   it('returns the redacted account identity after expected-workspace preflight', async () => {
     const authenticate = vi.fn().mockResolvedValue({
       id: 'key-1',
-      workspaceId: 'workspace-1',
+      workspaceId: '00000000-0000-4000-8000-000000000201',
       createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
@@ -57,11 +57,14 @@ describe('API key HTTP boundary', () => {
       url: '/api/v1/account',
       headers: {
         authorization: 'Bearer pr_public.secret',
-        'x-publish-relay-workspace': 'workspace-1',
+        'x-publish-relay-workspace': '00000000-0000-4000-8000-000000000201',
       },
     });
     expect(response.statusCode).toBe(200);
-    expect(authenticate).toHaveBeenCalledWith('workspace-1', 'pr_public.secret');
+    expect(authenticate).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000201',
+      'pr_public.secret',
+    );
     const body = response.json<{ data: Record<string, unknown> }>();
     expect(body.data).not.toHaveProperty('secretHash');
     expect(body.data).not.toHaveProperty('createdByUserId');
@@ -130,7 +133,7 @@ describe('API key HTTP boundary', () => {
   it('rate limits an authenticated API key and returns bounded retry headers', async () => {
     const authenticate = vi.fn().mockResolvedValue({
       id: 'key-1',
-      workspaceId: 'workspace-1',
+      workspaceId: '00000000-0000-4000-8000-000000000201',
       workspaceLabel: 'Atlas',
       prefix: 'pr_public',
       capabilities: [],
@@ -150,7 +153,7 @@ describe('API key HTTP boundary', () => {
       url: '/api/v1/account',
       headers: {
         authorization: 'Bearer pr_public.secret',
-        'x-publish-relay-workspace': 'workspace-1',
+        'x-publish-relay-workspace': '00000000-0000-4000-8000-000000000201',
       },
     };
     expect((await application.inject(request)).statusCode).toBe(200);
@@ -171,7 +174,7 @@ describe('API key HTTP boundary', () => {
     const list = vi.fn().mockResolvedValue([
       {
         id: 'key-1',
-        workspaceId: 'workspace-1',
+        workspaceId: '00000000-0000-4000-8000-000000000201',
         createdByUserId: 'user-1',
         createdByDisplayName: 'Avery',
         workspaceLabel: 'Atlas',
@@ -192,7 +195,7 @@ describe('API key HTTP boundary', () => {
     const updateCapabilities = vi.fn().mockResolvedValue('updated');
     const authenticate = vi.fn().mockResolvedValue({
       userId: 'user-1',
-      workspaceId: 'workspace-1',
+      workspaceId: '00000000-0000-4000-8000-000000000201',
       role: 'owner',
     });
     const application = Fastify();
@@ -204,7 +207,7 @@ describe('API key HTTP boundary', () => {
       { authenticate } as unknown as AuthService,
     );
     const cookies =
-      'publish_relay_session=workspace-1.session-token; publish_relay_csrf=csrf-token';
+      'publish_relay_session=00000000-0000-4000-8000-000000000201.session-token; publish_relay_csrf=csrf-token';
 
     const listed = await application.inject({
       method: 'GET',
@@ -251,7 +254,7 @@ describe('API key HTTP boundary', () => {
     expect(edited.json()).not.toHaveProperty('data.token');
     expect(updateCapabilities).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspaceId: 'workspace-1',
+        workspaceId: '00000000-0000-4000-8000-000000000201',
         updatedByUserId: 'user-1',
         capabilities: editPayload.capabilities,
       }),
@@ -304,7 +307,10 @@ describe('API key HTTP boundary', () => {
     });
     expect(revoked.statusCode).toBe(200);
     expect(revoke).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceId: 'workspace-1', revokedByUserId: 'user-1' }),
+      expect.objectContaining({
+        workspaceId: '00000000-0000-4000-8000-000000000201',
+        revokedByUserId: 'user-1',
+      }),
     );
   });
 });

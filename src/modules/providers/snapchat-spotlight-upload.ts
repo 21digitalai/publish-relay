@@ -74,7 +74,7 @@ export async function stageAndPostSnapchatSpotlight(input: {
   }
 }
 
-async function uploadEncryptedChunks(
+export async function uploadEncryptedChunks(
   client: SnapchatSpotlightClient,
   addUrl: string,
   accessToken: string,

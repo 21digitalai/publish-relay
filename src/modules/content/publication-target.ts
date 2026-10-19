@@ -6,6 +6,7 @@ import {
   tiktokCommercialContentSchema,
 } from '../providers/tiktok-publication-options.js';
 import { snapchatSpotlightContentSchema } from '../providers/snapchat-spotlight-content.js';
+import { snapchatStoryContentSchema } from '../providers/snapchat-story-content.js';
 
 const accountId = z.uuid();
 const mediaId = z.uuid();
@@ -101,7 +102,7 @@ export const publicationTargetSchema = z.discriminatedUnion('provider', [
   z.object({
     provider: z.literal('snapchat'),
     providerAccountId: accountId,
-    content: snapchatSpotlightContentSchema,
+    content: z.union([snapchatSpotlightContentSchema, snapchatStoryContentSchema]),
   }),
 ]);
 

@@ -55,13 +55,13 @@ function uploadPath(profileId: string, mediaId: string, raw: string): string {
 }
 
 export class SnapchatSpotlightClient {
-  private readonly request: typeof fetch;
+  protected readonly request: typeof fetch;
 
   public constructor(fetcher: typeof fetch = fetch) {
     this.request = fetcher;
   }
 
-  private async send(url: string, accessToken: string, init: RequestInit) {
+  protected async send(url: string, accessToken: string, init: RequestInit) {
     let response: Response;
     try {
       response = await this.request(url, {
@@ -76,7 +76,20 @@ export class SnapchatSpotlightClient {
     } catch {
       throw new SnapchatSpotlightRequestError('unknown');
     }
-    if (!response.ok) throw classify(response.status, response);
+    if (!response.ok) {
+      // Snap may report this after a prior POST already entered processing. The
+      // HTTP 4xx alone is not proof that publication did not happen.
+      if (response.status === 400 || response.status === 409) {
+        try {
+          const body = (await response.clone().json()) as { error_code?: unknown };
+          if (body.error_code === 'MEDIA_POSTING_ALREADY_IN_PROGRESS')
+            throw new SnapchatSpotlightRequestError('unknown');
+        } catch (error) {
+          if (error instanceof SnapchatSpotlightRequestError) throw error;
+        }
+      }
+      throw classify(response.status, response);
+    }
     try {
       return (await response.json()) as unknown;
     } catch {
@@ -90,6 +103,7 @@ export class SnapchatSpotlightClient {
     name: string;
     key: Buffer;
     iv: Buffer;
+    mediaType?: 'VIDEO' | 'IMAGE';
   }): Promise<{ mediaId: string; addUrl: string; finalizeUrl: string }> {
     const body = await this.send(
       `${ORIGIN}/v1/public_profiles/${input.profileId}/media`,
@@ -98,7 +112,7 @@ export class SnapchatSpotlightClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'VIDEO',
+          type: input.mediaType ?? 'VIDEO',
           name: input.name,
           key: input.key.toString('base64'),
           iv: input.iv.toString('base64'),

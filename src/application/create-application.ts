@@ -43,6 +43,7 @@ import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.rou
 import type { SnapchatHttpClient } from '../modules/providers/snapchat-http-client.js';
 import { registerSnapchatOauthRoutes } from '../modules/providers/snapchat-oauth.routes.js';
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
+import { registerTikTokDraftRoutes } from '../modules/providers/tiktok-draft.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
@@ -249,6 +250,7 @@ function registerBrowserRoutes(
       ...(tiktokOauth ? { tiktok: { keys: tiktokOauth.keys, client: tiktokOauth.client } } : {}),
     });
     registerTikTokConsentRoutes(application, { auth, database });
+    registerTikTokDraftRoutes(application, { auth, database, actionPolicy });
     registerBrowserWorkflowRoutes(application, {
       auth,
       database,

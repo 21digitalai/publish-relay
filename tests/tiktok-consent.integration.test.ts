@@ -16,7 +16,9 @@ import {
 import { createPost } from '../src/modules/content/post.service.js';
 import { registerTikTokConsentRoutes } from '../src/modules/providers/tiktok-consent.routes.js';
 import { prepareTikTokDraft } from '../src/modules/providers/tiktok-draft.service.js';
+import { registerTikTokDraftRoutes } from '../src/modules/providers/tiktok-draft.routes.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
+import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 
 const migrationNames = [
   '0000_identity_tenancy',
@@ -30,6 +32,7 @@ const migrationNames = [
   '0008_handy_shen',
   '0009_generalize_oauth_transaction_secret',
   '0016_common_barracuda',
+  '0017_dark_whizzer',
   '0019_media_retention_lifecycle',
   '0022_truthful_post_actors',
   '0024_mp4_media_metadata',
@@ -175,6 +178,50 @@ it('prepares one canonical unscheduled TikTok revision before human consent', as
   expect(
     (await pg.query('select id from publication_jobs where post_id = $1', [prepared.postId])).rows,
   ).toHaveLength(0);
+});
+
+it('prepares a draft through session, CSRF and idempotent browser admission', async () => {
+  const app = Fastify();
+  await app.register(cookie);
+  const auth = {
+    authenticate: (tenant: string) =>
+      Promise.resolve(tenant === workspaceId ? { workspaceId, userId, role: 'owner' } : null),
+  } as unknown as AuthService;
+  registerTikTokDraftRoutes(app, { auth, database: db, actionPolicy: allowAllActionPolicy });
+  const payload = { accountId, content: JSON.parse(content()) as Record<string, unknown> };
+  const url = '/api/workflow/tiktok-drafts';
+  const headers = {
+    cookie: `publish_relay_session=${workspaceId}.token; publish_relay_csrf=csrf`,
+    'x-csrf-token': 'csrf',
+    'idempotency-key': 'draft-replay-key',
+  };
+  expect((await app.inject({ method: 'POST', url, payload })).statusCode).toBe(401);
+  expect(
+    (await app.inject({ method: 'POST', url, payload, headers: { cookie: headers.cookie } }))
+      .statusCode,
+  ).toBe(403);
+  const first = await app.inject({ method: 'POST', url, payload, headers });
+  expect(first.statusCode, first.body).toBe(201);
+  const second = await app.inject({ method: 'POST', url, payload, headers });
+  expect(second.statusCode).toBe(201);
+  expect(second.headers['idempotency-replayed']).toBe('true');
+  expect(second.json()).toEqual(first.json());
+  const prepared = first.json<{ data: { postId: string } }>().data;
+  expect(
+    (await pg.query('select count(*)::int as count from posts where id = $1', [prepared.postId]))
+      .rows[0],
+  ).toEqual({ count: 1 });
+  expect(
+    (
+      await app.inject({
+        method: 'POST',
+        url,
+        payload: { ...payload, content: { ...payload.content, caption: 'Changed' } },
+        headers,
+      })
+    ).statusCode,
+  ).toBe(409);
+  await app.close();
 });
 
 describe('revision-bound TikTok consent', () => {

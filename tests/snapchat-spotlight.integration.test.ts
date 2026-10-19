@@ -366,6 +366,14 @@ it('records a Story request ID as unknown/manual, never as a published post ID',
     provider_request_id: '00000000-0000-4000-8000-000000000201',
     external_post_id: null,
   });
+  expect(
+    (
+      await pg.query<{ artifact_status: string; external_object_id: string | null }>(
+        'select artifact_status, external_object_id from provider_staging_artifacts where job_id = $1',
+        [jobId],
+      )
+    ).rows[0],
+  ).toEqual({ artifact_status: 'media', external_object_id: null });
   expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:02:00Z'))).toBe(0);
   expect(stageAndPostSnapchatStory).toHaveBeenCalledTimes(1);
 });

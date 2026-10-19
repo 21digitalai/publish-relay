@@ -85,9 +85,9 @@ async function dispatchStory(
         publication.mayHaveStarted = true;
         return Promise.resolve();
       },
-      onStoryPosted: async (id) => {
+      onStoryPosted: (id) => {
         publication.requestId = id;
-        await recordSnapchatArtifact(runtime, job.workspaceId, artifactId, 'posted', id);
+        return Promise.resolve();
       },
     });
     publication.requestId = posted.requestId;

@@ -323,57 +323,71 @@ export async function verifyTikTokPublicationConsent(
     actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
   },
 ): Promise<z.infer<typeof receiptPayloadSchema>> {
-  return withTenantTransaction(database, input, async (transaction) => {
-    await lockAccountGrant(transaction, input.workspaceId, input.accountId);
-    const receipt = await transaction.execute<{
-      payload: unknown;
-      payloadHash: string;
-      userId: string;
-      mediaSha256: string;
-      credentialVersion: number;
-      consentedAt: Date;
-    }>(sql`select payload, payload_hash as "payloadHash", user_id as "userId",
+  return withTenantTransaction(database, input, (transaction) =>
+    verifyTikTokPublicationConsentInTransaction(transaction, input),
+  );
+}
+
+export async function verifyTikTokPublicationConsentInTransaction(
+  transaction: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    postId: string;
+    revisionId: string;
+    accountId: string;
+    receiptId: string;
+    actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
+  },
+): Promise<z.infer<typeof receiptPayloadSchema>> {
+  await lockAccountGrant(transaction, input.workspaceId, input.accountId);
+  const receipt = await transaction.execute<{
+    payload: unknown;
+    payloadHash: string;
+    userId: string;
+    mediaSha256: string;
+    credentialVersion: number;
+    consentedAt: Date;
+  }>(sql`select payload, payload_hash as "payloadHash", user_id as "userId",
       media_sha256 as "mediaSha256", credential_version as "credentialVersion",
       consented_at as "consentedAt" from publication_consents
       where workspace_id = ${input.workspaceId} and id = ${input.receiptId}
         and post_id = ${input.postId} and revision_id = ${input.revisionId}
         and account_id = ${input.accountId}`);
-    const row = receipt.rows[0];
-    const parsed = receiptPayloadSchema.safeParse(row?.payload);
-    if (
-      !row ||
-      !parsed.success ||
-      (input.actor.type === 'user' && input.actor.id !== row.userId) ||
-      hashPayload(parsed.data) !== row.payloadHash ||
-      parsed.data.mediaSha256 !== row.mediaSha256 ||
-      parsed.data.credentialVersion !== row.credentialVersion ||
-      parsed.data.workspaceId !== input.workspaceId ||
-      parsed.data.userId !== row.userId ||
-      parsed.data.postId !== input.postId ||
-      parsed.data.revisionId !== input.revisionId ||
-      parsed.data.accountId !== input.accountId
-    )
-      throw new TikTokConsentInvalidError();
-    const member = await transaction.execute(sql`select 1 from memberships
+  const row = receipt.rows[0];
+  const parsed = receiptPayloadSchema.safeParse(row?.payload);
+  if (
+    !row ||
+    !parsed.success ||
+    (input.actor.type === 'user' && input.actor.id !== row.userId) ||
+    hashPayload(parsed.data) !== row.payloadHash ||
+    parsed.data.mediaSha256 !== row.mediaSha256 ||
+    parsed.data.credentialVersion !== row.credentialVersion ||
+    parsed.data.workspaceId !== input.workspaceId ||
+    parsed.data.userId !== row.userId ||
+    parsed.data.postId !== input.postId ||
+    parsed.data.revisionId !== input.revisionId ||
+    parsed.data.accountId !== input.accountId
+  )
+    throw new TikTokConsentInvalidError();
+  const member = await transaction.execute(sql`select 1 from memberships
       where workspace_id = ${input.workspaceId} and user_id = ${row.userId}
         and role in ('owner', 'admin', 'editor')`);
-    if (member.rows.length !== 1) throw new TikTokConsentInvalidError();
-    const source = await readConsentSource(transaction, {
-      workspaceId: input.workspaceId,
-      postId: input.postId,
-      revisionId: input.revisionId,
-      accountId: input.accountId,
-      snapshotId: parsed.data.capabilitySnapshotId,
-    });
-    const content = validateSource(source, parsed.data, new Date(row.consentedAt));
-    if (
-      source.mediaSha256 !== row.mediaSha256 ||
-      source.credentialVersion !== row.credentialVersion ||
-      content.caption !== parsed.data.caption
-    )
-      throw new TikTokConsentInvalidError();
-    return parsed.data;
+  if (member.rows.length !== 1) throw new TikTokConsentInvalidError();
+  const source = await readConsentSource(transaction, {
+    workspaceId: input.workspaceId,
+    postId: input.postId,
+    revisionId: input.revisionId,
+    accountId: input.accountId,
+    snapshotId: parsed.data.capabilitySnapshotId,
   });
+  const content = validateSource(source, parsed.data, new Date(row.consentedAt));
+  if (
+    source.mediaSha256 !== row.mediaSha256 ||
+    source.credentialVersion !== row.credentialVersion ||
+    content.caption !== parsed.data.caption
+  )
+    throw new TikTokConsentInvalidError();
+  return parsed.data;
 }
 
 export async function getTikTokPublicationConsent(

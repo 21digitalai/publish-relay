@@ -11,6 +11,7 @@ import {
   issueTikTokPublicationConsent,
   tiktokConsentRequestSchema,
   verifyTikTokPublicationConsent,
+  verifyTikTokPublicationConsentInTransaction,
   type TikTokConsentCommand,
 } from '../src/modules/providers/tiktok-consent.service.js';
 import { createPost } from '../src/modules/content/post.service.js';
@@ -19,6 +20,7 @@ import { prepareTikTokDraft } from '../src/modules/providers/tiktok-draft.servic
 import { registerTikTokDraftRoutes } from '../src/modules/providers/tiktok-draft.routes.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
 import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 
 const migrationNames = [
   '0000_identity_tenancy',
@@ -175,6 +177,17 @@ it('prepares one canonical unscheduled TikTok revision before human consent', as
     options: draft.content.options,
   });
   expect(receipt.id).toBeTruthy();
+  const verified = await withTenantTransaction(db, { workspaceId }, (transaction) =>
+    verifyTikTokPublicationConsentInTransaction(transaction, {
+      workspaceId,
+      postId: prepared.postId,
+      revisionId: prepared.revisionId,
+      accountId,
+      receiptId: receipt.id,
+      actor: { type: 'user', id: userId },
+    }),
+  );
+  expect(verified.revisionId).toBe(prepared.revisionId);
   expect(
     (await pg.query('select id from publication_jobs where post_id = $1', [prepared.postId])).rows,
   ).toHaveLength(0);

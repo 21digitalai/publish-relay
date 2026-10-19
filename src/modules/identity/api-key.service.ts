@@ -31,7 +31,10 @@ export interface ApiKeySummary extends ApiKeyPrincipal {
   createdAt: Date;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
+  capabilityVersion: number;
 }
+
+export type CapabilityUpdateResult = 'updated' | 'not_found' | 'conflict';
 
 export interface ApiKeyStore {
   create(input: {
@@ -59,6 +62,14 @@ export interface ApiKeyStore {
     revokedAt: Date;
     requestId: string;
   }): Promise<boolean>;
+  updateCapabilities(input: {
+    workspaceId: string;
+    keyId: string;
+    updatedByUserId: string;
+    expectedVersion: number;
+    capabilities: ApiKeyCapability[];
+    requestId: string;
+  }): Promise<CapabilityUpdateResult>;
 }
 
 export class ApiKeyAuthorizationError extends Error {
@@ -120,6 +131,21 @@ export class ApiKeyService {
 
   public list(workspaceId: string, userId: string): Promise<ApiKeySummary[]> {
     return this.store.list(workspaceId, userId);
+  }
+
+  public updateCapabilities(input: {
+    workspaceId: string;
+    keyId: string;
+    updatedByUserId: string;
+    expectedVersion: number;
+    capabilities: readonly string[];
+    requestId: string;
+  }): Promise<CapabilityUpdateResult> {
+    if (input.capabilities.length === 0) throw new Error('At least one capability is required');
+    return this.store.updateCapabilities({
+      ...input,
+      capabilities: parseApiKeyCapabilities(input.capabilities),
+    });
   }
 
   public async requireCapability(

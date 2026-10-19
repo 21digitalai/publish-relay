@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
 import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
-import type { ApiKeyCapability } from './api-key.js';
+import { API_KEY_CAPABILITIES, type ApiKeyCapability } from './api-key.js';
 import type { ApiKeyPrincipal, ApiKeyService } from './api-key.service.js';
 import type { AuthService } from './auth.service.js';
 import { authorizeRequest, CSRF_COOKIE } from './auth.routes.js';
@@ -13,10 +13,17 @@ import { authorizeMachineRequest } from './machine-auth.js';
 
 const createKeySchema = z.object({
   label: z.string().trim().min(1).max(100),
-  capabilities: z.array(z.string()).min(1),
+  capabilities: z.array(z.enum(API_KEY_CAPABILITIES)).min(1),
   expiresAt: z.iso.datetime().nullable().optional(),
 });
 const keyParamsSchema = z.object({ keyId: z.uuid() });
+export const updateCapabilitiesSchema = z.object({
+  capabilities: z
+    .array(z.enum(API_KEY_CAPABILITIES))
+    .min(1)
+    .refine((items) => new Set(items).size === items.length),
+  expectedVersion: z.number().int().positive(),
+});
 
 function hasValidCsrf(request: FastifyRequest): boolean {
   return verifyCsrfToken(
@@ -102,7 +109,10 @@ export function registerApiKeyRoutes(
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     void reply.header('Cache-Control', 'no-store');
     return {
-      data: { items: await service.list(identity.workspaceId, identity.userId) },
+      data: {
+        items: await service.list(identity.workspaceId, identity.userId),
+        eligibleCapabilities: API_KEY_CAPABILITIES,
+      },
       error: null,
     };
   });
@@ -142,5 +152,36 @@ export function registerApiKeyRoutes(
     return revoked
       ? { data: { revoked: true }, error: null }
       : reply.code(404).send({ data: null, error: 'API key not found' });
+  });
+
+  application.patch('/api/settings/api-keys/:keyId', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'workspace:manage');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!hasValidCsrf(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const params = keyParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ data: null, error: 'API key not found' });
+    const body = updateCapabilitiesSchema.safeParse(request.body);
+    if (!body.success)
+      return reply.code(400).send({ data: null, error: 'Invalid capabilities or version' });
+    const result = await service.updateCapabilities({
+      workspaceId: identity.workspaceId,
+      keyId: params.data.keyId,
+      updatedByUserId: identity.userId,
+      expectedVersion: body.data.expectedVersion,
+      capabilities: body.data.capabilities,
+      requestId: request.id,
+    });
+    void reply.header('Cache-Control', 'no-store');
+    if (result === 'not_found')
+      return reply.code(404).send({ data: null, error: 'API key not found' });
+    if (result === 'conflict')
+      return reply
+        .code(409)
+        .send({ data: null, error: 'API key changed or was revoked. Refresh and try again.' });
+    return {
+      data: { updated: true, capabilityVersion: body.data.expectedVersion + 1 },
+      error: null,
+    };
   });
 }

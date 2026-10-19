@@ -217,6 +217,7 @@ export const apiKeys = pgTable(
     prefix: text('prefix').notNull(),
     secretHash: text('secret_hash').notNull(),
     capabilities: text('capabilities').array().notNull().default([]),
+    capabilityVersion: integer('capability_version').notNull().default(1),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),

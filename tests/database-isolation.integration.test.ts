@@ -24,6 +24,7 @@ const migrationUrls = [
   new URL('../migrations/0042_long_pepper_potts.sql', import.meta.url),
   new URL('../migrations/0043_workspace_membership_listing.sql', import.meta.url),
   new URL('../migrations/0058_workspace_tombstone.sql', import.meta.url),
+  new URL('../migrations/0076_api_key_capability_version.sql', import.meta.url),
 ];
 let database: PGlite;
 
@@ -352,6 +353,72 @@ describe('PostgreSQL tenant isolation', () => {
     );
     await database.exec(`UPDATE workspaces SET deleted_at = now() WHERE id = '${workspaceA}'`);
     await expect(service.authenticate(workspaceA, created.token)).resolves.toBeNull();
+  });
+
+  it('replaces key permissions atomically with version conflicts and immediate authentication effect', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000051';
+    const otherWorkspaceId = '00000000-0000-4000-8000-000000000052';
+    const userId = '00000000-0000-4000-8000-000000000053';
+    await database.exec(`
+      INSERT INTO users (id, email, password_hash) VALUES ('${userId}', 'edit-key@example.test', 'hash');
+      INSERT INTO workspaces (id, name, slug) VALUES
+        ('${workspaceId}', 'Key Workspace', 'key-workspace'),
+        ('${otherWorkspaceId}', 'Other Workspace', 'other-workspace');
+      SET ROLE publish_relay_app;
+    `);
+    const service = new ApiKeyService(
+      createPostgresApiKeyStore(drizzle(database) as unknown as NodePgDatabase),
+    );
+    const created = await service.create({
+      workspaceId,
+      createdByUserId: userId,
+      label: 'Agent',
+      capabilities: ['schedules:read'],
+      requestId: 'create',
+    });
+    const input = {
+      workspaceId,
+      keyId: created.key.id,
+      updatedByUserId: userId,
+      expectedVersion: 1,
+      capabilities: ['schedules:write'],
+      requestId: 'edit',
+    };
+    await expect(
+      service.updateCapabilities({ ...input, workspaceId: otherWorkspaceId }),
+    ).resolves.toBe('not_found');
+    await expect(service.updateCapabilities(input)).resolves.toBe('updated');
+    await expect(service.authenticate(workspaceId, created.token)).resolves.toMatchObject({
+      capabilities: ['schedules:write'],
+    });
+    await expect(service.updateCapabilities(input)).resolves.toBe('conflict');
+    await withTenantTransaction(
+      drizzle(database) as unknown as NodePgDatabase,
+      { workspaceId },
+      async (transaction) => {
+        const version = await transaction.execute(
+          sql`SELECT capability_version FROM api_keys WHERE id = ${created.key.id}::uuid`,
+        );
+        expect(version.rows[0]).toMatchObject({ capability_version: 2 });
+        const audit = await transaction.execute(
+          sql`SELECT metadata FROM audit_events WHERE action = 'api_key.capabilities_changed'`,
+        );
+        expect(audit.rows).toHaveLength(1);
+        expect(audit.rows[0]).toMatchObject({
+          metadata: { oldCapabilities: ['schedules:read'], newCapabilities: ['schedules:write'] },
+        });
+      },
+    );
+    await service.revoke({
+      workspaceId,
+      keyId: created.key.id,
+      revokedByUserId: userId,
+      requestId: 'revoke',
+    });
+    await expect(service.updateCapabilities({ ...input, expectedVersion: 2 })).resolves.toBe(
+      'conflict',
+    );
+    await expect(service.authenticate(workspaceId, created.token)).resolves.toBeNull();
   });
 
   it('tombstones only an empty owned non-current workspace and invalidates its sessions', async () => {

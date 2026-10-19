@@ -94,6 +94,7 @@ export function createPostgresApiKeyStore(database: NodePgDatabase): ApiKeyStore
             label: apiKeys.label,
             prefix: apiKeys.prefix,
             capabilities: apiKeys.capabilities,
+            capabilityVersion: apiKeys.capabilityVersion,
             expiresAt: apiKeys.expiresAt,
             createdAt: apiKeys.createdAt,
             lastUsedAt: apiKeys.lastUsedAt,
@@ -111,7 +112,7 @@ export function createPostgresApiKeyStore(database: NodePgDatabase): ApiKeyStore
       await withTenantTransaction(database, { workspaceId }, async (transaction) => {
         await transaction
           .update(apiKeys)
-          .set({ lastUsedAt: usedAt, updatedAt: usedAt })
+          .set({ lastUsedAt: usedAt })
           .where(and(eq(apiKeys.workspaceId, workspaceId), eq(apiKeys.id, keyId)));
       });
     },
@@ -157,6 +158,57 @@ export function createPostgresApiKeyStore(database: NodePgDatabase): ApiKeyStore
             metadata: {},
           });
           return true;
+        },
+      );
+    },
+    async updateCapabilities(input) {
+      return withTenantTransaction(
+        database,
+        { workspaceId: input.workspaceId, userId: input.updatedByUserId },
+        async (transaction) => {
+          const current = await transaction
+            .select({
+              capabilities: apiKeys.capabilities,
+              version: apiKeys.capabilityVersion,
+              revokedAt: apiKeys.revokedAt,
+            })
+            .from(apiKeys)
+            .where(and(eq(apiKeys.workspaceId, input.workspaceId), eq(apiKeys.id, input.keyId)))
+            .limit(1);
+          if (!current[0]) return 'not_found';
+          if (current[0].revokedAt || current[0].version !== input.expectedVersion)
+            return 'conflict';
+          const changed = await transaction
+            .update(apiKeys)
+            .set({
+              capabilities: input.capabilities,
+              capabilityVersion: input.expectedVersion + 1,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(apiKeys.workspaceId, input.workspaceId),
+                eq(apiKeys.id, input.keyId),
+                eq(apiKeys.capabilityVersion, input.expectedVersion),
+                isNull(apiKeys.revokedAt),
+              ),
+            )
+            .returning({ id: apiKeys.id });
+          if (!changed[0]) return 'conflict';
+          await transaction.insert(auditEvents).values({
+            workspaceId: input.workspaceId,
+            actorType: 'user',
+            actorId: input.updatedByUserId,
+            action: 'api_key.capabilities_changed',
+            targetType: 'api_key',
+            targetId: input.keyId,
+            requestId: input.requestId,
+            metadata: {
+              oldCapabilities: current[0].capabilities,
+              newCapabilities: input.capabilities,
+            },
+          });
+          return 'updated';
         },
       );
     },

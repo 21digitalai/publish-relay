@@ -1924,19 +1924,6 @@ function AccountsPage() {
   );
 }
 
-const KEY_PRESETS = {
-  Read: ['schedules:read', 'destinations:read', 'audit:read'],
-  Publish: ['schedules:read', 'schedules:write', 'content:write', 'publishes:submit'],
-  Full: [
-    'schedules:read',
-    'schedules:write',
-    'content:write',
-    'publishes:submit',
-    'destinations:read',
-    'audit:read',
-  ],
-} as const;
-
 interface ManagedApiKey {
   id: string;
   label: string;
@@ -1947,6 +1934,7 @@ interface ManagedApiKey {
   lastUsedAt: string | null;
   expiresAt: string | null;
   revokedAt: string | null;
+  capabilityVersion: number;
 }
 
 interface DelegatedGrant {
@@ -1971,8 +1959,14 @@ function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const settingsLoadErrorReported = useRef(false);
   const [secret, setSecret] = useState<string | null>(null);
-  const [preset, setPreset] = useState<keyof typeof KEY_PRESETS>('Publish');
-  const [capabilities, setCapabilities] = useState<string[]>([...KEY_PRESETS.Publish]);
+  const [eligibleCapabilities, setEligibleCapabilities] = useState<string[]>([]);
+  const [capabilities, setCapabilities] = useState<string[]>([]);
+  const [editingKey, setEditingKey] = useState<{
+    id: string;
+    version: number;
+    capabilities: string[];
+  } | null>(null);
+  const [savingKeyId, setSavingKeyId] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [expiryDays, setExpiryDays] = useState<number | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
@@ -1995,12 +1989,13 @@ function SettingsPage() {
   const loadApiKeys = async () => {
     const response = await fetch('/api/settings/api-keys');
     const result = (await response.json()) as {
-      data: { items: ManagedApiKey[] } | null;
+      data: { items: ManagedApiKey[]; eligibleCapabilities: string[] } | null;
       error: string | null;
     };
     if (!response.ok || !result.data)
       throw new Error(result.error ?? 'API keys could not be loaded');
     setKeys(result.data.items);
+    setEligibleCapabilities(result.data.eligibleCapabilities);
     setKeyListRefreshFailed(false);
   };
   useEffect(() => {
@@ -2017,8 +2012,12 @@ function SettingsPage() {
         const primary = response[0];
         const result = (await primary.json()) as { data: unknown; error: string | null };
         if (!primary.ok) throw new Error(result.error ?? 'Settings could not be loaded');
-        if (isAutomation) setKeys((result.data as { items: ManagedApiKey[] }).items);
-        else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
+        if (isAutomation) {
+          const keyData = result.data as { items: ManagedApiKey[]; eligibleCapabilities: string[] };
+          setKeys(keyData.items);
+          setEligibleCapabilities(keyData.eligibleCapabilities);
+          setCapabilities([...keyData.eligibleCapabilities]);
+        } else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
         else {
           setWorkspace(result.data as typeof workspace);
           const workspaceResponse = response[1];
@@ -2180,6 +2179,49 @@ function SettingsPage() {
       }
     } finally {
       setIsCreatingKey(false);
+    }
+  };
+  const saveKeyPermissions = async () => {
+    if (!editingKey || savingKeyId || editingKey.capabilities.length === 0) return;
+    setSavingKeyId(editingKey.id);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/settings/api-keys/${editingKey.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({
+          capabilities: editingKey.capabilities,
+          expectedVersion: editingKey.version,
+        }),
+      });
+      const result = (await response.json()) as { error: string | null };
+      if (response.status === 409) {
+        setEditingKey(null);
+        try {
+          await loadApiKeys();
+        } catch {
+          setKeyListRefreshFailed(true);
+        }
+        throw new Error(
+          result.error ?? 'This key changed. Review its current permissions and try again.',
+        );
+      }
+      if (!response.ok) throw new Error(result.error ?? 'API key permissions could not be saved');
+      setEditingKey(null);
+      setMessage('API key permissions saved');
+      try {
+        await loadApiKeys();
+      } catch {
+        setKeyListRefreshFailed(true);
+        showAnalyticsError(
+          setMessage,
+          'API key permissions saved, but the key list could not refresh.',
+          'auth',
+          'network',
+        );
+      }
+    } finally {
+      setSavingKeyId(null);
     }
   };
   const run = (action: () => Promise<void>) => {
@@ -2364,30 +2406,13 @@ function SettingsPage() {
                 }}
               />
             </label>
-            <div className="field-label">
-              Capability preset
-              <div className="segmented-control">
-                {Object.keys(KEY_PRESETS).map((name) => (
-                  <button
-                    key={name}
-                    className={`preset-button ${preset === name ? 'active' : ''}`}
-                    aria-pressed={preset === name}
-                    onClick={() => {
-                      const nextPreset = name as keyof typeof KEY_PRESETS;
-                      setPreset(nextPreset);
-                      setCapabilities([...KEY_PRESETS[nextPreset]]);
-                    }}
-                  >
-                    {name}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <p className="field-hint">{capabilities.join(' · ')}</p>
-            <details className="advanced-capabilities">
-              <summary>Advanced capabilities</summary>
+            <div className="advanced-capabilities">
+              <p className="field-label">Permissions</p>
+              <p className="field-hint">
+                All available permissions are on by default. Turn off any this key should not have.
+              </p>
               <div className="capability-grid">
-                {KEY_PRESETS.Full.map((capability) => {
+                {eligibleCapabilities.map((capability) => {
                   const selected = capabilities.includes(capability);
                   return (
                     <button
@@ -2407,7 +2432,7 @@ function SettingsPage() {
                   );
                 })}
               </div>
-            </details>
+            </div>
             <div className="field-label">
               Expiry
               <div className="segmented-control">
@@ -2431,7 +2456,7 @@ function SettingsPage() {
             </div>
             <button
               className="primary-button"
-              disabled={!label.trim() || isCreatingKey}
+              disabled={!label.trim() || capabilities.length === 0 || isCreatingKey}
               onClick={() => {
                 run(createKey);
               }}
@@ -2494,6 +2519,57 @@ function SettingsPage() {
                           : 'Never used'}
                     </small>
                   </div>
+                  {!key.revokedAt && editingKey?.id === key.id && (
+                    <div className="api-key-permission-editor">
+                      <p className="field-label">Edit permissions</p>
+                      <div className="capability-grid">
+                        {eligibleCapabilities.map((capability) => (
+                          <button
+                            key={capability}
+                            className={`capability-button ${editingKey.capabilities.includes(capability) ? 'active' : ''}`}
+                            aria-pressed={editingKey.capabilities.includes(capability)}
+                            disabled={savingKeyId === key.id}
+                            onClick={() => {
+                              setEditingKey(
+                                (current) =>
+                                  current && {
+                                    ...current,
+                                    capabilities: current.capabilities.includes(capability)
+                                      ? current.capabilities.filter((value) => value !== capability)
+                                      : [...current.capabilities, capability],
+                                  },
+                              );
+                            }}
+                          >
+                            {capability}
+                          </button>
+                        ))}
+                      </div>
+                      {editingKey.capabilities.length === 0 && (
+                        <p className="form-summary" role="alert">
+                          Select at least one permission.
+                        </p>
+                      )}
+                      <button
+                        className="primary-button"
+                        disabled={savingKeyId === key.id || editingKey.capabilities.length === 0}
+                        onClick={() => {
+                          run(saveKeyPermissions);
+                        }}
+                      >
+                        {savingKeyId === key.id ? 'Saving…' : 'Save permissions'}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={savingKeyId === key.id}
+                        onClick={() => {
+                          setEditingKey(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                   {!key.revokedAt &&
                     (revokeId === key.id ? (
                       <div className="inline-confirm">
@@ -2534,14 +2610,30 @@ function SettingsPage() {
                         </button>
                       </div>
                     ) : (
-                      <button
-                        className="secondary-button"
-                        onClick={() => {
-                          setRevokeId(key.id);
-                        }}
-                      >
-                        Revoke
-                      </button>
+                      <span className="api-key-actions">
+                        <button
+                          className="secondary-button"
+                          onClick={() => {
+                            setRevokeId(null);
+                            setEditingKey({
+                              id: key.id,
+                              version: key.capabilityVersion,
+                              capabilities: [...key.capabilities],
+                            });
+                          }}
+                        >
+                          Edit permissions
+                        </button>
+                        <button
+                          className="secondary-button"
+                          onClick={() => {
+                            setEditingKey(null);
+                            setRevokeId(key.id);
+                          }}
+                        >
+                          Revoke
+                        </button>
+                      </span>
                     ))}
                 </article>
               ))

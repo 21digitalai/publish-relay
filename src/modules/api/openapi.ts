@@ -11,6 +11,7 @@ import {
   postValidationRequestSchema,
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
+import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
 const accountSchema = z.union([
@@ -125,6 +126,40 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
     openapi: '3.1.0',
     info: { title: 'Publish Relay API', version: '1.1.0' },
     paths: {
+      '/api/settings/api-keys/{keyId}': {
+        patch: {
+          operationId: 'updateApiKeyCapabilities',
+          security: [{ browserSession: [], csrfToken: [] }],
+          description:
+            'Browser-session owner/admin exact permission replacement; never returns key material. Not available to API keys.',
+          parameters: [
+            {
+              name: 'keyId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'X-CSRF-Token', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(updateCapabilitiesSchema) },
+            },
+          },
+          responses: {
+            '200': {
+              description:
+                'Capabilities replaced; returns updated flag and new capability version only',
+            },
+            '400': { description: 'Invalid, empty, or duplicate capability set or version' },
+            '401': { description: 'Browser authentication or workspace-management role required' },
+            '403': { description: 'CSRF validation failed' },
+            '404': { description: 'Key absent from active workspace' },
+            '409': { description: 'Version stale or key revoked' },
+          },
+        },
+      },
       '/api/workflow/tiktok-consents': {
         post: {
           operationId: 'issueTikTokPublicationConsent',

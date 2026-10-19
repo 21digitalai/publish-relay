@@ -189,6 +189,7 @@ describe('API key HTTP boundary', () => {
       token: 'pr_new.one-time-secret',
     });
     const revoke = vi.fn().mockResolvedValue(true);
+    const updateCapabilities = vi.fn().mockResolvedValue('updated');
     const authenticate = vi.fn().mockResolvedValue({
       userId: 'user-1',
       workspaceId: 'workspace-1',
@@ -198,7 +199,7 @@ describe('API key HTTP boundary', () => {
     await application.register(cookie);
     registerApiKeyRoutes(
       application,
-      { list, create, revoke } as unknown as ApiKeyService,
+      { list, create, revoke, updateCapabilities } as unknown as ApiKeyService,
       undefined,
       { authenticate } as unknown as AuthService,
     );
@@ -213,6 +214,70 @@ describe('API key HTTP boundary', () => {
     expect(listed.statusCode).toBe(200);
     expect(listed.headers['cache-control']).toBe('no-store');
     expect(listed.json()).not.toHaveProperty('data.items.0.secretHash');
+    const eligible = listed.json<{ data: { eligibleCapabilities: string[] } }>().data
+      .eligibleCapabilities;
+    expect(eligible).toContain('publishes:retry');
+    expect(eligible).toContain('audit:read');
+
+    const editUrl = '/api/settings/api-keys/00000000-0000-4000-8000-000000000001';
+    const editPayload = { capabilities: ['schedules:read', 'publishes:retry'], expectedVersion: 1 };
+    expect(
+      (
+        await application.inject({
+          method: 'PATCH',
+          url: editUrl,
+          headers: { cookie: cookies },
+          payload: editPayload,
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await application.inject({
+          method: 'PATCH',
+          url: editUrl,
+          headers: { cookie: cookies, 'x-csrf-token': 'csrf-token' },
+          payload: { capabilities: [], expectedVersion: 1 },
+        })
+      ).statusCode,
+    ).toBe(400);
+    const edited = await application.inject({
+      method: 'PATCH',
+      url: editUrl,
+      headers: { cookie: cookies, 'x-csrf-token': 'csrf-token' },
+      payload: editPayload,
+    });
+    expect(edited.statusCode).toBe(200);
+    expect(edited.json()).not.toHaveProperty('data.token');
+    expect(updateCapabilities).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        updatedByUserId: 'user-1',
+        capabilities: editPayload.capabilities,
+      }),
+    );
+    updateCapabilities.mockResolvedValueOnce('conflict');
+    expect(
+      (
+        await application.inject({
+          method: 'PATCH',
+          url: editUrl,
+          headers: { cookie: cookies, 'x-csrf-token': 'csrf-token' },
+          payload: editPayload,
+        })
+      ).statusCode,
+    ).toBe(409);
+    updateCapabilities.mockResolvedValueOnce('not_found');
+    expect(
+      (
+        await application.inject({
+          method: 'PATCH',
+          url: editUrl,
+          headers: { cookie: cookies, 'x-csrf-token': 'csrf-token' },
+          payload: editPayload,
+        })
+      ).statusCode,
+    ).toBe(404);
 
     const rejected = await application.inject({
       method: 'POST',

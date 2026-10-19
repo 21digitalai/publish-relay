@@ -1600,10 +1600,26 @@ textarea:focus-visible {
 }
 .api-key-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 16px;
   padding: 16px 0;
   border-top: 1px solid var(--border);
+}
+.api-key-permission-editor {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.api-key-permission-editor .capability-grid {
+  flex: 1 0 100%;
+}
+.api-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .api-key-row div:first-child {
   display: grid;

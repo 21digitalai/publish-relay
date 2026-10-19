@@ -3267,11 +3267,21 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   let workspaceOrderRequests = 0;
   let workspaceDeleteRequests = 0;
   let keys: Record<string, unknown>[] = [];
+  const eligibleCapabilities = [
+    'destinations:read',
+    'schedules:read',
+    'schedules:write',
+    'content:write',
+    'publishes:submit',
+    'publishes:retry',
+    'audit:read',
+  ];
   let workspaces = [
     { id: 'workspace-1', name: 'Atlas', slug: 'atlas', role: 'owner', position: 0 },
     { id: 'workspace-2', name: 'Relay', slug: 'relay', role: 'owner', position: 1 },
   ];
   let failNextKeyListRefresh = false;
+  let forceEditConflict = false;
   await establishWorkspaceSession(page);
   await page.route('**/api/workspaces/current', async (route) => {
     if (route.request().method() === 'PATCH') {
@@ -3360,6 +3370,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
           label: input.label,
           prefix: 'pr_new',
           capabilities: input.capabilities,
+          capabilityVersion: 1,
           createdByDisplayName: 'Avery',
           createdAt: '2026-09-01T00:00:00Z',
           lastUsedAt: null,
@@ -3385,6 +3396,33 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
       });
       return;
     }
+    if (route.request().method() === 'PATCH') {
+      const input = route.request().postDataJSON() as {
+        capabilities: string[];
+        expectedVersion: number;
+      };
+      const key = keys[0];
+      if (forceEditConflict || input.expectedVersion !== key?.capabilityVersion) {
+        forceEditConflict = false;
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: '{"data":null,"error":"API key changed or was revoked"}',
+        });
+        return;
+      }
+      keys = [
+        { ...key, capabilities: input.capabilities, capabilityVersion: input.expectedVersion + 1 },
+      ];
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { updated: true, capabilityVersion: input.expectedVersion + 1 },
+          error: null,
+        }),
+      });
+      return;
+    }
     if (failNextKeyListRefresh) {
       failNextKeyListRefresh = false;
       await route.fulfill({
@@ -3396,7 +3434,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
     }
     await route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ data: { items: keys }, error: null }),
+      body: JSON.stringify({ data: { items: keys, eligibleCapabilities }, error: null }),
     });
   });
   await page.route('**/api/settings/delegated-grants**', async (route) => {
@@ -3466,6 +3504,7 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   await page.getByRole('button', { name: 'Save workspace' }).click();
   await expect(page.getByRole('status')).toContainText('Workspace settings saved');
   await page.getByRole('link', { name: 'Automation' }).click();
+  await expect(page.locator('.advanced-capabilities .capability-button.active')).toHaveCount(7);
   await page.getByLabel('Key name').fill('Agent key');
   await page.getByRole('button', { name: 'Create key' }).click();
   await expect(page.getByRole('button', { name: 'Creating key…' })).toBeDisabled();
@@ -3475,6 +3514,27 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   await expect(page.getByText('Created 9/1/2026')).toBeVisible();
   await expect(page.getByText('Expires never')).toBeVisible();
   await expect(page.getByText('Capabilities:', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit permissions' }).click();
+  await page
+    .locator('.api-key-permission-editor .capability-button')
+    .filter({ hasText: 'audit:read' })
+    .click();
+  await page.screenshot({ path: testInfo.outputPath('settings-key-edit.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Save permissions' }).click();
+  await expect(page.locator('.form-summary[role="status"]')).toContainText(
+    'API key permissions saved',
+  );
+  await page.reload();
+  await expect(page.locator('.api-key-row')).toContainText('publishes:retry');
+  await expect(page.locator('.api-key-row')).not.toContainText('audit:read');
+  await page.getByRole('button', { name: 'Edit permissions' }).click();
+  forceEditConflict = true;
+  await page.getByRole('button', { name: 'Save permissions' }).click();
+  await expect(page.locator('.form-summary[role="status"]')).toContainText(
+    'API key changed or was revoked',
+  );
+  await expect(page.locator('.api-key-permission-editor')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('settings-key-conflict.png'), fullPage: true });
   await page.getByRole('button', { name: 'Revoke', exact: true }).click();
   await expect(page.getByText('Revoke this key?')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('settings-automation.png'), fullPage: true });

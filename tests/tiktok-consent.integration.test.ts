@@ -15,6 +15,7 @@ import {
 } from '../src/modules/providers/tiktok-consent.service.js';
 import { createPost } from '../src/modules/content/post.service.js';
 import { registerTikTokConsentRoutes } from '../src/modules/providers/tiktok-consent.routes.js';
+import { prepareTikTokDraft } from '../src/modules/providers/tiktok-draft.service.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
 
 const migrationNames = [
@@ -30,6 +31,7 @@ const migrationNames = [
   '0009_generalize_oauth_transaction_secret',
   '0016_common_barracuda',
   '0019_media_retention_lifecycle',
+  '0022_truthful_post_actors',
   '0024_mp4_media_metadata',
   '0025_lucky_legion',
   '0045_meta_destination_foundation',
@@ -131,6 +133,49 @@ beforeEach(async () => {
   `);
 });
 afterEach(async () => pg.close());
+
+it('prepares one canonical unscheduled TikTok revision before human consent', async () => {
+  const draft = {
+    workspaceId,
+    userId,
+    accountId,
+    requestId: 'draft-preparation',
+    content: {
+      schemaVersion: 1 as const,
+      kind: 'video' as const,
+      caption: 'Draft caption',
+      mediaId,
+      options: command().options,
+    },
+  };
+  await expect(prepareTikTokDraft(db, { ...draft, workspaceId: otherWorkspaceId })).rejects.toThrow(
+    'invalid',
+  );
+  await expect(
+    prepareTikTokDraft(db, {
+      ...draft,
+      content: { ...draft.content, mediaId: '00000000-0000-4000-8000-000000000499' },
+    }),
+  ).rejects.toThrow('invalid');
+  const prepared = await prepareTikTokDraft(db, draft);
+  const rows = await pg.query<{ content: unknown; job_count: number }>(
+    `select r.content, (select count(*)::int from publication_jobs j where j.post_id = p.id) as job_count
+     from posts p join post_revisions r on r.workspace_id = p.workspace_id and r.post_id = p.id
+     where p.id = $1`,
+    [prepared.postId],
+  );
+  expect(rows.rows).toEqual([{ content: draft.content, job_count: 0 }]);
+  const receipt = await issueTikTokPublicationConsent(db, {
+    ...command(),
+    postId: prepared.postId,
+    revisionId: prepared.revisionId,
+    options: draft.content.options,
+  });
+  expect(receipt.id).toBeTruthy();
+  expect(
+    (await pg.query('select id from publication_jobs where post_id = $1', [prepared.postId])).rows,
+  ).toHaveLength(0);
+});
 
 describe('revision-bound TikTok consent', () => {
   it('serves the real session/CSRF route against tenant data without machine or identity bypass', async () => {

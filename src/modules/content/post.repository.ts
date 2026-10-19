@@ -377,8 +377,21 @@ export async function createPostIntent(
   database: NodePgDatabase,
   input: PostRevisionInput & { workspaceId: string; userId: string },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[] }> {
-  const actor = persistedActor(input.actor, input.userId);
   await validateTargetOwnership(database, input);
+  const postId = await createPostRow(database, input);
+  const targets = await createRevisionTargets(database, {
+    ...input,
+    postId,
+    revisionNumber: 1,
+  });
+  return { postId, ...targets };
+}
+
+async function createPostRow(
+  database: NodePgDatabase,
+  input: { workspaceId: string; userId: string; actor?: PostRevisionInput['actor'] },
+): Promise<string> {
+  const actor = persistedActor(input.actor, input.userId);
   const rows = await database
     .insert(posts)
     .values({
@@ -392,12 +405,41 @@ export async function createPostIntent(
     .returning({ id: posts.id });
   const post = rows[0];
   if (!post) throw new Error('Post write returned no record');
-  const targets = await createRevisionTargets(database, {
-    ...input,
-    postId: post.id,
-    revisionNumber: 1,
+  return post.id;
+}
+
+export async function createUnscheduledPostRevision(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    userId: string;
+    actor?: PostRevisionInput['actor'];
+    content: Record<string, unknown>;
+    mediaId: string;
+  },
+): Promise<{ postId: string; revisionId: string }> {
+  const postId = await createPostRow(database, input);
+  const actor = persistedActor(input.actor, input.userId);
+  const revisions = await database
+    .insert(postRevisions)
+    .values({
+      workspaceId: input.workspaceId,
+      postId,
+      revisionNumber: 1,
+      content: input.content,
+      createdActorType: actor.type,
+      createdActorId: actor.id,
+    })
+    .returning({ id: postRevisions.id });
+  const revisionId = revisions[0]?.id;
+  if (!revisionId) throw new Error('Post revision write returned no record');
+  await database.insert(revisionMedia).values({
+    workspaceId: input.workspaceId,
+    revisionId,
+    mediaId: input.mediaId,
+    position: 0,
   });
-  return { postId: post.id, ...targets };
+  return { postId, revisionId };
 }
 
 async function revisePostIntentInternal(

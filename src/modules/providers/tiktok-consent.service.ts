@@ -26,7 +26,7 @@ const optionsSchema = z.strictObject({
   commercialContent: tiktokCommercialContentSchema,
   aiGenerated: z.boolean(),
 });
-const revisionContentSchema = z.object({
+export const tiktokRevisionContentSchema = z.object({
   schemaVersion: z.literal(1),
   kind: z.literal('video'),
   caption: z.string().max(TIKTOK_CAPTION_MAX_LENGTH),
@@ -184,7 +184,7 @@ function validateSource(
   input: Omit<TikTokConsentCommand, 'actor'>,
   now: Date,
 ) {
-  const content = revisionContentSchema.safeParse(source.content);
+  const content = tiktokRevisionContentSchema.safeParse(source.content);
   if (!content.success || source.currentRevisionId !== input.revisionId)
     throw new TikTokConsentInvalidError();
   if (

@@ -1,4 +1,5 @@
 import type { FastifyRequest } from 'fastify';
+import { z } from 'zod';
 
 import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
 import type { ApiKeyCapability } from './api-key.js';
@@ -36,7 +37,12 @@ export async function authorizeMachineRequest(
 ): Promise<MachinePrincipal | null> {
   const expectedWorkspaceId = request.headers['x-publish-relay-workspace'];
   const token = readBearerToken(request);
-  if (typeof expectedWorkspaceId !== 'string' || !expectedWorkspaceId || !token) return null;
+  if (
+    typeof expectedWorkspaceId !== 'string' ||
+    !z.uuid().safeParse(expectedWorkspaceId).success ||
+    !token
+  )
+    return null;
 
   const apiKey = await apiKeys.authenticate(expectedWorkspaceId, token);
   if (apiKey) {

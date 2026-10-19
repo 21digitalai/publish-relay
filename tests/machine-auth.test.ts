@@ -32,10 +32,12 @@ function applicationWithHandler(
 }
 
 describe('machine authentication boundary', () => {
+  const workspaceId = '00000000-0000-4000-8000-000000000001';
+  const otherWorkspaceId = '00000000-0000-4000-8000-000000000002';
   it('preserves API-key authentication and capability enforcement', async () => {
     const principal = {
       id: 'key-1',
-      workspaceId: 'workspace-1',
+      workspaceId,
       createdByUserId: 'user-1',
       workspaceLabel: 'Atlas',
       prefix: 'pr_key',
@@ -52,7 +54,7 @@ describe('machine authentication boundary', () => {
       url: '/',
       headers: {
         authorization: 'Bearer api-token',
-        'x-publish-relay-workspace': 'workspace-1',
+        'x-publish-relay-workspace': workspaceId,
       },
     });
     expect(response.statusCode).toBe(200);
@@ -71,7 +73,7 @@ describe('machine authentication boundary', () => {
     const delegatedAuthorization = {
       authenticate: vi.fn().mockResolvedValue({
         grantId: 'grant-1',
-        workspaceId: 'workspace-1',
+        workspaceId,
         userId: 'user-1',
         clientId: 'client-1',
         scopes: ['destinations:read'],
@@ -82,7 +84,7 @@ describe('machine authentication boundary', () => {
       url: '/',
       headers: {
         authorization: 'Bearer delegated-token',
-        'x-publish-relay-workspace': 'workspace-1',
+        'x-publish-relay-workspace': workspaceId,
       },
     });
     expect(response.statusCode).toBe(200);
@@ -97,7 +99,7 @@ describe('machine authentication boundary', () => {
     const apiKeys = { authenticate: vi.fn().mockResolvedValue(null) } as unknown as ApiKeyService;
     const authenticate = vi.fn().mockResolvedValue({
       grantId: 'grant-1',
-      workspaceId: 'workspace-2',
+      workspaceId: otherWorkspaceId,
       userId: 'user-1',
       clientId: 'client-1',
       scopes: [],
@@ -108,14 +110,14 @@ describe('machine authentication boundary', () => {
       url: '/',
       headers: {
         authorization: 'Bearer delegated-token',
-        'x-publish-relay-workspace': 'workspace-1',
+        'x-publish-relay-workspace': workspaceId,
       },
     });
     expect(wrongWorkspace.statusCode).toBe(401);
 
     authenticate.mockResolvedValue({
       grantId: 'grant-1',
-      workspaceId: 'workspace-1',
+      workspaceId,
       userId: 'user-1',
       clientId: 'client-1',
       scopes: [],
@@ -125,9 +127,24 @@ describe('machine authentication boundary', () => {
       url: '/',
       headers: {
         authorization: 'Bearer delegated-token',
-        'x-publish-relay-workspace': 'workspace-1',
+        'x-publish-relay-workspace': workspaceId,
       },
     });
     expect(missingScope.statusCode).toBe(403);
+  });
+
+  it('rejects an abbreviated workspace ID before querying for an API key', async () => {
+    const authenticate = vi.fn();
+    const apiKeys = { authenticate } as unknown as ApiKeyService;
+    const response = await applicationWithHandler(apiKeys).inject({
+      method: 'GET',
+      url: '/',
+      headers: {
+        authorization: 'Bearer api-token',
+        'x-publish-relay-workspace': 'c34a29d5',
+      },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(authenticate).not.toHaveBeenCalled();
   });
 });

@@ -40,7 +40,7 @@ describe.skipIf(!connectionString)('provider post URL on real PostgreSQL', () =>
       );
       await client.query(
         `INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
-        VALUES ($1, $2, 'facebook_page', $3)`,
+        VALUES ($1, $2, 'meta', $3)`,
         [connectionId, workspaceId, credentialId],
       );
       await client.query(
@@ -61,8 +61,9 @@ describe.skipIf(!connectionString)('provider post URL on real PostgreSQL', () =>
       );
       await client.query(
         `INSERT INTO publication_jobs
-        (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state, attempt_number)
-        VALUES ($1, $2, $3, $4, $5, now(), 'published', 1)`,
+        (id, workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state, attempt_number, effective_payload)
+        VALUES ($1, $2, $3, $4, $5, now(), 'published', 1,
+          '{"schemaVersion":1,"destinationProvider":"facebook_page","kind":"single_image","message":"Due","mediaIds":[]}')`,
         [jobId, workspaceId, postId, revisionId, accountId],
       );
       await client.query(
@@ -76,6 +77,11 @@ describe.skipIf(!connectionString)('provider post URL on real PostgreSQL', () =>
       const detail = await getBrowserJobDetail(drizzle(client), workspaceId, jobId);
       expect(detail?.providerResult?.url).toBe('https://www.facebook.com/page/posts/123');
       expect(detail?.attempts[0]).not.toHaveProperty('externalUrl');
+      await client.query('UPDATE publication_attempts SET external_url = NULL WHERE job_id = $1', [
+        jobId,
+      ]);
+      const historicalDetail = await getBrowserJobDetail(drizzle(client), workspaceId, jobId);
+      expect(historicalDetail?.providerResult?.url).toBe('https://www.facebook.com/page_123');
       expect(await getBrowserJobDetail(drizzle(client), otherWorkspaceId, jobId)).toBeNull();
     } finally {
       await client.query('ROLLBACK');

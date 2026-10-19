@@ -281,9 +281,17 @@ export async function getBrowserJobDetail(
       const published = [...attempts]
         .reverse()
         .find((attempt) => attempt.outcome === 'published' && attempt.externalPostId);
+      const payload = job.effectivePayload;
+      const destinationProvider =
+        payload &&
+        typeof payload === 'object' &&
+        !Array.isArray(payload) &&
+        typeof (payload as Record<string, unknown>).destinationProvider === 'string'
+          ? String((payload as Record<string, unknown>).destinationProvider)
+          : job.providerAccount.provider;
       const externalUrl = published?.externalPostId
         ? providerPostUrl({
-            provider: job.providerAccount.provider,
+            provider: destinationProvider,
             id: published.externalPostId,
             storedUrl: published.externalUrl,
             handle: job.providerAccount.handle,

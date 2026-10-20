@@ -128,6 +128,7 @@ interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview' | 'media'> {
 }
 
 const COLLISION_SPACING_MS = 15 * 60_000;
+const META_IMAGE_MIME_TYPES: readonly string[] = ['image/jpeg', 'image/png'];
 const COLLISION_PAGE_LIMIT = 100;
 const COLLISION_MAX_PAGES_PER_ACCOUNT = 50;
 const COLLISION_WINDOW_MS = 7 * 24 * 60 * 60_000;
@@ -863,10 +864,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       isLinkedInOnly ||
       (includesMeta &&
         (contentKind === 'link' ||
-          importedMedia.some(
-            (item) =>
-              !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(item.mimeType ?? ''),
-          ))) ||
+          importedMedia.some((item) => !META_IMAGE_MIME_TYPES.includes(item.mimeType ?? '')))) ||
       (isX &&
         (importedMedia.some(
           (item) =>
@@ -1841,7 +1839,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                           isTikTok || isYouTube
                             ? 'video/mp4'
                             : includesMeta
-                              ? 'image/jpeg,image/png,image/webp,image/gif'
+                              ? META_IMAGE_MIME_TYPES.join(',')
                               : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
                         }
                         multiple={isX || (includesMeta && contentKind === 'carousel')}
@@ -1862,7 +1860,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                             isTikTok || isYouTube
                               ? ['video/mp4']
                               : includesMeta
-                                ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+                                ? META_IMAGE_MIME_TYPES
                                 : [
                                     'image/jpeg',
                                     'image/png',
@@ -1873,7 +1871,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                           if (files.some((file) => !allowed.includes(file.type))) {
                             showAnalyticsError(
                               setError,
-                              'Choose a supported image, GIF, or MP4 file.',
+                              includesMeta
+                                ? 'Choose a JPEG or PNG image for this destination.'
+                                : 'Choose a supported image, GIF, or MP4 file.',
                               'composer',
                               'validation',
                             );

@@ -716,6 +716,80 @@ test('blocks incompatible imported media after changing destination and permits 
   expect(submitted?.providerAccountIds).toEqual([linkedinId]);
 });
 
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  for (const destination of ['Instagram · @mira', 'Facebook · Mira Studio']) {
+    for (const mimeType of ['image/gif', 'image/webp']) {
+      test(`rejects ${mimeType} for ${destination} imported and new media at ${String(viewport.width)}px`, async ({
+        page,
+      }, testInfo) => {
+        await page.setViewportSize(viewport);
+        await establishWorkspaceSession(page);
+        await mockMetaDestinations(page);
+        const draftId = '00000000-0000-4000-8000-000000000850';
+        const mediaId = '00000000-0000-4000-8000-000000000851';
+        await page.route(`**/api/workflow/drafts/${draftId}`, (route) =>
+          route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              data: {
+                label: 'Imported unsupported image',
+                mediaIds: [mediaId],
+                media: [{ id: mediaId, mimeType, byteSize: 1024, durationMs: null, ready: true }],
+                postId: null,
+              },
+              error: null,
+            }),
+          }),
+        );
+        let uploads = 0;
+        let posts = 0;
+        await page.route('**/api/workflow/media', (route) => {
+          uploads += 1;
+          return route.fulfill({ status: 201, body: '{"data":{"id":"new-media"}}' });
+        });
+        await page.route('**/api/workflow/posts', (route) => {
+          posts += 1;
+          return route.fulfill({ status: 201, body: '{"data":{"jobs":[{}]}}' });
+        });
+        await page.goto(await workspacePath(page, `drafts/${draftId}`));
+        await selectComposerAccount(page, destination);
+        if (destination.startsWith('Facebook'))
+          await page.getByRole('button', { name: 'single image' }).click();
+        await page.getByLabel('Post body').fill('Meta image post');
+        const schedule = page.getByRole('button', { name: 'Schedule 1 post' });
+        const input = page.locator('#composer-media-upload');
+        await expect(input).toHaveAttribute('accept', 'image/jpeg,image/png');
+        await expect(
+          page.getByText('Attached draft media is unavailable or unsupported'),
+        ).toBeVisible();
+        await expect(schedule).toBeDisabled();
+        await page.screenshot({ path: testInfo.outputPath('meta-imported-unsupported.png') });
+        await page.getByRole('button', { name: 'Remove from post' }).click();
+        await input.setInputFiles({
+          name: mimeType === 'image/gif' ? 'animated.gif' : 'photo.webp',
+          mimeType,
+          buffer: Buffer.from('unsupported image'),
+        });
+        await expect(page.getByRole('alert')).toContainText('Choose a JPEG or PNG image');
+        await expect(page.locator('.composer-media-attachment')).toHaveCount(0);
+        await expect(schedule).toBeDisabled();
+        expect(uploads).toBe(0);
+        expect(posts).toBe(0);
+        await page.screenshot({ path: testInfo.outputPath('meta-upload-rejected.png') });
+        await input.setInputFiles({
+          name: 'supported.png',
+          mimeType: 'image/png',
+          buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        });
+        await expect(schedule).toBeEnabled();
+      });
+    }
+  }
+}
+
 test('keeps imported-draft scheduling disabled until hydration succeeds and after failure', async ({
   page,
 }) => {

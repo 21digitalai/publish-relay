@@ -194,6 +194,9 @@ chosen before content: Instagram offers single image and carousel; Facebook offe
 image. The picker displays capability freshness and
 keeps unavailable destinations visible but disabled. Image upload reuses the canonical hidden file
 control/dropzone lifecycle; validation remains inline on desktop and mobile.
+Both current Meta image destinations accept JPEG or PNG only. The Composer applies that same
+allowlist to retained draft attachments, the file chooser, and newly selected files; unsupported
+GIF/WebP attachments stay visible with a remove-or-change-destination path and cannot be scheduled.
 
 ## TikTok Direct Post composer
 

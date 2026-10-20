@@ -239,6 +239,16 @@ Published jobs use the shared success token plus a visible check/Published marke
 
 Ship Month, Week, Day, and Timeline/hour modes. Preserve date and filters between modes. Header includes Today, navigation, date label, view switcher, timezone, and filters.
 
+### Calendar account and status filters
+
+The account-count and status labels are functional buttons. Each opens a compact checkbox popover anchored immediately below its trigger, never a centered dialog. Reuse the Queue filter trigger's visual language, but keep Queue's single-select `FilterSelect` semantics separate. One shared checkbox-popover primitive serves both Calendar controls. The menu must escape Calendar clipping/stacking ancestors, flip at viewport edges, fit at 390px mobile width, and preserve 44px touch targets.
+
+The account popover lists every account authorized for the Calendar, including exposed shared Pages, with provider, display name and handle when available. Use stable provider-account IDs, not names or handles, as selection keys. The default selects all; the trigger shows the total account count or `N of M accounts` when narrowed. The catalog and count must not depend on jobs in the current date window or a truncated page. An unexposed Page must never appear. The status popover defaults to `All statuses` and offers the existing normalized Calendar states with their human labels, including Scheduled, Published, Failed, Retry/Needs attention and provider processing. Selecting multiple statuses shows `N statuses`.
+
+Changes filter the visible Calendar immediately, without an Apply button or any publication/account write. Account and status selections combine with AND, after target/shared-mirror merge and deduplication but before Month/Week/Day/Timeline layout and `+N more` counts. Keep both selections through date/view navigation, refresh, copied URL and browser back/forward; omit default filters from the URL and reset on workspace switch. Unknown/stale URL selections must show a non-blocking notice and reset action, not silently broaden a narrowed view. `Select all` restores a control's default; `Clear filters` restores both. Zero selected values deliberately show no posts with a one-click recovery. Distinguish no matching jobs from an actually empty schedule, loading, and fetch failure. Filtering must not change shared-Page origin badges, status truth, timezone placement or detail links.
+
+Use native button/checkbox semantics: accurate expanded state and accessible summaries, Enter/Space to open/toggle, Tab through rows, Escape to close and restore trigger focus, outside click to dismiss without stealing the clicked target's focus. Opening one popover closes the other. Keep visible focus, bounded internal menu scrolling, reduced-motion behavior and no horizontal body scroll. Verify desktop/mobile, keyboard and screen-reader behavior across all four Calendar modes; Queue's existing single-select filters must remain unchanged.
+
 - Month shows up to three jobs then `+N more`; failures sort first within a day.
 - Week/day uses a 24-hour grid, current-time line, and positioned job blocks.
 - Timeline uses account lanes and 15-minute snapping.

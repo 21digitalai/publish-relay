@@ -13,7 +13,7 @@ import { loadPostAccounts } from './exposed-post-accounts.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
 import { hasExactInstagramLoginScopes } from '../providers/instagram-login-client.js';
-import { validateLinkedInTextContent } from '../providers/linkedin-content.js';
+import { parseLinkedInContent } from '../providers/linkedin-content.js';
 import { publicationSettingsRegistry } from '../providers/publication-settings-registry.js';
 import type { DestinationProvider } from '../providers/contract.js';
 import {
@@ -246,7 +246,7 @@ async function resolveRevisionTargets(
             'Reconnect LinkedIn before scheduling beyond its token expiry',
           );
         try {
-          validateLinkedInTextContent(input.content, input.mediaIds);
+          parseLinkedInContent(input.content, input.mediaIds);
         } catch (error) {
           throw new PostValidationError(
             error instanceof Error ? error.message : 'Invalid LinkedIn content',

@@ -703,6 +703,68 @@ test('hydrates an imported draft in the canonical composer on desktop and mobile
   await page.screenshot({ path: testInfo.outputPath('external-draft-mobile.png'), fullPage: true });
 });
 
+test('LinkedIn text URL and explicit article stay distinct', async ({ page }, testInfo) => {
+  await establishWorkspaceSession(page);
+  const linkedinId = '00000000-0000-4000-8000-000000000203';
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: linkedinId,
+              provider: 'linkedin',
+              displayName: 'Member One',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+              capabilitySnapshot: { contentKinds: ['text', 'link'] },
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  let submitted: { content: Record<string, string>; mediaIds: string[] } | undefined;
+  await page.route('**/api/workflow/posts', (route) => {
+    submitted = route.request().postDataJSON() as typeof submitted;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]},"error":null}',
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'LinkedIn · Member One');
+  await expect(page.getByRole('button', { name: 'Article link' })).toBeVisible();
+  await page.getByLabel('Post body').fill('https://example.com/plain-url');
+  await expect(page.getByLabel('Article title')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Article link' }).click();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  await page.getByLabel('HTTPS link').fill('https://example.com/article');
+  await page.getByLabel('Article title').fill('Our article');
+  await page.getByLabel('Description (optional)').fill('A short preview');
+  await expect(
+    page.getByText('LinkedIn will use these fields for the article preview'),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('linkedin-article-ready.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+  expect(submitted?.content).toMatchObject({
+    kind: 'link',
+    linkUrl: 'https://example.com/article',
+    title: 'Our article',
+    description: 'A short preview',
+  });
+  expect(submitted?.mediaIds).toEqual([]);
+});
+
 test('blocks incompatible imported media after changing destination and permits removal', async ({
   page,
 }, testInfo) => {

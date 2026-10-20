@@ -709,6 +709,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [body, setBody] = useState('');
   const [contentKind, setContentKind] = useState<ComposerContentKind>('text');
   const [linkUrl, setLinkUrl] = useState('');
+  const [articleTitle, setArticleTitle] = useState('');
+  const [articleDescription, setArticleDescription] = useState('');
   const [draftLabel, setDraftLabel] = useState<string | null>(null);
   const [importedMedia, setImportedMedia] = useState<ImportedDraftMedia[]>([]);
   const draftMediaIds = importedMedia.map((item) => item.id);
@@ -886,6 +888,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const isLinkedInOnly =
     selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
+  const isLinkedInArticle = isLinkedInOnly && contentKind === 'link';
   const importedMediaIncompatible =
     draftMediaIds.length > 0 &&
     (importedMedia.some((item) => !item.ready || !item.mimeType) ||
@@ -961,6 +964,8 @@ function Composer({ onClose }: { onClose: () => void }) {
       (mediaFiles.length + draftMediaIds.length < 2 ||
         mediaFiles.length + draftMediaIds.length > 10)) ||
     (includesMeta && contentKind === 'link' && !linkUrl.startsWith('https://')) ||
+    (isLinkedInOnly && !allowedKinds.includes(contentKind)) ||
+    (isLinkedInArticle && (!linkUrl.startsWith('https://') || !articleTitle.trim())) ||
     selectedAccounts.length !== 1 ||
     accountPickerOpen ||
     linkedinExpiresBeforeDispatch ||
@@ -990,6 +995,8 @@ function Composer({ onClose }: { onClose: () => void }) {
     body,
     contentKind,
     linkUrl,
+    articleTitle,
+    articleDescription,
     localSchedule,
     madeForKids,
     notifySubscribers,
@@ -1246,7 +1253,17 @@ function Composer({ onClose }: { onClose: () => void }) {
                   text: body.trim(),
                   ...(contentKind === 'link' ? { linkUrl: linkUrl.trim() } : {}),
                 }
-              : { type: 'text', text: body.trim() },
+              : isLinkedInArticle
+                ? {
+                    kind: 'link',
+                    text: body.trim(),
+                    linkUrl: linkUrl.trim(),
+                    title: articleTitle.trim(),
+                    ...(articleDescription.trim()
+                      ? { description: articleDescription.trim() }
+                      : {}),
+                  }
+                : { type: 'text', text: body.trim() },
           mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
@@ -1705,7 +1722,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     )}
                   </section>
                 )}
-                {includesMeta && (
+                {(includesMeta || isLinkedInOnly) && (
                   <fieldset className="content-kind-picker" inert={hasUncertainPost}>
                     <legend>2. Choose supported content</legend>
                     {allowedKinds.map((kind) => (
@@ -1717,7 +1734,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                           setContentKind(kind);
                         }}
                       >
-                        {kind.replaceAll('_', ' ')}
+                        {isLinkedInOnly && kind === 'link'
+                          ? 'Article link'
+                          : kind.replaceAll('_', ' ')}
                       </button>
                     ))}
                     {allowedKinds.length === 0 && (
@@ -1779,7 +1798,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     )}
                   </label>
                 )}
-                {includesMeta && contentKind === 'link' && (
+                {(includesMeta || isLinkedInArticle) && contentKind === 'link' && (
                   <label className="field-label">
                     HTTPS link
                     <input
@@ -1791,6 +1810,36 @@ function Composer({ onClose }: { onClose: () => void }) {
                       }}
                     />
                   </label>
+                )}
+                {isLinkedInArticle && (
+                  <div className="linkedin-article-fields" inert={hasUncertainPost}>
+                    <label className="field-label">
+                      Article title
+                      <input
+                        className="linkedin-article-title text-input"
+                        maxLength={399}
+                        value={articleTitle}
+                        onChange={(event) => {
+                          setArticleTitle(event.target.value);
+                        }}
+                      />
+                    </label>
+                    <label className="field-label">
+                      Description (optional)
+                      <textarea
+                        className="linkedin-article-description composer-body"
+                        maxLength={4085}
+                        value={articleDescription}
+                        onChange={(event) => {
+                          setArticleDescription(event.target.value);
+                        }}
+                      />
+                    </label>
+                    <p className="composer-body-hint">
+                      LinkedIn will use these fields for the article preview; it does not fetch them
+                      from the URL.
+                    </p>
+                  </div>
                 )}
                 {isYouTube && (
                   <div className="youtube-composer-options" inert={hasUncertainPost}>

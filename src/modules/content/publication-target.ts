@@ -69,11 +69,17 @@ const metaContent = z.object({
   mediaIds: z.array(mediaId).max(10).default([]),
 });
 
-const linkedinContent = z.object({
-  schemaVersion: version,
-  kind: z.literal('text'),
-  text: z.string().min(1),
-});
+const linkedinContent = z.discriminatedUnion('kind', [
+  z.object({ schemaVersion: version, kind: z.literal('text'), text: z.string().min(1) }),
+  z.object({
+    schemaVersion: version,
+    kind: z.literal('link'),
+    text: z.string().min(1),
+    linkUrl: z.url(),
+    title: z.string().min(1).max(399),
+    description: z.string().max(4085).optional(),
+  }),
+]);
 
 export const publicationTargetSchema = z.discriminatedUnion('provider', [
   z.object({ provider: z.literal('x'), providerAccountId: accountId, content: xContent }),

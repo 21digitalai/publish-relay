@@ -87,8 +87,12 @@ describe('API v1 contract', () => {
             properties: {
               destination: { properties: { provider: { const: string } } };
               content: {
-                properties: { schemaVersion: { const: number } };
-                additionalProperties: boolean;
+                properties?: { schemaVersion: { const: number } };
+                additionalProperties?: boolean;
+                oneOf?: {
+                  properties: { schemaVersion: { const: number } };
+                  additionalProperties: boolean;
+                }[];
               };
               providerAccountIds: unknown;
             };
@@ -101,8 +105,11 @@ describe('API v1 contract', () => {
       branches.map((branch) => branch.properties.destination.properties.provider.const),
     ).toEqual(['x', 'youtube', 'tiktok', 'instagram', 'facebook_page', 'linkedin']);
     for (const branch of branches) {
-      expect(branch.properties.content.properties.schemaVersion.const).toBe(1);
-      expect(branch.properties.content.additionalProperties).toBe(false);
+      const contentBranches = branch.properties.content.oneOf ?? [branch.properties.content];
+      for (const content of contentBranches) {
+        expect(content.properties?.schemaVersion.const).toBe(1);
+        expect(content.additionalProperties).toBe(false);
+      }
       expect(branch.properties.providerAccountIds).toEqual({ not: {} });
     }
   });

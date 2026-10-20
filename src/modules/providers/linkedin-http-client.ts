@@ -114,17 +114,41 @@ export class LinkedInHttpClient {
   }
 
   async publishText(input: { credential: LinkedInCredential; text: string }): Promise<string> {
+    return this.publishPost(input.credential, input.text);
+  }
+
+  async publishArticle(input: {
+    credential: LinkedInCredential;
+    text: string;
+    linkUrl: string;
+    title: string;
+    description?: string;
+  }): Promise<string> {
+    return this.publishPost(input.credential, input.text, {
+      article: {
+        source: input.linkUrl,
+        title: input.title,
+        ...(input.description ? { description: input.description } : {}),
+      },
+    });
+  }
+
+  private async publishPost(
+    credential: LinkedInCredential,
+    text: string,
+    content?: { article: { source: string; title: string; description?: string } },
+  ): Promise<string> {
     const response = await this.request('https://api.linkedin.com/rest/posts', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${input.credential.accessToken}`,
+        Authorization: `Bearer ${credential.accessToken}`,
         'Content-Type': 'application/json',
         'Linkedin-Version': LINKEDIN_API_VERSION,
         'X-Restli-Protocol-Version': '2.0.0',
       },
       body: JSON.stringify({
-        author: input.credential.memberUrn,
-        commentary: input.text,
+        author: credential.memberUrn,
+        commentary: text,
         visibility: 'PUBLIC',
         distribution: {
           feedDistribution: 'MAIN_FEED',
@@ -133,6 +157,7 @@ export class LinkedInHttpClient {
         },
         lifecycleState: 'PUBLISHED',
         isReshareDisabledByAuthor: false,
+        ...(content ? { content } : {}),
       }),
     });
     if (!response.ok)

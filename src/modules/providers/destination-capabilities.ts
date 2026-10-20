@@ -11,7 +11,7 @@ export interface DestinationCapabilitySnapshot {
 const CAPABILITIES: Partial<Record<DestinationProvider, DestinationCapabilitySnapshot>> = {
   x: { schemaVersion: 1, contentKinds: ['text'], media: { maxImages: 4 } },
   youtube: { schemaVersion: 1, contentKinds: ['video'], media: {} },
-  linkedin: { schemaVersion: 1, contentKinds: ['text'], media: {} },
+  linkedin: { schemaVersion: 1, contentKinds: ['text', 'link'], media: {} },
   instagram: {
     schemaVersion: 1,
     contentKinds: ['single_image', 'carousel'],

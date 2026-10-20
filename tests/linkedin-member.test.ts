@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { validateLinkedInTextContent } from '../src/modules/providers/linkedin-content.js';
+import {
+  parseLinkedInContent,
+  validateLinkedInTextContent,
+} from '../src/modules/providers/linkedin-content.js';
 import { classifyLinkedInDispatchFailure } from '../src/modules/providers/linkedin-dispatch.service.js';
 import {
   LinkedInHttpClient,
@@ -122,6 +125,89 @@ describe('LinkedIn member integration', () => {
     await expect(client.publishText({ credential, text: 'Hello members' })).rejects.toMatchObject({
       outcomeUnknown: true,
     });
+  });
+
+  it('posts an explicit HTTPS article without scraping or implicit thumbnail', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:share:article-1' } }),
+      );
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(
+      client.publishArticle({
+        credential,
+        text: 'Read this',
+        linkUrl: 'https://example.com/article',
+        title: 'Article title',
+        description: 'Article summary',
+      }),
+    ).resolves.toBe('urn:li:share:article-1');
+    expect(JSON.parse(request.mock.calls[0]?.[1]?.body as string)).toMatchObject({
+      author: credential.memberUrn,
+      commentary: 'Read this',
+      content: {
+        article: {
+          source: 'https://example.com/article',
+          title: 'Article title',
+          description: 'Article summary',
+        },
+      },
+    });
+    expect(request.mock.calls[0]?.[1]?.headers).toMatchObject({
+      'Linkedin-Version': '202605',
+      'X-Restli-Protocol-Version': '2.0.0',
+    });
+    expect(request.mock.calls[0]?.[1]?.body).not.toContain('thumbnail');
+    request.mockResolvedValueOnce(new Response(null, { status: 201 }));
+    await expect(
+      client.publishArticle({
+        credential,
+        text: 'Read this',
+        linkUrl: 'https://example.com/article',
+        title: 'Title',
+      }),
+    ).rejects.toMatchObject({ outcomeUnknown: true });
+  });
+
+  it('distinguishes an article attachment from ordinary text containing a URL', () => {
+    expect(parseLinkedInContent({ type: 'text', text: 'https://example.com' }, [])).toEqual({
+      kind: 'text',
+      text: 'https://example.com',
+    });
+    expect(
+      parseLinkedInContent(
+        {
+          kind: 'link',
+          text: 'Read this',
+          linkUrl: 'https://example.com',
+          title: 'Title',
+        },
+        [],
+      ),
+    ).toMatchObject({ kind: 'link', linkUrl: 'https://example.com' });
+    for (const content of [
+      { kind: 'link', text: 'Read', linkUrl: 'http://example.com', title: 'Title' },
+      { kind: 'link', text: 'Read', linkUrl: 'https://example.com', title: '' },
+    ])
+      expect(() => parseLinkedInContent(content, [])).toThrow();
+    expect(() =>
+      parseLinkedInContent(
+        {
+          kind: 'link',
+          text: 'Read',
+          linkUrl: 'https://example.com',
+          title: 'Title',
+        },
+        ['media-id'],
+      ),
+    ).toThrow();
   });
 
   it('classifies HTTP rejection and ambiguous provider failure from the actual publish client', async () => {

@@ -24,7 +24,7 @@ import {
   type LinkedInCredential,
   type LinkedInHttpClient,
 } from './linkedin-http-client.js';
-import { validateLinkedInTextContent } from './linkedin-content.js';
+import { parseLinkedInContent } from './linkedin-content.js';
 
 const credentialSchema = z.object({
   accessToken: z.string().min(1),
@@ -32,7 +32,6 @@ const credentialSchema = z.object({
   memberUrn: z.string().regex(/^urn:li:person:[^\s]+$/),
   scope: z.string().min(1),
 });
-const contentSchema = z.looseObject({ text: z.string().trim().min(1).max(3_000) });
 const LINKEDIN_RETRY_POLICY = { baseDelayMs: 30_000, maximumDelayMs: 900_000, maximumAttempts: 5 };
 
 export function classifyLinkedInDispatchFailure(
@@ -105,11 +104,10 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
       .limit(1);
     const row = rows[0];
     if (!row) throw new Error('LinkedIn destination is unavailable');
-    const content = contentSchema.parse(row.content);
-    validateLinkedInTextContent(content, []);
+    const content = parseLinkedInContent(row.content, []);
     const stored = await getActiveCredential(transaction, workspaceId, row.credentialId);
     if (!stored) throw new Error('LinkedIn credential is unavailable');
-    return { ...row, text: content.text, stored };
+    return { ...row, content, stored };
   });
 }
 
@@ -170,7 +168,10 @@ async function dispatchJob(
       await markReconnectRequired(runtime, job.workspaceId, context.connectionId);
       throw new LinkedInRequestError(401, 'auth', 'LinkedIn reconnect is required');
     }
-    const externalPostId = await runtime.client.publishText({ credential, text: context.text });
+    const externalPostId =
+      context.content.kind === 'link'
+        ? await runtime.client.publishArticle({ credential, ...context.content })
+        : await runtime.client.publishText({ credential, text: context.content.text });
     await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,

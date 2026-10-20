@@ -2,9 +2,15 @@ import { readFile } from 'node:fs/promises';
 
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
+import { eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import Fastify from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { credentials } from '../src/database/schema.js';
+import { encryptCredential, type MasterKeyProvider } from '../src/modules/credentials/envelope.js';
+import { dispatchDueLinkedInJobs } from '../src/modules/providers/linkedin-dispatch.service.js';
+import { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
 
 import { PostgresInstagramArtifactStore } from '../src/modules/providers/instagram-artifact-store.js';
 import { PostgresLinkedInVideoArtifactStore } from '../src/modules/providers/linkedin-video-artifact-store.js';
@@ -37,6 +43,7 @@ const migrations = [
   '0015_talented_alex_power.sql',
   '0016_common_barracuda.sql',
   '0019_media_retention_lifecycle.sql',
+  '0024_mp4_media_metadata.sql',
   '0025_lucky_legion.sql',
   '0026_parallel_human_cannonball.sql',
   '0027_overjoyed_dark_beast.sql',
@@ -137,6 +144,131 @@ describe('Instagram staging persistence and signed media delivery', () => {
       mediaId: '00000000-0000-4000-8000-000000000411',
     });
     await expect(unattached.ensure()).rejects.toThrow('not attached');
+  });
+
+  it('waits for LinkedIn video processing before one member post and survives a worker cycle', async () => {
+    const memberUrn = 'urn:li:person:member';
+    const videoUrn = 'urn:li:video:asset';
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'linkedin', member_urn = '${memberUrn}',
+        external_subject_id = '${memberUrn}', expires_at = '2030-01-01T00:00:00Z'
+        WHERE id = '00000000-0000-4000-8000-000000000405';
+      UPDATE provider_accounts SET destination_provider = 'linkedin',
+        provider_account_id = '${memberUrn}', remote_account_id = '${memberUrn}'
+        WHERE id = '00000000-0000-4000-8000-000000000406';
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+      VALUES ('00000000-0000-4000-8000-000000000412', '${workspaceA}',
+        '00000000-0000-4000-8000-000000000407', 2,
+        '{"kind":"video","text":"Watch","title":"Demo"}');
+      INSERT INTO revision_media (workspace_id, revision_id, media_id, position)
+      VALUES ('${workspaceA}', '00000000-0000-4000-8000-000000000412', '${mediaId}', 0);
+      UPDATE publication_jobs SET revision_id = '00000000-0000-4000-8000-000000000412'
+        WHERE id = '${jobId}';
+      UPDATE media_objects SET mime_type = 'video/mp4', byte_size = 75000,
+        duration_ms = 3000, container = 'mp4', video_codec = 'h264', audio_codec = 'aac'
+        WHERE id = '${mediaId}';
+    `);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    const credential = {
+      accessToken: 'fixture-token',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      memberUrn,
+      scope: 'w_member_social',
+    };
+    const encrypted = await encryptCredential(Buffer.from(JSON.stringify(credential)), keys);
+    await db
+      .update(credentials)
+      .set(encrypted)
+      .where(eq(credentials.id, '00000000-0000-4000-8000-000000000404'));
+    const statuses = ['PROCESSING', 'AVAILABLE', 'AVAILABLE'];
+    const request = vi.fn<typeof fetch>().mockImplementation((resource, init) => {
+      const url =
+        typeof resource === 'string'
+          ? resource
+          : resource instanceof URL
+            ? resource.href
+            : resource.url;
+      if (url.includes('initializeUpload'))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              value: {
+                video: videoUrn,
+                uploadToken: 'upload-token',
+                uploadUrlsExpireAt: Date.now() + 300_000,
+                uploadInstructions: [
+                  {
+                    firstByte: 0,
+                    lastByte: 74_999,
+                    uploadUrl: 'https://www.linkedin.com/upload/fixture',
+                  },
+                ],
+              },
+            }),
+            { status: 200 },
+          ),
+        );
+      if (init?.method === 'PUT')
+        return Promise.resolve(new Response(null, { status: 200, headers: { etag: 'part-1' } }));
+      if (url.includes('finalizeUpload'))
+        return Promise.resolve(new Response(null, { status: 200 }));
+      if (url.includes('/rest/videos/'))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: videoUrn,
+              owner: memberUrn,
+              status: statuses.shift() ?? 'AVAILABLE',
+            }),
+            { status: 200 },
+          ),
+        );
+      if (url.endsWith('/rest/posts'))
+        return Promise.resolve(
+          new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:share:post' } }),
+        );
+      throw new Error(`Unexpected LinkedIn fixture request: ${url}`);
+    });
+    const runtime = {
+      database: db,
+      keys,
+      client: new LinkedInHttpClient({
+        clientId: 'fixture',
+        clientSecret: 'fixture',
+        fetch: request,
+      }),
+      source: {
+        load: vi.fn().mockResolvedValue({ bytes: Buffer.alloc(75_000), mimeType: 'video/mp4' }),
+      },
+      workerId: 'linkedin-fixture',
+      leaseMs: 30_000,
+    };
+    const now = new Date();
+    await expect(dispatchDueLinkedInJobs(runtime, now)).resolves.toBe(0);
+    const pending = await database.query<{ state: string; count: number }>(`
+      SELECT state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS count
+      FROM publication_jobs WHERE id = '${jobId}'
+    `);
+    expect(pending.rows[0]).toMatchObject({ state: 'retry_wait', count: 0 });
+    await expect(dispatchDueLinkedInJobs(runtime, new Date(now.getTime() + 30_001))).resolves.toBe(
+      1,
+    );
+    const posted = await database.query<{ state: string; count: number }>(`
+      SELECT state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS count
+      FROM publication_jobs WHERE id = '${jobId}'
+    `);
+    expect(posted.rows[0]).toMatchObject({ state: 'published', count: 1 });
+    expect(
+      request.mock.calls.filter(([url]) =>
+        (typeof url === 'string' ? url : url instanceof URL ? url.href : url.url).endsWith(
+          '/rest/posts',
+        ),
+      ),
+    ).toHaveLength(1);
+    expect(runtime.source.load).toHaveBeenCalledTimes(1);
   });
   it('allows one Instagram worker claim and rejects lease-lost progression', async () => {
     const now = new Date();

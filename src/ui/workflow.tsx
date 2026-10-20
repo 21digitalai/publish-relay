@@ -9,6 +9,7 @@ import {
 import { Rail } from './main.js';
 import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { SnapchatStoryResolution } from './snapchat-story-resolution.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
 import { TikTokComposerForm, type ImportedDraftMedia } from './tiktok-composer.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
@@ -2758,6 +2759,17 @@ export function JobDetailPage() {
       controller.abort();
     };
   }, [jobId]);
+  const refreshResolvedStory = async () => {
+    const response = await fetch(`/api/workflow/jobs/${encodeURIComponent(jobId)}`, {
+      cache: 'no-store',
+    });
+    const result = (await response.json()) as { data: JobDetailDto | null; error: string | null };
+    if (!response.ok || !result.data)
+      throw new Error(result.error ?? 'Could not refresh the Story result.');
+    setDetail(result.data);
+    setJob(detailToJob(result.data));
+    setMutationAnnouncement('Verified Story failure recorded');
+  };
   if (loadError)
     return (
       <WorkspaceLayout active="queue">
@@ -2923,6 +2935,15 @@ export function JobDetailPage() {
                       }
                     </p>
                   </details>
+                )}
+                {detail?.attempts?.at(-1)?.providerRequestId && detail.attempts.at(-1)?.id && (
+                  <SnapchatStoryResolution
+                    jobId={job.id}
+                    attemptId={detail.attempts.at(-1)?.id ?? ''}
+                    providerRequestId={detail.attempts.at(-1)?.providerRequestId ?? ''}
+                    csrfToken={cookieValue('publish_relay_csrf')}
+                    onResolved={refreshResolvedStory}
+                  />
                 )}
               </div>
             </div>

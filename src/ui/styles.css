@@ -2637,6 +2637,20 @@ textarea:focus-visible {
   display: block;
   margin-top: 8px;
 }
+.story-resolution-form {
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.story-resolution-form .text-input {
+  width: 100%;
+}
+.story-resolution-form > .secondary-button {
+  justify-self: start;
+}
 .detail-actions {
   display: flex;
   justify-content: flex-end;

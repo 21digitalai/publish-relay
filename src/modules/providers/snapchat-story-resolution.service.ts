@@ -5,7 +5,6 @@ import { z } from 'zod';
 
 import { auditEvents, publicationJobEvents } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import { validatedPostUrl } from './post-url.js';
 
 const evidenceReference = z.string().trim().min(8).max(500);
 const publishedEvidence = z.strictObject({
@@ -89,12 +88,11 @@ async function verifyAdmin(transaction: NodePgDatabase, workspaceId: string, use
   if (rows.rows.length !== 1) throw new SnapchatStoryResolutionNotFound();
 }
 
-function normalizedEvidence(value: SnapchatStoryResolution) {
+function normalizedEvidence(value: SnapchatStoryResolution): SnapchatStoryResolution {
   if (value.outcome === 'failed') return value;
-  const permalink = validatedPostUrl(value.permalink, 'snapchat');
-  if (!permalink || new URL(permalink).pathname === '/')
-    throw new SnapchatStoryResolutionConflict('A canonical Snapchat Story permalink is required');
-  return { ...value, permalink };
+  // The Story POST exposes only a request ID. Core has no authoritative
+  // request-to-Story lookup, so a human-supplied URL cannot prove publication.
+  throw new SnapchatStoryResolutionConflict('No verified Story correlation is available');
 }
 
 export async function resolveSnapchatStoryEvidence(

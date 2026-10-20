@@ -171,66 +171,17 @@ describe.skipIf(!connectionString)('Snapchat Story authority on real PostgreSQL'
         permalink: 'https://www.snapchat.com/p/story12345',
       };
       const action = { workspaceId, userId, jobId, requestId: 'admin-resolution', evidence };
-      await expect(
-        resolveSnapchatStoryEvidence(runtime.database, {
-          ...action,
-          workspaceId: otherWorkspaceId,
-        }),
-      ).rejects.toThrow();
-      await expect(
-        resolveSnapchatStoryEvidence(runtime.database, { ...action, userId: randomUUID() }),
-      ).rejects.toThrow();
-      await expect(
-        resolveSnapchatStoryEvidence(runtime.database, {
-          ...action,
-          evidence: { ...evidence, attemptId: randomUUID() },
-        }),
-      ).rejects.toThrow('current attempt');
-      expect(await resolveSnapchatStoryEvidence(runtime.database, action)).toEqual({
-        outcome: 'published',
-        replayed: false,
-      });
-      expect(await resolveSnapchatStoryEvidence(runtime.database, action)).toEqual({
-        outcome: 'published',
-        replayed: true,
-      });
-      await expect(
-        resolveSnapchatStoryEvidence(runtime.database, {
-          ...action,
-          evidence: { ...evidence, storyId: 'conflicting' },
-        }),
-      ).rejects.toThrow('already resolved');
-      const resolved = (
-        await client.query<{ state: string; reconciliation_required: boolean }>(
-          'select state, reconciliation_required from publication_jobs where id = $1',
-          [jobId],
-        )
-      ).rows[0];
-      expect(resolved).toEqual({ state: 'published', reconciliation_required: false });
+      await expect(resolveSnapchatStoryEvidence(runtime.database, action)).rejects.toThrow(
+        'No verified Story correlation',
+      );
       expect(
         (
-          await client.query(
-            'select external_post_id, external_url from publication_attempts where job_id = $1',
+          await client.query<{ state: string }>(
+            'select state from publication_jobs where id = $1',
             [jobId],
           )
-        ).rows[0],
-      ).toEqual({ external_post_id: evidence.storyId, external_url: evidence.permalink });
-      expect(
-        (
-          await client.query<{ count: number }>(
-            "select count(*)::int as count from audit_events where target_id = $1 and action = 'snapchat_story.manual_resolution'",
-            [jobId],
-          )
-        ).rows[0]?.count,
-      ).toBe(1);
-      expect(
-        (
-          await client.query<{ count: number }>(
-            "select count(*)::int as count from publication_job_events where job_id = $1 and reason = 'snapchat_story_manual_resolution'",
-            [jobId],
-          )
-        ).rows[0]?.count,
-      ).toBe(1);
+        ).rows[0]?.state,
+      ).toBe('dispatching');
       await client.query('RESET ROLE');
       const failedJobId = randomUUID();
       const failedAttemptId = randomUUID();
@@ -264,6 +215,29 @@ describe.skipIf(!connectionString)('Snapchat Story authority on real PostgreSQL'
         reference: 'support-case-absence-9',
         finding: 'verified_absent' as const,
       };
+      await expect(
+        resolveSnapchatStoryEvidence(runtime.database, {
+          ...action,
+          jobId: failedJobId,
+          evidence: failedEvidence,
+          workspaceId: otherWorkspaceId,
+        }),
+      ).rejects.toThrow();
+      await expect(
+        resolveSnapchatStoryEvidence(runtime.database, {
+          ...action,
+          jobId: failedJobId,
+          evidence: failedEvidence,
+          userId: randomUUID(),
+        }),
+      ).rejects.toThrow();
+      await expect(
+        resolveSnapchatStoryEvidence(runtime.database, {
+          ...action,
+          jobId: failedJobId,
+          evidence: { ...failedEvidence, attemptId: randomUUID() },
+        }),
+      ).rejects.toThrow('current attempt');
       expect(
         await resolveSnapchatStoryEvidence(runtime.database, {
           ...action,
@@ -271,6 +245,20 @@ describe.skipIf(!connectionString)('Snapchat Story authority on real PostgreSQL'
           evidence: failedEvidence,
         }),
       ).toEqual({ outcome: 'failed', replayed: false });
+      expect(
+        await resolveSnapchatStoryEvidence(runtime.database, {
+          ...action,
+          jobId: failedJobId,
+          evidence: failedEvidence,
+        }),
+      ).toEqual({ outcome: 'failed', replayed: true });
+      await expect(
+        resolveSnapchatStoryEvidence(runtime.database, {
+          ...action,
+          jobId: failedJobId,
+          evidence: { ...failedEvidence, reference: 'other-case-98765' },
+        }),
+      ).rejects.toThrow('already resolved');
       expect(
         (
           await client.query<{ state: string }>(
@@ -310,12 +298,8 @@ describe.skipIf(!connectionString)('Snapchat Story authority on real PostgreSQL'
           })
         ).statusCode,
       ).toBe(403);
-      const routeReplay = await app.inject({ method: 'POST', url, payload: evidence, headers });
-      expect(routeReplay.statusCode, routeReplay.body).toBe(200);
-      expect(routeReplay.json()).toEqual({
-        data: { outcome: 'published', replayed: true },
-        error: null,
-      });
+      const routeBlocked = await app.inject({ method: 'POST', url, payload: evidence, headers });
+      expect(routeBlocked.statusCode, routeBlocked.body).toBe(409);
       expect(
         (
           await app.inject({

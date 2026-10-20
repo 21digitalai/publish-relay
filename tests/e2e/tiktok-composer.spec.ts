@@ -668,3 +668,216 @@ test('TikTok confirmation uses one exact draft and consent with stable schedule 
   expect(uploadKeys).toHaveLength(2);
   expect(uploadKeys[0]).toBe(uploadKeys[1]);
 });
+
+test('prepared TikTok post resumes after reload and deterministic schedule rejection requires fresh consent', async ({
+  page,
+}, testInfo) => {
+  const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
+  const registration = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Relay Owner',
+      email: `tiktok-resume-${suffix}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: `TikTok resume ${suffix}`,
+    },
+  });
+  expect(registration.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: TIKTOK_ONE,
+              provider: 'tiktok',
+              displayName: 'TikTok One',
+              status: 'active',
+              availability: 'active',
+            },
+          ],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/provider-accounts/*/tiktok-capabilities', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          id: '00000000-0000-4000-8000-000000000399',
+          nickname: 'Fresh Creator',
+          privacyOptions: ['SELF_ONLY'],
+          commentDisabled: false,
+          duetDisabled: false,
+          stitchDisabled: false,
+          maxVideoDurationSeconds: 60,
+          fetchedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 900000).toISOString(),
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/jobs?**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[],"next":null},"error":null}',
+    }),
+  );
+  const postId = '00000000-0000-4000-8000-000000000401';
+  const revisionId = '00000000-0000-4000-8000-000000000402';
+  const correctedRevisionId = '00000000-0000-4000-8000-000000000405';
+  const prepared = {
+    postId,
+    revisionId,
+    createdAt: new Date().toISOString(),
+    captionPreview: 'Prepared caption',
+    content: {
+      schemaVersion: 1,
+      kind: 'video',
+      caption: 'Prepared caption',
+      mediaId: IMPORTED_VIDEO,
+      options: {
+        privacyLevel: 'SELF_ONLY',
+        allowComment: false,
+        allowDuet: false,
+        allowStitch: false,
+        commercialContent: 'none',
+        aiGenerated: false,
+      },
+    },
+    media: {
+      id: IMPORTED_VIDEO,
+      mimeType: 'video/mp4',
+      byteSize: 3500,
+      durationMs: 1000,
+      ready: true,
+      previewUrl: `/api/workflow/media/${IMPORTED_VIDEO}`,
+    },
+  };
+  await page.route('**/api/workflow/tiktok-drafts?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: [prepared], error: null }),
+    }),
+  );
+  await page.route(`**/api/workflow/tiktok-drafts/${postId}`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: prepared, error: null }),
+    }),
+  );
+  await page.route(`**/api/workflow/media/${IMPORTED_VIDEO}`, (route) =>
+    route.fulfill({
+      contentType: 'video/mp4',
+      body: readFileSync(new URL('../fixtures/tiktok-preview.mp4', import.meta.url)),
+    }),
+  );
+  const mutations: { stage: string; key: string | undefined; body: Record<string, unknown> }[] = [];
+  await page.route('**/api/workflow/tiktok-drafts/*', (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    const changed = mutations.some((item) => item.stage === 'revision');
+    mutations.push({
+      stage: 'revision',
+      key: route.request().headers()['idempotency-key'],
+      body: route.request().postDataJSON() as Record<string, unknown>,
+    });
+    if (changed) {
+      prepared.revisionId = correctedRevisionId;
+      prepared.content.caption = 'Corrected caption';
+    }
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { postId, revisionId: changed ? correctedRevisionId : revisionId, changed },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/workflow/tiktok-consents', (route) => {
+    mutations.push({
+      stage: 'consent',
+      key: route.request().headers()['idempotency-key'],
+      body: route.request().postDataJSON() as Record<string, unknown>,
+    });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { id: '00000000-0000-4000-8000-000000000403' },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/workflow/tiktok-schedules', (route) => {
+    mutations.push({
+      stage: 'schedule',
+      key: route.request().headers()['idempotency-key'],
+      body: route.request().postDataJSON() as Record<string, unknown>,
+    });
+    if (mutations.filter((item) => item.stage === 'schedule').length === 1)
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: '{"data":null,"error":"Choose a future publishing time"}',
+      });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobId":"00000000-0000-4000-8000-000000000404"},"error":null}',
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/queue`);
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await page.getByRole('button', { name: /Resume Prepared caption/ }).click();
+  await expect(page.getByRole('textbox', { name: 'Caption' })).toHaveValue('Prepared caption');
+  await page.getByRole('button', { name: 'Start a new TikTok post' }).click();
+  await expect(page.getByRole('textbox', { name: 'Caption' })).toHaveValue('');
+  await page.getByRole('button', { name: /Resume Prepared caption/ }).click();
+  await expect(page.getByRole('textbox', { name: 'Caption' })).toHaveValue('Prepared caption');
+  await page.screenshot({ path: testInfo.outputPath('prepared-resumed.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Visibility' }).click();
+  await page.getByRole('option', { name: 'Only me' }).click();
+  await page.getByRole('radio', { name: 'No' }).check();
+  await page.getByRole('checkbox', { name: /Music Usage Confirmation/ }).check();
+  await page.getByRole('button', { name: 'Confirm and schedule' }).click();
+  await expect(page.getByText(/Choose a future publishing time/)).toBeVisible();
+  await expect(page.locator('.tiktok-composer-options')).not.toHaveAttribute('inert');
+  await expect(page.getByRole('button', { name: 'Confirm and schedule' })).toBeDisabled();
+  await page.screenshot({
+    path: testInfo.outputPath('prepared-correctable-error.png'),
+    fullPage: true,
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.getByRole('textbox', { name: 'Caption' }).fill('Corrected caption');
+  await page.getByRole('button', { name: 'Visibility' }).click();
+  await page.getByRole('option', { name: 'Only me' }).click();
+  await page.getByRole('radio', { name: 'No' }).check();
+  await page.getByRole('checkbox', { name: /Music Usage Confirmation/ }).check();
+  await page.getByRole('button', { name: 'Confirm and schedule' }).click();
+  await expect(page.getByText('1 post scheduled')).toBeVisible();
+  expect(mutations.map((item) => item.stage)).toEqual([
+    'revision',
+    'consent',
+    'schedule',
+    'revision',
+    'consent',
+    'schedule',
+  ]);
+  expect(mutations[0]?.body).toMatchObject({
+    content: { caption: 'Prepared caption', mediaId: IMPORTED_VIDEO },
+  });
+  expect(mutations[3]?.body).toMatchObject({ content: { caption: 'Corrected caption' } });
+  expect(mutations[4]?.body).toMatchObject({ revisionId: correctedRevisionId });
+  expect(mutations[5]?.body).toMatchObject({ revisionId: correctedRevisionId });
+  expect(mutations[1]?.key).not.toBe(mutations[4]?.key);
+  expect(mutations[2]?.key).not.toBe(mutations[5]?.key);
+});

@@ -17,8 +17,12 @@ import {
 } from './tiktok-composer.js';
 import {
   createTikTokAttempt,
+  readPreparedTikTokDraft,
+  readPreparedTikTokDrafts,
   submitTikTokAttempt,
   tikTokAttemptMatches,
+  TikTokRequestError,
+  type PreparedTikTokDraft,
   type TikTokAttempt,
 } from './tiktok-submit.js';
 import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedule-time.js';
@@ -684,6 +688,15 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [hasUncertainPost, setHasUncertainPost] = useState(false);
   const [tiktokSubmission, setTikTokSubmission] = useState<TikTokSubmission | null>(null);
+  const [preparedTikTokDrafts, setPreparedTikTokDrafts] = useState<PreparedTikTokDraft[]>([]);
+  const [preparedTikTokDraft, setPreparedTikTokDraft] = useState<PreparedTikTokDraft | null>(null);
+  const [preparedLoadState, setPreparedLoadState] = useState<'loading' | 'ready' | 'error'>(
+    'loading',
+  );
+  const [preparedHasMore, setPreparedHasMore] = useState(false);
+  const [preparedLoadingMore, setPreparedLoadingMore] = useState(false);
+  const [preparedLoadAttempt, setPreparedLoadAttempt] = useState(0);
+  const [tiktokReviewCycle, setTikTokReviewCycle] = useState(0);
   const tiktokAttempt = useRef<TikTokAttempt | null>(null);
   const intentKey = useRef(crypto.randomUUID());
   const mediaBatchKey = useRef(crypto.randomUUID());
@@ -759,6 +772,56 @@ function Composer({ onClose }: { onClose: () => void }) {
   const allowedKindKey = allowedKinds.join(',');
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const isTikTok = selected.length === 1 && selected[0]?.destinationProvider === 'tiktok';
+  useEffect(() => {
+    if (!isTikTok) return;
+    let cancelled = false;
+    setPreparedLoadState('loading');
+    void readPreparedTikTokDrafts()
+      .then((drafts) => {
+        if (cancelled) return;
+        setPreparedTikTokDrafts(drafts);
+        setPreparedHasMore(drafts.length === 20);
+        setPreparedLoadState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setPreparedLoadState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isTikTok, preparedLoadAttempt]);
+  const loadMorePreparedTikTokDrafts = async () => {
+    const last = preparedTikTokDrafts.at(-1);
+    if (!last || preparedLoadingMore) return;
+    setPreparedLoadingMore(true);
+    try {
+      const next = await readPreparedTikTokDrafts(last);
+      setPreparedTikTokDrafts((current) => [...current, ...next]);
+      setPreparedHasMore(next.length === 20);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'More prepared posts could not be loaded.',
+      );
+    } finally {
+      setPreparedLoadingMore(false);
+    }
+  };
+  const resumePreparedTikTokDraft = async (postId: string) => {
+    try {
+      const draft = await readPreparedTikTokDraft(postId);
+      if (!draft.content || !draft.media.ready)
+        throw new Error('This prepared video is unavailable.');
+      setBody(draft.content.caption);
+      setMediaFiles([]);
+      setImportedMedia([{ ...draft.media, mimeType: draft.media.mimeType }]);
+      setPreparedTikTokDraft(draft);
+      setTikTokSubmission(null);
+      setTikTokReviewCycle((cycle) => cycle + 1);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Prepared post could not be loaded.');
+    }
+  };
   const isX = selected.length > 0 && selected.every((account) => account.provider === 'x');
   const selectedX = selected.filter((account) => account.provider === 'x');
   const includesX = selectedX.length > 0;
@@ -1182,6 +1245,17 @@ function Composer({ onClose }: { onClose: () => void }) {
   const submitTikTok = async () => {
     const existing = tiktokAttempt.current;
     if (!isTikTok || (!existing && !tiktokSubmission?.ready)) return;
+    if (
+      !existing &&
+      preparedTikTokDraft &&
+      mediaFiles.length === 0 &&
+      uploadedMediaIds.current.length > 0
+    ) {
+      if (!(await discardUpload())) {
+        setError('Unused video cleanup is still pending. Try again before scheduling.');
+        return;
+      }
+    }
     if (existing && !tikTokAttemptMatches(existing, formSnapshot, mediaFiles, tiktokSubmission)) {
       setError(
         'The previous TikTok request may have succeeded. Confirm it unchanged before editing.',
@@ -1204,6 +1278,13 @@ function Composer({ onClose }: { onClose: () => void }) {
         submission: tiktokSubmission,
         scheduledAt: targetTime.toISOString(),
       });
+      if (preparedTikTokDraft) {
+        attempt.postId = preparedTikTokDraft.postId;
+        attempt.revisionId = preparedTikTokDraft.revisionId;
+        if (mediaFiles.length === 0 && draftMediaIds[0] === preparedTikTokDraft.media.id)
+          attempt.mediaId = preparedTikTokDraft.media.id;
+        attempt.recovered = true;
+      }
     }
     tiktokAttempt.current = attempt;
     setState('saving');
@@ -1223,13 +1304,39 @@ function Composer({ onClose }: { onClose: () => void }) {
       });
       tiktokAttempt.current = null;
       setHasUncertainPost(false);
+      setPreparedTikTokDraft(null);
       uploadedMediaIds.current = [];
       setReceipt({ count: 1, scheduledAt: attempt.scheduledAt, effectiveProviderSettings: [] });
     } catch (reason) {
-      setHasUncertainPost(true);
-      setError(
-        `${reason instanceof Error ? reason.message : 'TikTok scheduling failed.'} The outcome may be uncertain; confirm the same request before editing or closing.`,
-      );
+      if (reason instanceof TikTokRequestError && reason.deterministic) {
+        if (attempt.postId) {
+          try {
+            const draft = await readPreparedTikTokDraft(attempt.postId);
+            setPreparedTikTokDraft(draft);
+            setImportedMedia([{ ...draft.media, mimeType: draft.media.mimeType }]);
+            setMediaFiles([]);
+            setTikTokSubmission(null);
+            setTikTokReviewCycle((cycle) => cycle + 1);
+            if (draft.media.id !== attempt.mediaId) await discardUpload();
+            else uploadedMediaIds.current = [];
+          } catch {
+            setHasUncertainPost(true);
+            setError('Prepared post could not be verified. Keep this request unchanged and retry.');
+            return;
+          }
+        }
+        tiktokAttempt.current = null;
+        setHasUncertainPost(false);
+        setPreparedLoadAttempt((count) => count + 1);
+        setError(
+          `${reason.message.replace(/\.?$/, '.')} Review this prepared post and confirm again with current TikTok options.`,
+        );
+      } else {
+        setHasUncertainPost(true);
+        setError(
+          `${reason instanceof Error ? reason.message : 'TikTok scheduling failed.'} The outcome may be uncertain; confirm the same request before editing or closing.`,
+        );
+      }
     } finally {
       setState('ready');
     }
@@ -1412,6 +1519,74 @@ function Composer({ onClose }: { onClose: () => void }) {
                 </button>
               )}
             </fieldset>
+            {isTikTok && !hasUncertainPost && (
+              <section className="tiktok-prepared-recovery" aria-label="Prepared TikTok posts">
+                <h3>Prepared TikTok posts</h3>
+                {preparedLoadState === 'loading' && <p role="status">Loading prepared posts…</p>}
+                {preparedLoadState === 'error' && (
+                  <p role="alert">
+                    Prepared posts could not be loaded.{' '}
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        setPreparedLoadAttempt((count) => count + 1);
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </p>
+                )}
+                {preparedLoadState === 'ready' && preparedTikTokDrafts.length === 0 && (
+                  <p>No prepared posts.</p>
+                )}
+                {preparedLoadState === 'ready' &&
+                  preparedTikTokDrafts.map((draft) => (
+                    <button
+                      key={draft.postId}
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void resumePreparedTikTokDraft(draft.postId)}
+                    >
+                      Resume {draft.captionPreview ?? 'untitled video'} ·{' '}
+                      {new Date(draft.createdAt).toLocaleDateString()}
+                    </button>
+                  ))}
+                {preparedLoadState === 'ready' && preparedHasMore && (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={preparedLoadingMore}
+                    onClick={() => void loadMorePreparedTikTokDrafts()}
+                  >
+                    {preparedLoadingMore ? 'Loading more…' : 'Load more prepared posts'}
+                  </button>
+                )}
+                {preparedTikTokDraft && (
+                  <div role="status">
+                    <p>
+                      Prepared video selected. Choose current TikTok options, review and confirm
+                      again.
+                    </p>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => {
+                        setPreparedTikTokDraft(null);
+                        setImportedMedia([]);
+                        setMediaFiles([]);
+                        setBody('');
+                        setTikTokSubmission(null);
+                        setTikTokReviewCycle((cycle) => cycle + 1);
+                        setError(null);
+                      }}
+                    >
+                      Start a new TikTok post
+                    </button>
+                  </div>
+                )}
+              </section>
+            )}
             {selected.length > 0 && !isYouTube && !isTikTok && (
               <fieldset className="content-kind-picker" inert={hasUncertainPost}>
                 <legend>2. Choose supported content</legend>
@@ -1732,7 +1907,7 @@ function Composer({ onClose }: { onClose: () => void }) {
             </div>
             {isTikTok && (
               <TikTokComposerForm
-                key={selected[0]?.id}
+                key={`${selected[0]?.id ?? ''}:${String(tiktokReviewCycle)}`}
                 accountId={selected[0]?.id ?? ''}
                 caption={body}
                 onCaptionChange={setBody}

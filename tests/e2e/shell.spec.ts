@@ -3005,7 +3005,9 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
   });
   if ((page.viewportSize()?.width ?? 0) < 768) {
     const secondBadge = page.locator('.calendar-block.mirrored .calendar-origin-badge').nth(1);
-    await secondBadge.evaluate((element) => element.scrollIntoView({ block: 'nearest' }));
+    await secondBadge.evaluate((element) => {
+      element.scrollIntoView({ block: 'nearest' });
+    });
     const rightEdge = await secondBadge.evaluate(
       (element) => element.getBoundingClientRect().right,
     );

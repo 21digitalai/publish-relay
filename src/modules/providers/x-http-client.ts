@@ -54,8 +54,39 @@ function retryAfter(response: Response): number | undefined {
   return Math.max(0, Math.ceil(reset - Date.now() / 1000));
 }
 
-function toApiError(response: Response): XApiError {
+function safeProviderReason(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const problem = body as Record<string, unknown>;
+  const parts: string[] = [];
+  const code = Array.isArray(problem.errors)
+    ? (problem.errors[0] as Record<string, unknown> | undefined)?.code
+    : undefined;
+  if (typeof code === 'number' && Number.isInteger(code) && code >= 0 && code <= 99999)
+    parts.push(`code ${String(code)}`);
+  if (problem.type === 'about:blank') parts.push('type about:blank');
+  if (
+    problem.type === 'https://api.twitter.com/2/problems/not-authorized-for-resource' ||
+    problem.type === 'https://api.x.com/2/problems/not-authorized-for-resource'
+  )
+    parts.push('type not-authorized-for-resource');
+  // This exact provider-documented reason contains no account or request data.
+  if (problem.detail === 'This user is not allowed to post a video longer than 20 minutes.')
+    parts.push('video exceeds the account 20-minute limit');
+  if (problem.detail === 'This user is not allowed to post a video longer than 125 minutes.')
+    parts.push('video exceeds the account 125-minute limit');
+  return parts.length > 0 ? parts.join(', ') : undefined;
+}
+
+async function toApiError(response: Response): Promise<XApiError> {
   const retryAfterSeconds = retryAfter(response);
+  let providerReason: string | undefined;
+  if (response.headers.get('content-type')?.includes('json')) {
+    try {
+      providerReason = safeProviderReason(await response.json());
+    } catch {
+      // Malformed provider error bodies retain only the safe HTTP classification.
+    }
+  }
   const message =
     response.status === 400 || response.status === 422
       ? 'X rejected this request. Check the post content and connected account.'
@@ -68,7 +99,7 @@ function toApiError(response: Response): XApiError {
             : 'X request failed.';
   return {
     status: response.status,
-    message: `${message} (HTTP ${String(response.status)})`,
+    message: `${message} (HTTP ${String(response.status)}${providerReason ? `; ${providerReason}` : ''})`,
     ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
   };
 }
@@ -343,7 +374,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     } catch (cause) {
       throw new XRequestError(503, 'X media upload request failed', { cause });
     }
-    if (!response.ok) throw mediaRequestError(response);
+    if (!response.ok) throw await mediaRequestError(response);
     return expectsJson ? ((await response.json()) as XMediaResponse) : {};
   }
 
@@ -354,7 +385,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     } catch (cause) {
       throw new XRequestError(503, 'X media status request failed', { cause });
     }
-    if (!response.ok) throw mediaRequestError(response);
+    if (!response.ok) throw await mediaRequestError(response);
     return (await response.json()) as XMediaResponse;
   }
 
@@ -382,7 +413,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     }
     if (allowNotFound && response.status === 404) return {} as T;
     if (!response.ok) {
-      const error = toApiError(response);
+      const error = await toApiError(response);
       throw new XRequestError(error.status, error.message, {
         ...(error.retryAfterSeconds === undefined
           ? {}
@@ -410,7 +441,7 @@ export class XHttpClient implements XClient, XMediaUploadClient {
       throw new XRequestError(503, 'X OAuth request failed', { cause });
     }
     if (!response.ok) {
-      const error = toApiError(response);
+      const error = await toApiError(response);
       throw new XRequestError(error.status, error.message);
     }
     return new URLSearchParams(await response.text());
@@ -469,8 +500,8 @@ function mediaState(response: XMediaResponse): { state: 'succeeded' | 'pending' 
   return { state: 'pending' };
 }
 
-function mediaRequestError(response: Response): XRequestError {
-  const error = toApiError(response);
+async function mediaRequestError(response: Response): Promise<XRequestError> {
+  const error = await toApiError(response);
   return new XRequestError(error.status, error.message, {
     ...(error.retryAfterSeconds === undefined
       ? {}

@@ -6,7 +6,12 @@ import { XHttpClient } from '../src/modules/providers/x-http-client.js';
 const credential = JSON.stringify({ accessToken: 'token', accessTokenSecret: 'token-secret' });
 
 function response(body: object, status = 200, headers?: HeadersInit): Response {
-  return new Response(JSON.stringify(body), { status, ...(headers ? { headers } : {}) });
+  const responseHeaders = new Headers(headers);
+  responseHeaders.set('content-type', 'application/json');
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: responseHeaders,
+  });
 }
 
 describe('X OAuth 1.0a HTTP client', () => {
@@ -99,6 +104,67 @@ describe('X OAuth 1.0a HTTP client', () => {
       expect(String(error)).toContain(`HTTP ${String(status)}`);
     },
   );
+
+  it('retains only allowlisted X video denial evidence for post creation', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }))
+      .mockResolvedValueOnce(
+        response(
+          {
+            title: 'Forbidden',
+            type: 'about:blank',
+            status: 403,
+            detail: 'This user is not allowed to post a video longer than 20 minutes.',
+            errors: [{ code: 324, message: 'private-account-sentinel' }],
+            request_id: 'private-request-sentinel',
+          },
+          403,
+        ),
+      );
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+    }).bindCredential(credential);
+
+    const error = await client
+      .createPost({ text: 'Video', mediaIds: ['media-1'], idempotencyKey: 'video-denial' })
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status: 403 });
+    expect(String(error)).toContain(
+      'code 324, type about:blank, video exceeds the account 20-minute limit',
+    );
+    expect(String(error)).not.toContain('private-account-sentinel');
+    expect(String(error)).not.toContain('private-request-sentinel');
+  });
+
+  it('discards arbitrary X 403 response detail and non-allowlisted codes', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }))
+      .mockResolvedValueOnce(
+        response(
+          {
+            detail: 'account-secret-sentinel',
+            type: 'https://evil.test/path',
+            errors: [{ code: '123secret' }],
+          },
+          403,
+        ),
+      );
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+    }).bindCredential(credential);
+    const error = await client
+      .createPost({ text: 'Video', mediaIds: ['media-1'], idempotencyKey: 'unknown-denial' })
+      .catch((cause: unknown) => cause);
+    expect(String(error)).toContain('(HTTP 403)');
+    expect(String(error)).not.toContain('sentinel');
+    expect(String(error)).not.toContain('evil.test');
+  });
 
   it('does not submit an irreversible post when the identity preflight fails', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(response({}, 401));

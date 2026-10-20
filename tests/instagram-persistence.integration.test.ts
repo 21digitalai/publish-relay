@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { PostgresInstagramArtifactStore } from '../src/modules/providers/instagram-artifact-store.js';
+import { PostgresLinkedInVideoArtifactStore } from '../src/modules/providers/linkedin-video-artifact-store.js';
 import { registerInstagramMediaRoutes } from '../src/modules/providers/instagram-media.routes.js';
 import { InstagramMediaTokenCodec } from '../src/modules/providers/instagram-media-token.js';
 import { cleanupExpiredStaging } from '../src/modules/content/provider-staging.service.js';
@@ -99,6 +100,35 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('Instagram staging persistence and signed media delivery', () => {
+  it('persists tenant-bound LinkedIn video phase transitions in the shared artifact ledger', async () => {
+    const scope = { workspaceId: workspaceA, jobId, mediaId, memberUrn: 'urn:li:person:member-1' };
+    const store = new PostgresLinkedInVideoArtifactStore(db, scope);
+    await expect(store.ensure()).resolves.toEqual({ phase: 'reserved', video: null });
+    await store.recordUploaded('urn:li:video:video-1');
+    const restarted = new PostgresLinkedInVideoArtifactStore(db, scope);
+    await expect(restarted.ensure()).resolves.toEqual({
+      phase: 'processing',
+      video: 'urn:li:video:video-1',
+    });
+    await expect(store.recordUploaded('urn:li:video:video-2')).rejects.toThrow();
+    await expect(store.recordStatus('urn:li:video:foreign', 'AVAILABLE')).rejects.toThrow();
+    await store.recordStatus('urn:li:video:video-1', 'AVAILABLE');
+    await expect(restarted.ensure()).resolves.toEqual({
+      phase: 'available',
+      video: 'urn:li:video:video-1',
+    });
+    await expect(store.recordStatus('urn:li:video:video-1', 'AVAILABLE')).rejects.toThrow();
+    const wrongOwner = new PostgresLinkedInVideoArtifactStore(db, {
+      ...scope,
+      memberUrn: 'urn:li:person:other',
+    });
+    await expect(wrongOwner.ensure()).rejects.toThrow('identity mismatch');
+    const wrongTenant = new PostgresLinkedInVideoArtifactStore(db, {
+      ...scope,
+      workspaceId: workspaceB,
+    });
+    await expect(wrongTenant.ensure()).rejects.toThrow();
+  });
   it('allows one Instagram worker claim and rejects lease-lost progression', async () => {
     const now = new Date();
     const [first, second] = await Promise.all([

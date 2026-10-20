@@ -39,8 +39,8 @@ describe('X OAuth 1.0a HTTP client', () => {
     const longText = 'L'.repeat(281);
     const request = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(response({ data: { id: 'post-1' } }))
-      .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }));
+      .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }))
+      .mockResolvedValueOnce(response({ data: { id: 'post-1' } }));
     const client = new XHttpClient({
       consumerKey: 'consumer',
       consumerSecret: 'secret',
@@ -54,7 +54,11 @@ describe('X OAuth 1.0a HTTP client', () => {
         idempotencyKey: 'caller-owned-key',
       }),
     ).resolves.toEqual({ id: 'post-1', username: 'daily' });
-    const requestBody = request.mock.calls[0]?.[1]?.body;
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      'https://api.x.com/2/users/me',
+      'https://api.x.com/2/tweets',
+    ]);
+    const requestBody = request.mock.calls[1]?.[1]?.body;
     expect(typeof requestBody).toBe('string');
     expect(JSON.parse(requestBody as string)).toEqual({
       text: longText,
@@ -69,7 +73,8 @@ describe('X OAuth 1.0a HTTP client', () => {
       const secret = 'sensitive-provider-detail-sentinel';
       const request = vi
         .fn<typeof fetch>()
-        .mockResolvedValue(
+        .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }))
+        .mockResolvedValueOnce(
           response(
             { detail: secret, title: secret, errors: [{ message: secret }] },
             status,
@@ -90,15 +95,30 @@ describe('X OAuth 1.0a HTTP client', () => {
         ...(status === 429 ? { retryAfterSeconds: 12 } : {}),
       });
       expect(String(error)).not.toContain(secret);
-      expect(String(error)).toContain('X ');
+      expect(String(error)).toContain(`X post creation: X `);
+      expect(String(error)).toContain(`HTTP ${String(status)}`);
     },
   );
+
+  it('does not submit an irreversible post when the identity preflight fails', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(response({}, 401));
+    const client = new XHttpClient({
+      consumerKey: 'consumer',
+      consumerSecret: 'secret',
+      fetch: request,
+    }).bindCredential(credential);
+
+    await expect(
+      client.createPost({ text: 'Not sent', mediaIds: ['media-1'], idempotencyKey: 'preflight' }),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(request.mock.calls.map(([url]) => url)).toEqual(['https://api.x.com/2/users/me']);
+  });
 
   it('uses native X reply linkage without attaching root media to the reply', async () => {
     const request = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(response({ data: { id: 'reply-1' } }))
-      .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }));
+      .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }))
+      .mockResolvedValueOnce(response({ data: { id: 'reply-1' } }));
     const client = new XHttpClient({
       consumerKey: 'consumer',
       consumerSecret: 'secret',
@@ -110,7 +130,7 @@ describe('X OAuth 1.0a HTTP client', () => {
       replyToPostId: 'root-1',
       idempotencyKey: 'reply-key',
     });
-    expect(JSON.parse(request.mock.calls[0]?.[1]?.body as string)).toEqual({
+    expect(JSON.parse(request.mock.calls[1]?.[1]?.body as string)).toEqual({
       text: 'Source: https://example.test',
       reply: { in_reply_to_tweet_id: 'root-1' },
     });

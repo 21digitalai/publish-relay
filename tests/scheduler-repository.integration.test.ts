@@ -128,16 +128,28 @@ describe('scheduler repository', () => {
         .update(credentials)
         .set(encrypted)
         .where(eq(credentials.id, '00000000-0000-4000-8000-000000000303'));
-      const fetch = () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ detail: sentinel, title: sentinel, errors: [{ message: sentinel }] }),
-            {
-              status,
-              ...(status === 429 ? { headers: { 'Retry-After': '45' } } : {}),
-            },
-          ),
+      const requestedUrls: string[] = [];
+      const fetch = (url: string | URL | Request) => {
+        if (typeof url !== 'string') throw new Error('Expected an X URL string');
+        requestedUrls.push(url);
+        return Promise.resolve(
+          requestedUrls.length === 1
+            ? new Response(
+                JSON.stringify({ data: { id: '1', name: 'Scheduler', username: 'scheduler' } }),
+              )
+            : new Response(
+                JSON.stringify({
+                  detail: sentinel,
+                  title: sentinel,
+                  errors: [{ message: sentinel }],
+                }),
+                {
+                  status,
+                  ...(status === 429 ? { headers: { 'Retry-After': '45' } } : {}),
+                },
+              ),
         );
+      };
       const dispatched = await dispatchDueXJobs(
         {
           database: db,
@@ -155,6 +167,7 @@ describe('scheduler repository', () => {
         now,
       );
       expect(dispatched).toBe(1);
+      expect(requestedUrls).toEqual(['https://api.x.com/2/users/me', 'https://api.x.com/2/tweets']);
       const stored = await database.query<{
         state: string;
         outcome: string;
@@ -165,11 +178,13 @@ describe('scheduler repository', () => {
       WHERE job.id = '${jobId}'`);
       expect(stored.rows[0]).toMatchObject({ state, outcome: code });
       expect(stored.rows[0]?.redacted_error).toBe(
-        status === 400 || status === 422
-          ? 'X rejected this request. Check the post content and connected account.'
-          : status === 429
-            ? 'X rate limit reached. Retry after the provider limit resets.'
-            : 'X is temporarily unavailable.',
+        `X post creation: ${
+          status === 400 || status === 422
+            ? 'X rejected this request. Check the post content and connected account.'
+            : status === 429
+              ? 'X rate limit reached. Retry after the provider limit resets.'
+              : 'X is temporarily unavailable.'
+        } (HTTP ${String(status)})`,
       );
       expect(stored.rows[0]?.retry_at ?? null).toEqual(
         retrySeconds === null ? null : expect.any(Date),

@@ -68,7 +68,7 @@ function toApiError(response: Response): XApiError {
             : 'X request failed.';
   return {
     status: response.status,
-    message,
+    message: `${message} (HTTP ${String(response.status)})`,
     ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
   };
 }
@@ -173,19 +173,33 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     void input.idempotencyKey;
     const credential = this.activeCredential;
     if (!credential) throw new Error('X credential must be bound before publishing');
+    // Resolve the permalink identity before the irreversible create request. A
+    // failed identity read after a successful create must not mark a live post failed.
+    const account = await this.currentAccount(credential);
     const payload = {
       text: input.text,
       ...(input.mediaIds.length === 0 ? {} : { media: { media_ids: input.mediaIds } }),
       ...(input.quoteTweetId ? { quote_tweet_id: input.quoteTweetId } : {}),
       ...(input.replyToPostId ? { reply: { in_reply_to_tweet_id: input.replyToPostId } } : {}),
     };
-    const created = await this.call<{ data: { id: string } }>(
-      'POST',
-      'https://api.x.com/2/tweets',
-      credential,
-      payload,
-    );
-    const account = await this.currentAccount(credential);
+    let created: { data: { id: string } };
+    try {
+      created = await this.call<{ data: { id: string } }>(
+        'POST',
+        'https://api.x.com/2/tweets',
+        credential,
+        payload,
+      );
+    } catch (error) {
+      if (!(error instanceof XRequestError)) throw error;
+      throw new XRequestError(error.status, `X post creation: ${error.message}`, {
+        ...(error.retryAfterSeconds === undefined
+          ? {}
+          : { retryAfterSeconds: error.retryAfterSeconds }),
+        ...(error.outcomeUnknown === undefined ? {} : { outcomeUnknown: error.outcomeUnknown }),
+        cause: error,
+      });
+    }
     return { id: created.data.id, username: account.username };
   }
 

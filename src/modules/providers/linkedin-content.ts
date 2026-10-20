@@ -22,6 +22,28 @@ export type LinkedInContent =
   | { kind: 'text'; text: string }
   | { kind: 'link'; text: string; linkUrl: string; title: string; description?: string };
 
+const linkedInVideoSchema = z.object({
+  kind: z.literal('video'),
+  text: z.string().trim().min(1).max(LINKEDIN_TEXT_MAX_LENGTH),
+  title: z.string().trim().min(1).max(200),
+});
+
+/** The media ID is tenant-checked by admission before this stored content is dispatched. */
+export function parseLinkedInVideoContent(
+  content: unknown,
+  mediaIds: readonly string[],
+): {
+  kind: 'video';
+  text: string;
+  title: string;
+  mediaId: string;
+} {
+  const parsed = linkedInVideoSchema.safeParse(content);
+  if (!parsed.success || mediaIds.length !== 1 || !mediaIds[0])
+    throw new Error('LinkedIn video requires text, a title, and exactly one prepared MP4');
+  return { kind: 'video', text: parsed.data.text, title: parsed.data.title, mediaId: mediaIds[0] };
+}
+
 export function parseLinkedInContent(
   content: unknown,
   mediaIds: readonly string[],

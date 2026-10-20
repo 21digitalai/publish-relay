@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   parseLinkedInContent,
+  parseLinkedInVideoContent,
   validateLinkedInTextContent,
   validateLinkedInVideoAsset,
 } from '../src/modules/providers/linkedin-content.js';
@@ -14,6 +15,15 @@ import {
 const options = { clientId: 'client-id', clientSecret: 'client-secret', now: () => 1_000 };
 
 describe('LinkedIn member integration', () => {
+  it('requires exactly one prepared media ID for explicit video content', () => {
+    const mediaId = '00000000-0000-4000-8000-000000000123';
+    const content = { kind: 'video', text: 'Watch', title: 'Demo' };
+    expect(parseLinkedInVideoContent(content, [mediaId])).toEqual({ ...content, mediaId });
+    for (const ids of [[], [mediaId, mediaId]])
+      expect(() => parseLinkedInVideoContent(content, ids)).toThrow();
+    expect(() => parseLinkedInVideoContent({ ...content, title: '' }, [mediaId])).toThrow();
+    expect(() => parseLinkedInContent(content, [mediaId])).toThrow();
+  });
   it('applies conservative LinkedIn MP4 size, duration and codec bounds', () => {
     const media = {
       mimeType: 'video/mp4',

@@ -282,6 +282,85 @@ test('Composer chooses exactly one adapter before showing provider controls', as
   await page.screenshot({ path: testInfo.outputPath('composer-one-destination-success.png') });
 });
 
+test('LinkedIn member video uses one MP4 in the shared Composer on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  const accountId = '00000000-0000-4000-8000-000000000299';
+  const mediaId = '00000000-0000-4000-8000-000000000298';
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: accountId,
+              provider: 'linkedin',
+              displayName: 'Member video profile',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+              capabilitySnapshot: { contentKinds: ['text', 'link', 'video'] },
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/media', (route) =>
+    route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: mediaId }, error: null }),
+    }),
+  );
+  let submitted:
+    { content: { kind: string; text: string; title: string }; mediaIds: string[] } | undefined;
+  await page.route('**/api/workflow/posts', (route) => {
+    submitted = route.request().postDataJSON() as typeof submitted;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]},"error":null}',
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'Member video profile');
+  await expect(page.locator('#composer-media-upload')).toHaveCount(0);
+  await page.getByRole('button', { name: 'video', exact: true }).click();
+  await expect(page.getByLabel('Video title')).toBeVisible();
+  await expect(page.locator('#composer-media-upload')).toHaveAttribute('accept', 'video/mp4');
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath('linkedin-video-empty.png'), fullPage: true });
+  await page.getByLabel('Post body').fill('Watch our member video');
+  await page.getByLabel('Video title').fill('Demo');
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'demo.mp4',
+    mimeType: 'video/mp4',
+    buffer: Buffer.from('fixture video'),
+  });
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('linkedin-video-ready.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Remove' }).click();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'demo.mp4',
+    mimeType: 'video/mp4',
+    buffer: Buffer.from('fixture video'),
+  });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+  expect(submitted?.content).toEqual({
+    kind: 'video',
+    text: 'Watch our member video',
+    title: 'Demo',
+  });
+  expect(submitted?.mediaIds).toEqual([mediaId]);
+});
+
 test('Composer separates same-name destinations by platform on desktop and mobile', async ({
   page,
 }, testInfo) => {

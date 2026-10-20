@@ -223,6 +223,8 @@ export async function deferLeasedJob(
         .set({
           state: 'retry_wait',
           nextAttemptAt: input.retryAt,
+          // Claim increments this counter; processing created no publication attempt.
+          attemptNumber: sql`${publicationJobs.attemptNumber} - 1`,
           leaseOwner: null,
           leaseExpiresAt: null,
           updatedAt: input.now,

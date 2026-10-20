@@ -200,11 +200,12 @@ describe('Instagram staging persistence and signed media delivery', () => {
     await expect(
       deferLeasedJob(db, { workspaceId: workspaceA, jobId, workerId: 'media-owner', now, retryAt }),
     ).resolves.toBe(true);
-    const rows = await database.query<{ state: string; count: number }>(`
-      SELECT job.state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = job.id) AS count
+    const rows = await database.query<{ state: string; count: number; attempt_number: number }>(`
+      SELECT job.state, job.attempt_number,
+        (SELECT count(*)::int FROM publication_attempts WHERE job_id = job.id) AS count
       FROM publication_jobs job WHERE job.id = '${jobId}'
     `);
-    expect(rows.rows[0]).toMatchObject({ state: 'retry_wait', count: 0 });
+    expect(rows.rows[0]).toMatchObject({ state: 'retry_wait', attempt_number: 0, count: 0 });
     await expect(
       startDispatchAttempt(db, {
         workspaceId: workspaceA,

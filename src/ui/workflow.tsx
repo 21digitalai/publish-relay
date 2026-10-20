@@ -9,6 +9,7 @@ import {
 import { Rail } from './main.js';
 import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { ConfirmationDialog } from './confirmation-dialog.js';
 import { SnapchatStoryResolution } from './snapchat-story-resolution.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
 import { TikTokComposerForm, type ImportedDraftMedia } from './tiktok-composer.js';
@@ -3115,93 +3116,81 @@ export function JobDetailPage() {
         </div>
       )}
       {dialog && (
-        <div className="dialog-backdrop">
-          <section
-            className="confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="job-dialog-title"
-          >
+        <ConfirmationDialog
+          titleId="job-dialog-title"
+          icon={
             <span className={dialog === 'cancel' ? 'danger-icon' : 'info-icon'}>
               {dialog === 'cancel' ? '!' : '↻'}
             </span>
-            <h2 id="job-dialog-title">
-              {dialog === 'cancel'
-                ? `Cancel ${job.account} publication?`
-                : 'Retry this publication now?'}
-            </h2>
-            <p>
-              {dialog === 'cancel'
-                ? 'It will be removed from dispatch. Published external content cannot be undone.'
-                : 'The same publication job will be reused, preventing a duplicate post.'}
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                autoFocus
-                onClick={() => {
-                  setDialog(null);
-                }}
-              >
-                Keep job
-              </button>
-              <button
-                className={dialog === 'cancel' ? 'danger-button' : 'primary-button'}
-                disabled={isMutating}
-                onClick={() => {
-                  const action = dialog;
-                  setIsMutating(true);
-                  setMutationError(null);
-                  setMutationAnnouncement(
-                    action === 'cancel' ? 'Cancelling publication' : 'Retrying publication',
-                  );
-                  void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/${action}`, {
-                    method: 'POST',
-                    headers: {
-                      'x-csrf-token': cookieValue('publish_relay_csrf'),
-                      'idempotency-key': crypto.randomUUID(),
-                    },
-                  })
-                    .then(async (response) => {
-                      const result = (await response.json()) as {
-                        data: { state: string } | null;
-                        error: string | null;
-                      };
-                      if (!response.ok || !result.data)
-                        throw new Error(result.error ?? `Could not ${action} this job`);
-                      setJob({ ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' });
-                      setDialog(null);
-                      setMutationAnnouncement(
-                        action === 'cancel'
-                          ? 'Publication cancelled successfully'
-                          : 'Publication retry queued successfully',
-                      );
-                    })
-                    .catch((error: unknown) => {
-                      const message =
-                        error instanceof Error ? error.message : `Could not ${action} this job`;
-                      showAnalyticsError(setMutationError, message, 'publishing', 'unknown');
-                      setMutationAnnouncement(
-                        `${action === 'cancel' ? 'Cancellation' : 'Retry'} failed: ${message}`,
-                      );
-                      setDialog(null);
-                    })
-                    .finally(() => {
-                      setIsMutating(false);
-                    });
-                }}
-              >
-                {isMutating
-                  ? dialog === 'cancel'
-                    ? 'Cancelling…'
-                    : 'Retrying…'
-                  : dialog === 'cancel'
-                    ? 'Cancel job'
-                    : 'Retry safely'}
-              </button>
-            </div>
-          </section>
-        </div>
+          }
+          title={
+            dialog === 'cancel'
+              ? `Cancel ${job.account} publication?`
+              : 'Retry this publication now?'
+          }
+          description={
+            dialog === 'cancel'
+              ? 'It will be removed from dispatch. Published external content cannot be undone.'
+              : 'The same publication job will be reused, preventing a duplicate post.'
+          }
+          cancelLabel="Keep job"
+          confirmLabel={
+            isMutating
+              ? dialog === 'cancel'
+                ? 'Cancelling…'
+                : 'Retrying…'
+              : dialog === 'cancel'
+                ? 'Cancel job'
+                : 'Retry safely'
+          }
+          confirmTone={dialog === 'cancel' ? 'danger' : 'primary'}
+          disabled={isMutating}
+          onCancel={() => {
+            setDialog(null);
+          }}
+          onConfirm={() => {
+            const action = dialog;
+            setIsMutating(true);
+            setMutationError(null);
+            setMutationAnnouncement(
+              action === 'cancel' ? 'Cancelling publication' : 'Retrying publication',
+            );
+            void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/${action}`, {
+              method: 'POST',
+              headers: {
+                'x-csrf-token': cookieValue('publish_relay_csrf'),
+                'idempotency-key': crypto.randomUUID(),
+              },
+            })
+              .then(async (response) => {
+                const result = (await response.json()) as {
+                  data: { state: string } | null;
+                  error: string | null;
+                };
+                if (!response.ok || !result.data)
+                  throw new Error(result.error ?? `Could not ${action} this job`);
+                setJob({ ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' });
+                setDialog(null);
+                setMutationAnnouncement(
+                  action === 'cancel'
+                    ? 'Publication cancelled successfully'
+                    : 'Publication retry queued successfully',
+                );
+              })
+              .catch((error: unknown) => {
+                const message =
+                  error instanceof Error ? error.message : `Could not ${action} this job`;
+                showAnalyticsError(setMutationError, message, 'publishing', 'unknown');
+                setMutationAnnouncement(
+                  `${action === 'cancel' ? 'Cancellation' : 'Retry'} failed: ${message}`,
+                );
+                setDialog(null);
+              })
+              .finally(() => {
+                setIsMutating(false);
+              });
+          }}
+        />
       )}
     </WorkspaceLayout>
   );

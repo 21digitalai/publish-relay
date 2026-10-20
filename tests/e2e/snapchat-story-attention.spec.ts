@@ -123,6 +123,8 @@ test('Story unknown outcome appears under Needs attention without a retry action
     .fill('support-case-12345');
   await page.getByRole('button', { name: 'Record verified failure' }).click();
   await expect(page.getByRole('alertdialog')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Keep Needs attention' })).toBeFocused();
+  await page.screenshot({ path: testInfo.outputPath('story-failure-confirm.png') });
   await page.getByRole('button', { name: 'Keep Needs attention' }).click();
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
   await page.getByRole('button', { name: 'Record verified failure' }).click();

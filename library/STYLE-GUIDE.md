@@ -94,6 +94,12 @@ the dialog requires the exact displayed name and renders server resource blocker
 The list and switcher remove a deleted workspace after the response and stay absent on reload.
 On narrow screens, row actions wrap below the workspace label.
 
+`src/ui/confirmation-dialog.tsx` owns the shared alert-dialog shell for Queue job cancel/retry
+and Snapchat Story verified-failure confirmation. It keeps the cancel action initially focused,
+uses one labelled modal/action order, and accepts the caller's explanatory text, icon, button
+labels, tone, pending state, and action handlers. The caller retains its own mutation and
+close/error lifecycle; do not duplicate the shell for another job recovery confirmation.
+
 Desktop uses a 240px left rail with wordmark, workspace switcher, Create post, Queue, Calendar, Accounts, Settings, then help/user/connection health in the footer. Create post remains visible without scrolling. Mobile uses a drawer.
 
 The workspace switcher in `src/ui/main.tsx` keeps its Add new workspace link after the searchable workspace list, outside the listbox so filtering to zero matches never hides it. The link uses the active workspace's existing Settings > Workspace creation route; it does not create a second form. It remains keyboard reachable, and Escape from the link closes the menu and restores focus to the switcher.

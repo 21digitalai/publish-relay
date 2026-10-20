@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { DefaultsSelect } from './defaults-select.js';
+import { ConfirmationDialog } from './confirmation-dialog.js';
 
 type EvidenceSource = 'provider_dashboard' | 'provider_support' | 'provider_api';
 type FailureFinding = 'provider_rejected' | 'verified_absent';
@@ -151,40 +152,21 @@ export function SnapchatStoryResolution({
         </p>
       )}
       {confirming && (
-        <div className="dialog-backdrop">
-          <section
-            className="confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="story-failure-confirm-title"
-          >
-            <h2 id="story-failure-confirm-title">Mark this Story attempt failed?</h2>
-            <p>
-              This records the supplied Snapchat evidence and ends the unknown outcome. It does not
-              retry or publish a Story.
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                type="button"
-                autoFocus
-                onClick={() => {
-                  setConfirming(false);
-                }}
-              >
-                Keep Needs attention
-              </button>
-              <button
-                className="danger-button"
-                type="button"
-                disabled={saving}
-                onClick={() => void resolve()}
-              >
-                {saving ? 'Recording…' : 'Confirm verified failure'}
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmationDialog
+          titleId="story-failure-confirm-title"
+          title="Mark this Story attempt failed?"
+          description="This records the supplied Snapchat evidence and ends the unknown outcome. It does not retry or publish a Story."
+          cancelLabel="Keep Needs attention"
+          confirmLabel={saving ? 'Recording…' : 'Confirm verified failure'}
+          confirmTone="danger"
+          disabled={saving}
+          onCancel={() => {
+            setConfirming(false);
+          }}
+          onConfirm={() => {
+            void resolve();
+          }}
+        />
       )}
     </section>
   );

@@ -8,6 +8,48 @@ const tokenSchema = z.object({
 const profileSchema = z.object({ sub: z.string().min(1), name: z.string().optional() });
 const LINKEDIN_SCOPES = 'openid profile email w_member_social';
 const LINKEDIN_API_VERSION = '202605';
+const videoUploadSchema = z.object({
+  value: z.object({
+    video: z.string().regex(/^urn:li:video:[^\s]+$/),
+    uploadToken: z.string(),
+    uploadUrlsExpireAt: z.number().int().positive(),
+    uploadInstructions: z
+      .array(
+        z.object({
+          firstByte: z.number().int().nonnegative(),
+          lastByte: z.number().int().nonnegative(),
+          uploadUrl: z.url(),
+        }),
+      )
+      .min(1),
+  }),
+});
+const videoStatusSchema = z.object({
+  id: z.string().regex(/^urn:li:video:[^\s]+$/),
+  owner: z.string().regex(/^urn:li:person:[^\s]+$/),
+  status: z.enum(['WAITING_UPLOAD', 'PROCESSING', 'PROCESSING_FAILED', 'AVAILABLE']),
+});
+
+function videoHeaders(credential: LinkedInCredential): Record<string, string> {
+  return {
+    Authorization: `Bearer ${credential.accessToken}`,
+    'Content-Type': 'application/json',
+    'Linkedin-Version': LINKEDIN_API_VERSION,
+    'X-Restli-Protocol-Version': '2.0.0',
+  };
+}
+
+function trustedUploadUrl(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== 'https:' ||
+    !['linkedin.com', 'linkedin-ei.com'].some(
+      (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+    )
+  )
+    throw new Error('LinkedIn video upload URL is not trusted');
+  return value;
+}
 
 export interface LinkedInCredential {
   accessToken: string;
@@ -115,6 +157,106 @@ export class LinkedInHttpClient {
 
   async publishText(input: { credential: LinkedInCredential; text: string }): Promise<string> {
     return this.publishPost(input.credential, input.text);
+  }
+
+  async uploadVideo(input: { credential: LinkedInCredential; bytes: Buffer }): Promise<string> {
+    const { credential, bytes } = input;
+    if (bytes.length < 75_000 || bytes.length > 500_000_000)
+      throw new Error('LinkedIn member video must be between 75 kB and 500 MB');
+    const initialized = await this.request(
+      'https://api.linkedin.com/rest/videos?action=initializeUpload',
+      {
+        method: 'POST',
+        headers: videoHeaders(credential),
+        body: JSON.stringify({
+          initializeUploadRequest: {
+            owner: credential.memberUrn,
+            fileSizeBytes: bytes.length,
+            uploadCaptions: false,
+            uploadThumbnail: false,
+          },
+        }),
+      },
+    );
+    if (!initialized.ok)
+      throw new LinkedInRequestError(
+        initialized.status,
+        classifyStatus(initialized.status),
+        `LinkedIn video initialization failed (HTTP ${String(initialized.status)})`,
+      );
+    const session = videoUploadSchema.parse(await initialized.json()).value;
+    if (session.uploadUrlsExpireAt <= this.now())
+      throw new Error('LinkedIn video upload URLs expired');
+    const uploadedPartIds: string[] = [];
+    let nextByte = 0;
+    for (const instruction of session.uploadInstructions) {
+      if (
+        instruction.firstByte !== nextByte ||
+        instruction.lastByte < nextByte ||
+        instruction.lastByte >= bytes.length
+      )
+        throw new Error('LinkedIn video upload ranges are invalid');
+      const uploadUrl = trustedUploadUrl(instruction.uploadUrl);
+      const uploaded = await this.request(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: new Uint8Array(bytes.subarray(instruction.firstByte, instruction.lastByte + 1)),
+        redirect: 'error',
+      });
+      if (!uploaded.ok)
+        throw new LinkedInRequestError(
+          uploaded.status,
+          classifyStatus(uploaded.status),
+          `LinkedIn video part upload failed (HTTP ${String(uploaded.status)})`,
+        );
+      const partId = uploaded.headers.get('etag')?.replace(/^"|"$/g, '');
+      if (!partId) throw new Error('LinkedIn video upload part receipt is missing');
+      uploadedPartIds.push(partId);
+      nextByte = instruction.lastByte + 1;
+    }
+    if (nextByte !== bytes.length) throw new Error('LinkedIn video upload ranges are incomplete');
+    const finalized = await this.request(
+      'https://api.linkedin.com/rest/videos?action=finalizeUpload',
+      {
+        method: 'POST',
+        headers: videoHeaders(credential),
+        body: JSON.stringify({
+          finalizeUploadRequest: {
+            video: session.video,
+            uploadToken: session.uploadToken,
+            uploadedPartIds,
+          },
+        }),
+      },
+    );
+    if (!finalized.ok)
+      throw new LinkedInRequestError(
+        finalized.status,
+        classifyStatus(finalized.status),
+        `LinkedIn video finalization failed (HTTP ${String(finalized.status)})`,
+      );
+    return session.video;
+  }
+
+  async getVideoStatus(input: {
+    credential: LinkedInCredential;
+    video: string;
+  }): Promise<'WAITING_UPLOAD' | 'PROCESSING' | 'PROCESSING_FAILED' | 'AVAILABLE'> {
+    if (!/^urn:li:video:[^\s]+$/.test(input.video)) throw new Error('Invalid LinkedIn video URN');
+    const response = await this.request(
+      `https://api.linkedin.com/rest/videos/${encodeURIComponent(input.video)}`,
+      { headers: videoHeaders(input.credential) },
+    );
+    if (!response.ok)
+      throw new LinkedInRequestError(
+        response.status,
+        classifyStatus(response.status),
+        `LinkedIn video status failed (HTTP ${String(response.status)})`,
+      );
+    const video = videoStatusSchema.parse(await response.json());
+    if (video.id !== input.video || video.owner !== input.credential.memberUrn)
+      throw new Error('LinkedIn video owner or identity mismatch');
+    return video.status;
   }
 
   async publishArticle(input: {

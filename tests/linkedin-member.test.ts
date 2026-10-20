@@ -13,6 +13,161 @@ import {
 const options = { clientId: 'client-id', clientSecret: 'client-secret', now: () => 1_000 };
 
 describe('LinkedIn member integration', () => {
+  it('uploads ordered video parts, finalizes ETags, and requires matching ready asset', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const bytes = Buffer.alloc(75_000);
+    const video = 'urn:li:video:video-1';
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: {
+              video,
+              uploadToken: 'token',
+              uploadUrlsExpireAt: 10_000,
+              uploadInstructions: [
+                {
+                  firstByte: 0,
+                  lastByte: 39_999,
+                  uploadUrl: 'https://www.linkedin.com/upload/one',
+                },
+                {
+                  firstByte: 40_000,
+                  lastByte: 74_999,
+                  uploadUrl: 'https://www.linkedin.com/upload/two',
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200, headers: { etag: 'part-1' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 200, headers: { etag: 'part-2' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: video,
+            owner: credential.memberUrn,
+            status: 'AVAILABLE',
+          }),
+          { status: 200 },
+        ),
+      );
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(client.uploadVideo({ credential, bytes })).resolves.toBe(video);
+    expect(JSON.parse(request.mock.calls[0]?.[1]?.body as string)).toEqual({
+      initializeUploadRequest: {
+        owner: credential.memberUrn,
+        fileSizeBytes: 75_000,
+        uploadCaptions: false,
+        uploadThumbnail: false,
+      },
+    });
+    expect(request.mock.calls[1]?.[1]?.body).toHaveLength(40_000);
+    expect(request.mock.calls[2]?.[1]?.body).toHaveLength(35_000);
+    expect(JSON.parse(request.mock.calls[3]?.[1]?.body as string)).toEqual({
+      finalizeUploadRequest: { video, uploadToken: 'token', uploadedPartIds: ['part-1', 'part-2'] },
+    });
+    await expect(client.getVideoStatus({ credential, video })).resolves.toBe('AVAILABLE');
+    expect(request.mock.calls[4]?.[0]).toBe(
+      'https://api.linkedin.com/rest/videos/urn%3Ali%3Avideo%3Avideo-1',
+    );
+  });
+
+  it('rejects malformed video ranges and untrusted signed upload URLs before PUT', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    for (const uploadInstructions of [
+      [{ firstByte: 1, lastByte: 74_999, uploadUrl: 'https://www.linkedin.com/upload' }],
+      [{ firstByte: 0, lastByte: 74_999, uploadUrl: 'https://attacker.example/upload' }],
+    ]) {
+      const request = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            value: {
+              video: 'urn:li:video:video-1',
+              uploadToken: '',
+              uploadUrlsExpireAt: 10_000,
+              uploadInstructions,
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+      const client = new LinkedInHttpClient({ ...options, fetch: request });
+      await expect(
+        client.uploadVideo({ credential, bytes: Buffer.alloc(75_000) }),
+      ).rejects.toThrow();
+      expect(request).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('does not finalize a partial upload without an ETag receipt', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: {
+              video: 'urn:li:video:video-1',
+              uploadToken: '',
+              uploadUrlsExpireAt: 10_000,
+              uploadInstructions: [
+                { firstByte: 0, lastByte: 74_999, uploadUrl: 'https://www.linkedin.com/upload' },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(client.uploadVideo({ credential, bytes: Buffer.alloc(75_000) })).rejects.toThrow(
+      'part receipt is missing',
+    );
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns processing status without treating an unfinished video as ready', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const video = 'urn:li:video:video-1';
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: video,
+          owner: credential.memberUrn,
+          status: 'PROCESSING',
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(client.getVideoStatus({ credential, video })).resolves.toBe('PROCESSING');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it('retries definite rate-limit rejection but holds ambiguous delivery outcomes', () => {
     const now = new Date('2026-09-28T07:00:00Z');
     const rejected = new LinkedInRequestError(429, 'rate_limit', 'Rate limited');

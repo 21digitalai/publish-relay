@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   parseLinkedInContent,
   validateLinkedInTextContent,
+  validateLinkedInVideoAsset,
 } from '../src/modules/providers/linkedin-content.js';
 import { classifyLinkedInDispatchFailure } from '../src/modules/providers/linkedin-dispatch.service.js';
 import {
@@ -13,6 +14,31 @@ import {
 const options = { clientId: 'client-id', clientSecret: 'client-secret', now: () => 1_000 };
 
 describe('LinkedIn member integration', () => {
+  it('applies conservative LinkedIn MP4 size, duration and codec bounds', () => {
+    const media = {
+      mimeType: 'video/mp4',
+      byteSize: 75_000,
+      durationMs: 3_000,
+      container: 'mp4',
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+    };
+    expect(() => {
+      validateLinkedInVideoAsset(media);
+    }).not.toThrow();
+    for (const changed of [
+      { mimeType: 'video/quicktime' },
+      { byteSize: 74_999 },
+      { byteSize: 500_000_001 },
+      { durationMs: 2_999 },
+      { durationMs: 1_800_001 },
+      { videoCodec: 'hevc' },
+      { audioCodec: 'opus' },
+    ])
+      expect(() => {
+        validateLinkedInVideoAsset({ ...media, ...changed });
+      }).toThrow();
+  });
   it('uploads ordered video parts, finalizes ETags, and requires matching ready asset', async () => {
     const credential = {
       accessToken: 'access',

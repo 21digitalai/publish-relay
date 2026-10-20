@@ -45,3 +45,24 @@ export function validateLinkedInTextContent(content: unknown, mediaIds: readonly
   if (mediaIds.length !== 0 || !linkedInTextSchema.safeParse(content).success)
     throw new Error('LinkedIn member posts require text only, up to 3000 characters');
 }
+
+/** Conservative member-feed bounds from the Videos API and linked video specifications. */
+export function validateLinkedInVideoAsset(media: {
+  mimeType: string;
+  byteSize: number;
+  durationMs: number | null;
+  container: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+}): void {
+  if (media.mimeType !== 'video/mp4' || media.container !== 'mp4')
+    throw new Error('LinkedIn video requires an MP4 file');
+  if (media.byteSize < 75_000 || media.byteSize > 500_000_000)
+    throw new Error('LinkedIn video must be between 75 kB and 500 MB');
+  if (media.durationMs === null || media.durationMs < 3_000 || media.durationMs > 1_800_000)
+    throw new Error('LinkedIn video must be between 3 seconds and 30 minutes');
+  if (media.videoCodec !== 'h264' && media.videoCodec !== 'vp8')
+    throw new Error('LinkedIn video requires H.264 or VP8 video codec');
+  if (media.audioCodec !== null && media.audioCodec !== 'aac' && media.audioCodec !== 'mp4a')
+    throw new Error('LinkedIn video audio requires AAC or MPEG-4 codec');
+}

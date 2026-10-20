@@ -163,6 +163,125 @@ async function mockMetaDestinations(page: Page) {
   );
 }
 
+async function selectComposerAccount(page: Page, name: string) {
+  const change = page.getByRole('button', { name: 'Change account' });
+  if (await change.isVisible().catch(() => false)) await change.click();
+  await page.locator('.account-picker label').filter({ hasText: name }).locator('input').click();
+}
+
+test('Composer chooses exactly one adapter before showing provider controls', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000201',
+              provider: 'x',
+              displayName: 'X account',
+              status: 'active',
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000202',
+              provider: 'youtube',
+              displayName: 'Video channel',
+              status: 'active',
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000203',
+              provider: 'linkedin',
+              displayName: 'Member profile',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000204',
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: 'Page',
+              status: 'active',
+              capabilitySnapshot: { contentKinds: ['link', 'single_image'] },
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000205',
+              provider: 'tiktok',
+              displayName: 'Creator',
+              status: 'active',
+            },
+            {
+              id: '00000000-0000-4000-8000-000000000206',
+              provider: 'x',
+              displayName: 'Expired account',
+              status: 'reconnect_required',
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  const requests: { providerAccountIds: string[] }[] = [];
+  await page.route('**/api/workflow/posts', (route) => {
+    requests.push(route.request().postDataJSON() as { providerAccountIds: string[] });
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]},"error":null}',
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await expect(page.getByRole('radio', { name: /X account/ })).not.toBeChecked();
+  await expect(page.getByLabel('Post body')).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: /Expired account/ })).toBeDisabled();
+  await expect(page.locator('.composer-sheet')).toHaveCSS('opacity', '1');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    testInfo.project.name === 'mobile' ? 390 : 1440,
+  );
+  await page.screenshot({ path: testInfo.outputPath('composer-choose-account.png') });
+
+  const choose = async (name: RegExp) => {
+    const change = page.getByRole('button', { name: 'Change account' });
+    if (await change.isVisible().catch(() => false)) await change.click();
+    await page.getByRole('radio', { name }).click();
+    await expect(page.getByRole('button', { name: 'Change account' })).toBeVisible();
+  };
+  await page.getByRole('radio', { name: /X account/ }).focus();
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('button', { name: 'Change account' })).toBeFocused();
+  await expect(page.getByText('Text, images, GIF or MP4 video')).toHaveCount(0);
+  await expect(page.getByLabel('Post body')).toBeVisible();
+  await expect(page.getByText('Up to four images, or one GIF or MP4 video')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('composer-x-selected.png') });
+  await choose(/Video channel/);
+  await expect(page.getByLabel('Video title')).toBeVisible();
+  await expect(page.getByLabel('Visibility')).toBeVisible();
+  await expect(page.getByLabel('Post body')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('composer-youtube-selected.png') });
+  await choose(/Member profile/);
+  await expect(page.getByLabel('Post body')).toBeVisible();
+  await expect(page.locator('#composer-media-upload')).toHaveCount(0);
+  await choose(/Facebook · Page/);
+  await expect(page.getByRole('button', { name: 'link' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
+  await choose(/TikTok · Creator/);
+  await expect(page.getByText('Prepared TikTok posts')).toBeVisible();
+  await choose(/X account/);
+  await page.getByLabel('Post body').fill('One destination only');
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+  expect(requests.map((request) => request.providerAccountIds)).toEqual([
+    ['00000000-0000-4000-8000-000000000201'],
+  ]);
+  await page.screenshot({ path: testInfo.outputPath('composer-one-destination-success.png') });
+});
+
 test('selected Meta grant revoke distinguishes remote and local actions', async ({
   page,
 }, testInfo) => {
@@ -320,19 +439,20 @@ test('computes Meta destination capability intersection on desktop and mobile', 
     .locator('.page-heading')
     .getByRole('button', { name: /Create post/ })
     .click();
-  await page.getByText('Instagram · @mira').click();
+  await selectComposerAccount(page, 'Instagram · @mira');
   await expect(page.getByRole('button', { name: 'carousel' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'link' })).toHaveCount(0);
-  await page.getByText('Facebook · Mira Studio').click();
+  await selectComposerAccount(page, 'Facebook · Mira Studio');
   await expect(page.getByRole('button', { name: 'single image' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
-  await expect(page.getByText(/remote missing · reconnect to schedule/)).toBeVisible();
   await expect(page.locator('.composer-body-heading')).toContainText('0/280 characters');
   await expect(page.locator('.composer-body-heading')).not.toContainText('X post');
+  await page.getByRole('button', { name: 'Change account' }).click();
+  await expect(page.getByText(/remote missing · reconnect to schedule/)).toBeVisible();
   await expect(page.getByText(/reauth required · reconnect to schedule/)).toBeVisible();
   await expect(page.getByText(/permission lost · reconnect to schedule/)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('meta-shared-shape.png'), fullPage: true });
-  await page.getByText('Instagram · @mira').click();
+  await page.getByRole('button', { name: 'Keep Facebook · Mira Studio' }).click();
   await expect(page.getByRole('button', { name: 'link' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -351,11 +471,11 @@ test('computes Meta destination capability intersection on desktop and mobile', 
   await page.getByRole('button', { name: 'link' }).click();
   await page.getByPlaceholder('What should your audience know?').fill('Facebook link post');
   await page.getByLabel('HTTPS link').fill('http://example.test');
-  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath('meta-link-validation.png'), fullPage: true });
   await page.getByLabel('HTTPS link').fill('https://example.test');
-  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
   await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('meta-link-success.png'), fullPage: true });
   expect(submitted?.content).toMatchObject({ kind: 'link', linkUrl: 'https://example.test' });
@@ -386,7 +506,7 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
     return route.fulfill({
       status: 201,
       contentType: 'application/json',
-      body: JSON.stringify({ data: { jobs: [{}, {}] }, error: null }),
+      body: JSON.stringify({ data: { jobs: [{}] }, error: null }),
     });
   });
   await page.goto(await workspacePath(page, 'queue'));
@@ -402,7 +522,7 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
     await expect(
       page.locator('.account-picker label').filter({ hasText: name }).locator('input'),
     ).toBeDisabled();
-  await page.getByText('Instagram · @mira').click();
+  await selectComposerAccount(page, 'Instagram · @mira');
   await page.getByRole('button', { name: 'carousel' }).click();
   await page.getByPlaceholder('What should your audience know?').fill('Shared Meta image');
   const image = (name: string) => ({
@@ -411,7 +531,7 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
     buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]),
   });
   await page.locator('#composer-media-upload').setInputFiles([image('first.png')]);
-  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   await page.screenshot({
     path: testInfo.outputPath('meta-carousel-needs-images.png'),
     fullPage: true,
@@ -419,13 +539,14 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
   await page
     .locator('#composer-media-upload')
     .setInputFiles([image('first.png'), image('second.png')]);
-  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
-  await page.getByText('Facebook · Mira Studio').click();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await selectComposerAccount(page, 'Facebook · Mira Studio');
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'single image' }).click();
   await page.locator('#composer-media-upload').setInputFiles([image('shared.png')]);
-  await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
-  await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath('meta-shared-image-success.png'),
     fullPage: true,
@@ -433,10 +554,7 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
   expect(uploadCount).toBe(1);
   expect(submitted?.content.kind).toBe('single_image');
   expect(submitted?.mediaIds).toHaveLength(1);
-  expect(submitted?.providerAccountIds).toEqual([
-    '00000000-0000-4000-8000-000000000211',
-    '00000000-0000-4000-8000-000000000212',
-  ]);
+  expect(submitted?.providerAccountIds).toEqual(['00000000-0000-4000-8000-000000000212']);
 });
 
 test('renders the login surface and reports an inline authentication error', async ({
@@ -544,8 +662,9 @@ test('keeps imported-draft scheduling disabled until hydration succeeds and afte
   });
   const path = await workspacePath(page, `drafts/${draftId}`);
   await page.goto(path);
+  await selectComposerAccount(page, 'Example Editorial');
   await page.getByLabel('Post body').fill('Ready only after hydration');
-  const schedule = page.getByRole('button', { name: 'Schedule 2 posts' });
+  const schedule = page.getByRole('button', { name: 'Schedule 1 post' });
   await expect(schedule).toBeDisabled();
   releaseDraft?.();
   await expect(page.getByText('1 attached media item selected')).toBeVisible();
@@ -564,6 +683,7 @@ test('keeps imported-draft scheduling disabled until hydration succeeds and afte
     }),
   );
   await page.reload();
+  await selectComposerAccount(page, 'Example Editorial');
   await page.getByLabel('Post body').fill('Must remain blocked');
   await expect(page.getByRole('alert')).toContainText('Draft not found');
   await expect(schedule).toBeDisabled();
@@ -814,9 +934,9 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
     await page.getByRole('button', { name: 'Open navigation' }).click();
   }
   await page.getByRole('button', { name: 'Create post' }).click();
-  await expect(page.getByRole('checkbox', { name: /Facebook · Shared Page/ })).toBeVisible();
+  await expect(page.getByRole('radio', { name: /Facebook · Shared Page/ })).toBeVisible();
   await page.getByRole('button', { name: 'Load more accounts' }).click();
-  await expect(page.getByRole('checkbox', { name: /Facebook · Later Page/ })).toBeVisible();
+  await expect(page.getByRole('radio', { name: /Facebook · Later Page/ })).toBeVisible();
 });
 
 test('lets the origin Page owner hide other-workspace calendar posts', async ({ page }) => {
@@ -1378,6 +1498,7 @@ test('shows LinkedIn expiry and prevents scheduling after the token lifetime', a
     page.getByRole('complementary', { name: 'LinkedIn connection warnings' }),
   ).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  await selectComposerAccount(page, 'Member One');
   await expect(
     page.getByText(
       'LinkedIn access expires before this post. Reconnect the account or choose an earlier time.',
@@ -1901,10 +2022,11 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   await page.screenshot({ path: testInfo.outputPath('queue-populated.png'), fullPage: true });
   await page.getByRole('button', { name: 'Create post' }).last().click();
   await expect(page.getByRole('dialog', { name: 'Create post' })).toBeVisible();
+  await selectComposerAccount(page, 'Example Editorial');
   await expect(page.getByLabel('Post body')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('composer.png'), fullPage: true });
-  await expect(page.getByText('Choose files')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
+  await expect(page.getByText('Choose files')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   await page.getByLabel('Post body').fill('A clear publishing update for two accounts.');
   const scheduleDate = page.getByLabel('Date', { exact: true });
   const scheduleTime = page.getByLabel('Time', { exact: true });
@@ -1931,29 +2053,24 @@ test('renders queue, composer, calendar modes, and safe job recovery', async ({
   ).toBe(true);
   expect(
     new Set(collisionQueryUrls.map((url) => new URL(url).searchParams.get('providerAccountId'))),
-  ).toEqual(
-    new Set(['00000000-0000-4000-8000-000000000201', '00000000-0000-4000-8000-000000000203']),
-  );
+  ).toEqual(new Set(['00000000-0000-4000-8000-000000000201']));
   await scheduleDate.fill('2020-01-01');
   await scheduleTime.fill('09:00');
   await expect(page.getByRole('alert')).toContainText('future publishing time');
-  await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   await scheduleDate.fill('2026-09-01');
   await scheduleTime.fill('10:05');
-  await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
   await expect(page.getByRole('alert')).toContainText('Retry safely');
   await page.getByRole('button', { name: 'Confirm previous request' }).click();
-  await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   expect(createHeaders?.['x-csrf-token']).toBeTruthy();
   expect(createHeaders?.['idempotency-key']).toBeTruthy();
   expect(createHeaders?.['idempotency-key']).toBe(firstCreateHeaders?.['idempotency-key']);
   expect(createPayload).toMatchObject({
     content: { type: 'text', text: 'A clear publishing update for two accounts.' },
-    providerAccountIds: [
-      '00000000-0000-4000-8000-000000000201',
-      '00000000-0000-4000-8000-000000000203',
-    ],
+    providerAccountIds: ['00000000-0000-4000-8000-000000000201'],
   });
   expect(new Date(String((createPayload as Record<string, unknown> | null)?.scheduledAt))).toEqual(
     new Date('2026-09-01T10:05:00+03:00'),
@@ -2052,6 +2169,7 @@ test('reports collision guidance as unavailable instead of an empty result', asy
   );
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'Example Editorial');
   await expect(page.getByText('Nearby schedule guidance is unavailable.')).toBeVisible();
 });
 
@@ -2065,6 +2183,7 @@ test('dismisses the composer safely and restores its Create post trigger', async
   const dialog = page.getByRole('dialog', { name: 'Create post' });
 
   await trigger.click();
+  await selectComposerAccount(page, 'Example Editorial');
   await dialog.getByText('Add media', { exact: true }).click();
   await expect(dialog).toBeVisible();
   if (testInfo.project.name === 'desktop') {
@@ -2072,6 +2191,7 @@ test('dismisses the composer safely and restores its Create post trigger', async
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
+    await selectComposerAccount(page, 'Example Editorial');
   }
   await dialog.getByPlaceholder('What should your audience know?').focus();
   await page.keyboard.press('Escape');
@@ -2126,6 +2246,7 @@ test('selects and schedules X image media through the canonical composer', async
   });
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'Example Editorial');
   await page.getByPlaceholder('What should your audience know?').fill('Image post');
   await page
     .locator('#composer-media-upload')
@@ -2154,7 +2275,7 @@ test('selects and schedules X image media through the canonical composer', async
   });
   await expect(page.locator('.composer-media-attachment')).toContainText('image.png');
   await page.screenshot({ path: testInfo.outputPath('x-media-attached.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
   await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   expect(uploads).toEqual(['image/png']);
   expect(submittedMedia).toEqual(['media-1']);
@@ -2224,6 +2345,7 @@ test('retries partial X uploads and a rejected post without replaying deleted me
   });
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'Example Editorial');
   await page.getByLabel('Post body').fill('Two image retry');
   await page.locator('#composer-media-upload').setInputFiles(
     ['one.png', 'two.png'].map((name) => ({
@@ -2232,7 +2354,7 @@ test('retries partial X uploads and a rejected post without replaying deleted me
       buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
     })),
   );
-  const schedule = page.getByRole('button', { name: 'Schedule 1 posts' });
+  const schedule = page.getByRole('button', { name: 'Schedule 1 post' });
   await schedule.click();
   await expect(page.getByRole('alert')).toContainText('Upload unavailable');
   expect(deleted).toHaveLength(1);
@@ -2305,6 +2427,7 @@ for (const viewport of [
     });
     await page.goto(await workspacePath(page, 'queue'));
     await page.getByRole('button', { name: 'Create post' }).last().click();
+    await selectComposerAccount(page, 'Example Editorial');
     await page.getByLabel('Post body').fill('Image A');
     const input = page.locator('#composer-media-upload');
     await input.setInputFiles({
@@ -2312,7 +2435,7 @@ for (const viewport of [
       mimeType: 'image/png',
       buffer: Buffer.from('image A'),
     });
-    await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+    await page.getByRole('button', { name: 'Schedule 1 post' }).click();
     await expect(page.getByRole('alert')).toContainText('Outcome uncertain');
     await expect(page.getByText('Editing is paused')).toBeVisible();
     await input.setInputFiles({
@@ -2331,13 +2454,14 @@ for (const viewport of [
     expect(uploads[0]?.bytes).toBe(Buffer.from('image A').toString('hex'));
     await page.getByRole('button', { name: 'Close composer' }).click();
     await page.getByRole('button', { name: 'Create post' }).last().click();
+    await selectComposerAccount(page, 'Example Editorial');
     await page.getByLabel('Post body').fill('Image B');
     await page.locator('#composer-media-upload').setInputFiles({
       name: 'image.png',
       mimeType: 'image/png',
       buffer: Buffer.from('image B'),
     });
-    await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
+    await page.getByRole('button', { name: 'Schedule 1 post' }).click();
     await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
     expect(uploads[1]?.bytes).toBe(Buffer.from('image B').toString('hex'));
     expect(uploads[1]?.id).not.toBe(uploads[0]?.id);
@@ -2364,7 +2488,7 @@ test('uses consistent workspace actions and readable X composer fields', async (
   await mockConnectedAccounts(page);
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
-  await page.getByRole('checkbox', { name: /Instagram · Avery Studio/ }).uncheck();
+  await selectComposerAccount(page, 'Example Editorial');
   await page
     .getByRole('dialog', { name: 'Create post' })
     .getByText('Add media', { exact: true })
@@ -2428,24 +2552,25 @@ test('uses the selected X account weighted limit on desktop and mobile', async (
     await page.setViewportSize({ width, height });
     await page.goto(await workspacePath(page, 'queue'));
     await page.getByRole('button', { name: 'Create post' }).last().click();
+    await selectComposerAccount(page, 'Standard account');
     const body = page.getByPlaceholder('What should your audience know?');
     const heading = page.locator('.composer-body-heading');
-    const submit = page.getByRole('button', { name: 'Schedule 2 posts' });
+    const submit = page.getByRole('button', { name: 'Schedule 1 post' });
     await body.fill('a'.repeat(281));
     await expect(heading).toContainText('281/280 weighted characters');
     await expect(submit).toBeDisabled();
     await expect(page.getByRole('alert')).toContainText('280 weighted-character limit');
     await page.screenshot({ path: testInfo.outputPath(`x-mixed-${label}.png`), fullPage: true });
-    await page.getByLabel('Standard account').uncheck();
+    await selectComposerAccount(page, 'Long account');
     await expect(heading).toContainText('281/25000 weighted characters');
     await expect(page.getByText('Long-post access is self-declared, not verified.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
     await body.fill('a'.repeat(25_000));
     await expect(heading).toContainText('25000/25000 weighted characters');
-    await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
     await body.fill('a'.repeat(25_001));
     await expect(heading).toContainText('25001/25000 weighted characters');
-    await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
     await body.fill('Ж'.repeat(125) + '😀'.repeat(16));
     await expect(heading).toContainText('157/25000 weighted characters');
     await page.screenshot({ path: testInfo.outputPath(`x-long-${label}.png`), fullPage: true });
@@ -2558,6 +2683,7 @@ test('retries uncertain YouTube post responses without deleting media', async ({
   });
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'Relay Channel');
   await page.getByLabel('Video title').fill('A finished short');
   await page.getByLabel('Made for kids').click();
   await page.getByRole('option', { name: 'No', exact: true }).click();
@@ -2617,6 +2743,7 @@ test('suppresses workflow motion when reduced motion is requested', async ({ pag
   await expect(page.locator('.composer-sheet')).toHaveCSS('animation-name', 'none');
   await expect(page.locator('.sheet-backdrop')).toHaveCSS('animation-name', 'none');
   await expect(page.locator('.composer-sheet')).toHaveCSS('transform', 'none');
+  await selectComposerAccount(page, 'Example Editorial');
   await page.getByLabel('Post body').fill('Reduced motion scheduling receipt.');
   await page.getByLabel('Date', { exact: true }).fill('2026-09-01');
   await page.getByLabel('Time', { exact: true }).fill('10:05');
@@ -3187,14 +3314,14 @@ test('uses Page-wide occupancy only as advisory Composer guidance', async ({ pag
   );
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
-  await page.getByText('Facebook · Mira Studio').click();
+  await selectComposerAccount(page, 'Facebook · Mira Studio');
   await page.getByLabel('Post body').fill('Intentional shared Page slot');
   await page.getByLabel('HTTPS link').fill('https://example.test/page');
   await page.getByLabel('Date', { exact: true }).fill('2026-10-19');
   await page.getByLabel('Time', { exact: true }).fill('08:30');
   await expect(page.getByText('2 nearby publications detected')).toBeVisible();
   await expect(page.getByText('keep the exact minute intentionally')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
   expect(occupancyCalls.length).toBeGreaterThan(0);
   expect(new URL(occupancyCalls.at(-1) ?? '').searchParams.get('startsAt')).toBe(
     '2026-10-19T05:15:00.000Z',
@@ -3905,16 +4032,17 @@ test.describe('Europe/Sofia DST scheduling', () => {
 
     const scheduleFold = async (offsetLabel: string) => {
       await page.getByRole('button', { name: 'Create post' }).last().click();
+      await selectComposerAccount(page, 'Example Editorial');
       await page.getByLabel('Post body').fill(`DST choice ${offsetLabel}`);
       await page.getByLabel('Date', { exact: true }).fill('2027-03-28');
       await page.getByLabel('Time', { exact: true }).fill('03:30');
       await expect(page.getByRole('alert')).toContainText('clock changes');
-      await expect(page.getByRole('button', { name: 'Schedule 2 posts' })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
       await page.getByLabel('Date', { exact: true }).fill('2027-10-31');
       await expect(page.getByText('This time occurs twice')).toBeVisible();
       await page.getByRole('radio', { name: offsetLabel, exact: true }).check();
-      await page.getByRole('button', { name: 'Schedule 2 posts' }).click();
-      await expect(page.getByRole('heading', { name: '2 posts scheduled' })).toBeVisible();
+      await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+      await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
       await page.getByRole('button', { name: 'Close composer' }).click();
     };
 

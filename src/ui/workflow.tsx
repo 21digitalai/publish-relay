@@ -602,16 +602,6 @@ interface ComposerDestination {
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
 }
 
-function sharedContentKinds(destinations: readonly ComposerDestination[]): ComposerContentKind[] {
-  const first = destinations[0];
-  if (!first) return [];
-  return first.capabilitySnapshot.contentKinds.filter((kind) =>
-    destinations
-      .slice(1)
-      .every((destination) => destination.capabilitySnapshot.contentKinds.includes(kind)),
-  );
-}
-
 function destinationName(destination: ComposerDestination): string {
   if (destination.destinationProvider === 'tiktok') return `TikTok · ${destination.displayName}`;
   if (destination.destinationProvider === 'instagram')
@@ -619,6 +609,19 @@ function destinationName(destination: ComposerDestination): string {
   if (destination.destinationProvider === 'facebook_page')
     return `Facebook · ${destination.displayName}`;
   return destination.displayName;
+}
+
+function destinationContentLabel(destination: ComposerDestination): string {
+  if (destination.destinationProvider === 'tiktok')
+    return 'Video · options checked after selection';
+  if (destination.destinationProvider === 'x') return 'Text, images, GIF or MP4 video';
+  const kinds = destination.capabilitySnapshot.contentKinds.map((kind) =>
+    kind.replaceAll('_', ' '),
+  );
+  const supported = kinds.length > 0 ? kinds.join(' · ') : 'Content options unavailable';
+  return destination.capabilityFreshness === 'stale'
+    ? `${supported} · capabilities may be outdated`
+    : supported;
 }
 
 function normalizeComposerDestination(
@@ -660,6 +663,13 @@ function Composer({ onClose }: { onClose: () => void }) {
   const [nextAccountCursor, setNextAccountCursor] = useState<string | null>(null);
   const [loadingMoreAccounts, setLoadingMoreAccounts] = useState(false);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
+  const [accountPickerOpen, setAccountPickerOpen] = useState(true);
+  const changeAccountRef = useRef<HTMLButtonElement>(null);
+  const selectedAccountRadioRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (accountPickerOpen) selectedAccountRadioRef.current?.focus();
+    else changeAccountRef.current?.focus();
+  }, [accountPickerOpen]);
   const [scheduledJobs, setScheduledJobs] = useState<ScheduleOccupancy[]>([]);
   const [collisionGuidance, setCollisionGuidance] = useState<'loading' | 'ready' | 'unavailable'>(
     'loading',
@@ -775,7 +785,11 @@ function Composer({ onClose }: { onClose: () => void }) {
   const scheduledAt = scheduleOptions[scheduleOption];
   const scheduledAtMillis = scheduledAt ? scheduledAt.getTime() : null;
   const selected = accounts.filter((account) => selectedAccounts.includes(account.id));
-  const allowedKinds = sharedContentKinds(selected);
+  const selectedDestination = selected[0];
+  const allowedKinds = useMemo(
+    () => selectedDestination?.capabilitySnapshot.contentKinds ?? [],
+    [selectedDestination],
+  );
   const includesMeta = selected.some((account) => account.provider === 'meta');
   const allowedKindKey = allowedKinds.join(',');
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
@@ -888,7 +902,8 @@ function Composer({ onClose }: { onClose: () => void }) {
       (mediaFiles.length + draftMediaIds.length < 2 ||
         mediaFiles.length + draftMediaIds.length > 10)) ||
     (includesMeta && contentKind === 'link' && !linkUrl.startsWith('https://')) ||
-    selectedAccounts.length === 0 ||
+    selectedAccounts.length !== 1 ||
+    accountPickerOpen ||
     linkedinExpiresBeforeDispatch ||
     state !== 'ready' ||
     draftState !== 'ready' ||
@@ -990,20 +1005,8 @@ function Composer({ onClose }: { onClose: () => void }) {
         const destinations = data.accounts.map(normalizeComposerDestination);
         setAccounts(destinations);
         setNextAccountCursor(data.nextCursor);
-        setSelectedAccounts(
-          destinations.some((destination) => destination.provider === 'meta')
-            ? []
-            : destinations
-                .filter(
-                  (destination) =>
-                    destination.status === 'active' &&
-                    destination.availability === 'active' &&
-                    destination.destinationProvider !== 'tiktok' &&
-                    (!destination.expiresAt ||
-                      new Date(destination.expiresAt).getTime() > Date.now()),
-                )
-                .map((destination) => destination.id),
-        );
+        setSelectedAccounts([]);
+        setAccountPickerOpen(true);
         setAccountLoadState('ready');
         setState('ready');
       })
@@ -1466,644 +1469,701 @@ function Composer({ onClose }: { onClose: () => void }) {
                 </span>
               </div>
             )}
-            <fieldset className="account-picker" inert={hasUncertainPost}>
-              <legend>1. Choose destination</legend>
-              {accounts.map((account) => (
-                <label key={account.id}>
-                  <input
-                    className="account-picker-checkbox"
-                    type="checkbox"
-                    disabled={account.availability !== 'active'}
-                    checked={selectedAccounts.includes(account.id)}
-                    onChange={() => {
-                      setMediaFiles([]);
-                      setTikTokSubmission(null);
-                      setSelectedAccounts((current) =>
-                        current.includes(account.id)
-                          ? current.filter((id) => id !== account.id)
-                          : account.destinationProvider === 'tiktok'
-                            ? [account.id]
-                            : [
-                                ...current.filter(
-                                  (id) =>
-                                    accounts.find((item) => item.id === id)?.destinationProvider !==
-                                    'tiktok',
-                                ),
-                                account.id,
-                              ],
-                      );
-                    }}
-                  />
-                  <span className="account-avatar">
-                    {account.displayName.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span>
-                    <strong>{destinationName(account)}</strong>
-                    <small>
-                      {account.availability === 'active'
-                        ? account.destinationProvider === 'tiktok'
-                          ? 'Video · options checked after selection'
-                          : `${account.capabilitySnapshot.contentKinds.join(' · ')} · ${account.capabilityFreshness}`
-                        : account.availability === 'publishing_unavailable'
-                          ? 'Connected · publishing is not yet available'
-                          : `${account.availability.replaceAll('_', ' ')} · reconnect to schedule`}
-                    </small>
-                  </span>
-                  {account.destinationProvider === 'tiktok' &&
-                    account.availability !== 'active' &&
-                    account.availability !== 'publishing_unavailable' && (
-                      <a href={`${workspacePath()}/accounts`}>Reconnect</a>
-                    )}
-                </label>
-              ))}
-              {nextAccountCursor && (
+            {selectedDestination && !accountPickerOpen ? (
+              <div className="account-picker-summary" inert={hasUncertainPost}>
+                <span>
+                  <strong>Posting to {destinationName(selectedDestination)}</strong>
+                </span>
                 <button
-                  className="secondary-button composer-load-more-accounts"
+                  ref={changeAccountRef}
                   type="button"
-                  disabled={loadingMoreAccounts}
-                  onClick={loadMoreAccounts}
+                  className="secondary-button"
+                  onClick={() => {
+                    setAccountPickerOpen(true);
+                  }}
                 >
-                  {loadingMoreAccounts ? 'Loading accounts…' : 'Load more accounts'}
+                  Change account
                 </button>
-              )}
-            </fieldset>
-            {isTikTok && !hasUncertainPost && (
-              <section className="tiktok-prepared-recovery" aria-label="Prepared TikTok posts">
-                <h3>Prepared TikTok posts</h3>
-                {preparedLoadState === 'loading' && <p role="status">Loading prepared posts…</p>}
-                {preparedLoadState === 'error' && (
-                  <p role="alert">
-                    Prepared posts could not be loaded.{' '}
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => {
-                        setPreparedLoadAttempt((count) => count + 1);
-                      }}
+              </div>
+            ) : (
+              <fieldset className="account-picker" inert={hasUncertainPost}>
+                <legend>1. Choose one destination</legend>
+                {accounts.map((account) => {
+                  const expired = Boolean(
+                    account.expiresAt && new Date(account.expiresAt).getTime() <= Date.now(),
+                  );
+                  const unavailable =
+                    account.status !== 'active' || account.availability !== 'active' || expired;
+                  return (
+                    <label
+                      key={account.id}
+                      className={selectedAccounts.includes(account.id) ? 'selected' : ''}
                     >
-                      Retry
-                    </button>
-                  </p>
-                )}
-                {preparedLoadState === 'ready' && preparedTikTokDrafts.length === 0 && (
-                  <p>No prepared posts.</p>
-                )}
-                {preparedLoadState === 'ready' &&
-                  preparedTikTokDrafts.map((draft) => (
-                    <button
-                      key={draft.postId}
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => void resumePreparedTikTokDraft(draft.postId)}
-                    >
-                      Resume {draft.captionPreview ?? 'untitled video'} ·{' '}
-                      {new Date(draft.createdAt).toLocaleDateString()}
-                    </button>
-                  ))}
-                {preparedLoadState === 'ready' && preparedHasMore && (
+                      <input
+                        ref={
+                          selectedAccounts.includes(account.id)
+                            ? selectedAccountRadioRef
+                            : undefined
+                        }
+                        className="account-picker-radio"
+                        type="radio"
+                        name="composer-destination"
+                        disabled={unavailable}
+                        checked={selectedAccounts.includes(account.id)}
+                        onChange={() => {
+                          if (unavailable) return;
+                          setMediaFiles([]);
+                          setTikTokSubmission(null);
+                          setPreparedTikTokDraft(null);
+                          setSelectedAccounts([account.id]);
+                          setAccountPickerOpen(false);
+                          if (draftState === 'ready') setError(null);
+                        }}
+                      />
+                      <span className="account-avatar">
+                        {account.displayName.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="account-picker-details">
+                        <strong>{destinationName(account)}</strong>
+                        <small>
+                          {expired
+                            ? 'Connection expired · reconnect to schedule'
+                            : account.availability === 'active' && account.status === 'active'
+                              ? destinationContentLabel(account)
+                              : account.availability === 'publishing_unavailable'
+                                ? 'Connected · publishing is not yet available'
+                                : `${(account.availability === 'active' ? account.status : account.availability).replaceAll('_', ' ')} · reconnect to schedule`}
+                        </small>
+                      </span>
+                      {unavailable && account.availability !== 'publishing_unavailable' && (
+                        <a href={`${workspacePath()}/accounts`}>Reconnect</a>
+                      )}
+                    </label>
+                  );
+                })}
+                {selectedDestination && (
                   <button
-                    className="secondary-button"
+                    className="secondary-button account-picker-keep"
                     type="button"
-                    disabled={preparedLoadingMore}
-                    onClick={() => void loadMorePreparedTikTokDrafts()}
+                    onClick={() => {
+                      setAccountPickerOpen(false);
+                    }}
                   >
-                    {preparedLoadingMore ? 'Loading more…' : 'Load more prepared posts'}
+                    Keep {destinationName(selectedDestination)}
                   </button>
                 )}
-                {preparedTikTokDraft && (
-                  <div role="status">
+                {nextAccountCursor && (
+                  <button
+                    className="secondary-button composer-load-more-accounts"
+                    type="button"
+                    disabled={loadingMoreAccounts}
+                    onClick={loadMoreAccounts}
+                  >
+                    {loadingMoreAccounts ? 'Loading accounts…' : 'Load more accounts'}
+                  </button>
+                )}
+              </fieldset>
+            )}
+            {selected.length === 1 && !accountPickerOpen && (
+              <>
+                {isTikTok && !hasUncertainPost && (
+                  <section className="tiktok-prepared-recovery" aria-label="Prepared TikTok posts">
+                    <h3>Prepared TikTok posts</h3>
+                    {preparedLoadState === 'loading' && (
+                      <p role="status">Loading prepared posts…</p>
+                    )}
+                    {preparedLoadState === 'error' && (
+                      <p role="alert">
+                        Prepared posts could not be loaded.{' '}
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => {
+                            setPreparedLoadAttempt((count) => count + 1);
+                          }}
+                        >
+                          Retry
+                        </button>
+                      </p>
+                    )}
+                    {preparedLoadState === 'ready' && preparedTikTokDrafts.length === 0 && (
+                      <p>No prepared posts.</p>
+                    )}
+                    {preparedLoadState === 'ready' &&
+                      preparedTikTokDrafts.map((draft) => (
+                        <button
+                          key={draft.postId}
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => void resumePreparedTikTokDraft(draft.postId)}
+                        >
+                          Resume {draft.captionPreview ?? 'untitled video'} ·{' '}
+                          {new Date(draft.createdAt).toLocaleDateString()}
+                        </button>
+                      ))}
+                    {preparedLoadState === 'ready' && preparedHasMore && (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={preparedLoadingMore}
+                        onClick={() => void loadMorePreparedTikTokDrafts()}
+                      >
+                        {preparedLoadingMore ? 'Loading more…' : 'Load more prepared posts'}
+                      </button>
+                    )}
+                    {preparedTikTokDraft && (
+                      <div role="status">
+                        <p>
+                          Prepared video selected. Choose current TikTok options, review and confirm
+                          again.
+                        </p>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => {
+                            setPreparedTikTokDraft(null);
+                            setImportedMedia([]);
+                            setMediaFiles([]);
+                            setBody('');
+                            setTikTokSubmission(null);
+                            setTikTokReviewCycle((cycle) => cycle + 1);
+                            setError(null);
+                          }}
+                        >
+                          Start a new TikTok post
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                )}
+                {includesMeta && (
+                  <fieldset className="content-kind-picker" inert={hasUncertainPost}>
+                    <legend>2. Choose supported content</legend>
+                    {allowedKinds.map((kind) => (
+                      <button
+                        className={contentKind === kind ? 'selected' : ''}
+                        key={kind}
+                        type="button"
+                        onClick={() => {
+                          setContentKind(kind);
+                        }}
+                      >
+                        {kind.replaceAll('_', ' ')}
+                      </button>
+                    ))}
+                    {allowedKinds.length === 0 && (
+                      <p className="inline-validation" role="alert">
+                        These destinations do not share a supported content shape.
+                      </p>
+                    )}
+                  </fieldset>
+                )}
+                {!isTikTok && (
+                  <label className="field-label composer-body-field" inert={hasUncertainPost}>
+                    <span className="composer-body-heading">
+                      <span>{isYouTube ? 'Video title' : 'Post body'}</span>
+                      <small>
+                        {isYouTube
+                          ? `${String(videoTitle.length)}/100`
+                          : includesX
+                            ? `${String(xWeightedLength)}/${String(xLimit)} weighted characters per X post`
+                            : `${String(body.length)}/${String(textLimit)} characters`}
+                      </small>
+                    </span>
+                    {isYouTube ? (
+                      <input
+                        className="text-input"
+                        maxLength={100}
+                        value={videoTitle}
+                        onChange={(event) => {
+                          setVideoTitle(event.target.value);
+                        }}
+                      />
+                    ) : (
+                      <textarea
+                        className="composer-body"
+                        maxLength={includesX ? undefined : textLimit}
+                        value={body}
+                        onChange={(event) => {
+                          setBody(event.target.value);
+                        }}
+                        placeholder="What should your audience know?"
+                      />
+                    )}
+                    <small className="composer-body-hint">
+                      {isYouTube
+                        ? `${String(videoTitle.length)}/100`
+                        : includesX
+                          ? selectedX.some((account) => account.xLongPosts?.allowed)
+                            ? 'Long-post access is self-declared, not verified. X may reject longer posts.'
+                            : 'X uses weighted characters; undeclared accounts allow 280.'
+                          : includesMeta
+                            ? 'Shared caption or message for each destination'
+                            : `${String(body.length)}/${String(textLimit)} characters`}
+                    </small>
+                    {includesX && bodyTooLong && (
+                      <small className="composer-body-validation inline-validation" role="alert">
+                        {isX
+                          ? `X post exceeds the ${String(xLimit)} weighted-character limit for the selected accounts.`
+                          : 'Post exceeds a selected destination limit.'}
+                      </small>
+                    )}
+                  </label>
+                )}
+                {includesMeta && contentKind === 'link' && (
+                  <label className="field-label">
+                    HTTPS link
+                    <input
+                      className="composer-link text-input"
+                      type="url"
+                      value={linkUrl}
+                      onChange={(event) => {
+                        setLinkUrl(event.target.value);
+                      }}
+                    />
+                  </label>
+                )}
+                {isYouTube && (
+                  <div className="youtube-composer-options" inert={hasUncertainPost}>
+                    <label className="field-label">
+                      Description
+                      <textarea
+                        className="composer-body"
+                        maxLength={5000}
+                        value={videoDescription}
+                        onChange={(event) => {
+                          setVideoDescription(event.target.value);
+                        }}
+                      />
+                    </label>
+                    <DefaultsSelect
+                      label="Visibility"
+                      name="privacyStatus"
+                      value={privacyStatus}
+                      options={[
+                        ['default', 'Use channel default'],
+                        ['public', 'Public'],
+                        ['unlisted', 'Unlisted'],
+                        ['private', 'Private'],
+                      ]}
+                      onChange={(value) => {
+                        setPrivacyStatus(value as typeof privacyStatus);
+                      }}
+                    />
+                    <DefaultsSelect
+                      label="Made for kids"
+                      name="madeForKids"
+                      value={madeForKids}
+                      options={[
+                        ['default', 'Use channel default'],
+                        ['yes', 'Yes'],
+                        ['no', 'No'],
+                      ]}
+                      onChange={(value) => {
+                        setMadeForKids(value as typeof madeForKids);
+                      }}
+                    />
+                    <DefaultsSelect
+                      label="Notify subscribers"
+                      name="notifySubscribers"
+                      value={notifySubscribers}
+                      options={[
+                        ['default', 'Use channel default'],
+                        ['yes', 'Yes'],
+                        ['no', 'No'],
+                      ]}
+                      onChange={(value) => {
+                        setNotifySubscribers(value as typeof notifySubscribers);
+                      }}
+                    />
+                  </div>
+                )}
+                <div className="media-dropzone" inert={hasUncertainPost}>
+                  <strong>Add media</strong>
+                  <span>
+                    {isTikTok
+                      ? (mediaFiles[0]?.name ?? 'Choose exactly one MP4 video')
+                      : isYouTube
+                        ? mediaFiles[0]
+                          ? mediaFiles[0].name
+                          : 'Choose exactly one MP4 video'
+                        : includesMeta && contentKind !== 'link'
+                          ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
+                          : isX
+                            ? 'Up to four images, or one GIF or MP4 video'
+                            : 'Select an account to add media'}
+                  </span>
+                  {(isTikTok || isYouTube || isX || (includesMeta && contentKind !== 'link')) && (
+                    <>
+                      <label className="secondary-button" htmlFor="composer-media-upload">
+                        Choose files
+                      </label>
+                      <input
+                        id="composer-media-upload"
+                        className="sr-only"
+                        type="file"
+                        accept={
+                          isTikTok || isYouTube
+                            ? 'video/mp4'
+                            : includesMeta
+                              ? 'image/jpeg,image/png,image/webp,image/gif'
+                              : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
+                        }
+                        multiple={isX || (includesMeta && contentKind === 'carousel')}
+                        onChange={(event) => {
+                          if (uncertainPost.current) {
+                            event.target.value = '';
+                            showAnalyticsError(
+                              setError,
+                              'Confirm the previous request before replacing its media.',
+                              'composer',
+                              'validation',
+                            );
+                            return;
+                          }
+                          const files = Array.from(event.target.files ?? []);
+                          event.target.value = '';
+                          const allowed =
+                            isTikTok || isYouTube
+                              ? ['video/mp4']
+                              : includesMeta
+                                ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+                                : [
+                                    'image/jpeg',
+                                    'image/png',
+                                    'image/webp',
+                                    'image/gif',
+                                    'video/mp4',
+                                  ];
+                          if (files.some((file) => !allowed.includes(file.type))) {
+                            showAnalyticsError(
+                              setError,
+                              'Choose a supported image, GIF, or MP4 file.',
+                              'composer',
+                              'validation',
+                            );
+                            return;
+                          }
+                          if ((isTikTok || isYouTube) && files.length !== 1) {
+                            showAnalyticsError(
+                              setError,
+                              'Choose exactly one MP4 video.',
+                              'composer',
+                              'validation',
+                            );
+                            return;
+                          }
+                          if (
+                            includesMeta &&
+                            files.length > (contentKind === 'carousel' ? 10 : 1)
+                          ) {
+                            showAnalyticsError(
+                              setError,
+                              'Choose only the number of images supported by this destination.',
+                              'composer',
+                              'validation',
+                            );
+                            return;
+                          }
+                          if (
+                            isX &&
+                            (files.length > 4 ||
+                              (files.length > 1 &&
+                                files.some(
+                                  (file) => file.type === 'video/mp4' || file.type === 'image/gif',
+                                )))
+                          ) {
+                            showAnalyticsError(
+                              setError,
+                              'X accepts up to four images, or one GIF or MP4 video.',
+                              'composer',
+                              'validation',
+                            );
+                            return;
+                          }
+                          if (
+                            files.some(
+                              (file) =>
+                                file.size >
+                                (file.type === 'video/mp4'
+                                  ? isYouTube || isTikTok
+                                    ? 2048
+                                    : 512
+                                  : file.type === 'image/gif'
+                                    ? 15
+                                    : 5) *
+                                  1024 *
+                                  1024,
+                            )
+                          ) {
+                            showAnalyticsError(
+                              setError,
+                              'One or more files exceed the destination size limit.',
+                              'composer',
+                              'validation',
+                            );
+                            return;
+                          }
+                          setError(null);
+                          if (isTikTok) {
+                            setImportedMedia([]);
+                          }
+                          setMediaFiles(files);
+                        }}
+                      />
+                    </>
+                  )}
+                  {mediaFiles.map((file) => (
+                    <div
+                      className="composer-media-attachment"
+                      key={`${file.name}-${String(file.size)}`}
+                    >
+                      <span>{file.name}</span>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => {
+                          setMediaFiles((current) => current.filter((item) => item !== file));
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {importedMedia.map((item, index) => (
+                    <div className="composer-media-attachment" key={item.id}>
+                      <span>
+                        Imported{' '}
+                        {item.mimeType === 'video/mp4'
+                          ? 'MP4 video'
+                          : item.mimeType?.startsWith('image/')
+                            ? 'image'
+                            : 'media'}{' '}
+                        {index + 1}
+                        {item.byteSize !== null
+                          ? item.byteSize < 1024 * 1024
+                            ? ` · ${String(Math.ceil(item.byteSize / 1024))} KB`
+                            : ` · ${String(Math.ceil(item.byteSize / 1024 / 1024))} MB`
+                          : ''}
+                        {item.durationMs !== null
+                          ? ` · ${String(Math.ceil(item.durationMs / 1000))} seconds`
+                          : ''}
+                      </span>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => {
+                          setImportedMedia((current) =>
+                            current.filter((media) => media.id !== item.id),
+                          );
+                        }}
+                      >
+                        Remove from post
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {isTikTok && (
+                  <TikTokComposerForm
+                    key={`${selected[0]?.id ?? ''}:${String(tiktokReviewCycle)}`}
+                    accountId={selected[0]?.id ?? ''}
+                    caption={body}
+                    onCaptionChange={setBody}
+                    video={mediaFiles[0] ?? null}
+                    importedMedia={importedMedia}
+                    scheduled={scheduled}
+                    scheduledAt={scheduledAt}
+                    frozen={hasUncertainPost}
+                    onSubmissionChange={setTikTokSubmission}
+                  />
+                )}
+                {includesYouTube && !isYouTube && (
+                  <p className="inline-validation" role="alert">
+                    YouTube videos must target exactly one YouTube channel.
+                  </p>
+                )}
+                {isYouTube && !youtubeHasMadeForKids && madeForKids === 'default' && (
+                  <p className="inline-validation">Choose whether this video is made for kids.</p>
+                )}
+                {linkedinExpiresBeforeDispatch && (
+                  <p className="inline-validation" role="alert">
+                    LinkedIn access expires before this post. Reconnect the account or choose an
+                    earlier time.
+                  </p>
+                )}
+                <fieldset className="schedule-choice" inert={hasUncertainPost}>
+                  <legend>Publishing time</legend>
+                  <button
+                    className={!scheduled ? 'selected' : ''}
+                    onClick={() => {
+                      setScheduled(false);
+                    }}
+                  >
+                    Now
+                  </button>
+                  <button
+                    className={scheduled ? 'selected' : ''}
+                    onClick={() => {
+                      setScheduled(true);
+                    }}
+                  >
+                    Schedule
+                  </button>
+                </fieldset>
+                {scheduled && (
+                  <div className="schedule-fields" inert={hasUncertainPost}>
+                    <label className="field-label">
+                      Date
+                      <span className="schedule-picker-field">
+                        <input
+                          ref={scheduleDateRef}
+                          className="text-input"
+                          type="date"
+                          aria-label="Date"
+                          value={localSchedule.split('T')[0]}
+                          onChange={(event) => {
+                            setLocalSchedule(
+                              `${event.target.value}T${localSchedule.split('T')[1] ?? ''}`,
+                            );
+                            setScheduleOption(0);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Open date picker"
+                          onClick={() => {
+                            openNativePicker(scheduleDateRef.current);
+                          }}
+                        >
+                          <span aria-hidden="true">▦</span>
+                        </button>
+                      </span>
+                    </label>
+                    <label className="field-label">
+                      Time
+                      <span className="schedule-picker-field">
+                        <input
+                          ref={scheduleTimeRef}
+                          className="text-input"
+                          type="time"
+                          aria-label="Time"
+                          step="60"
+                          value={localSchedule.split('T')[1] ?? ''}
+                          onChange={(event) => {
+                            setLocalSchedule(
+                              `${localSchedule.split('T')[0] ?? ''}T${event.target.value}`,
+                            );
+                            setScheduleOption(0);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Open time picker"
+                          onClick={() => {
+                            openNativePicker(scheduleTimeRef.current);
+                          }}
+                        >
+                          <span aria-hidden="true">◷</span>
+                        </button>
+                      </span>
+                    </label>
+                    <label className="field-label">
+                      Timezone
+                      <input
+                        className="text-input"
+                        value={Intl.DateTimeFormat().resolvedOptions().timeZone}
+                        readOnly
+                      />
+                    </label>
+                    {scheduleOptions.length > 1 && (
+                      <fieldset className="schedule-offset-choice">
+                        <legend>This time occurs twice. Choose the intended offset.</legend>
+                        {scheduleOptions.map((option, index) => (
+                          <label key={option.toISOString()}>
+                            <input
+                              className="schedule-offset-radio"
+                              type="radio"
+                              name="schedule-offset"
+                              checked={scheduleOption === index}
+                              onChange={() => {
+                                setScheduleOption(index);
+                              }}
+                            />
+                            {offsetLabel(option)}
+                          </label>
+                        ))}
+                      </fieldset>
+                    )}
+                  </div>
+                )}
+                {scheduleError && (
+                  <p className="inline-validation" role="alert">
+                    {scheduleError}
+                  </p>
+                )}
+                {scheduled && scheduledAt && collisions.length > 0 && (
+                  <div
+                    className="schedule-collision-guidance"
+                    role="status"
+                    inert={hasUncertainPost}
+                  >
+                    <strong>
+                      {collisions.reduce((total, item) => total + item.jobCount, 0)}{' '}
+                      {collisions.reduce((total, item) => total + item.jobCount, 0) === 1
+                        ? 'nearby publication'
+                        : 'nearby publications'}{' '}
+                      detected
+                    </strong>
                     <p>
-                      Prepared video selected. Choose current TikTok options, review and confirm
-                      again.
+                      Leave breathing room for this account or keep the exact minute intentionally.
                     </p>
                     <button
                       className="secondary-button"
                       type="button"
                       onClick={() => {
-                        setPreparedTikTokDraft(null);
-                        setImportedMedia([]);
-                        setMediaFiles([]);
-                        setBody('');
-                        setTikTokSubmission(null);
-                        setTikTokReviewCycle((cycle) => cycle + 1);
-                        setError(null);
+                        const opening = collisionWindowEnd
+                          ? nextCollisionFreeSchedule(
+                              scheduledAt,
+                              scheduledJobs,
+                              collisionWindowEnd,
+                            )
+                          : null;
+                        if (!opening) {
+                          setCollisionGuidance('unavailable');
+                          return;
+                        }
+                        setLocalSchedule(localDateTimeValue(opening));
+                        setScheduleOption(0);
                       }}
                     >
-                      Start a new TikTok post
+                      Use next 15-minute opening
                     </button>
                   </div>
                 )}
-              </section>
-            )}
-            {selected.length > 0 && !isYouTube && !isTikTok && (
-              <fieldset className="content-kind-picker" inert={hasUncertainPost}>
-                <legend>2. Choose supported content</legend>
-                {allowedKinds.map((kind) => (
-                  <button
-                    className={contentKind === kind ? 'selected' : ''}
-                    key={kind}
-                    type="button"
-                    onClick={() => {
-                      setContentKind(kind);
-                    }}
-                  >
-                    {kind.replaceAll('_', ' ')}
-                  </button>
-                ))}
-                {allowedKinds.length === 0 && (
-                  <p className="inline-validation" role="alert">
-                    These destinations do not share a supported content shape.
+                {scheduled && collisionGuidance === 'unavailable' && (
+                  <p className="inline-validation" role="status">
+                    Nearby schedule guidance is unavailable. You can still choose a time
+                    intentionally.
                   </p>
                 )}
-              </fieldset>
-            )}
-            {!isTikTok && (
-              <label className="field-label composer-body-field" inert={hasUncertainPost}>
-                <span className="composer-body-heading">
-                  <span>{isYouTube ? 'Video title' : 'Post body'}</span>
-                  <small>
-                    {isYouTube
-                      ? `${String(videoTitle.length)}/100`
-                      : includesX
-                        ? `${String(xWeightedLength)}/${String(xLimit)} weighted characters per X post`
-                        : `${String(body.length)}/${String(textLimit)} characters`}
-                  </small>
-                </span>
-                {isYouTube ? (
-                  <input
-                    className="text-input"
-                    maxLength={100}
-                    value={videoTitle}
-                    onChange={(event) => {
-                      setVideoTitle(event.target.value);
-                    }}
-                  />
-                ) : (
-                  <textarea
-                    className="composer-body"
-                    maxLength={includesX ? undefined : textLimit}
-                    value={body}
-                    onChange={(event) => {
-                      setBody(event.target.value);
-                    }}
-                    placeholder="What should your audience know?"
-                  />
+                {hasUncertainPost && (
+                  <p className="inline-validation" role="status">
+                    This request may already be scheduled. Editing is paused until the original
+                    request is confirmed by retry.
+                  </p>
                 )}
-                <small className="composer-body-hint">
-                  {isYouTube
-                    ? `${String(videoTitle.length)}/100`
-                    : includesX
-                      ? selectedX.some((account) => account.xLongPosts?.allowed)
-                        ? 'Long-post access is self-declared, not verified. X may reject longer posts.'
-                        : 'X uses weighted characters; undeclared accounts allow 280.'
-                      : includesMeta
-                        ? 'Shared caption or message for each destination'
-                        : `${String(body.length)}/${String(textLimit)} characters`}
-                </small>
-                {includesX && bodyTooLong && (
-                  <small className="composer-body-validation inline-validation" role="alert">
-                    {isX
-                      ? `X post exceeds the ${String(xLimit)} weighted-character limit for the selected accounts.`
-                      : 'Post exceeds a selected destination limit.'}
-                  </small>
+                {state === 'loading' && (
+                  <p className="inline-validation">Loading connected accounts before scheduling.</p>
                 )}
-              </label>
-            )}
-            {includesMeta && contentKind === 'link' && (
-              <label className="field-label">
-                HTTPS link
-                <input
-                  className="composer-link text-input"
-                  type="url"
-                  value={linkUrl}
-                  onChange={(event) => {
-                    setLinkUrl(event.target.value);
-                  }}
-                />
-              </label>
-            )}
-            {isYouTube && (
-              <div className="youtube-composer-options" inert={hasUncertainPost}>
-                <label className="field-label">
-                  Description
-                  <textarea
-                    className="composer-body"
-                    maxLength={5000}
-                    value={videoDescription}
-                    onChange={(event) => {
-                      setVideoDescription(event.target.value);
-                    }}
-                  />
-                </label>
-                <DefaultsSelect
-                  label="Visibility"
-                  name="privacyStatus"
-                  value={privacyStatus}
-                  options={[
-                    ['default', 'Use channel default'],
-                    ['public', 'Public'],
-                    ['unlisted', 'Unlisted'],
-                    ['private', 'Private'],
-                  ]}
-                  onChange={(value) => {
-                    setPrivacyStatus(value as typeof privacyStatus);
-                  }}
-                />
-                <DefaultsSelect
-                  label="Made for kids"
-                  name="madeForKids"
-                  value={madeForKids}
-                  options={[
-                    ['default', 'Use channel default'],
-                    ['yes', 'Yes'],
-                    ['no', 'No'],
-                  ]}
-                  onChange={(value) => {
-                    setMadeForKids(value as typeof madeForKids);
-                  }}
-                />
-                <DefaultsSelect
-                  label="Notify subscribers"
-                  name="notifySubscribers"
-                  value={notifySubscribers}
-                  options={[
-                    ['default', 'Use channel default'],
-                    ['yes', 'Yes'],
-                    ['no', 'No'],
-                  ]}
-                  onChange={(value) => {
-                    setNotifySubscribers(value as typeof notifySubscribers);
-                  }}
-                />
-              </div>
-            )}
-            <div className="media-dropzone" inert={hasUncertainPost}>
-              <strong>Add media</strong>
-              <span>
-                {isTikTok
-                  ? (mediaFiles[0]?.name ?? 'Choose exactly one MP4 video')
-                  : isYouTube
-                    ? mediaFiles[0]
-                      ? mediaFiles[0].name
-                      : 'Choose exactly one MP4 video'
-                    : includesMeta && contentKind !== 'link'
-                      ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
-                      : isX
-                        ? 'Up to four images, or one GIF or MP4 video'
-                        : 'Select an account to add media'}
-              </span>
-              {(isTikTok || isYouTube || isX || (includesMeta && contentKind !== 'link')) && (
-                <>
-                  <label className="secondary-button" htmlFor="composer-media-upload">
-                    Choose files
-                  </label>
-                  <input
-                    id="composer-media-upload"
-                    className="sr-only"
-                    type="file"
-                    accept={
-                      isTikTok || isYouTube
-                        ? 'video/mp4'
-                        : includesMeta
-                          ? 'image/jpeg,image/png,image/webp,image/gif'
-                          : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
-                    }
-                    multiple={isX || (includesMeta && contentKind === 'carousel')}
-                    onChange={(event) => {
-                      if (uncertainPost.current) {
-                        event.target.value = '';
-                        showAnalyticsError(
-                          setError,
-                          'Confirm the previous request before replacing its media.',
-                          'composer',
-                          'validation',
-                        );
-                        return;
-                      }
-                      const files = Array.from(event.target.files ?? []);
-                      event.target.value = '';
-                      const allowed =
-                        isTikTok || isYouTube
-                          ? ['video/mp4']
-                          : includesMeta
-                            ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-                            : ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'];
-                      if (files.some((file) => !allowed.includes(file.type))) {
-                        showAnalyticsError(
-                          setError,
-                          'Choose a supported image, GIF, or MP4 file.',
-                          'composer',
-                          'validation',
-                        );
-                        return;
-                      }
-                      if ((isTikTok || isYouTube) && files.length !== 1) {
-                        showAnalyticsError(
-                          setError,
-                          'Choose exactly one MP4 video.',
-                          'composer',
-                          'validation',
-                        );
-                        return;
-                      }
-                      if (includesMeta && files.length > (contentKind === 'carousel' ? 10 : 1)) {
-                        showAnalyticsError(
-                          setError,
-                          'Choose only the number of images supported by this destination.',
-                          'composer',
-                          'validation',
-                        );
-                        return;
-                      }
-                      if (
-                        isX &&
-                        (files.length > 4 ||
-                          (files.length > 1 &&
-                            files.some(
-                              (file) => file.type === 'video/mp4' || file.type === 'image/gif',
-                            )))
-                      ) {
-                        showAnalyticsError(
-                          setError,
-                          'X accepts up to four images, or one GIF or MP4 video.',
-                          'composer',
-                          'validation',
-                        );
-                        return;
-                      }
-                      if (
-                        files.some(
-                          (file) =>
-                            file.size >
-                            (file.type === 'video/mp4'
-                              ? isYouTube || isTikTok
-                                ? 2048
-                                : 512
-                              : file.type === 'image/gif'
-                                ? 15
-                                : 5) *
-                              1024 *
-                              1024,
-                        )
-                      ) {
-                        showAnalyticsError(
-                          setError,
-                          'One or more files exceed the destination size limit.',
-                          'composer',
-                          'validation',
-                        );
-                        return;
-                      }
-                      setError(null);
-                      if (isTikTok) {
-                        setImportedMedia([]);
-                      }
-                      setMediaFiles(files);
-                    }}
-                  />
-                </>
-              )}
-              {mediaFiles.map((file) => (
-                <div
-                  className="composer-media-attachment"
-                  key={`${file.name}-${String(file.size)}`}
-                >
-                  <span>{file.name}</span>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => {
-                      setMediaFiles((current) => current.filter((item) => item !== file));
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              {importedMedia.map((item, index) => (
-                <div className="composer-media-attachment" key={item.id}>
-                  <span>
-                    Imported{' '}
-                    {item.mimeType === 'video/mp4'
-                      ? 'MP4 video'
-                      : item.mimeType?.startsWith('image/')
-                        ? 'image'
-                        : 'media'}{' '}
-                    {index + 1}
-                    {item.byteSize !== null
-                      ? item.byteSize < 1024 * 1024
-                        ? ` · ${String(Math.ceil(item.byteSize / 1024))} KB`
-                        : ` · ${String(Math.ceil(item.byteSize / 1024 / 1024))} MB`
-                      : ''}
-                    {item.durationMs !== null
-                      ? ` · ${String(Math.ceil(item.durationMs / 1000))} seconds`
-                      : ''}
-                  </span>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => {
-                      setImportedMedia((current) =>
-                        current.filter((media) => media.id !== item.id),
-                      );
-                    }}
-                  >
-                    Remove from post
-                  </button>
-                </div>
-              ))}
-            </div>
-            {isTikTok && (
-              <TikTokComposerForm
-                key={`${selected[0]?.id ?? ''}:${String(tiktokReviewCycle)}`}
-                accountId={selected[0]?.id ?? ''}
-                caption={body}
-                onCaptionChange={setBody}
-                video={mediaFiles[0] ?? null}
-                importedMedia={importedMedia}
-                scheduled={scheduled}
-                scheduledAt={scheduledAt}
-                frozen={hasUncertainPost}
-                onSubmissionChange={setTikTokSubmission}
-              />
-            )}
-            {includesYouTube && !isYouTube && (
-              <p className="inline-validation" role="alert">
-                YouTube videos must target exactly one YouTube channel.
-              </p>
-            )}
-            {isYouTube && !youtubeHasMadeForKids && madeForKids === 'default' && (
-              <p className="inline-validation">Choose whether this video is made for kids.</p>
-            )}
-            {linkedinExpiresBeforeDispatch && (
-              <p className="inline-validation" role="alert">
-                LinkedIn access expires before this post. Reconnect the account or choose an earlier
-                time.
-              </p>
-            )}
-            <fieldset className="schedule-choice" inert={hasUncertainPost}>
-              <legend>Publishing time</legend>
-              <button
-                className={!scheduled ? 'selected' : ''}
-                onClick={() => {
-                  setScheduled(false);
-                }}
-              >
-                Now
-              </button>
-              <button
-                className={scheduled ? 'selected' : ''}
-                onClick={() => {
-                  setScheduled(true);
-                }}
-              >
-                Schedule
-              </button>
-            </fieldset>
-            {scheduled && (
-              <div className="schedule-fields" inert={hasUncertainPost}>
-                <label className="field-label">
-                  Date
-                  <span className="schedule-picker-field">
-                    <input
-                      ref={scheduleDateRef}
-                      className="text-input"
-                      type="date"
-                      aria-label="Date"
-                      value={localSchedule.split('T')[0]}
-                      onChange={(event) => {
-                        setLocalSchedule(
-                          `${event.target.value}T${localSchedule.split('T')[1] ?? ''}`,
-                        );
-                        setScheduleOption(0);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Open date picker"
-                      onClick={() => {
-                        openNativePicker(scheduleDateRef.current);
-                      }}
-                    >
-                      <span aria-hidden="true">▦</span>
-                    </button>
-                  </span>
-                </label>
-                <label className="field-label">
-                  Time
-                  <span className="schedule-picker-field">
-                    <input
-                      ref={scheduleTimeRef}
-                      className="text-input"
-                      type="time"
-                      aria-label="Time"
-                      step="60"
-                      value={localSchedule.split('T')[1] ?? ''}
-                      onChange={(event) => {
-                        setLocalSchedule(
-                          `${localSchedule.split('T')[0] ?? ''}T${event.target.value}`,
-                        );
-                        setScheduleOption(0);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Open time picker"
-                      onClick={() => {
-                        openNativePicker(scheduleTimeRef.current);
-                      }}
-                    >
-                      <span aria-hidden="true">◷</span>
-                    </button>
-                  </span>
-                </label>
-                <label className="field-label">
-                  Timezone
-                  <input
-                    className="text-input"
-                    value={Intl.DateTimeFormat().resolvedOptions().timeZone}
-                    readOnly
-                  />
-                </label>
-                {scheduleOptions.length > 1 && (
-                  <fieldset className="schedule-offset-choice">
-                    <legend>This time occurs twice. Choose the intended offset.</legend>
-                    {scheduleOptions.map((option, index) => (
-                      <label key={option.toISOString()}>
-                        <input
-                          className="schedule-offset-radio"
-                          type="radio"
-                          name="schedule-offset"
-                          checked={scheduleOption === index}
-                          onChange={() => {
-                            setScheduleOption(index);
-                          }}
-                        />
-                        {offsetLabel(option)}
-                      </label>
-                    ))}
-                  </fieldset>
+                {state === 'ready' && !isYouTube && !isTikTok && !body.trim() && (
+                  <p className="inline-validation">Add post text before scheduling.</p>
                 )}
-              </div>
-            )}
-            {scheduleError && (
-              <p className="inline-validation" role="alert">
-                {scheduleError}
-              </p>
-            )}
-            {scheduled && scheduledAt && collisions.length > 0 && (
-              <div className="schedule-collision-guidance" role="status" inert={hasUncertainPost}>
-                <strong>
-                  {collisions.reduce((total, item) => total + item.jobCount, 0)}{' '}
-                  {collisions.reduce((total, item) => total + item.jobCount, 0) === 1
-                    ? 'nearby publication'
-                    : 'nearby publications'}{' '}
-                  detected
-                </strong>
-                <p>Leave breathing room for this account or keep the exact minute intentionally.</p>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => {
-                    const opening = collisionWindowEnd
-                      ? nextCollisionFreeSchedule(scheduledAt, scheduledJobs, collisionWindowEnd)
-                      : null;
-                    if (!opening) {
-                      setCollisionGuidance('unavailable');
-                      return;
-                    }
-                    setLocalSchedule(localDateTimeValue(opening));
-                    setScheduleOption(0);
-                  }}
-                >
-                  Use next 15-minute opening
-                </button>
-              </div>
-            )}
-            {scheduled && collisionGuidance === 'unavailable' && (
-              <p className="inline-validation" role="status">
-                Nearby schedule guidance is unavailable. You can still choose a time intentionally.
-              </p>
-            )}
-            {hasUncertainPost && (
-              <p className="inline-validation" role="status">
-                This request may already be scheduled. Editing is paused until the original request
-                is confirmed by retry.
-              </p>
-            )}
-            {state === 'loading' && (
-              <p className="inline-validation">Loading connected accounts before scheduling.</p>
-            )}
-            {state === 'ready' && !isYouTube && !isTikTok && !body.trim() && (
-              <p className="inline-validation">Add post text before scheduling.</p>
-            )}
-            {state === 'ready' && body.trim() && selectedAccounts.length === 0 && (
-              <p className="inline-validation">Select at least one connected account.</p>
-            )}
-            {state === 'saving' && (
-              <p className="inline-validation" role="status">
-                Saving this publication…
-              </p>
+                {state === 'saving' && (
+                  <p className="inline-validation" role="status">
+                    Saving this publication…
+                  </p>
+                )}
+              </>
             )}
             {error && (
               <p className="inline-validation" role="alert">
@@ -2131,7 +2191,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                       ? scheduled
                         ? 'Confirm and schedule'
                         : 'Confirm and publish'
-                      : `Schedule ${String(selectedAccounts.length)} posts`}
+                      : 'Schedule 1 post'}
               </button>
             </footer>
           </>

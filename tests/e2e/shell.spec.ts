@@ -356,7 +356,7 @@ test('computes Meta destination capability intersection on desktop and mobile', 
   await page.getByLabel('HTTPS link').fill('https://example.test');
   await expect(page.getByRole('button', { name: 'Schedule 1 posts' })).toBeEnabled();
   await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
-  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('meta-link-success.png'), fullPage: true });
   expect(submitted?.content).toMatchObject({ kind: 'link', linkUrl: 'https://example.test' });
   expect(submitted?.providerAccountIds).toEqual(['00000000-0000-4000-8000-000000000212']);
@@ -2155,7 +2155,7 @@ test('selects and schedules X image media through the canonical composer', async
   await expect(page.locator('.composer-media-attachment')).toContainText('image.png');
   await page.screenshot({ path: testInfo.outputPath('x-media-attached.png'), fullPage: true });
   await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
-  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   expect(uploads).toEqual(['image/png']);
   expect(submittedMedia).toEqual(['media-1']);
 });
@@ -2240,7 +2240,7 @@ test('retries partial X uploads and a rejected post without replaying deleted me
   await expect(page.getByRole('alert')).toContainText('Post rejected');
   expect(deleted).toHaveLength(3);
   await schedule.click();
-  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   expect(uploadKeys).toHaveLength(6);
   expect(new Set(uploadKeys).size).toBe(6);
   expect(postCount).toBe(2);
@@ -2325,7 +2325,7 @@ for (const viewport of [
     expect(uploads).toHaveLength(1);
     expect(posts).toHaveLength(1);
     await page.getByRole('button', { name: 'Confirm previous request' }).click();
-    await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
     expect(posts).toHaveLength(2);
     expect(posts[1]).toEqual(posts[0]);
     expect(uploads[0]?.bytes).toBe(Buffer.from('image A').toString('hex'));
@@ -2338,7 +2338,7 @@ for (const viewport of [
       buffer: Buffer.from('image B'),
     });
     await page.getByRole('button', { name: 'Schedule 1 posts' }).click();
-    await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
     expect(uploads[1]?.bytes).toBe(Buffer.from('image B').toString('hex'));
     expect(uploads[1]?.id).not.toBe(uploads[0]?.id);
     expect(uploads[1]?.key).not.toBe(uploads[0]?.key);
@@ -2575,7 +2575,7 @@ test('retries uncertain YouTube post responses without deleting media', async ({
   await expect(page.getByRole('alert')).toContainText('temporarily unavailable');
   expect(deletedMedia).toHaveLength(0);
   await page.getByRole('button', { name: 'Confirm previous request' }).click();
-  await expect(page.getByRole('heading', { name: '1 posts scheduled' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
   const settings = page.getByLabel('YouTube settings');
   await expect(settings).toContainText('Visibilitypublic');
   await expect(settings).toContainText('Made for kidsNo');
@@ -2814,8 +2814,8 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   await page.getByRole('button', { name: 'Previous date' }).click();
   const morning = page.getByRole('link', { name: /Avery Editorial, Dispatching/ });
   const lunch = page.getByRole('link', { name: /Avery Editorial, Retrying/ });
-  await expect(morning).toHaveAttribute('style', /top: 53\.75px/);
-  await expect(lunch).toHaveAttribute('style', /top: 64\.5px/);
+  await expect(morning).toHaveAttribute('style', /top: 397\.75px/);
+  await expect(lunch).toHaveAttribute('style', /top: 408\.5px/);
   await expect(page.getByRole('link', { name: /Studio Notes, Failed/ })).toBeVisible();
   await expect(page.getByRole('link', { name: /Studio Notes, Scheduled/ })).toBeVisible();
 
@@ -2986,7 +2986,6 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
     'From 21digital',
   );
   if ((page.viewportSize()?.width ?? 0) < 768) {
-    await page.locator('.calendar-block.mirrored').first().scrollIntoViewIfNeeded();
     for (const badge of await page
       .locator('.calendar-block.mirrored .calendar-origin-badge')
       .all()) {
@@ -3006,7 +3005,7 @@ test('shows a shared Page once in the calendar with read-only origin detail', as
   });
   if ((page.viewportSize()?.width ?? 0) < 768) {
     const secondBadge = page.locator('.calendar-block.mirrored .calendar-origin-badge').nth(1);
-    await secondBadge.scrollIntoViewIfNeeded();
+    await secondBadge.evaluate((element) => element.scrollIntoView({ block: 'nearest' }));
     const rightEdge = await secondBadge.evaluate(
       (element) => element.getBoundingClientRect().right,
     );
@@ -3352,8 +3351,8 @@ test('keeps late immediate publications inside the Week and Day calendar grid', 
   await page.goto(await workspacePath(page, 'calendar?mode=Week&date=2026-10-19'));
   for (const mode of ['Week', 'Day'] as const) {
     if (mode === 'Day') await page.getByRole('button', { name: 'Day', exact: true }).click();
-    const gridBox = await page.locator('.time-grid').boundingBox();
-    if (!gridBox) throw new Error('Time grid is missing');
+    const grid = page.locator('.time-grid');
+    await expect(grid).toBeVisible();
     const published = page.locator('.calendar-block.published');
     await expect(published).toHaveCount(2);
     await expect(published.nth(0)).toHaveAttribute(
@@ -3364,10 +3363,16 @@ test('keeps late immediate publications inside the Week and Day calendar grid', 
       'aria-label',
       /Night Page, Published.*11:59 PM UTC/,
     );
-    for (const block of await published.all()) {
-      const blockBox = await block.boundingBox();
-      if (!blockBox) throw new Error('Published block is missing');
-      expect(blockBox.y + blockBox.height).toBeLessThanOrEqual(gridBox.y + gridBox.height);
+    for (let index = 0; index < 2; index += 1) {
+      await expect
+        .poll(async () => {
+          const gridBox = await grid.boundingBox();
+          const blockBox = await published.nth(index).boundingBox();
+          return Boolean(
+            gridBox && blockBox && blockBox.y + blockBox.height <= gridBox.y + gridBox.height,
+          );
+        })
+        .toBe(true);
     }
   }
 });

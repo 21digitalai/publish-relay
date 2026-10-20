@@ -33,11 +33,11 @@ Users can register, connect multiple social accounts, schedule content through t
   publishing accepts JPEG only under Meta's documented input contract; PNG support remains a
   separate unresolved conversion/product decision. Existing Facebook Login Instagram
   grants require fresh consent and do not migrate tokens. Instagram and Facebook jobs remain independent.
-- Meta phase-one composition is destination-first. Instagram accepts one image or a 2–10 image
-  carousel with a caption; Facebook Pages accept one image or an HTTPS link with a message. A
-  combined Instagram + Facebook composition is intentionally limited to one image plus shared
-  caption/message, and creates one immutable target payload and job per destination. Instagram now
-  and Facebook now have separate publishing adapters and independent publication state.
+- Meta phase-one web composition is destination-first and posts to one selected account. Instagram
+  accepts one image or a 2–10 image carousel with a caption; Facebook Pages accept one image or an
+  HTTPS link with a message. Instagram and Facebook have separate publishing adapters and independent
+  publication state. The backend API retains multi-destination scheduling for machine clients, with
+  one immutable target payload and job per destination; the web Composer does not combine them.
 - A lost or ambiguous Facebook create response is held for operator reconciliation and never blindly posted again. External links prefer Meta's authoritative permalink; a clearly recorded derived link is fallback-only.
 
 ## Explicit non-goals for the first release

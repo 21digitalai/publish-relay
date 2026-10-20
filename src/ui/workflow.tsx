@@ -646,6 +646,7 @@ function normalizeComposerDestination(
     destinationProvider,
     displayName: input.displayName,
     status: input.status ?? 'active',
+    expiresAt: input.expiresAt ?? null,
     availability: input.availability ?? 'active',
     capabilityFreshness: input.capabilityFreshness ?? 'unknown',
     capabilitySnapshot: input.capabilitySnapshot ?? { contentKinds: inferredKinds },
@@ -855,6 +856,36 @@ function Composer({ onClose }: { onClose: () => void }) {
   const includesYouTube = selected.some((account) => account.provider === 'youtube');
   const isLinkedInOnly =
     selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
+  const importedMediaIncompatible =
+    draftMediaIds.length > 0 &&
+    (importedMedia.some((item) => !item.ready || !item.mimeType) ||
+      isYouTube ||
+      isLinkedInOnly ||
+      (includesMeta &&
+        (contentKind === 'link' ||
+          importedMedia.some(
+            (item) =>
+              !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(item.mimeType ?? ''),
+          ))) ||
+      (isX &&
+        (importedMedia.some(
+          (item) =>
+            item.mimeType !== null &&
+            !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4'].includes(
+              item.mimeType,
+            ),
+        ) ||
+          draftMediaIds.length + mediaFiles.length > 4 ||
+          (draftMediaIds.length + mediaFiles.length > 1 &&
+            (importedMedia.some(
+              (item) =>
+                item.mimeType === null ||
+                item.mimeType === 'image/gif' ||
+                item.mimeType === 'video/mp4',
+            ) ||
+              mediaFiles.some(
+                (file) => file.type === 'image/gif' || file.type === 'video/mp4',
+              ))))));
   const textLimit = isTikTok ? 2200 : isLinkedInOnly ? 3000 : 280;
   const bodyTooLong = includesX
     ? xWeightedLength > xLimit || (!isX && body.length > textLimit)
@@ -893,6 +924,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         : !body.trim() || bodyTooLong) ||
     (includesYouTube && !isYouTube) ||
     (mediaFiles.length > 0 && !isYouTube && !isTikTok && !isX && !includesMeta) ||
+    importedMediaIncompatible ||
     (includesMeta && !allowedKinds.includes(contentKind)) ||
     (includesMeta &&
       contentKind === 'single_image' &&
@@ -938,6 +970,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     scheduleOption,
     scheduled,
     selectedAccounts,
+    draftMediaIds,
     videoDescription,
     videoTitle,
   });
@@ -1653,7 +1686,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     ))}
                     {allowedKinds.length === 0 && (
                       <p className="inline-validation" role="alert">
-                        These destinations do not share a supported content shape.
+                        This account does not support a content type in this form.
                       </p>
                     )}
                   </fieldset>
@@ -1698,7 +1731,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                             ? 'Long-post access is self-declared, not verified. X may reject longer posts.'
                             : 'X uses weighted characters; undeclared accounts allow 280.'
                           : includesMeta
-                            ? 'Shared caption or message for each destination'
+                            ? 'Caption or message for this destination'
                             : `${String(body.length)}/${String(textLimit)} characters`}
                     </small>
                     {includesX && bodyTooLong && (
@@ -1791,7 +1824,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                           ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
                           : isX
                             ? 'Up to four images, or one GIF or MP4 video'
-                            : 'Select an account to add media'}
+                            : selectedDestination
+                              ? 'Media is not supported for this account'
+                              : 'Select an account to add media'}
                   </span>
                   {(isTikTok || isYouTube || isX || (includesMeta && contentKind !== 'link')) && (
                     <>
@@ -1962,6 +1997,12 @@ function Composer({ onClose }: { onClose: () => void }) {
                       </button>
                     </div>
                   ))}
+                  {importedMediaIncompatible && (
+                    <p className="inline-validation" role="alert">
+                      Attached draft media is unavailable or unsupported for this destination.
+                      Remove it from this post or choose another destination.
+                    </p>
+                  )}
                 </div>
                 {isTikTok && (
                   <TikTokComposerForm

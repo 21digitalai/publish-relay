@@ -618,6 +618,9 @@ test('hydrates an imported draft in the canonical composer on desktop and mobile
   await expect(page.getByText('Approved launch clip')).toBeVisible();
   await expect(page.getByText('1 attached media item selected')).toBeVisible();
   await expect(page.locator('.composer-sheet')).toBeVisible();
+  await selectComposerAccount(page, 'Example Editorial');
+  await page.getByLabel('Post body').fill('Imported draft awaiting media details');
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   await page.screenshot({
     path: testInfo.outputPath('external-draft-desktop.png'),
     fullPage: true,
@@ -627,6 +630,90 @@ test('hydrates an imported draft in the canonical composer on desktop and mobile
   await expect(page.locator('.composer-sheet')).toBeVisible();
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
   await page.screenshot({ path: testInfo.outputPath('external-draft-mobile.png'), fullPage: true });
+});
+
+test('blocks incompatible imported media after changing destination and permits removal', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  const xId = '00000000-0000-4000-8000-000000000201';
+  const linkedinId = '00000000-0000-4000-8000-000000000203';
+  const mediaId = '00000000-0000-4000-8000-000000000851';
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            { id: xId, provider: 'x', displayName: 'X account', status: 'active' },
+            {
+              id: linkedinId,
+              provider: 'linkedin',
+              displayName: 'LinkedIn member',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  const draftId = '00000000-0000-4000-8000-000000000850';
+  await page.route(`**/api/workflow/drafts/${draftId}`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          label: 'Imported image',
+          mediaIds: [mediaId],
+          media: [
+            {
+              id: mediaId,
+              mimeType: 'image/jpeg',
+              byteSize: 1024,
+              durationMs: null,
+              ready: true,
+              previewUrl: null,
+            },
+          ],
+          postId: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  let submitted: { mediaIds: string[]; providerAccountIds: string[] } | undefined;
+  await page.route('**/api/workflow/posts', (route) => {
+    submitted = route.request().postDataJSON() as typeof submitted;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]},"error":null}',
+    });
+  });
+  await page.goto(await workspacePath(page, `drafts/${draftId}`));
+  await selectComposerAccount(page, 'X account');
+  await page.getByLabel('Post body').fill('A post with media');
+  const schedule = page.getByRole('button', { name: 'Schedule 1 post' });
+  await expect(schedule).toBeEnabled();
+  await selectComposerAccount(page, 'LinkedIn member');
+  await expect(page.getByText('Imported image', { exact: true })).toBeVisible();
+  await expect(page.getByText('Media is not supported for this account')).toBeVisible();
+  await expect(
+    page.getByText('Attached draft media is unavailable or unsupported for this destination.'),
+  ).toBeVisible();
+  await expect(schedule).toBeDisabled();
+  expect(submitted).toBeUndefined();
+  await page.screenshot({ path: testInfo.outputPath('imported-media-incompatible.png') });
+  await page.getByRole('button', { name: 'Remove from post' }).click();
+  await expect(schedule).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('imported-media-removed.png') });
+  await schedule.click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+  expect(submitted?.mediaIds).toEqual([]);
+  expect(submitted?.providerAccountIds).toEqual([linkedinId]);
 });
 
 test('keeps imported-draft scheduling disabled until hydration succeeds and after failure', async ({
@@ -654,6 +741,16 @@ test('keeps imported-draft scheduling disabled until hydration succeeds and afte
           id: draftId,
           label: 'Delayed clip',
           mediaIds: ['00000000-0000-4000-8000-000000000861'],
+          media: [
+            {
+              id: '00000000-0000-4000-8000-000000000861',
+              mimeType: 'image/jpeg',
+              byteSize: 1024,
+              durationMs: null,
+              ready: true,
+              previewUrl: null,
+            },
+          ],
           postId: null,
         },
         error: null,

@@ -349,6 +349,8 @@ Next design pass: after the first complete static shell and one populated queue/
 
 # YouTube composer
 
+LinkedIn member video reuses the destination-first Composer sheet and its existing media attachment/upload/remove lifecycle. Choosing the Video content kind presents one MP4 picker and a required friendly video title beside the normal post body; text and article keep their media-free shapes. Processing is represented by the existing Queue/detail job state rather than a new Composer shell. `.linkedin-video-title` is the semantic anchor for the title field; upload rejection and cleanup use the shared inline error and media controls.
+
 - The canonical publication composer in `src/ui/workflow.tsx` switches to a single-channel YouTube video flow only when exactly one YouTube destination is selected.
 - Successful YouTube receipts render an allowlisted definition list with friendly visibility, Made for Kids, and subscriber-notification labels; internal settings keys and raw JSON never appear.
 - It uploads one MP4 through the authenticated browser media endpoint before creating the post, exposes sparse per-publication overrides, and displays the returned effective settings snapshot in the receipt.

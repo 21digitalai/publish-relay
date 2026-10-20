@@ -118,6 +118,7 @@ const linkedinRuntime =
     ? {
         database,
         keys,
+        source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
         client: new LinkedInHttpClient({
           clientId: config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID,
           clientSecret: config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET,

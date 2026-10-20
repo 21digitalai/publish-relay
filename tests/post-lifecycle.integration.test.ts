@@ -147,6 +147,47 @@ beforeEach(async () => {
 
 afterEach(async () => database.close());
 
+describe('LinkedIn member video admission', () => {
+  it('requires one tenant-owned ready MP4 with verified duration and codecs', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000261';
+    const mediaId = '00000000-0000-4000-8000-000000000262';
+    await database.exec(`
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id, member_urn, expires_at)
+      VALUES ('00000000-0000-4000-8000-000000000260', '${workspaceId}', 'linkedin',
+        '00000000-0000-4000-8000-000000000205', 'urn:li:person:test', 'urn:li:person:test', now() + interval '30 days');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id,
+        destination_provider, remote_account_id, display_name)
+      VALUES ('${accountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000260',
+        'urn:li:person:test', 'linkedin', 'urn:li:person:test', 'Member');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size,
+        duration_ms, container, video_codec, audio_codec, state)
+      VALUES ('${mediaId}', '${workspaceId}', 'video.mp4', 'hash-video', 'video/mp4', 75000,
+        3000, 'mp4', 'h264', 'aac', 'ready');
+    `);
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const input = {
+      workspaceId,
+      providerAccountIds: [accountId],
+      selectedDestination: 'linkedin',
+      content: { kind: 'video', text: 'Watch', title: 'Demo' },
+      scheduledAt: new Date(Date.now() + 60_000),
+    };
+    await expect(validatePostTargets(db, { ...input, mediaIds: [mediaId] })).resolves.toEqual([
+      { providerAccountId: accountId, valid: true },
+    ]);
+    await expect(validatePostTargets(db, { ...input, mediaIds: [] })).resolves.toEqual([
+      expect.objectContaining({ valid: false }),
+    ]);
+    await database.exec(`UPDATE media_objects SET video_codec = 'hevc' WHERE id = '${mediaId}'`);
+    await expect(validatePostTargets(db, { ...input, mediaIds: [mediaId] })).resolves.toEqual([
+      expect.objectContaining({
+        valid: false,
+        error: 'LinkedIn video requires H.264 or VP8 video codec',
+      }),
+    ]);
+  });
+});
+
 describe('Instagram Login scheduling admission', () => {
   it('accepts JPEG while rejecting PNG and a partial grant before creating a job', async () => {
     const accountId = '00000000-0000-4000-8000-000000000241';

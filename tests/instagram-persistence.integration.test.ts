@@ -16,7 +16,11 @@ import {
   createFixedMediaRetentionPolicy,
   evaluateMediaRetention,
 } from '../src/modules/content/media-retention.service.js';
-import { claimDueJobs, startDispatchAttempt } from '../src/modules/scheduler/job.repository.js';
+import {
+  claimDueJobs,
+  deferLeasedJob,
+  startDispatchAttempt,
+} from '../src/modules/scheduler/job.repository.js';
 
 const migrations = [
   '0000_identity_tenancy.sql',
@@ -177,6 +181,39 @@ describe('Instagram staging persistence and signed media delivery', () => {
         now,
       }),
     ).resolves.toMatchObject({ attemptNumber: 1 });
+  });
+
+  it('defers a processing asset only for its live lease owner, without a post attempt', async () => {
+    const now = new Date();
+    const [claimed] = await claimDueJobs(db, {
+      workerId: 'media-owner',
+      now,
+      leaseMs: 30_000,
+      limit: 1,
+      destinationProvider: 'instagram',
+    });
+    expect(claimed?.id).toBe(jobId);
+    const retryAt = new Date(now.getTime() + 30_000);
+    await expect(
+      deferLeasedJob(db, { workspaceId: workspaceA, jobId, workerId: 'other', now, retryAt }),
+    ).resolves.toBe(false);
+    await expect(
+      deferLeasedJob(db, { workspaceId: workspaceA, jobId, workerId: 'media-owner', now, retryAt }),
+    ).resolves.toBe(true);
+    const rows = await database.query<{ state: string; count: number }>(`
+      SELECT job.state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = job.id) AS count
+      FROM publication_jobs job WHERE job.id = '${jobId}'
+    `);
+    expect(rows.rows[0]).toMatchObject({ state: 'retry_wait', count: 0 });
+    await expect(
+      startDispatchAttempt(db, {
+        workspaceId: workspaceA,
+        jobId,
+        workerId: 'media-owner',
+        fingerprint: 'not-posted',
+        now,
+      }),
+    ).resolves.toBeNull();
   });
 
   it('persists one tenant-bound artifact with a bounded expiry and durable updates', async () => {

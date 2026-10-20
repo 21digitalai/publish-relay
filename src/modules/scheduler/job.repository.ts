@@ -209,6 +209,47 @@ export async function claimReconciliationJobs(
   return resultRows(result).map((row) => row.id);
 }
 
+/** Return a leased job to the due queue while provider media is still processing. */
+export async function deferLeasedJob(
+  database: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; workerId: string; now: Date; retryAt: Date },
+): Promise<boolean> {
+  return withTenantTransaction(
+    database,
+    { workspaceId: input.workspaceId },
+    async (transaction) => {
+      const rows = await transaction
+        .update(publicationJobs)
+        .set({
+          state: 'retry_wait',
+          nextAttemptAt: input.retryAt,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          updatedAt: input.now,
+        })
+        .where(
+          and(
+            eq(publicationJobs.workspaceId, input.workspaceId),
+            eq(publicationJobs.id, input.jobId),
+            eq(publicationJobs.state, 'leased'),
+            eq(publicationJobs.leaseOwner, input.workerId),
+            gt(publicationJobs.leaseExpiresAt, input.now),
+          ),
+        )
+        .returning({ id: publicationJobs.id });
+      if (rows.length === 0) return false;
+      await transaction.insert(publicationJobEvents).values({
+        workspaceId: input.workspaceId,
+        jobId: input.jobId,
+        fromState: 'leased',
+        toState: 'retry_wait',
+        reason: 'provider_media_processing',
+      });
+      return true;
+    },
+  );
+}
+
 export async function startDispatchAttempt(
   database: NodePgDatabase,
   input: {

@@ -1,18 +1,21 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import {
   postRevisions,
+  mediaObjects,
   providerAccounts,
   providerConnections,
   publicationJobs,
+  revisionMedia,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { getActiveCredential } from '../credentials/credential.repository.js';
 import { decryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
 import {
   claimDueJobs,
+  deferLeasedJob,
   deriveJobIdempotencyKey,
   finishDispatchAttempt,
   recoverExpiredDispatches,
@@ -21,10 +24,18 @@ import {
 import { calculateFullJitterDelay } from '../scheduler/retry-policy.js';
 import {
   LinkedInRequestError,
+  LinkedInVideoReadinessError,
   type LinkedInCredential,
   type LinkedInHttpClient,
 } from './linkedin-http-client.js';
-import { parseLinkedInContent } from './linkedin-content.js';
+import {
+  parseLinkedInContent,
+  parseLinkedInVideoContent,
+  validateLinkedInVideoAsset,
+} from './linkedin-content.js';
+import { PostgresLinkedInVideoArtifactStore } from './linkedin-video-artifact-store.js';
+import { stageLinkedInVideo } from './linkedin-video-staging.service.js';
+import type { XMediaSource } from './x-media-staging.service.js';
 
 const credentialSchema = z.object({
   accessToken: z.string().min(1),
@@ -33,6 +44,12 @@ const credentialSchema = z.object({
   scope: z.string().min(1),
 });
 const LINKEDIN_RETRY_POLICY = { baseDelayMs: 30_000, maximumDelayMs: 900_000, maximumAttempts: 5 };
+const LINKEDIN_VIDEO_POLL_MS = 30_000;
+
+function requireStagedVideo(video: string | undefined): string {
+  if (!video) throw new Error('LinkedIn video staging returned no asset');
+  return video;
+}
 
 export function classifyLinkedInDispatchFailure(
   error: unknown,
@@ -40,6 +57,14 @@ export function classifyLinkedInDispatchFailure(
   now: Date,
   random: () => number = Math.random,
 ): { outcome: 'unknown' | LinkedInRequestError['kind']; retryAt?: Date } {
+  if (error instanceof LinkedInVideoReadinessError) {
+    if (error.permanent) return { outcome: 'validation' };
+    const retryDelay = calculateFullJitterDelay(attemptNumber, LINKEDIN_RETRY_POLICY, random);
+    return {
+      outcome: 'transient',
+      ...(retryDelay !== null ? { retryAt: new Date(now.getTime() + retryDelay) } : {}),
+    };
+  }
   const requestError = error instanceof LinkedInRequestError ? error : null;
   // A 429 rejects the request. A 5xx, transport error, or missing receipt may follow acceptance.
   if (!requestError || requestError.outcomeUnknown || requestError.kind === 'transient')
@@ -56,6 +81,7 @@ export interface LinkedInDispatchRuntime {
   database: NodePgDatabase;
   keys: MasterKeyProvider;
   client: LinkedInHttpClient;
+  source: XMediaSource;
   workerId: string;
   leaseMs: number;
 }
@@ -70,6 +96,14 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
         connectionId: providerConnections.id,
         expiresAt: providerConnections.expiresAt,
         status: providerConnections.status,
+        mediaId: revisionMedia.mediaId,
+        mimeType: mediaObjects.mimeType,
+        byteSize: mediaObjects.byteSize,
+        durationMs: mediaObjects.durationMs,
+        container: mediaObjects.container,
+        videoCodec: mediaObjects.videoCodec,
+        audioCodec: mediaObjects.audioCodec,
+        mediaState: mediaObjects.state,
       })
       .from(publicationJobs)
       .innerJoin(
@@ -93,6 +127,21 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
           eq(providerConnections.id, providerAccounts.connectionId),
         ),
       )
+      .leftJoin(
+        revisionMedia,
+        and(
+          eq(revisionMedia.workspaceId, publicationJobs.workspaceId),
+          eq(revisionMedia.revisionId, publicationJobs.revisionId),
+        ),
+      )
+      .leftJoin(
+        mediaObjects,
+        and(
+          eq(mediaObjects.workspaceId, revisionMedia.workspaceId),
+          eq(mediaObjects.id, revisionMedia.mediaId),
+          isNull(mediaObjects.deletedAt),
+        ),
+      )
       .where(
         and(
           eq(publicationJobs.workspaceId, workspaceId),
@@ -101,10 +150,27 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
           isNull(providerAccounts.disconnectedAt),
         ),
       )
-      .limit(1);
+      .orderBy(asc(revisionMedia.position))
+      .limit(2);
     const row = rows[0];
     if (!row) throw new Error('LinkedIn destination is unavailable');
-    const content = parseLinkedInContent(row.content, []);
+    const mediaIds = rows.flatMap((item) => (item.mediaId ? [item.mediaId] : []));
+    const content =
+      (row.content as { kind?: unknown }).kind === 'video'
+        ? parseLinkedInVideoContent(row.content, mediaIds)
+        : parseLinkedInContent(row.content, mediaIds);
+    if (content.kind === 'video') {
+      if (!row.mimeType || row.byteSize === null || row.mediaState !== 'ready')
+        throw new Error('LinkedIn video media is unavailable');
+      validateLinkedInVideoAsset({
+        mimeType: row.mimeType,
+        byteSize: row.byteSize,
+        durationMs: row.durationMs,
+        container: row.container,
+        videoCodec: row.videoCodec,
+        audioCodec: row.audioCodec,
+      });
+    }
     const stored = await getActiveCredential(transaction, workspaceId, row.credentialId);
     if (!stored) throw new Error('LinkedIn credential is unavailable');
     return { ...row, content, stored };
@@ -134,18 +200,7 @@ async function dispatchJob(
   job: { id: string; workspaceId: string; revisionId: string; providerAccountId: string },
   now: Date,
 ): Promise<boolean> {
-  const attempt = await startDispatchAttempt(runtime.database, {
-    workspaceId: job.workspaceId,
-    jobId: job.id,
-    workerId: runtime.workerId,
-    fingerprint: deriveJobIdempotencyKey({
-      jobId: job.id,
-      revisionId: job.revisionId,
-      providerAccountId: job.providerAccountId,
-    }),
-    now,
-  });
-  if (!attempt) return false;
+  let attempt: Awaited<ReturnType<typeof startDispatchAttempt>> = null;
   let connectionId: string | undefined;
   try {
     const context = await loadJob(runtime, job.workspaceId, job.id);
@@ -168,10 +223,57 @@ async function dispatchJob(
       await markReconnectRequired(runtime, job.workspaceId, context.connectionId);
       throw new LinkedInRequestError(401, 'auth', 'LinkedIn reconnect is required');
     }
+    let video: string | undefined;
+    if (context.content.kind === 'video') {
+      const artifact = new PostgresLinkedInVideoArtifactStore(runtime.database, {
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        mediaId: context.content.mediaId,
+        memberUrn: credential.memberUrn,
+      });
+      const staged = await stageLinkedInVideo({
+        artifact,
+        client: runtime.client,
+        source: runtime.source,
+        credential,
+        workspaceId: job.workspaceId,
+        mediaId: context.content.mediaId,
+      });
+      if (staged.state === 'pending') {
+        await deferLeasedJob(runtime.database, {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          workerId: runtime.workerId,
+          now,
+          retryAt: new Date(now.getTime() + LINKEDIN_VIDEO_POLL_MS),
+        });
+        return false;
+      }
+      video = staged.video;
+    }
+    attempt = await startDispatchAttempt(runtime.database, {
+      workspaceId: job.workspaceId,
+      jobId: job.id,
+      workerId: runtime.workerId,
+      fingerprint: deriveJobIdempotencyKey({
+        jobId: job.id,
+        revisionId: job.revisionId,
+        providerAccountId: job.providerAccountId,
+      }),
+      now,
+    });
+    if (!attempt) return false;
     const externalPostId =
       context.content.kind === 'link'
         ? await runtime.client.publishArticle({ credential, ...context.content })
-        : await runtime.client.publishText({ credential, text: context.content.text });
+        : context.content.kind === 'video'
+          ? await runtime.client.publishVideo({
+              credential,
+              text: context.content.text,
+              title: context.content.title,
+              video: requireStagedVideo(video),
+            })
+          : await runtime.client.publishText({ credential, text: context.content.text });
     await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,
@@ -186,6 +288,37 @@ async function dispatchJob(
     const requestError = error instanceof LinkedInRequestError ? error : null;
     if (requestError?.kind === 'auth' && connectionId)
       await markReconnectRequired(runtime, job.workspaceId, connectionId);
+    if (!attempt) {
+      // Staging cannot have created a post. A lost lease is safely reclaimed;
+      // otherwise record a definite pre-POST failure rather than reconciliation.
+      attempt = await startDispatchAttempt(runtime.database, {
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        workerId: runtime.workerId,
+        fingerprint: deriveJobIdempotencyKey({
+          jobId: job.id,
+          revisionId: job.revisionId,
+          providerAccountId: job.providerAccountId,
+        }),
+        now,
+      });
+      if (!attempt) return false;
+      const request = error instanceof LinkedInRequestError ? error : null;
+      const retryAt =
+        request && ['rate_limit', 'transient'].includes(request.kind)
+          ? new Date(now.getTime() + LINKEDIN_VIDEO_POLL_MS)
+          : undefined;
+      await finishDispatchAttempt(runtime.database, {
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        attemptId: attempt.attemptId,
+        outcome: retryAt && request ? request.kind : 'validation',
+        now,
+        ...(retryAt ? { retryAt } : {}),
+        redactedError: request?.message ?? 'LinkedIn video staging failed',
+      });
+      return false;
+    }
     const failure = classifyLinkedInDispatchFailure(error, attempt.attemptNumber, now);
     await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
@@ -195,7 +328,11 @@ async function dispatchJob(
       now,
       ...(failure.retryAt ? { retryAt: failure.retryAt } : {}),
       ...(failure.outcome === 'unknown' ? { reconciliationKey: `linkedin:${job.id}` } : {}),
-      redactedError: requestError?.message ?? 'LinkedIn dispatch outcome is unknown',
+      redactedError:
+        requestError?.message ??
+        (error instanceof LinkedInVideoReadinessError
+          ? error.message
+          : 'LinkedIn dispatch outcome is unknown'),
     });
     return false;
   }

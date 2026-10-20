@@ -69,6 +69,16 @@ export class LinkedInRequestError extends Error {
   }
 }
 
+/** Readiness failures occur before the publication POST and are safe to retry. */
+export class LinkedInVideoReadinessError extends Error {
+  constructor(
+    message: string,
+    public readonly permanent = false,
+  ) {
+    super(message);
+  }
+}
+
 function classifyStatus(status: number): LinkedInRequestError['kind'] {
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
@@ -255,7 +265,7 @@ export class LinkedInHttpClient {
       );
     const video = videoStatusSchema.parse(await response.json());
     if (video.id !== input.video || video.owner !== input.credential.memberUrn)
-      throw new Error('LinkedIn video owner or identity mismatch');
+      throw new LinkedInRequestError(0, 'validation', 'LinkedIn video owner or identity mismatch');
     return video.status;
   }
 
@@ -281,8 +291,21 @@ export class LinkedInHttpClient {
     video: string;
     title: string;
   }): Promise<string> {
-    const status = await this.getVideoStatus({ credential: input.credential, video: input.video });
-    if (status !== 'AVAILABLE') throw new Error(`LinkedIn video cannot be posted while ${status}`);
+    let status: Awaited<ReturnType<LinkedInHttpClient['getVideoStatus']>>;
+    try {
+      status = await this.getVideoStatus({ credential: input.credential, video: input.video });
+    } catch (error) {
+      if (error instanceof LinkedInRequestError && error.kind === 'auth') throw error;
+      throw new LinkedInVideoReadinessError(
+        'LinkedIn video readiness could not be verified',
+        error instanceof LinkedInRequestError && error.kind === 'validation',
+      );
+    }
+    if (status !== 'AVAILABLE')
+      throw new LinkedInVideoReadinessError(
+        `LinkedIn video cannot be posted while ${status}`,
+        status === 'PROCESSING_FAILED',
+      );
     return this.publishPost(input.credential, input.text, {
       media: { id: input.video, title: input.title },
     });

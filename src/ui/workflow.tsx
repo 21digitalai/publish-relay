@@ -889,11 +889,15 @@ function Composer({ onClose }: { onClose: () => void }) {
   const isLinkedInOnly =
     selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
   const isLinkedInArticle = isLinkedInOnly && contentKind === 'link';
+  const isLinkedInVideo = isLinkedInOnly && contentKind === 'video';
   const importedMediaIncompatible =
     draftMediaIds.length > 0 &&
     (importedMedia.some((item) => !item.ready || !item.mimeType) ||
       isYouTube ||
-      isLinkedInOnly ||
+      (isLinkedInOnly &&
+        (!isLinkedInVideo ||
+          draftMediaIds.length + mediaFiles.length !== 1 ||
+          importedMedia.some((item) => item.mimeType !== 'video/mp4'))) ||
       (includesMeta &&
         (contentKind === 'link' ||
           importedMedia.some((item) => !META_IMAGE_MIME_TYPES.includes(item.mimeType ?? '')))) ||
@@ -953,7 +957,12 @@ function Composer({ onClose }: { onClose: () => void }) {
           (!youtubeHasMadeForKids && madeForKids === 'default')
         : !body.trim() || bodyTooLong) ||
     (includesYouTube && !isYouTube) ||
-    (mediaFiles.length > 0 && !isYouTube && !isTikTok && !isX && !includesMeta) ||
+    (mediaFiles.length > 0 &&
+      !isYouTube &&
+      !isTikTok &&
+      !isX &&
+      !includesMeta &&
+      !isLinkedInVideo) ||
     importedMediaIncompatible ||
     (includesMeta && !allowedKinds.includes(contentKind)) ||
     (includesMeta &&
@@ -966,6 +975,10 @@ function Composer({ onClose }: { onClose: () => void }) {
     (includesMeta && contentKind === 'link' && !linkUrl.startsWith('https://')) ||
     (isLinkedInOnly && !allowedKinds.includes(contentKind)) ||
     (isLinkedInArticle && (!linkUrl.startsWith('https://') || !articleTitle.trim())) ||
+    (isLinkedInVideo &&
+      (!videoTitle.trim() ||
+        mediaFiles.length + draftMediaIds.length !== 1 ||
+        mediaFiles.some((file) => file.type !== 'video/mp4'))) ||
     selectedAccounts.length !== 1 ||
     accountPickerOpen ||
     linkedinExpiresBeforeDispatch ||
@@ -1265,7 +1278,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                       ? { description: articleDescription.trim() }
                       : {}),
                   }
-                : { type: 'text', text: body.trim() },
+                : isLinkedInVideo
+                  ? { kind: 'video', text: body.trim(), title: videoTitle.trim() }
+                  : { type: 'text', text: body.trim() },
           mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
@@ -1843,6 +1858,19 @@ function Composer({ onClose }: { onClose: () => void }) {
                     </p>
                   </div>
                 )}
+                {isLinkedInVideo && (
+                  <label className="field-label linkedin-video-title" inert={hasUncertainPost}>
+                    Video title
+                    <input
+                      className="text-input"
+                      maxLength={200}
+                      value={videoTitle}
+                      onChange={(event) => {
+                        setVideoTitle(event.target.value);
+                      }}
+                    />
+                  </label>
+                )}
                 {isYouTube && (
                   <div className="youtube-composer-options" inert={hasUncertainPost}>
                     <label className="field-label">
@@ -1907,15 +1935,21 @@ function Composer({ onClose }: { onClose: () => void }) {
                         ? mediaFiles[0]
                           ? mediaFiles[0].name
                           : 'Choose exactly one MP4 video'
-                        : includesMeta && contentKind !== 'link'
-                          ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
-                          : isX
-                            ? 'Up to four images, or one GIF or MP4 video'
-                            : selectedDestination
-                              ? 'Media is not supported for this account'
-                              : 'Select an account to add media'}
+                        : isLinkedInVideo
+                          ? (mediaFiles[0]?.name ?? 'Choose exactly one MP4 video')
+                          : includesMeta && contentKind !== 'link'
+                            ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
+                            : isX
+                              ? 'Up to four images, or one GIF or MP4 video'
+                              : selectedDestination
+                                ? 'Media is not supported for this account'
+                                : 'Select an account to add media'}
                   </span>
-                  {(isTikTok || isYouTube || isX || (includesMeta && contentKind !== 'link')) && (
+                  {(isTikTok ||
+                    isYouTube ||
+                    isX ||
+                    isLinkedInVideo ||
+                    (includesMeta && contentKind !== 'link')) && (
                     <>
                       <label className="secondary-button" htmlFor="composer-media-upload">
                         Choose files
@@ -1925,7 +1959,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                         className="sr-only"
                         type="file"
                         accept={
-                          isTikTok || isYouTube
+                          isTikTok || isYouTube || isLinkedInVideo
                             ? 'video/mp4'
                             : includesMeta
                               ? META_IMAGE_MIME_TYPES.join(',')
@@ -1946,7 +1980,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                           const files = Array.from(event.target.files ?? []);
                           event.target.value = '';
                           const allowed =
-                            isTikTok || isYouTube
+                            isTikTok || isYouTube || isLinkedInVideo
                               ? ['video/mp4']
                               : includesMeta
                                 ? META_IMAGE_MIME_TYPES
@@ -1968,7 +2002,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                             );
                             return;
                           }
-                          if ((isTikTok || isYouTube) && files.length !== 1) {
+                          if ((isTikTok || isYouTube || isLinkedInVideo) && files.length !== 1) {
                             showAnalyticsError(
                               setError,
                               'Choose exactly one MP4 video.',
@@ -2008,16 +2042,17 @@ function Composer({ onClose }: { onClose: () => void }) {
                           if (
                             files.some(
                               (file) =>
+                                (isLinkedInVideo && file.size > 500_000_000) ||
                                 file.size >
-                                (file.type === 'video/mp4'
-                                  ? isYouTube || isTikTok
-                                    ? 2048
-                                    : 512
-                                  : file.type === 'image/gif'
-                                    ? 15
-                                    : 5) *
-                                  1024 *
-                                  1024,
+                                  (file.type === 'video/mp4'
+                                    ? isYouTube || isTikTok
+                                      ? 2048
+                                      : 512
+                                    : file.type === 'image/gif'
+                                      ? 15
+                                      : 5) *
+                                    1024 *
+                                    1024,
                             )
                           ) {
                             showAnalyticsError(

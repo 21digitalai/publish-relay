@@ -10,6 +10,7 @@ import { classifyLinkedInDispatchFailure } from '../src/modules/providers/linked
 import {
   LinkedInHttpClient,
   LinkedInRequestError,
+  LinkedInVideoReadinessError,
 } from '../src/modules/providers/linkedin-http-client.js';
 
 const options = { clientId: 'client-id', clientSecret: 'client-secret', now: () => 1_000 };
@@ -262,6 +263,25 @@ describe('LinkedIn member integration', () => {
       expect(request).toHaveBeenCalledTimes(1);
     }
   });
+  it('classifies a video status failure as definitely pre-POST', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 503 }));
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(
+      client.publishVideo({
+        credential,
+        text: 'Watch',
+        video: 'urn:li:video:asset',
+        title: 'Demo',
+      }),
+    ).rejects.toBeInstanceOf(LinkedInVideoReadinessError);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it('retries definite rate-limit rejection but holds ambiguous delivery outcomes', () => {
     const now = new Date('2026-09-28T07:00:00Z');
     const rejected = new LinkedInRequestError(429, 'rate_limit', 'Rate limited');
@@ -289,6 +309,21 @@ describe('LinkedIn member integration', () => {
     expect(classifyLinkedInDispatchFailure(new Error('Network disconnected'), 1, now)).toEqual({
       outcome: 'unknown',
     });
+    expect(
+      classifyLinkedInDispatchFailure(
+        new LinkedInVideoReadinessError('Still processing'),
+        1,
+        now,
+        () => 0.5,
+      ),
+    ).toEqual({ outcome: 'transient', retryAt: new Date(now.getTime() + 15_000) });
+    expect(
+      classifyLinkedInDispatchFailure(
+        new LinkedInVideoReadinessError('Processing failed', true),
+        1,
+        now,
+      ),
+    ).toEqual({ outcome: 'validation' });
   });
 
   it('requests member-posting scope and binds the exact callback and state', () => {

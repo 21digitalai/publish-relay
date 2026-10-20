@@ -13,7 +13,11 @@ import { loadPostAccounts } from './exposed-post-accounts.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
 import { hasExactInstagramLoginScopes } from '../providers/instagram-login-client.js';
-import { parseLinkedInContent } from '../providers/linkedin-content.js';
+import {
+  parseLinkedInContent,
+  parseLinkedInVideoContent,
+  validateLinkedInVideoAsset,
+} from '../providers/linkedin-content.js';
 import { publicationSettingsRegistry } from '../providers/publication-settings-registry.js';
 import type { DestinationProvider } from '../providers/contract.js';
 import {
@@ -191,7 +195,15 @@ async function resolveRevisionTargets(
     input.mediaIds.length === 0
       ? []
       : await database
-          .select({ id: mediaObjects.id, mimeType: mediaObjects.mimeType })
+          .select({
+            id: mediaObjects.id,
+            mimeType: mediaObjects.mimeType,
+            byteSize: mediaObjects.byteSize,
+            durationMs: mediaObjects.durationMs,
+            container: mediaObjects.container,
+            videoCodec: mediaObjects.videoCodec,
+            audioCodec: mediaObjects.audioCodec,
+          })
           .from(mediaObjects)
           .where(
             and(
@@ -246,7 +258,14 @@ async function resolveRevisionTargets(
             'Reconnect LinkedIn before scheduling beyond its token expiry',
           );
         try {
-          parseLinkedInContent(input.content, input.mediaIds);
+          if (input.content.kind === 'video') {
+            const content = parseLinkedInVideoContent(input.content, input.mediaIds);
+            const media = mediaRows.find((item) => item.id === content.mediaId);
+            if (!media) throw new Error('LinkedIn video media is unavailable');
+            validateLinkedInVideoAsset(media);
+          } else {
+            parseLinkedInContent(input.content, input.mediaIds);
+          }
         } catch (error) {
           throw new PostValidationError(
             error instanceof Error ? error.message : 'Invalid LinkedIn content',

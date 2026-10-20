@@ -727,13 +727,24 @@ test('LinkedIn text URL and explicit article stay distinct', async ({ page }, te
       }),
     }),
   );
-  let submitted: { content: Record<string, string>; mediaIds: string[] } | undefined;
+  const submissions: {
+    content: Record<string, string>;
+    mediaIds: string[];
+    key: string;
+  }[] = [];
   await page.route('**/api/workflow/posts', (route) => {
-    submitted = route.request().postDataJSON() as typeof submitted;
+    const body = route.request().postDataJSON() as {
+      content: Record<string, string>;
+      mediaIds: string[];
+    };
+    submissions.push({ ...body, key: route.request().headers()['idempotency-key'] ?? '' });
     return route.fulfill({
-      status: 201,
+      status: submissions.length < 3 ? 400 : 201,
       contentType: 'application/json',
-      body: '{"data":{"jobs":[{}]},"error":null}',
+      body:
+        submissions.length < 3
+          ? '{"error":"Post rejected"}'
+          : '{"data":{"jobs":[{}]},"error":null}',
     });
   });
   await page.goto(await workspacePath(page, 'queue'));
@@ -755,14 +766,24 @@ test('LinkedIn text URL and explicit article stay distinct', async ({ page }, te
     fullPage: true,
   });
   await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect.poll(() => submissions.length).toBe(1);
+  await page.getByLabel('Article title').fill('Corrected title');
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect.poll(() => submissions.length).toBe(2);
+  await page.getByLabel('Description (optional)').fill('Corrected preview');
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
   await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
-  expect(submitted?.content).toMatchObject({
+  expect(submissions.map((item) => item.key)).toHaveLength(3);
+  expect(new Set(submissions.map((item) => item.key)).size).toBe(3);
+  expect(submissions[1]?.content.title).toBe('Corrected title');
+  expect(submissions[1]?.content.description).toBe('A short preview');
+  expect(submissions[2]?.content).toMatchObject({
     kind: 'link',
     linkUrl: 'https://example.com/article',
-    title: 'Our article',
-    description: 'A short preview',
+    title: 'Corrected title',
+    description: 'Corrected preview',
   });
-  expect(submitted?.mediaIds).toEqual([]);
+  expect(submissions[2]?.mediaIds).toEqual([]);
 });
 
 test('blocks incompatible imported media after changing destination and permits removal', async ({

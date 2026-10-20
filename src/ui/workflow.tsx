@@ -1148,6 +1148,8 @@ function Composer({ onClose }: { onClose: () => void }) {
     body,
     contentKind,
     linkUrl,
+    articleTitle,
+    articleDescription,
     localSchedule,
     madeForKids,
     notifySubscribers,

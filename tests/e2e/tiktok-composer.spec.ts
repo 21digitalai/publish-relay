@@ -117,7 +117,7 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
     }),
   );
   await page.goto(`/w/${workspace.data.slug}/drafts/${IMPORTED_DRAFT}`);
-  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await page.getByRole('radio', { name: /TikTok One/ }).click();
   await expect(page.getByText('This draft has multiple media items')).toBeVisible();
   await expect(page.getByText('Imported image 1')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Confirm and schedule' })).toBeDisabled();
@@ -178,7 +178,7 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
     },
   ];
   await page.reload();
-  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await page.getByRole('radio', { name: /TikTok One/ }).click();
   await expect(page.getByText('not an MP4 video')).toBeVisible();
   await expect(page.getByText('Imported MP4 video', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('imported-image-only.png'), fullPage: true });
@@ -197,7 +197,7 @@ test('imported TikTok media is identified, removable, and replaceable on desktop
     },
   ];
   await page.reload();
-  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await page.getByRole('radio', { name: /TikTok One/ }).click();
   await expect(page.getByText('no verified duration or preview')).toBeVisible();
   await expect(page.getByText('Imported MP4 video', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Remove from post' })).toBeVisible();
@@ -288,13 +288,11 @@ test('TikTok uses one explicit account and blocks confirmation until choices are
   });
   await page.goto(`/w/${workspace.data.slug}/queue`);
   await page.getByRole('button', { name: 'Create post' }).last().click();
-  const first = page.getByRole('checkbox', { name: /TikTok One/ });
-  const second = page.getByRole('checkbox', { name: /TikTok Two/ });
-  const x = page.getByRole('checkbox', { name: /X Account/ });
+  const first = page.getByRole('radio', { name: /TikTok One/ });
+  const second = page.getByRole('radio', { name: /TikTok Two/ });
   await expect(first).not.toBeChecked();
   await expect(second).not.toBeChecked();
-  await first.check();
-  await expect(x).not.toBeChecked();
+  await first.click();
   await expect(page.getByText('Posting as')).toContainText('Fresh Creator One');
   await expect(page.getByRole('button', { name: 'Visibility' })).toContainText('Choose visibility');
   await expect(page.getByLabel('Duet')).toBeDisabled();
@@ -359,8 +357,8 @@ test('TikTok uses one explicit account and blocks confirmation until choices are
       'Branded content is unavailable while this account offers only private visibility.',
     ),
   ).toBeVisible();
-  await second.check();
-  await expect(first).not.toBeChecked();
+  await page.getByRole('button', { name: 'Change account' }).click();
+  await second.click();
   await expect(page.getByText('Posting as')).toContainText('Fresh Creator Two');
   await expect(page.getByText('This visibility is no longer available')).toHaveCount(0);
   await page.screenshot({
@@ -447,11 +445,11 @@ test('TikTok creator failure and expiry remain visible and recoverable without p
   );
   await page.goto(`/w/${workspace.data.slug}/queue`);
   await page.getByRole('button', { name: 'Create post' }).last().click();
-  const account = page.getByRole('checkbox', { name: /TikTok One/ });
+  const account = page.getByRole('radio', { name: /TikTok One/ });
   await expect(account).not.toBeChecked();
   await account.focus();
   await page.keyboard.press('Space');
-  await expect(account).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Change account' })).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('TikTok options could not be refreshed');
   const hooksAfterFailure = await page.evaluate(
     () => (window as typeof window & { __relayErrorHooks: unknown[] }).__relayErrorHooks,
@@ -618,7 +616,7 @@ test('TikTok confirmation uses one exact draft and consent with stable schedule 
     });
   });
   await page.goto(`/w/${workspace.data.slug}/drafts/${IMPORTED_DRAFT}`);
-  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await page.getByRole('radio', { name: /TikTok One/ }).click();
   await page.getByRole('button', { name: 'Remove from post' }).click();
   await page.locator('#composer-media-upload').setInputFiles({
     name: 'confirmed.mp4',
@@ -834,7 +832,7 @@ test('prepared TikTok post resumes after reload and deterministic schedule rejec
   });
   await page.goto(`/w/${workspace.data.slug}/queue`);
   await page.getByRole('button', { name: 'Create post' }).last().click();
-  await page.getByRole('checkbox', { name: /TikTok One/ }).check();
+  await page.getByRole('radio', { name: /TikTok One/ }).click();
   await page.getByRole('button', { name: /Resume Prepared caption/ }).click();
   await expect(page.getByRole('textbox', { name: 'Caption' })).toHaveValue('Prepared caption');
   await page.getByRole('button', { name: 'Start a new TikTok post' }).click();

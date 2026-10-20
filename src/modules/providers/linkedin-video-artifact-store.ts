@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { providerStagingArtifacts } from '../../database/schema.js';
+import { providerStagingArtifacts, publicationJobs, revisionMedia } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
 export type LinkedInVideoPhase = 'reserved' | 'processing' | 'available' | 'failed';
@@ -31,6 +31,25 @@ export class PostgresLinkedInVideoArtifactStore {
   async ensure(): Promise<LinkedInVideoArtifact> {
     return withTenantTransaction(this.database, this.scope, async (tx) => {
       const now = this.scope.now?.() ?? new Date();
+      const [attached] = await tx
+        .select({ mediaId: revisionMedia.mediaId })
+        .from(publicationJobs)
+        .innerJoin(
+          revisionMedia,
+          and(
+            eq(revisionMedia.workspaceId, publicationJobs.workspaceId),
+            eq(revisionMedia.revisionId, publicationJobs.revisionId),
+          ),
+        )
+        .where(
+          and(
+            eq(publicationJobs.workspaceId, this.scope.workspaceId),
+            eq(publicationJobs.id, this.scope.jobId),
+            eq(revisionMedia.mediaId, this.scope.mediaId),
+          ),
+        )
+        .limit(1);
+      if (!attached) throw new Error('LinkedIn video is not attached to this scheduled job');
       await tx
         .insert(providerStagingArtifacts)
         .values({

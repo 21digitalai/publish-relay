@@ -128,6 +128,11 @@ describe('Instagram staging persistence and signed media delivery', () => {
       workspaceId: workspaceB,
     });
     await expect(wrongTenant.ensure()).rejects.toThrow();
+    const unattached = new PostgresLinkedInVideoArtifactStore(db, {
+      ...scope,
+      mediaId: '00000000-0000-4000-8000-000000000411',
+    });
+    await expect(unattached.ensure()).rejects.toThrow('not attached');
   });
   it('allows one Instagram worker claim and rejects lease-lost progression', async () => {
     const now = new Date();

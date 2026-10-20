@@ -2253,6 +2253,19 @@ textarea:focus-visible {
   margin-bottom: 8px;
   font-weight: 650;
 }
+.account-picker-group {
+  margin-top: 16px;
+}
+.account-picker-platform {
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--brand);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--brand) 12%, var(--surface-1));
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
 .account-picker label {
   display: flex;
   align-items: center;
@@ -2267,11 +2280,13 @@ textarea:focus-visible {
   border-color: var(--brand);
   background: color-mix(in srgb, var(--brand) 9%, var(--surface-2));
 }
-.account-picker label:first-of-type {
+.account-picker-group label:first-of-type {
   border-radius: 8px 8px 0 0;
 }
-.account-picker label:last-of-type {
+.account-picker-group label:last-of-type {
   border-radius: 0 0 8px 8px;
+}
+.account-picker-group label + label {
   border-top: 0;
 }
 .account-picker input {

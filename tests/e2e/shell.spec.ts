@@ -266,7 +266,7 @@ test('Composer chooses exactly one adapter before showing provider controls', as
   await choose(/Member profile/);
   await expect(page.getByLabel('Post body')).toBeVisible();
   await expect(page.locator('#composer-media-upload')).toHaveCount(0);
-  await choose(/Facebook · Page/);
+  await choose(/Facebook Pages · Page/);
   await expect(page.getByRole('button', { name: 'link' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
   await choose(/TikTok · Creator/);
@@ -280,6 +280,77 @@ test('Composer chooses exactly one adapter before showing provider controls', as
     ['00000000-0000-4000-8000-000000000201'],
   ]);
   await page.screenshot({ path: testInfo.outputPath('composer-one-destination-success.png') });
+});
+
+test('Composer separates same-name destinations by platform on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            { id: 'x-one', provider: 'x', displayName: 'Plamen Andonov', status: 'active' },
+            {
+              id: 'linkedin-one',
+              provider: 'linkedin',
+              displayName: 'Plamen Andonov',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+            },
+            {
+              id: 'facebook-one',
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: 'VibeCoders.bg',
+              status: 'active',
+              availability: 'remote_missing',
+            },
+            {
+              id: 'youtube-one',
+              provider: 'youtube',
+              displayName: 'Video channel',
+              status: 'active',
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await expect(page.locator('.account-picker-platform')).toHaveText([
+    'LinkedIn',
+    'Facebook Pages',
+    'X',
+    'YouTube',
+  ]);
+  await expect(page.getByRole('radio', { name: /LinkedIn · Plamen Andonov/ })).toBeEnabled();
+  await expect(page.getByRole('radio', { name: /X · Plamen Andonov/ })).toBeEnabled();
+  await expect(page.getByRole('radio', { name: /Facebook Pages · VibeCoders.bg/ })).toBeDisabled();
+  await expect(page.getByRole('link', { name: 'Reconnect' })).toBeVisible();
+  await expect(page.locator('.composer-sheet')).toHaveCSS('opacity', '1');
+  await page.screenshot({ path: testInfo.outputPath('composer-platform-groups.png') });
+
+  await page.getByRole('radio', { name: /LinkedIn · Plamen Andonov/ }).focus();
+  await page.keyboard.press('Space');
+  await expect(page.locator('.account-picker-summary')).toContainText(
+    'Posting to LinkedIn · Plamen Andonov',
+  );
+  await page.getByRole('button', { name: 'Change account' }).click();
+  await expect(page.getByRole('radio', { name: /LinkedIn · Plamen Andonov/ })).toBeFocused();
+  await page.getByRole('radio', { name: /X · Plamen Andonov/ }).click();
+  await expect(page.locator('.account-picker-summary')).toContainText(
+    'Posting to X · Plamen Andonov',
+  );
+  await page.screenshot({ path: testInfo.outputPath('composer-platform-selected.png') });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    testInfo.project.name === 'mobile' ? 390 : 1440,
+  );
 });
 
 test('selected Meta grant revoke distinguishes remote and local actions', async ({
@@ -442,7 +513,7 @@ test('computes Meta destination capability intersection on desktop and mobile', 
   await selectComposerAccount(page, 'Instagram · @mira');
   await expect(page.getByRole('button', { name: 'carousel' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'link' })).toHaveCount(0);
-  await selectComposerAccount(page, 'Facebook · Mira Studio');
+  await selectComposerAccount(page, 'Facebook Pages · Mira Studio');
   await expect(page.getByRole('button', { name: 'single image' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
   await expect(page.locator('.composer-body-heading')).toContainText('0/280 characters');
@@ -452,7 +523,7 @@ test('computes Meta destination capability intersection on desktop and mobile', 
   await expect(page.getByText(/reauth required · reconnect to schedule/)).toBeVisible();
   await expect(page.getByText(/permission lost · reconnect to schedule/)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('meta-shared-shape.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Keep Facebook · Mira Studio' }).click();
+  await page.getByRole('button', { name: 'Keep Facebook Pages · Mira Studio' }).click();
   await expect(page.getByRole('button', { name: 'link' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -516,8 +587,8 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
     .click();
   for (const name of [
     'Instagram · @missing',
-    'Facebook · Unavailable Page 1',
-    'Facebook · Unavailable Page 2',
+    'Facebook Pages · Unavailable Page 1',
+    'Facebook Pages · Unavailable Page 2',
   ])
     await expect(
       page.locator('.account-picker label').filter({ hasText: name }).locator('input'),
@@ -540,7 +611,7 @@ test('validates Instagram carousel and schedules the shared Meta image shape', a
     .locator('#composer-media-upload')
     .setInputFiles([image('first.png'), image('second.png')]);
   await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
-  await selectComposerAccount(page, 'Facebook · Mira Studio');
+  await selectComposerAccount(page, 'Facebook Pages · Mira Studio');
   await expect(page.getByRole('button', { name: 'carousel' })).toHaveCount(0);
   await page.getByRole('button', { name: 'single image' }).click();
   await page.locator('#composer-media-upload').setInputFiles([image('shared.png')]);
@@ -720,7 +791,7 @@ for (const viewport of [
   { width: 1280, height: 900 },
   { width: 390, height: 844 },
 ]) {
-  for (const destination of ['Instagram · @mira', 'Facebook · Mira Studio']) {
+  for (const destination of ['Instagram · @mira', 'Facebook Pages · Mira Studio']) {
     for (const mimeType of ['image/gif', 'image/webp']) {
       test(`rejects ${mimeType} for ${destination} imported and new media at ${String(viewport.width)}px`, async ({
         page,
@@ -1105,9 +1176,9 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
     await page.getByRole('button', { name: 'Open navigation' }).click();
   }
   await page.getByRole('button', { name: 'Create post' }).click();
-  await expect(page.getByRole('radio', { name: /Facebook · Shared Page/ })).toBeVisible();
+  await expect(page.getByRole('radio', { name: /Facebook Pages · Shared Page/ })).toBeVisible();
   await page.getByRole('button', { name: 'Load more accounts' }).click();
-  await expect(page.getByRole('radio', { name: /Facebook · Later Page/ })).toBeVisible();
+  await expect(page.getByRole('radio', { name: /Facebook Pages · Later Page/ })).toBeVisible();
 });
 
 test('lets the origin Page owner hide other-workspace calendar posts', async ({ page }) => {
@@ -3485,7 +3556,7 @@ test('uses Page-wide occupancy only as advisory Composer guidance', async ({ pag
   );
   await page.goto(await workspacePath(page, 'queue'));
   await page.getByRole('button', { name: 'Create post' }).last().click();
-  await selectComposerAccount(page, 'Facebook · Mira Studio');
+  await selectComposerAccount(page, 'Facebook Pages · Mira Studio');
   await page.getByLabel('Post body').fill('Intentional shared Page slot');
   await page.getByLabel('HTTPS link').fill('https://example.test/page');
   await page.getByLabel('Date', { exact: true }).fill('2026-10-19');

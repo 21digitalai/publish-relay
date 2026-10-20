@@ -31,6 +31,7 @@ import { localDateTimeValue, matchingLocalInstants, offsetLabel } from './schedu
 import { useCalendarMirror, type CalendarMirrorJob } from './calendar-mirror.js';
 import { calendarDateKey, calendarTime, calendarZonedMidnight } from './calendar-time.js';
 import { layoutCalendarBlocks } from './calendar-layout.js';
+import { getPostingAdapter } from './posting-adapter-registry.js';
 
 type JobState =
   | 'scheduled'
@@ -603,13 +604,41 @@ interface ComposerDestination {
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
 }
 
+const COMPOSER_PLATFORM_ORDER = [
+  'instagram',
+  'linkedin',
+  'facebook_page',
+  'x',
+  'youtube',
+  'tiktok',
+];
+
+function destinationPlatform(platform: string): string {
+  const adapter = getPostingAdapter(platform);
+  if (adapter) return adapter.label;
+  return platform.replaceAll('_', ' ');
+}
+
 function destinationName(destination: ComposerDestination): string {
-  if (destination.destinationProvider === 'tiktok') return `TikTok · ${destination.displayName}`;
-  if (destination.destinationProvider === 'instagram')
-    return `Instagram · ${destination.displayName}`;
-  if (destination.destinationProvider === 'facebook_page')
-    return `Facebook · ${destination.displayName}`;
-  return destination.displayName;
+  return `${destinationPlatform(destination.destinationProvider)} · ${destination.displayName}`;
+}
+
+function groupComposerDestinations(accounts: ComposerDestination[]) {
+  const groups = new Map<string, ComposerDestination[]>();
+  for (const account of accounts) {
+    const platform = account.destinationProvider;
+    const group = groups.get(platform) ?? [];
+    group.push(account);
+    groups.set(platform, group);
+  }
+  return [...groups].sort(([left], [right]) => {
+    const leftOrder = COMPOSER_PLATFORM_ORDER.indexOf(left);
+    const rightOrder = COMPOSER_PLATFORM_ORDER.indexOf(right);
+    if (leftOrder === -1 && rightOrder === -1) return left.localeCompare(right);
+    if (leftOrder === -1) return 1;
+    if (rightOrder === -1) return -1;
+    return leftOrder - rightOrder;
+  });
 }
 
 function destinationContentLabel(destination: ComposerDestination): string {
@@ -1519,59 +1548,68 @@ function Composer({ onClose }: { onClose: () => void }) {
             ) : (
               <fieldset className="account-picker" inert={hasUncertainPost}>
                 <legend>1. Choose one destination</legend>
-                {accounts.map((account) => {
-                  const expired = Boolean(
-                    account.expiresAt && new Date(account.expiresAt).getTime() <= Date.now(),
-                  );
-                  const unavailable =
-                    account.status !== 'active' || account.availability !== 'active' || expired;
-                  return (
-                    <label
-                      key={account.id}
-                      className={selectedAccounts.includes(account.id) ? 'selected' : ''}
-                    >
-                      <input
-                        ref={
-                          selectedAccounts.includes(account.id)
-                            ? selectedAccountRadioRef
-                            : undefined
-                        }
-                        className="account-picker-radio"
-                        type="radio"
-                        name="composer-destination"
-                        disabled={unavailable}
-                        checked={selectedAccounts.includes(account.id)}
-                        onChange={() => {
-                          if (unavailable) return;
-                          setMediaFiles([]);
-                          setTikTokSubmission(null);
-                          setPreparedTikTokDraft(null);
-                          setSelectedAccounts([account.id]);
-                          setAccountPickerOpen(false);
-                          if (draftState === 'ready') setError(null);
-                        }}
-                      />
-                      <span className="account-avatar">
-                        {account.displayName.slice(0, 2).toUpperCase()}
-                      </span>
-                      <span className="account-picker-details">
-                        <strong>{destinationName(account)}</strong>
-                        <small>
-                          {expired
-                            ? 'Connection expired · reconnect to schedule'
-                            : account.availability === 'active' && account.status === 'active'
-                              ? destinationContentLabel(account)
-                              : account.availability === 'publishing_unavailable'
-                                ? 'Connected · publishing is not yet available'
-                                : `${(account.availability === 'active' ? account.status : account.availability).replaceAll('_', ' ')} · reconnect to schedule`}
-                        </small>
-                      </span>
-                      {unavailable && account.availability !== 'publishing_unavailable' && (
-                        <a href={`${workspacePath()}/accounts`}>Reconnect</a>
-                      )}
-                    </label>
-                  );
-                })}
+                {groupComposerDestinations(accounts).map(([platform, platformAccounts]) => (
+                  <section
+                    key={platform}
+                    className="account-picker-group"
+                    aria-label={destinationPlatform(platform)}
+                  >
+                    <h3 className="account-picker-platform">{destinationPlatform(platform)}</h3>
+                    {platformAccounts.map((account) => {
+                      const expired = Boolean(
+                        account.expiresAt && new Date(account.expiresAt).getTime() <= Date.now(),
+                      );
+                      const unavailable =
+                        account.status !== 'active' || account.availability !== 'active' || expired;
+                      return (
+                        <label
+                          key={account.id}
+                          className={selectedAccounts.includes(account.id) ? 'selected' : ''}
+                        >
+                          <input
+                            ref={
+                              selectedAccounts.includes(account.id)
+                                ? selectedAccountRadioRef
+                                : undefined
+                            }
+                            className="account-picker-radio"
+                            type="radio"
+                            name="composer-destination"
+                            disabled={unavailable}
+                            checked={selectedAccounts.includes(account.id)}
+                            onChange={() => {
+                              if (unavailable) return;
+                              setMediaFiles([]);
+                              setTikTokSubmission(null);
+                              setPreparedTikTokDraft(null);
+                              setSelectedAccounts([account.id]);
+                              setAccountPickerOpen(false);
+                              if (draftState === 'ready') setError(null);
+                            }}
+                          />
+                          <span className="account-avatar">
+                            {account.displayName.slice(0, 2).toUpperCase()}
+                          </span>
+                          <span className="account-picker-details">
+                            <strong>{destinationName(account)}</strong>
+                            <small>
+                              {expired
+                                ? 'Connection expired · reconnect to schedule'
+                                : account.availability === 'active' && account.status === 'active'
+                                  ? destinationContentLabel(account)
+                                  : account.availability === 'publishing_unavailable'
+                                    ? 'Connected · publishing is not yet available'
+                                    : `${(account.availability === 'active' ? account.status : account.availability).replaceAll('_', ' ')} · reconnect to schedule`}
+                            </small>
+                          </span>
+                          {unavailable && account.availability !== 'publishing_unavailable' && (
+                            <a href={`${workspacePath()}/accounts`}>Reconnect</a>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </section>
+                ))}
                 {selectedDestination && (
                   <button
                     className="secondary-button account-picker-keep"

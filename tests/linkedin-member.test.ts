@@ -168,6 +168,64 @@ describe('LinkedIn member integration', () => {
     await expect(client.getVideoStatus({ credential, video })).resolves.toBe('PROCESSING');
     expect(request).toHaveBeenCalledTimes(1);
   });
+
+  it('only posts a member-owned AVAILABLE video with the exact media payload', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const video = 'urn:li:video:video-1';
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: video,
+            owner: credential.memberUrn,
+            status: 'AVAILABLE',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:share:post-1' } }),
+      );
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(
+      client.publishVideo({ credential, text: 'Watch this', video, title: 'Demo' }),
+    ).resolves.toBe('urn:li:share:post-1');
+    const postBody = JSON.parse(request.mock.calls[1]?.[1]?.body as string) as {
+      content: unknown;
+    };
+    expect(postBody.content).toEqual({
+      media: { id: video, title: 'Demo' },
+    });
+  });
+
+  it('does not post a PROCESSING or foreign-owned video', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const video = 'urn:li:video:video-1';
+    for (const response of [
+      { id: video, owner: credential.memberUrn, status: 'PROCESSING' },
+      { id: video, owner: 'urn:li:person:other', status: 'AVAILABLE' },
+    ]) {
+      const request = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify(response), { status: 200 }));
+      const client = new LinkedInHttpClient({ ...options, fetch: request });
+      await expect(
+        client.publishVideo({ credential, text: 'Watch', video, title: 'Demo' }),
+      ).rejects.toThrow();
+      expect(request).toHaveBeenCalledTimes(1);
+    }
+  });
   it('retries definite rate-limit rejection but holds ambiguous delivery outcomes', () => {
     const now = new Date('2026-09-28T07:00:00Z');
     const rejected = new LinkedInRequestError(429, 'rate_limit', 'Rate limited');

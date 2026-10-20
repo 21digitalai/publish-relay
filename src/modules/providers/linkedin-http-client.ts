@@ -275,10 +275,25 @@ export class LinkedInHttpClient {
     });
   }
 
+  async publishVideo(input: {
+    credential: LinkedInCredential;
+    text: string;
+    video: string;
+    title: string;
+  }): Promise<string> {
+    const status = await this.getVideoStatus({ credential: input.credential, video: input.video });
+    if (status !== 'AVAILABLE') throw new Error(`LinkedIn video cannot be posted while ${status}`);
+    return this.publishPost(input.credential, input.text, {
+      media: { id: input.video, title: input.title },
+    });
+  }
+
   private async publishPost(
     credential: LinkedInCredential,
     text: string,
-    content?: { article: { source: string; title: string; description?: string } },
+    content?:
+      | { article: { source: string; title: string; description?: string } }
+      | { media: { id: string; title: string } },
   ): Promise<string> {
     const response = await this.request('https://api.linkedin.com/rest/posts', {
       method: 'POST',

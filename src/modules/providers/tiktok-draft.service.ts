@@ -53,7 +53,7 @@ interface PreparedRow extends Record<string, unknown> {
   byteSize: number;
   durationMs: number | null;
   ready: boolean;
-  createdAt: Date;
+  createdAt: string;
 }
 
 function preparedSummary(row: PreparedRow, detail = false) {
@@ -66,7 +66,7 @@ function preparedSummary(row: PreparedRow, detail = false) {
     ...(detail
       ? { content: content.data }
       : { captionPreview: content.data.caption.slice(0, 160) }),
-    createdAt: new Date(row.createdAt).toISOString(),
+    createdAt: row.createdAt,
     media: {
       id: row.mediaId,
       mimeType: row.mimeType,
@@ -89,7 +89,7 @@ const preparedQuery = sql`
 
 export async function listPreparedTikTokDrafts(
   database: NodePgDatabase,
-  input: { workspaceId: string; userId: string; limit: number; before?: Date; beforeId?: string },
+  input: { workspaceId: string; userId: string; limit: number; before?: string; beforeId?: string },
 ) {
   return withTenantTransaction(database, input, async (transaction) => {
     await transaction.execute(sql`set transaction read only`);
@@ -98,7 +98,7 @@ export async function listPreparedTikTokDrafts(
       select p.id as "postId", r.id as "revisionId", r.content,
         m.id as "mediaId", m.mime_type as "mimeType", m.byte_size as "byteSize",
         m.duration_ms as "durationMs", (m.state = 'ready' and m.deleted_at is null) as ready,
-        p.created_at as "createdAt"
+        to_char(p.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "createdAt"
       ${preparedQuery} ${input.workspaceId}
         and not exists (select 1 from publication_jobs j where j.workspace_id = p.workspace_id and j.post_id = p.id)
         and r.content->>'kind' = 'video' and r.content->>'schemaVersion' = '1'
@@ -121,7 +121,7 @@ export async function getPreparedTikTokDraft(
       select p.id as "postId", r.id as "revisionId", r.content,
         m.id as "mediaId", m.mime_type as "mimeType", m.byte_size as "byteSize",
         m.duration_ms as "durationMs", (m.state = 'ready' and m.deleted_at is null) as ready,
-        p.created_at as "createdAt"
+        to_char(p.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "createdAt"
       ${preparedQuery} ${input.workspaceId} and p.id = ${input.postId}
         and not exists (select 1 from publication_jobs j where j.workspace_id = p.workspace_id and j.post_id = p.id)
     `);

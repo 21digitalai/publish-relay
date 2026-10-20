@@ -51,7 +51,7 @@ export function registerTikTokDraftRoutes(
         workspaceId: identity.workspaceId,
         userId: identity.userId,
         limit: query.data.limit,
-        ...(query.data.before ? { before: new Date(query.data.before) } : {}),
+        ...(query.data.before ? { before: query.data.before } : {}),
         ...(query.data.beforeId ? { beforeId: query.data.beforeId } : {}),
       });
       return await reply.send({ data: drafts, error: null });

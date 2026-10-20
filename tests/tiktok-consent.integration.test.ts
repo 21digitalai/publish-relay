@@ -298,6 +298,13 @@ it('prepares a draft through session, CSRF and idempotent browser admission', as
   expect(second.headers['idempotency-replayed']).toBe('true');
   expect(second.json()).toEqual(first.json());
   const prepared = first.json<{ data: { postId: string } }>().data;
+  await pg.query(
+    `update posts set created_at = case when id = $1
+    then '2026-10-20T00:00:00.123456Z'::timestamptz
+    else '2026-10-20T00:00:00.123123Z'::timestamptz end
+    where id in ($1, $2)`,
+    [prepared.postId, postId],
+  );
   const detailUrl = `${url}/${prepared.postId}`;
   const detail = await app.inject({ method: 'GET', url: detailUrl, headers });
   expect(detail.statusCode).toBe(200);
@@ -313,6 +320,7 @@ it('prepares a draft through session, CSRF and idempotent browser admission', as
   expect(listData).toHaveLength(1);
   expect(listData[0]?.content).toBeUndefined();
   expect(listData[0]?.captionPreview).toBeTruthy();
+  expect(listData[0]?.createdAt).toBe('2026-10-20T00:00:00.123456Z');
   expect(JSON.stringify(listData).length).toBeLessThan(1000);
   expect(
     (await app.inject({ method: 'GET', url: `${url}?beforeId=${postId}`, headers })).statusCode,
@@ -326,6 +334,7 @@ it('prepares a draft through session, CSRF and idempotent browser admission', as
   });
   expect(olderPage.statusCode, olderPage.body).toBe(200);
   expect(olderPage.json<{ data: unknown[] }>().data).toHaveLength(1);
+  expect(olderPage.json<{ data: { postId: string }[] }>().data[0]?.postId).toBe(postId);
   const patchHeaders = { ...headers, 'idempotency-key': 'draft-revision-key' };
   const patchPayload = { content: { ...payload.content, caption: 'Corrected caption' } };
   expect(

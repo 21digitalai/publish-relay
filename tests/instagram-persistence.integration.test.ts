@@ -184,6 +184,7 @@ describe('Instagram staging persistence and signed media delivery', () => {
       .set(encrypted)
       .where(eq(credentials.id, '00000000-0000-4000-8000-000000000404'));
     const statuses = ['PROCESSING', 'AVAILABLE', 'AVAILABLE'];
+    let initializeFailures = 1;
     const request = vi.fn<typeof fetch>().mockImplementation((resource, init) => {
       const url =
         typeof resource === 'string'
@@ -191,6 +192,8 @@ describe('Instagram staging persistence and signed media delivery', () => {
           : resource instanceof URL
             ? resource.href
             : resource.url;
+      if (url.includes('initializeUpload') && initializeFailures-- > 0)
+        return Promise.reject(new TypeError('temporary network failure'));
       if (url.includes('initializeUpload'))
         return Promise.resolve(
           new Response(
@@ -248,19 +251,34 @@ describe('Instagram staging persistence and signed media delivery', () => {
     };
     const now = new Date();
     await expect(dispatchDueLinkedInJobs(runtime, now)).resolves.toBe(0);
+    const failedUpload = await database.query<{ state: string; count: number }>(`
+      SELECT state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS count
+      FROM publication_jobs WHERE id = '${jobId}'
+    `);
+    expect(failedUpload.rows[0]).toMatchObject({ state: 'retry_wait', count: 1 });
+    expect(
+      request.mock.calls.filter(([url]) =>
+        (typeof url === 'string' ? url : url instanceof URL ? url.href : url.url).endsWith(
+          '/rest/posts',
+        ),
+      ),
+    ).toHaveLength(0);
+    await expect(dispatchDueLinkedInJobs(runtime, new Date(now.getTime() + 30_001))).resolves.toBe(
+      0,
+    );
     const pending = await database.query<{ state: string; count: number }>(`
       SELECT state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS count
       FROM publication_jobs WHERE id = '${jobId}'
     `);
-    expect(pending.rows[0]).toMatchObject({ state: 'retry_wait', count: 0 });
-    await expect(dispatchDueLinkedInJobs(runtime, new Date(now.getTime() + 30_001))).resolves.toBe(
+    expect(pending.rows[0]).toMatchObject({ state: 'retry_wait', count: 1 });
+    await expect(dispatchDueLinkedInJobs(runtime, new Date(now.getTime() + 60_002))).resolves.toBe(
       1,
     );
     const posted = await database.query<{ state: string; count: number }>(`
       SELECT state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS count
       FROM publication_jobs WHERE id = '${jobId}'
     `);
-    expect(posted.rows[0]).toMatchObject({ state: 'published', count: 1 });
+    expect(posted.rows[0]).toMatchObject({ state: 'published', count: 2 });
     expect(
       request.mock.calls.filter(([url]) =>
         (typeof url === 'string' ? url : url instanceof URL ? url.href : url.url).endsWith(
@@ -268,7 +286,7 @@ describe('Instagram staging persistence and signed media delivery', () => {
         ),
       ),
     ).toHaveLength(1);
-    expect(runtime.source.load).toHaveBeenCalledTimes(1);
+    expect(runtime.source.load).toHaveBeenCalledTimes(2);
   });
   it('allows one Instagram worker claim and rejects lease-lost progression', async () => {
     const now = new Date();

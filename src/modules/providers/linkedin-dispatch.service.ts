@@ -46,6 +46,22 @@ const credentialSchema = z.object({
 const LINKEDIN_RETRY_POLICY = { baseDelayMs: 30_000, maximumDelayMs: 900_000, maximumAttempts: 5 };
 const LINKEDIN_VIDEO_POLL_MS = 30_000;
 
+export function classifyLinkedInPrePostFailure(
+  error: unknown,
+  attemptNumber: number,
+  now: Date,
+  random: () => number = Math.random,
+): { outcome: LinkedInRequestError['kind']; retryAt?: Date } {
+  const request = error instanceof LinkedInRequestError ? error : null;
+  const outcome = request?.kind ?? (error instanceof TypeError ? 'transient' : 'validation');
+  if (outcome !== 'transient' && outcome !== 'rate_limit') return { outcome };
+  const delay = calculateFullJitterDelay(attemptNumber, LINKEDIN_RETRY_POLICY, random);
+  return {
+    outcome,
+    ...(delay === null ? {} : { retryAt: new Date(now.getTime() + delay) }),
+  };
+}
+
 function requireStagedVideo(video: string | undefined): string {
   if (!video) throw new Error('LinkedIn video staging returned no asset');
   return video;
@@ -197,7 +213,13 @@ async function markReconnectRequired(
 
 async function dispatchJob(
   runtime: LinkedInDispatchRuntime,
-  job: { id: string; workspaceId: string; revisionId: string; providerAccountId: string },
+  job: {
+    id: string;
+    workspaceId: string;
+    revisionId: string;
+    providerAccountId: string;
+    attemptNumber: number;
+  },
   now: Date,
 ): Promise<boolean> {
   let attempt: Awaited<ReturnType<typeof startDispatchAttempt>> = null;
@@ -303,19 +325,15 @@ async function dispatchJob(
         now,
       });
       if (!attempt) return false;
-      const request = error instanceof LinkedInRequestError ? error : null;
-      const retryAt =
-        request && ['rate_limit', 'transient'].includes(request.kind)
-          ? new Date(now.getTime() + LINKEDIN_VIDEO_POLL_MS)
-          : undefined;
+      const failure = classifyLinkedInPrePostFailure(error, job.attemptNumber, now);
       await finishDispatchAttempt(runtime.database, {
         workspaceId: job.workspaceId,
         jobId: job.id,
         attemptId: attempt.attemptId,
-        outcome: retryAt && request ? request.kind : 'validation',
+        outcome: failure.outcome,
         now,
-        ...(retryAt ? { retryAt } : {}),
-        redactedError: request?.message ?? 'LinkedIn video staging failed',
+        ...(failure.retryAt ? { retryAt: failure.retryAt } : {}),
+        redactedError: requestError?.message ?? 'LinkedIn video staging failed',
       });
       return false;
     }

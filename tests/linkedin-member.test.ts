@@ -6,7 +6,10 @@ import {
   validateLinkedInTextContent,
   validateLinkedInVideoAsset,
 } from '../src/modules/providers/linkedin-content.js';
-import { classifyLinkedInDispatchFailure } from '../src/modules/providers/linkedin-dispatch.service.js';
+import {
+  classifyLinkedInDispatchFailure,
+  classifyLinkedInPrePostFailure,
+} from '../src/modules/providers/linkedin-dispatch.service.js';
 import {
   LinkedInHttpClient,
   LinkedInRequestError,
@@ -324,6 +327,30 @@ describe('LinkedIn member integration', () => {
         now,
       ),
     ).toEqual({ outcome: 'validation' });
+  });
+
+  it('bounds definitely pre-POST transport and provider retries', () => {
+    const now = new Date('2026-10-21T00:00:00Z');
+    expect(
+      classifyLinkedInPrePostFailure(new TypeError('fetch failed'), 1, now, () => 0.5),
+    ).toEqual({
+      outcome: 'transient',
+      retryAt: new Date(now.getTime() + 15_000),
+    });
+    expect(classifyLinkedInPrePostFailure(new TypeError('fetch failed'), 5, now)).toEqual({
+      outcome: 'transient',
+    });
+    expect(
+      classifyLinkedInPrePostFailure(
+        new LinkedInRequestError(503, 'transient', 'Unavailable'),
+        1,
+        now,
+        () => 0.5,
+      ),
+    ).toEqual({ outcome: 'transient', retryAt: new Date(now.getTime() + 15_000) });
+    expect(classifyLinkedInPrePostFailure(new Error('Invalid media'), 1, now)).toEqual({
+      outcome: 'validation',
+    });
   });
 
   it('requests member-posting scope and binds the exact callback and state', () => {

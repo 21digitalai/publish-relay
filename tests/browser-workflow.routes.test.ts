@@ -78,6 +78,7 @@ function job() {
     id: jobId,
     postId,
     state: 'scheduled',
+    needsAttention: false,
     scheduledAt: new Date('2026-09-02T10:00:00.000Z'),
     createdAt: new Date('2026-09-01T10:00:00.000Z'),
     updatedAt: new Date('2026-09-01T11:00:00.000Z'),
@@ -280,6 +281,29 @@ describe('browser workflow read contract', () => {
       },
       error: null,
     });
+    await application.close();
+  });
+
+  it('projects only the Story attention flag in lists and request correlation in detail', async () => {
+    const story = { ...job(), state: 'dispatching', needsAttention: true };
+    listBrowserJobSummaries.mockResolvedValue([story]);
+    getBrowserJobDetail.mockResolvedValue({
+      ...story,
+      attempts: [{ providerRequestId: 'snap-request-1', outcome: 'unknown' }],
+    });
+    const application = Fastify();
+    registerBrowserWorkflowRoutes(application, { auth: {} as AuthService, database: {} as never });
+    const list = await application.inject({ method: 'GET', url: '/api/workflow/jobs' });
+    const detail = await application.inject({ method: 'GET', url: `/api/workflow/jobs/${jobId}` });
+    expect(list.json()).toMatchObject({ data: { items: [{ needsAttention: true }] } });
+    expect(list.body).not.toContain('snap-request-1');
+    expect(detail.json()).toMatchObject({
+      data: {
+        needsAttention: true,
+        attempts: [{ providerRequestId: 'snap-request-1', outcome: 'unknown' }],
+      },
+    });
+    expect(detail.body).not.toContain('must-never-leak');
     await application.close();
   });
 

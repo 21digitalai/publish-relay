@@ -43,6 +43,10 @@ const browserJobProjection = {
   id: publicationJobs.id,
   postId: publicationJobs.postId,
   state: publicationJobs.state,
+  needsAttention: sql<boolean>`case when ${publicationJobs.state} = 'dispatching'
+    and ${publicationJobs.reconciliationRequired} = true
+    and ${publicationJobs.effectivePayload}->>'kind' in ('story_image', 'story_video')
+    then true else false end`,
   scheduledAt: publicationJobs.scheduledAt,
   createdAt: publicationJobs.createdAt,
   updatedAt: publicationJobs.updatedAt,
@@ -248,6 +252,7 @@ export async function getBrowserJobDetail(
             startedAt: publicationAttempts.startedAt,
             finishedAt: publicationAttempts.finishedAt,
             outcome: publicationAttempts.outcome,
+            providerRequestId: publicationAttempts.providerRequestId,
             externalPostId: publicationAttempts.externalPostId,
             externalUrl: publicationAttempts.externalUrl,
             retryAt: publicationAttempts.retryAt,
@@ -309,6 +314,7 @@ export async function getBrowserJobDetail(
           startedAt: attempt.startedAt,
           finishedAt: attempt.finishedAt,
           outcome: attempt.outcome,
+          providerRequestId: job.needsAttention ? attempt.providerRequestId : null,
           externalPostId: attempt.externalPostId,
           retryAt: attempt.retryAt,
           error: attempt.error,
@@ -385,5 +391,15 @@ export async function getJobDetail(
   jobId: string,
   machineActor?: { type: 'api-key' | 'delegated'; id: string; capability: 'schedules:read' },
 ) {
-  return getBrowserJobDetail(database, workspaceId, jobId, undefined, machineActor);
+  const detail = await getBrowserJobDetail(database, workspaceId, jobId, undefined, machineActor);
+  if (!detail) return null;
+  const { needsAttention: _needsAttention, ...job } = detail;
+  void _needsAttention;
+  return {
+    ...job,
+    attempts: job.attempts.map(({ providerRequestId: _providerRequestId, ...attempt }) => {
+      void _providerRequestId;
+      return attempt;
+    }),
+  };
 }

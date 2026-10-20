@@ -45,6 +45,7 @@ import { registerSnapchatOauthRoutes } from '../modules/providers/snapchat-oauth
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerTikTokDraftRoutes } from '../modules/providers/tiktok-draft.routes.js';
 import { registerTikTokScheduleRoutes } from '../modules/providers/tiktok-schedule.routes.js';
+import { registerSnapchatStoryResolutionRoutes } from '../modules/providers/snapchat-story-resolution.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
@@ -258,6 +259,7 @@ function registerBrowserRoutes(
       actionPolicy,
       enabled: Boolean(tiktokOauth),
     });
+    registerSnapchatStoryResolutionRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {
       auth,
       database,

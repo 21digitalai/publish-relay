@@ -9,6 +9,8 @@ import {
 import { Rail } from './main.js';
 import { LiveRegion, PublicationToastStack, type PublicationToast } from './feedback.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { ConfirmationDialog } from './confirmation-dialog.js';
+import { SnapchatStoryResolution } from './snapchat-story-resolution.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
 import {
   TikTokComposerForm,
@@ -34,6 +36,7 @@ type JobState =
   | 'scheduled'
   | 'leased'
   | 'dispatching'
+  | 'needs_attention'
   | 'accepted_pending'
   | 'failed'
   | 'retrying'
@@ -78,6 +81,7 @@ interface AttemptDto {
   outcome: string | null;
   retryAt: string | null;
   error: string | null;
+  providerRequestId?: string | null;
 }
 
 interface ActivityDto {
@@ -96,6 +100,7 @@ const STATE_LABELS: Record<JobState, string> = {
   cancelled: 'Cancelled',
   leased: 'Preparing',
   dispatching: 'Dispatching',
+  needs_attention: 'Needs attention',
   accepted_pending: 'Provider processing',
   superseded: 'Superseded',
 };
@@ -104,6 +109,7 @@ interface QueueJobDto {
   id: string;
   postId?: string;
   state: string;
+  needsAttention: boolean;
   scheduledAt: string;
   contentPreview: string;
   providerAccount: { id?: string; displayName: string; handle: string; provider: string };
@@ -409,8 +415,9 @@ function toJob(dto: QueueJobDto): Job {
     'cancelled',
     'superseded',
   ];
-  const state: JobState =
-    dto.state === 'retry_wait'
+  const state: JobState = dto.needsAttention
+    ? 'needs_attention'
+    : dto.state === 'retry_wait'
       ? 'retrying'
       : knownStates.includes(dto.state as JobState)
         ? (dto.state as JobState)
@@ -439,6 +446,7 @@ function detailToJob(dto: JobDetailDto): Job {
     id: dto.id,
     ...(dto.postId ? { postId: dto.postId } : {}),
     state: dto.state,
+    needsAttention: dto.needsAttention,
     scheduledAt: dto.scheduledAt,
     contentPreview: contentParts(dto.content).join('\n\n'),
     providerAccount: dto.providerAccount,
@@ -2297,7 +2305,7 @@ export function QueuePage() {
             `${job.text} ${job.account}`.toLowerCase().includes(query.toLowerCase()) &&
             (view === 'All' ||
               (view === 'Needs attention'
-                ? ['failed', 'retrying'].includes(job.state)
+                ? ['failed', 'retrying', 'needs_attention'].includes(job.state)
                 : view === 'Upcoming'
                   ? ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
                   : STATE_LABELS[job.state] === view)) &&
@@ -2313,7 +2321,7 @@ export function QueuePage() {
           if (sort === 'oldest') return time;
           if (sort === 'newest') return -time;
           const group = (job: Job) =>
-            ['failed', 'retrying'].includes(job.state)
+            ['failed', 'retrying', 'needs_attention'].includes(job.state)
               ? 0
               : ['scheduled', 'leased', 'dispatching', 'accepted_pending'].includes(job.state)
                 ? 1
@@ -2967,6 +2975,7 @@ export function JobDetailPage() {
   const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
+  const confirmationTrigger = useRef<HTMLElement | null>(null);
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
   const [editSchedule, setEditSchedule] = useState('');
   const [editScheduleOption, setEditScheduleOption] = useState(0);
@@ -3014,6 +3023,17 @@ export function JobDetailPage() {
       controller.abort();
     };
   }, [jobId]);
+  const refreshResolvedStory = async () => {
+    const response = await fetch(`/api/workflow/jobs/${encodeURIComponent(jobId)}`, {
+      cache: 'no-store',
+    });
+    const result = (await response.json()) as { data: JobDetailDto | null; error: string | null };
+    if (!response.ok || !result.data)
+      throw new Error(result.error ?? 'Could not refresh the Story result.');
+    setDetail(result.data);
+    setJob(detailToJob(result.data));
+    setMutationAnnouncement('Verified Story failure recorded');
+  };
   if (loadError)
     return (
       <WorkspaceLayout active="queue">
@@ -3159,6 +3179,39 @@ export function JobDetailPage() {
               View post
             </a>
           )}
+          {job.state === 'needs_attention' && (
+            <div className="recovery-panel story-needs-attention" role="alert">
+              <div>
+                <strong>Snapchat Story outcome needs verification</strong>
+                <p>
+                  Snapchat accepted or may have received this request, but has not confirmed a
+                  published Story. Do not retry: that could publish a duplicate. This stays open
+                  until authoritative provider evidence resolves the outcome.
+                </p>
+                {detail?.attempts?.some((attempt) => attempt.providerRequestId) && (
+                  <details className="story-attention-details">
+                    <summary className="story-attention-details-toggle">Technical details</summary>
+                    <p>
+                      Provider request reference:{' '}
+                      {
+                        detail.attempts.find((attempt) => attempt.providerRequestId)
+                          ?.providerRequestId
+                      }
+                    </p>
+                  </details>
+                )}
+                {detail?.attempts?.at(-1)?.providerRequestId && detail.attempts.at(-1)?.id && (
+                  <SnapchatStoryResolution
+                    jobId={job.id}
+                    attemptId={detail.attempts.at(-1)?.id ?? ''}
+                    providerRequestId={detail.attempts.at(-1)?.providerRequestId ?? ''}
+                    csrfToken={cookieValue('publish_relay_csrf')}
+                    onResolved={refreshResolvedStory}
+                  />
+                )}
+              </div>
+            </div>
+          )}
           {job.state === 'failed' && (
             <div className="recovery-panel" role="alert">
               <div>
@@ -3174,7 +3227,8 @@ export function JobDetailPage() {
               </div>
               <button
                 className="primary-button"
-                onClick={() => {
+                onClick={(event) => {
+                  confirmationTrigger.current = event.currentTarget;
                   setDialog('retry');
                 }}
               >
@@ -3199,7 +3253,8 @@ export function JobDetailPage() {
             <button
               className="danger-button"
               disabled={!['scheduled', 'retrying'].includes(job.state)}
-              onClick={() => {
+              onClick={(event) => {
+                confirmationTrigger.current = event.currentTarget;
                 setDialog('cancel');
               }}
             >
@@ -3326,93 +3381,82 @@ export function JobDetailPage() {
         </div>
       )}
       {dialog && (
-        <div className="dialog-backdrop">
-          <section
-            className="confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="job-dialog-title"
-          >
+        <ConfirmationDialog
+          titleId="job-dialog-title"
+          icon={
             <span className={dialog === 'cancel' ? 'danger-icon' : 'info-icon'}>
               {dialog === 'cancel' ? '!' : '↻'}
             </span>
-            <h2 id="job-dialog-title">
-              {dialog === 'cancel'
-                ? `Cancel ${job.account} publication?`
-                : 'Retry this publication now?'}
-            </h2>
-            <p>
-              {dialog === 'cancel'
-                ? 'It will be removed from dispatch. Published external content cannot be undone.'
-                : 'The same publication job will be reused, preventing a duplicate post.'}
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                autoFocus
-                onClick={() => {
-                  setDialog(null);
-                }}
-              >
-                Keep job
-              </button>
-              <button
-                className={dialog === 'cancel' ? 'danger-button' : 'primary-button'}
-                disabled={isMutating}
-                onClick={() => {
-                  const action = dialog;
-                  setIsMutating(true);
-                  setMutationError(null);
-                  setMutationAnnouncement(
-                    action === 'cancel' ? 'Cancelling publication' : 'Retrying publication',
-                  );
-                  void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/${action}`, {
-                    method: 'POST',
-                    headers: {
-                      'x-csrf-token': cookieValue('publish_relay_csrf'),
-                      'idempotency-key': crypto.randomUUID(),
-                    },
-                  })
-                    .then(async (response) => {
-                      const result = (await response.json()) as {
-                        data: { state: string } | null;
-                        error: string | null;
-                      };
-                      if (!response.ok || !result.data)
-                        throw new Error(result.error ?? `Could not ${action} this job`);
-                      setJob({ ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' });
-                      setDialog(null);
-                      setMutationAnnouncement(
-                        action === 'cancel'
-                          ? 'Publication cancelled successfully'
-                          : 'Publication retry queued successfully',
-                      );
-                    })
-                    .catch((error: unknown) => {
-                      const message =
-                        error instanceof Error ? error.message : `Could not ${action} this job`;
-                      showAnalyticsError(setMutationError, message, 'publishing', 'unknown');
-                      setMutationAnnouncement(
-                        `${action === 'cancel' ? 'Cancellation' : 'Retry'} failed: ${message}`,
-                      );
-                      setDialog(null);
-                    })
-                    .finally(() => {
-                      setIsMutating(false);
-                    });
-                }}
-              >
-                {isMutating
-                  ? dialog === 'cancel'
-                    ? 'Cancelling…'
-                    : 'Retrying…'
-                  : dialog === 'cancel'
-                    ? 'Cancel job'
-                    : 'Retry safely'}
-              </button>
-            </div>
-          </section>
-        </div>
+          }
+          title={
+            dialog === 'cancel'
+              ? `Cancel ${job.account} publication?`
+              : 'Retry this publication now?'
+          }
+          description={
+            dialog === 'cancel'
+              ? 'It will be removed from dispatch. Published external content cannot be undone.'
+              : 'The same publication job will be reused, preventing a duplicate post.'
+          }
+          cancelLabel="Keep job"
+          confirmLabel={
+            isMutating
+              ? dialog === 'cancel'
+                ? 'Cancelling…'
+                : 'Retrying…'
+              : dialog === 'cancel'
+                ? 'Cancel job'
+                : 'Retry safely'
+          }
+          confirmTone={dialog === 'cancel' ? 'danger' : 'primary'}
+          disabled={isMutating}
+          returnFocusTo={confirmationTrigger.current}
+          onCancel={() => {
+            setDialog(null);
+          }}
+          onConfirm={() => {
+            const action = dialog;
+            setIsMutating(true);
+            setMutationError(null);
+            setMutationAnnouncement(
+              action === 'cancel' ? 'Cancelling publication' : 'Retrying publication',
+            );
+            void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/${action}`, {
+              method: 'POST',
+              headers: {
+                'x-csrf-token': cookieValue('publish_relay_csrf'),
+                'idempotency-key': crypto.randomUUID(),
+              },
+            })
+              .then(async (response) => {
+                const result = (await response.json()) as {
+                  data: { state: string } | null;
+                  error: string | null;
+                };
+                if (!response.ok || !result.data)
+                  throw new Error(result.error ?? `Could not ${action} this job`);
+                setJob({ ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' });
+                setDialog(null);
+                setMutationAnnouncement(
+                  action === 'cancel'
+                    ? 'Publication cancelled successfully'
+                    : 'Publication retry queued successfully',
+                );
+              })
+              .catch((error: unknown) => {
+                const message =
+                  error instanceof Error ? error.message : `Could not ${action} this job`;
+                showAnalyticsError(setMutationError, message, 'publishing', 'unknown');
+                setMutationAnnouncement(
+                  `${action === 'cancel' ? 'Cancellation' : 'Retry'} failed: ${message}`,
+                );
+                setDialog(null);
+              })
+              .finally(() => {
+                setIsMutating(false);
+              });
+          }}
+        />
       )}
     </WorkspaceLayout>
   );

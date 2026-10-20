@@ -5,6 +5,7 @@ const providerHosts: Record<string, readonly string[]> = {
   youtube: ['youtube.com', 'youtu.be'],
   linkedin: ['linkedin.com'],
   tiktok: ['tiktok.com'],
+  snapchat: ['snapchat.com'],
 };
 
 export function validatedPostUrl(url: string | null | undefined, provider?: string): string | null {

@@ -94,6 +94,12 @@ the dialog requires the exact displayed name and renders server resource blocker
 The list and switcher remove a deleted workspace after the response and stay absent on reload.
 On narrow screens, row actions wrap below the workspace label.
 
+`src/ui/confirmation-dialog.tsx` owns the shared alert-dialog shell for Queue job cancel/retry
+and Snapchat Story verified-failure confirmation. It keeps the cancel action initially focused,
+uses one labelled modal/action order, and accepts the caller's explanatory text, icon, button
+labels, tone, pending state, and action handlers. The caller retains its own mutation and
+close/error lifecycle; do not duplicate the shell for another job recovery confirmation.
+
 Desktop uses a 240px left rail with wordmark, workspace switcher, Create post, Queue, Calendar, Accounts, Settings, then help/user/connection health in the footer. Create post remains visible without scrolling. Mobile uses a drawer.
 
 The workspace switcher in `src/ui/main.tsx` keeps its Add new workspace link after the searchable workspace list, outside the listbox so filtering to zero matches never hides it. The link uses the active workspace's existing Settings > Workspace creation route; it does not create a second form. It remains keyboard reachable, and Escape from the link closes the menu and restores focus to the switcher.
@@ -238,6 +244,10 @@ Ship Month, Week, Day, and Timeline/hour modes. Preserve date and filters betwee
 - Mobile defaults to agenda/day; month opens the selected day below.
 
 ## Job detail and recovery
+
+An unresolved Snapchat Story send uses the shared Queue and detail status renderer with `Needs attention`, appears in the existing Needs attention view rather than Upcoming, and shows a persistent no-blind-retry explanation in the existing recovery panel. The provider request reference is available only under Technical details; it is correlation, not a Story link or published state. Retry controls stay absent while outcome is unknown. This fixture-only presentation does not enable customer Story admission or manual resolution.
+
+Failure-only Story evidence resolution extends that same job-detail recovery panel, not a second job view. Owner/admin sessions may choose a friendly Snapchat evidence source, a verified rejection/absence finding, and a provider evidence reference, then confirm in the shared dialog before the server records a failed outcome. Non-admin sessions see only the unresolved explanation; the route independently enforces workspace authority. Refresh detail from server truth after mutation so status, timeline and no external link agree. No user-entered Story URL or published resolution is offered without an authoritative request-to-Story correlation contract.
 
 Publication trust surfaces keep normalized server truth visible: `.queue-media` is the bounded media summary inside the canonical queue row; `.detail-content-parts` preserves provider-ready thread order; `.detail-media-gallery` renders ordered media and `.missing-media` makes unavailable assets explicit. `.external-result-link` is rendered only from the server-provided canonical provider URL—the browser never constructs provider links.
 

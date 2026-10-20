@@ -11,10 +11,20 @@ vi.mock('../src/modules/providers/snapchat-credential.service.js', () => ({
 vi.mock('../src/modules/providers/snapchat-spotlight-upload.js', () => ({
   stageAndPostSnapchatSpotlight: vi.fn(),
 }));
+vi.mock('../src/modules/providers/snapchat-story-upload.js', () => ({
+  stageAndPostSnapchatStory: vi.fn(),
+}));
 
 import { dispatchDueSnapchatSpotlights } from '../src/modules/providers/snapchat-spotlight-dispatch.service.js';
-import { requestOperatorRetry } from '../src/modules/scheduler/job.repository.js';
+import { dispatchDueSnapchatStories } from '../src/modules/providers/snapchat-story-dispatch.service.js';
+import {
+  claimDueJobs,
+  claimReconciliationJobs,
+  requestOperatorRetry,
+} from '../src/modules/scheduler/job.repository.js';
 import { stageAndPostSnapchatSpotlight } from '../src/modules/providers/snapchat-spotlight-upload.js';
+import { stageAndPostSnapchatStory } from '../src/modules/providers/snapchat-story-upload.js';
+import { SnapchatSpotlightRequestError } from '../src/modules/providers/snapchat-spotlight-client.js';
 
 const migrations = [
   '0000_identity_tenancy',
@@ -148,6 +158,61 @@ it('persists the owner-profile Spotlight as pending with an attempt and staging 
   ).toBe('spotlight-one');
 });
 
+it('leaves Story jobs for their own claimer and excludes them from Spotlight reconciliation', async () => {
+  const storyJobId = '00000000-0000-4000-8000-000000000116';
+  await pg.exec(`
+    insert into posts (id, workspace_id, created_by_user_id)
+      values ('00000000-0000-4000-8000-000000000114', '${workspaceId}', '${userId}');
+    insert into post_revisions (id, workspace_id, post_id, revision_number, content)
+      values ('00000000-0000-4000-8000-000000000115', '${workspaceId}',
+        '00000000-0000-4000-8000-000000000114', 1, '{}');
+    insert into revision_media (workspace_id, revision_id, media_id, position)
+      values ('${workspaceId}', '00000000-0000-4000-8000-000000000115', '${mediaId}', 0);
+    insert into publication_jobs (id, workspace_id, post_id, revision_id, provider_account_id,
+      effective_payload, scheduled_at)
+      values ('${storyJobId}', '${workspaceId}', '00000000-0000-4000-8000-000000000114',
+        '00000000-0000-4000-8000-000000000115', '${accountId}',
+        '{"schemaVersion":1,"kind":"story_video","mediaId":"${mediaId}"}',
+        '2026-10-19T18:00:00Z');
+  `);
+  vi.mocked(stageAndPostSnapchatSpotlight).mockResolvedValue({
+    spotlightId: 'spotlight-one',
+    mediaId: 'remote-media',
+  });
+  const now = new Date('2026-10-19T20:00:00Z');
+  expect(await dispatchDueSnapchatSpotlights(runtime(), now)).toBe(1);
+  expect(
+    (
+      await pg.query<{ state: string }>('select state from publication_jobs where id = $1', [
+        storyJobId,
+      ])
+    ).rows[0]?.state,
+  ).toBe('scheduled');
+  const storyClaims = await claimDueJobs(db, {
+    workerId: 'story-fixture',
+    now,
+    leaseMs: 60_000,
+    limit: 10,
+    destinationProvider: 'snapchat',
+    contentKinds: ['story_image', 'story_video'],
+    requireMedia: true,
+  });
+  expect(storyClaims.map((job) => job.id)).toEqual([storyJobId]);
+  await pg.exec(`update publication_jobs set state = 'dispatching',
+    reconciliation_required = true, lease_owner = null, lease_expires_at = null
+    where id = '${storyJobId}'`);
+  expect(
+    await claimReconciliationJobs(db, {
+      workerId: 'spotlight-fixture',
+      now,
+      leaseMs: 60_000,
+      limit: 10,
+      destinationProvider: 'snapchat',
+      contentKinds: ['spotlight_video'],
+    }),
+  ).toEqual([jobId]);
+});
+
 it('refuses a changed owner-profile binding before any provider call', async () => {
   await pg.exec(`update provider_accounts set remote_account_id = 'other-profile'
     where id = '${accountId}'`);
@@ -255,4 +320,161 @@ it('keeps a possibly sent POST unknown without a blind retry', async () => {
       now: new Date('2026-10-19T20:01:00Z'),
     }),
   ).toBe('conflict');
+});
+
+async function makeStory(kind: 'story_image' | 'story_video' = 'story_video') {
+  await pg.exec(`update publication_jobs set effective_payload =
+    '{"schemaVersion":1,"kind":"${kind}","mediaId":"${mediaId}"}'
+    where id = '${jobId}'`);
+  if (kind === 'story_image')
+    await pg.exec(`update media_objects set mime_type = 'image/jpeg',
+      duration_ms = null, width = null, height = null, video_codec = null, container = null
+      where id = '${mediaId}'`);
+}
+
+it('records a Story request ID as unknown/manual, never as a published post ID', async () => {
+  await makeStory('story_image');
+  vi.mocked(stageAndPostSnapchatStory).mockImplementationOnce(async (input) => {
+    await input.onMediaCreated?.('story-media');
+    await input.onBeforeStoryPost?.();
+    await input.onStoryPosted?.('00000000-0000-4000-8000-000000000201');
+    return { mediaId: 'story-media', requestId: '00000000-0000-4000-8000-000000000201' };
+  });
+  const now = new Date('2026-10-19T20:00:00Z');
+  expect(await dispatchDueSnapchatStories(runtime(), now)).toBe(1);
+  expect(
+    (
+      await pg.query<{ state: string; reconciliation_required: boolean }>(
+        'select state, reconciliation_required from publication_jobs where id = $1',
+        [jobId],
+      )
+    ).rows[0],
+  ).toEqual({ state: 'dispatching', reconciliation_required: true });
+  expect(
+    (
+      await pg.query<{
+        outcome: string;
+        provider_request_id: string;
+        external_post_id: string | null;
+      }>(
+        'select outcome, provider_request_id, external_post_id from publication_attempts where job_id = $1',
+        [jobId],
+      )
+    ).rows[0],
+  ).toEqual({
+    outcome: 'unknown',
+    provider_request_id: '00000000-0000-4000-8000-000000000201',
+    external_post_id: null,
+  });
+  expect(
+    (
+      await pg.query<{ artifact_status: string; external_object_id: string | null }>(
+        'select artifact_status, external_object_id from provider_staging_artifacts where job_id = $1',
+        [jobId],
+      )
+    ).rows[0],
+  ).toEqual({ artifact_status: 'media', external_object_id: null });
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:02:00Z'))).toBe(0);
+  expect(stageAndPostSnapchatStory).toHaveBeenCalledTimes(1);
+});
+
+it('retries a known pre-POST Story failure with fresh staging and no duplicate POST', async () => {
+  await makeStory();
+  vi.mocked(stageAndPostSnapchatStory)
+    .mockImplementationOnce(async (input) => {
+      await input.onMediaCreated?.('first-story-media');
+      throw new Error('source failed before POST');
+    })
+    .mockImplementationOnce(async (input) => {
+      await input.onMediaCreated?.('second-story-media');
+      await input.onBeforeStoryPost?.();
+      return { mediaId: 'second-story-media', requestId: '00000000-0000-4000-8000-000000000202' };
+    });
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:00:00Z'))).toBe(0);
+  expect(
+    await requestOperatorRetry(db, {
+      workspaceId,
+      jobId,
+      actorId: userId,
+      now: new Date('2026-10-19T20:01:00Z'),
+    }),
+  ).toBe('scheduled');
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:02:00Z'))).toBe(1);
+  const artifacts = await pg.query<{ artifact_key: string; deleted_at: Date | null }>(
+    'select artifact_key, deleted_at from provider_staging_artifacts where job_id = $1 order by artifact_key',
+    [jobId],
+  );
+  expect(artifacts.rows.map((row) => row.artifact_key)).toEqual([
+    'snapchat:story:1',
+    'snapchat:story:2',
+  ]);
+  expect(artifacts.rows[0]?.deleted_at).not.toBeNull();
+  expect(artifacts.rows[1]?.deleted_at).toBeNull();
+});
+
+it('automatically retries a transient pre-POST Story failure after tombstoning staging', async () => {
+  await makeStory();
+  vi.mocked(stageAndPostSnapchatStory)
+    .mockImplementationOnce(async (input) => {
+      await input.onMediaCreated?.('first-story-media');
+      throw new SnapchatSpotlightRequestError('transient');
+    })
+    .mockResolvedValueOnce({
+      mediaId: 'second-story-media',
+      requestId: '00000000-0000-4000-8000-000000000203',
+    });
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:00:00Z'))).toBe(0);
+  expect(
+    (
+      await pg.query<{ state: string; next_attempt_at: Date }>(
+        'select state, next_attempt_at from publication_jobs where id = $1',
+        [jobId],
+      )
+    ).rows[0]?.state,
+  ).toBe('retry_wait');
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:02:00Z'))).toBe(1);
+  const artifacts = await pg.query<{ artifact_key: string; deleted_at: Date | null }>(
+    'select artifact_key, deleted_at from provider_staging_artifacts where job_id = $1 order by artifact_key',
+    [jobId],
+  );
+  expect(artifacts.rows.map((row) => row.artifact_key)).toEqual([
+    'snapchat:story:1',
+    'snapchat:story:2',
+  ]);
+  expect(artifacts.rows[0]?.deleted_at).not.toBeNull();
+});
+
+it('locks an ambiguous Story POST for manual resolution without blind retry', async () => {
+  await makeStory();
+  vi.mocked(stageAndPostSnapchatStory).mockImplementationOnce(async (input) => {
+    await input.onBeforeStoryPost?.();
+    throw new Error('POST response lost');
+  });
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:00:00Z'))).toBe(0);
+  expect(
+    (
+      await pg.query<{ outcome: string; reconciliation_key: string }>(
+        'select outcome, reconciliation_key from publication_attempts where job_id = $1',
+        [jobId],
+      )
+    ).rows[0],
+  ).toEqual({ outcome: 'unknown', reconciliation_key: `snapchat:story:${jobId}` });
+  expect(
+    await requestOperatorRetry(db, {
+      workspaceId,
+      jobId,
+      actorId: userId,
+      now: new Date('2026-10-19T20:01:00Z'),
+    }),
+  ).toBe('conflict');
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:02:00Z'))).toBe(0);
+  expect(stageAndPostSnapchatStory).toHaveBeenCalledTimes(1);
+});
+
+it('rejects a changed Story profile before provider transport', async () => {
+  await makeStory();
+  await pg.exec(`update provider_accounts set remote_account_id = 'other-profile'
+    where id = '${accountId}'`);
+  expect(await dispatchDueSnapchatStories(runtime(), new Date('2026-10-19T20:00:00Z'))).toBe(0);
+  expect(stageAndPostSnapchatStory).not.toHaveBeenCalled();
 });

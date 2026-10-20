@@ -2486,6 +2486,8 @@ describe('CLI and direct HTTP parity', () => {
     const cliJob = await runCli(['publishes', 'show', jobId]);
     expect(directJob.statusCode).toBe(200);
     expect(cliJob.code).toBe(0);
+    expect(directJob.body).not.toContain('needsAttention');
+    expect(directJob.body).not.toContain('providerRequestId');
     expect(stableEnvelope(cliJob.body)).toEqual(stableEnvelope(directJob.json()));
 
     const mismatch = await runCli([

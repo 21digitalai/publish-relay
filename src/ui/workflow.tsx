@@ -2713,6 +2713,7 @@ export function JobDetailPage() {
   const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
+  const confirmationTrigger = useRef<HTMLElement | null>(null);
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
   const [editSchedule, setEditSchedule] = useState('');
   const [editScheduleOption, setEditScheduleOption] = useState(0);
@@ -2964,7 +2965,8 @@ export function JobDetailPage() {
               </div>
               <button
                 className="primary-button"
-                onClick={() => {
+                onClick={(event) => {
+                  confirmationTrigger.current = event.currentTarget;
                   setDialog('retry');
                 }}
               >
@@ -2989,7 +2991,8 @@ export function JobDetailPage() {
             <button
               className="danger-button"
               disabled={!['scheduled', 'retrying'].includes(job.state)}
-              onClick={() => {
+              onClick={(event) => {
+                confirmationTrigger.current = event.currentTarget;
                 setDialog('cancel');
               }}
             >
@@ -3145,6 +3148,7 @@ export function JobDetailPage() {
           }
           confirmTone={dialog === 'cancel' ? 'danger' : 'primary'}
           disabled={isMutating}
+          returnFocusTo={confirmationTrigger.current}
           onCancel={() => {
             setDialog(null);
           }}

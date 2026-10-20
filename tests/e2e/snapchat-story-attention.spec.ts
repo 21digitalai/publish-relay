@@ -124,9 +124,14 @@ test('Story unknown outcome appears under Needs attention without a retry action
   await page.getByRole('button', { name: 'Record verified failure' }).click();
   await expect(page.getByRole('alertdialog')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Keep Needs attention' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('button', { name: 'Confirm verified failure' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Keep Needs attention' })).toBeFocused();
   await page.screenshot({ path: testInfo.outputPath('story-failure-confirm.png') });
-  await page.getByRole('button', { name: 'Keep Needs attention' }).click();
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Record verified failure' })).toBeFocused();
   await page.getByRole('button', { name: 'Record verified failure' }).click();
   await page.getByRole('button', { name: 'Confirm verified failure' }).click();
   await expect(page.locator('.job-detail .job-status')).toHaveText(/Failed/);

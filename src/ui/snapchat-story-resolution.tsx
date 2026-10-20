@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { DefaultsSelect } from './defaults-select.js';
 import { ConfirmationDialog } from './confirmation-dialog.js';
@@ -26,6 +26,7 @@ export function SnapchatStoryResolution({
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const confirmationTrigger = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -140,7 +141,8 @@ export function SnapchatStoryResolution({
         className="secondary-button"
         type="button"
         disabled={!ready || saving}
-        onClick={() => {
+        onClick={(event) => {
+          confirmationTrigger.current = event.currentTarget;
           setConfirming(true);
         }}
       >
@@ -160,6 +162,7 @@ export function SnapchatStoryResolution({
           confirmLabel={saving ? 'Recording…' : 'Confirm verified failure'}
           confirmTone="danger"
           disabled={saving}
+          returnFocusTo={confirmationTrigger.current}
           onCancel={() => {
             setConfirming(false);
           }}

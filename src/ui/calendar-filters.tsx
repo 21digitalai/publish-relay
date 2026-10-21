@@ -106,6 +106,7 @@ export function CalendarCheckboxFilter({
         <label className="calendar-filter-row">
           <input
             type="checkbox"
+            aria-label={[option.group, option.label, option.detail].filter(Boolean).join(' · ')}
             checked={selected === null || selected.includes(option.id)}
             onChange={(event) => {
               const next = selected ?? options.map((item) => item.id);

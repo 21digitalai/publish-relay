@@ -1,6 +1,7 @@
 import type { DestinationProvider } from './contract.js';
 
-export type DestinationContentKind = 'text' | 'video' | 'single_image' | 'carousel' | 'link';
+export type DestinationContentKind =
+  'text' | 'video' | 'single_image' | 'multi_image' | 'carousel' | 'link';
 
 export interface DestinationCapabilitySnapshot {
   schemaVersion: 1;
@@ -13,8 +14,8 @@ const CAPABILITIES: Partial<Record<DestinationProvider, DestinationCapabilitySna
   youtube: { schemaVersion: 1, contentKinds: ['video'], media: {} },
   linkedin: {
     schemaVersion: 1,
-    contentKinds: ['text', 'link', 'video', 'single_image'],
-    media: {},
+    contentKinds: ['text', 'link', 'video', 'single_image', 'multi_image'],
+    media: { minImages: 2, maxImages: 20 },
   },
   instagram: {
     schemaVersion: 1,

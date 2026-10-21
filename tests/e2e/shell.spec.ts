@@ -361,6 +361,86 @@ test('LinkedIn member video uses one MP4 in the shared Composer on desktop and m
   expect(submitted?.mediaIds).toEqual([mediaId]);
 });
 
+test('LinkedIn organic multi-image keeps ordered media in one destination', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000299',
+              provider: 'linkedin',
+              displayName: 'Member gallery profile',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+              capabilitySnapshot: {
+                contentKinds: ['text', 'link', 'video', 'single_image', 'multi_image'],
+              },
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  let uploads = 0;
+  await page.route('**/api/workflow/media', (route) => {
+    uploads += 1;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { id: `00000000-0000-4000-8000-${String(uploads).padStart(12, '0')}` },
+        error: null,
+      }),
+    });
+  });
+  let submitted: { content: { kind: string; text: string }; mediaIds: string[] } | undefined;
+  await page.route('**/api/workflow/posts', (route) => {
+    submitted = route.request().postDataJSON() as typeof submitted;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]},"error":null}',
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'Member gallery profile');
+  await page.getByRole('button', { name: 'Multiple images' }).click();
+  await page.getByLabel('Post body').fill('Gallery');
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'one.png',
+    mimeType: 'image/png',
+    buffer: Buffer.alloc(100),
+  });
+  await expect(page.getByText('Choose 2 to 20 JPEG or PNG images.')).toBeVisible();
+  expect(uploads).toBe(0);
+  await page.locator('#composer-media-upload').setInputFiles([
+    { name: 'first.png', mimeType: 'image/png', buffer: Buffer.alloc(100) },
+    { name: 'second.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(100) },
+  ]);
+  await expect(page.getByText('2 of 2–20 images selected')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.screenshot({
+    path: testInfo.outputPath('linkedin-multi-image-ready.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+  expect(submitted).toMatchObject({
+    content: { kind: 'multi_image', text: 'Gallery' },
+    mediaIds: ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'],
+  });
+  expect(uploads).toBe(2);
+});
+
 test('LinkedIn member image uses one JPEG or PNG in the shared Composer', async ({
   page,
 }, testInfo) => {

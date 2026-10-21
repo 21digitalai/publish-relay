@@ -79,6 +79,12 @@ const linkedinContent = z.discriminatedUnion('kind', [
   }),
   z.object({
     schemaVersion: version,
+    kind: z.literal('multi_image'),
+    text: z.string().min(1).max(3000),
+    mediaIds: z.array(mediaId).min(2).max(20),
+  }),
+  z.object({
+    schemaVersion: version,
     kind: z.literal('video'),
     text: z.string().min(1).max(3000),
     title: z.string().min(1).max(200),

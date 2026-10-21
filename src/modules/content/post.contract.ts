@@ -8,7 +8,7 @@ import {
 export const legacyCreatePostRequestSchema = z.object({
   destination: z.never().optional(),
   content: z.record(z.string(), z.unknown()),
-  mediaIds: z.array(z.uuid()).max(10).default([]),
+  mediaIds: z.array(z.uuid()).max(20).default([]),
   providerAccountIds: z.array(z.uuid()).min(1).max(50),
   scheduledAt: z.iso.datetime(),
 });

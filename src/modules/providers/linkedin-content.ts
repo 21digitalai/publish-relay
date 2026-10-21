@@ -32,6 +32,23 @@ const linkedInImageSchema = z.object({
   kind: z.literal('single_image'),
   text: z.string().trim().min(1).max(LINKEDIN_TEXT_MAX_LENGTH),
 });
+const linkedInMultiImageSchema = z.object({
+  kind: z.literal('multi_image'),
+  text: z.string().trim().min(1).max(LINKEDIN_TEXT_MAX_LENGTH),
+});
+
+export function parseLinkedInMultiImageContent(content: unknown, mediaIds: readonly string[]) {
+  const parsed = linkedInMultiImageSchema.safeParse(content);
+  if (
+    !parsed.success ||
+    mediaIds.length < 2 ||
+    mediaIds.length > 20 ||
+    mediaIds.some((id) => !id) ||
+    new Set(mediaIds).size !== mediaIds.length
+  )
+    throw new Error('LinkedIn multi-image requires text and 2 to 20 prepared JPEG or PNG images');
+  return { kind: 'multi_image' as const, text: parsed.data.text, mediaIds: [...mediaIds] };
+}
 
 export function parseLinkedInImageContent(content: unknown, mediaIds: readonly string[]) {
   const parsed = linkedInImageSchema.safeParse(content);

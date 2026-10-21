@@ -258,6 +258,22 @@ export class LinkedInHttpClient {
     return this.publishPost(input.credential, input.text, { media: { id: input.image } });
   }
 
+  async publishMultiImage(input: {
+    credential: LinkedInCredential;
+    text: string;
+    images: string[];
+  }): Promise<string> {
+    if (
+      input.images.length < 2 ||
+      input.images.length > 20 ||
+      input.images.some((image) => !/^urn:li:image:[^\s]+$/.test(image))
+    )
+      throw new Error('LinkedIn multi-image requires 2 to 20 verified image URNs');
+    return this.publishPost(input.credential, input.text, {
+      multiImage: { images: input.images.map((id) => ({ id })) },
+    });
+  }
+
   async uploadVideo(input: { credential: LinkedInCredential; bytes: Buffer }): Promise<string> {
     const { credential, bytes } = input;
     if (bytes.length < 75_000 || bytes.length > 500_000_000)
@@ -405,6 +421,7 @@ export class LinkedInHttpClient {
     text: string,
     content?:
       | { article: { source: string; title: string; description?: string } }
+      | { multiImage: { images: { id: string }[] } }
       | { media: { id: string; title?: string } },
   ): Promise<string> {
     const response = await this.request('https://api.linkedin.com/rest/posts', {

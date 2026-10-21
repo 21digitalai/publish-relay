@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   parseLinkedInContent,
   parseLinkedInImageContent,
+  parseLinkedInMultiImageContent,
   parseLinkedInVideoContent,
   validateLinkedInImageAsset,
   validateLinkedInTextContent,
@@ -21,6 +22,50 @@ import {
 const options = { clientId: 'client-id', clientSecret: 'client-secret', now: () => 1_000 };
 
 describe('LinkedIn member integration', () => {
+  it('preserves 2–20 ordered distinct member images and the organic Posts API shape', async () => {
+    const mediaIds = ['media-first', 'media-second'];
+    expect(
+      parseLinkedInMultiImageContent({ kind: 'multi_image', text: ' Gallery ' }, mediaIds),
+    ).toEqual({ kind: 'multi_image', text: 'Gallery', mediaIds });
+    for (const invalid of [[], ['one'], Array(21).fill('asset'), ['same', 'same']])
+      expect(() =>
+        parseLinkedInMultiImageContent({ kind: 'multi_image', text: 'Gallery' }, invalid),
+      ).toThrow();
+    const credential = {
+      accessToken: 'access',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:share:gallery' } }),
+      );
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(
+      client.publishMultiImage({
+        credential,
+        text: 'Gallery',
+        images: ['urn:li:image:first', 'urn:li:image:second'],
+      }),
+    ).resolves.toBe('urn:li:share:gallery');
+    expect(JSON.parse(request.mock.calls[0]?.[1]?.body as string)).toMatchObject({
+      author: credential.memberUrn,
+      content: {
+        multiImage: { images: [{ id: 'urn:li:image:first' }, { id: 'urn:li:image:second' }] },
+      },
+    });
+    await expect(
+      client.publishMultiImage({
+        credential,
+        text: 'Gallery',
+        images: ['urn:li:image:first', 'bad'],
+      }),
+    ).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it('admits one bounded JPEG or PNG image with text', () => {
     const mediaId = '00000000-0000-4000-8000-000000000123';
     expect(

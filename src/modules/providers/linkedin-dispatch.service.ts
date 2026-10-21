@@ -31,6 +31,7 @@ import {
 import {
   parseLinkedInContent,
   parseLinkedInImageContent,
+  parseLinkedInMultiImageContent,
   parseLinkedInVideoContent,
   validateLinkedInImageAsset,
   validateLinkedInVideoAsset,
@@ -170,7 +171,7 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
         ),
       )
       .orderBy(asc(revisionMedia.position))
-      .limit(2);
+      .limit(21);
     const row = rows[0];
     if (!row) throw new Error('LinkedIn destination is unavailable');
     const mediaIds = rows.flatMap((item) => (item.mediaId ? [item.mediaId] : []));
@@ -179,8 +180,16 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
         ? parseLinkedInVideoContent(row.content, mediaIds)
         : (row.content as { kind?: unknown }).kind === 'single_image'
           ? parseLinkedInImageContent(row.content, mediaIds)
-          : parseLinkedInContent(row.content, mediaIds);
-    if (content.kind === 'video') {
+          : (row.content as { kind?: unknown }).kind === 'multi_image'
+            ? parseLinkedInMultiImageContent(row.content, mediaIds)
+            : parseLinkedInContent(row.content, mediaIds);
+    if (content.kind === 'multi_image') {
+      for (const media of rows) {
+        if (!media.mimeType || media.byteSize === null || media.mediaState !== 'ready')
+          throw new Error('LinkedIn multi-image media is unavailable');
+        validateLinkedInImageAsset({ mimeType: media.mimeType, byteSize: media.byteSize });
+      }
+    } else if (content.kind === 'video') {
       if (!row.mimeType || row.byteSize === null || row.mediaState !== 'ready')
         throw new Error('LinkedIn video media is unavailable');
       validateLinkedInVideoAsset({
@@ -236,7 +245,7 @@ async function dispatchJob(
   let isImageJob = false;
   try {
     const context = await loadJob(runtime, job.workspaceId, job.id);
-    isImageJob = context.content.kind === 'single_image';
+    isImageJob = context.content.kind === 'single_image' || context.content.kind === 'multi_image';
     connectionId = context.connectionId;
     if (context.status !== 'active' || !context.expiresAt || context.expiresAt <= now) {
       await markReconnectRequired(runtime, job.workspaceId, context.connectionId);
@@ -257,7 +266,7 @@ async function dispatchJob(
       throw new LinkedInRequestError(401, 'auth', 'LinkedIn reconnect is required');
     }
     let video: string | undefined;
-    let image: string | undefined;
+    const images: string[] = [];
     if (context.content.kind === 'video') {
       const artifact = new PostgresLinkedInVideoArtifactStore(runtime.database, {
         workspaceId: job.workspaceId,
@@ -284,34 +293,42 @@ async function dispatchJob(
         return false;
       }
       video = staged.video;
-    } else if (context.content.kind === 'single_image') {
-      const artifact = new PostgresLinkedInVideoArtifactStore(runtime.database, {
-        workspaceId: job.workspaceId,
-        jobId: job.id,
-        mediaId: context.content.mediaId,
-        memberUrn: credential.memberUrn,
-        kind: 'image',
-        now: () => now,
-      });
-      const staged = await stageLinkedInImage({
-        artifact,
-        client: runtime.client,
-        source: runtime.source,
-        credential,
-        workspaceId: job.workspaceId,
-        mediaId: context.content.mediaId,
-      });
-      if (staged.state === 'pending') {
-        await deferLeasedJob(runtime.database, {
+    } else if (isImageJob) {
+      const imageMediaIds =
+        context.content.kind === 'multi_image'
+          ? context.content.mediaIds
+          : context.content.kind === 'single_image'
+            ? [context.content.mediaId]
+            : [];
+      for (const mediaId of imageMediaIds) {
+        const artifact = new PostgresLinkedInVideoArtifactStore(runtime.database, {
           workspaceId: job.workspaceId,
           jobId: job.id,
-          workerId: runtime.workerId,
-          now,
-          retryAt: new Date(now.getTime() + LINKEDIN_VIDEO_POLL_MS),
+          mediaId,
+          memberUrn: credential.memberUrn,
+          kind: 'image',
+          now: () => now,
         });
-        return false;
+        const staged = await stageLinkedInImage({
+          artifact,
+          client: runtime.client,
+          source: runtime.source,
+          credential,
+          workspaceId: job.workspaceId,
+          mediaId,
+        });
+        if (staged.state === 'pending') {
+          await deferLeasedJob(runtime.database, {
+            workspaceId: job.workspaceId,
+            jobId: job.id,
+            workerId: runtime.workerId,
+            now,
+            retryAt: new Date(now.getTime() + LINKEDIN_VIDEO_POLL_MS),
+          });
+          return false;
+        }
+        images.push(staged.image);
       }
-      image = staged.image;
     }
     attempt = await startDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
@@ -339,9 +356,15 @@ async function dispatchJob(
             ? await runtime.client.publishImage({
                 credential,
                 text: context.content.text,
-                image: requireStagedVideo(image),
+                image: requireStagedVideo(images[0]),
               })
-            : await runtime.client.publishText({ credential, text: context.content.text });
+            : context.content.kind === 'multi_image'
+              ? await runtime.client.publishMultiImage({
+                  credential,
+                  text: context.content.text,
+                  images,
+                })
+              : await runtime.client.publishText({ credential, text: context.content.text });
     await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,

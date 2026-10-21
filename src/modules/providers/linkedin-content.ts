@@ -20,7 +20,14 @@ const linkedInArticleSchema = z.object({
 
 export type LinkedInContent =
   | { kind: 'text'; text: string }
-  | { kind: 'link'; text: string; linkUrl: string; title: string; description?: string };
+  | {
+      kind: 'link';
+      text: string;
+      linkUrl: string;
+      title: string;
+      description?: string;
+      mediaId?: string;
+    };
 
 const linkedInVideoSchema = z.object({
   kind: z.literal('video'),
@@ -69,16 +76,20 @@ export function parseLinkedInContent(
   content: unknown,
   mediaIds: readonly string[],
 ): LinkedInContent {
-  if (mediaIds.length !== 0) throw new Error('LinkedIn article and text posts do not accept media');
   const article = linkedInArticleSchema.safeParse(content);
-  if (article.success)
+  if (article.success) {
+    if (mediaIds.length > 1 || (mediaIds.length === 1 && !mediaIds[0]))
+      throw new Error('LinkedIn article accepts one optional thumbnail');
     return {
       kind: 'link',
       text: article.data.text,
       linkUrl: article.data.linkUrl,
       title: article.data.title,
       ...(article.data.description === undefined ? {} : { description: article.data.description }),
+      ...(mediaIds[0] ? { mediaId: mediaIds[0] } : {}),
     };
+  }
+  if (mediaIds.length !== 0) throw new Error('LinkedIn text posts do not accept media');
   const text = linkedInTextSchema.safeParse(content);
   if (text.success) return { kind: 'text', text: text.data.text };
   throw new Error('LinkedIn requires text up to 3000 characters or an HTTPS article with a title');

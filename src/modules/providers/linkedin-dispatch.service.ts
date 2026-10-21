@@ -180,7 +180,11 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
         : (row.content as { kind?: unknown }).kind === 'single_image'
           ? parseLinkedInImageContent(row.content, mediaIds)
           : parseLinkedInContent(row.content, mediaIds);
-    if (content.kind === 'video') {
+    if (content.kind === 'link' && content.mediaId) {
+      if (!row.mimeType || row.byteSize === null || row.mediaState !== 'ready')
+        throw new Error('LinkedIn article thumbnail is unavailable');
+      validateLinkedInImageAsset({ mimeType: row.mimeType, byteSize: row.byteSize });
+    } else if (content.kind === 'video') {
       if (!row.mimeType || row.byteSize === null || row.mediaState !== 'ready')
         throw new Error('LinkedIn video media is unavailable');
       validateLinkedInVideoAsset({
@@ -236,7 +240,9 @@ async function dispatchJob(
   let isImageJob = false;
   try {
     const context = await loadJob(runtime, job.workspaceId, job.id);
-    isImageJob = context.content.kind === 'single_image';
+    isImageJob =
+      context.content.kind === 'single_image' ||
+      (context.content.kind === 'link' && Boolean(context.content.mediaId));
     connectionId = context.connectionId;
     if (context.status !== 'active' || !context.expiresAt || context.expiresAt <= now) {
       await markReconnectRequired(runtime, job.workspaceId, context.connectionId);
@@ -284,11 +290,16 @@ async function dispatchJob(
         return false;
       }
       video = staged.video;
-    } else if (context.content.kind === 'single_image') {
+    } else if (
+      context.content.kind === 'single_image' ||
+      (context.content.kind === 'link' && context.content.mediaId)
+    ) {
+      const mediaId = context.content.mediaId;
+      if (!mediaId) throw new Error('LinkedIn image media is unavailable');
       const artifact = new PostgresLinkedInVideoArtifactStore(runtime.database, {
         workspaceId: job.workspaceId,
         jobId: job.id,
-        mediaId: context.content.mediaId,
+        mediaId,
         memberUrn: credential.memberUrn,
         kind: 'image',
         now: () => now,
@@ -299,7 +310,7 @@ async function dispatchJob(
         source: runtime.source,
         credential,
         workspaceId: job.workspaceId,
-        mediaId: context.content.mediaId,
+        mediaId,
       });
       if (staged.state === 'pending') {
         await deferLeasedJob(runtime.database, {
@@ -327,7 +338,11 @@ async function dispatchJob(
     if (!attempt) return false;
     const externalPostId =
       context.content.kind === 'link'
-        ? await runtime.client.publishArticle({ credential, ...context.content })
+        ? await runtime.client.publishArticle({
+            credential,
+            ...context.content,
+            ...(image ? { thumbnail: image } : {}),
+          })
         : context.content.kind === 'video'
           ? await runtime.client.publishVideo({
               credential,

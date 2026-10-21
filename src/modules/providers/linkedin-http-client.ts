@@ -364,12 +364,16 @@ export class LinkedInHttpClient {
     linkUrl: string;
     title: string;
     description?: string;
+    thumbnail?: string;
   }): Promise<string> {
+    if (input.thumbnail && !/^urn:li:image:[^\s]+$/.test(input.thumbnail))
+      throw new Error('Invalid LinkedIn article thumbnail URN');
     return this.publishPost(input.credential, input.text, {
       article: {
         source: input.linkUrl,
         title: input.title,
         ...(input.description ? { description: input.description } : {}),
+        ...(input.thumbnail ? { thumbnail: input.thumbnail } : {}),
       },
     });
   }
@@ -404,7 +408,7 @@ export class LinkedInHttpClient {
     credential: LinkedInCredential,
     text: string,
     content?:
-      | { article: { source: string; title: string; description?: string } }
+      | { article: { source: string; title: string; description?: string; thumbnail?: string } }
       | { media: { id: string; title?: string } },
   ): Promise<string> {
     const response = await this.request('https://api.linkedin.com/rest/posts', {

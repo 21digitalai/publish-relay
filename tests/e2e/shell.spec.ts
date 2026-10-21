@@ -361,6 +361,85 @@ test('LinkedIn member video uses one MP4 in the shared Composer on desktop and m
   expect(submitted?.mediaIds).toEqual([mediaId]);
 });
 
+test('LinkedIn article optionally attaches one verified image through the shared Composer', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  const mediaId = '00000000-0000-4000-8000-000000000298';
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000299',
+              provider: 'linkedin',
+              displayName: 'Member article profile',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+              capabilitySnapshot: { contentKinds: ['text', 'link', 'video', 'single_image'] },
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  let uploads = 0;
+  await page.route('**/api/workflow/media', (route) => {
+    uploads += 1;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: mediaId }, error: null }),
+    });
+  });
+  let submitted: { content: { kind: string; linkUrl: string }; mediaIds: string[] } | undefined;
+  await page.route('**/api/workflow/posts', (route) => {
+    submitted = route.request().postDataJSON() as typeof submitted;
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]},"error":null}',
+    });
+  });
+  await page.goto(await workspacePath(page, 'queue'));
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await selectComposerAccount(page, 'Member article profile');
+  await page.getByRole('button', { name: 'Article link' }).click();
+  await page.getByLabel('Post body').fill('Read the full story');
+  await page.getByLabel('HTTPS link').fill('https://example.com/story');
+  await page.getByLabel('Article title').fill('Full story');
+  await expect(page.getByText('Optional JPEG or PNG article thumbnail')).toBeVisible();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'too-large.png',
+    mimeType: 'image/png',
+    buffer: Buffer.alloc(5_000_001),
+  });
+  await expect(
+    page.getByText('One or more files exceed the destination size limit.'),
+  ).toBeVisible();
+  expect(uploads).toBe(0);
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'thumbnail.png',
+    mimeType: 'image/png',
+    buffer: Buffer.alloc(100),
+  });
+  await page.screenshot({
+    path: testInfo.outputPath('linkedin-article-thumbnail.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+  expect(submitted).toMatchObject({
+    content: { kind: 'link', linkUrl: 'https://example.com/story' },
+    mediaIds: [mediaId],
+  });
+  expect(uploads).toBe(1);
+});
+
 test('LinkedIn member image uses one JPEG or PNG in the shared Composer', async ({
   page,
 }, testInfo) => {

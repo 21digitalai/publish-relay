@@ -91,6 +91,7 @@ const linkedinContent = z.discriminatedUnion('kind', [
     linkUrl: z.url(),
     title: z.string().min(1).max(399),
     description: z.string().max(4085).optional(),
+    mediaIds: z.array(mediaId).max(1).default([]),
   }),
 ]);
 

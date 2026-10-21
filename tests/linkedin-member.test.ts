@@ -613,6 +613,22 @@ describe('LinkedIn member integration', () => {
       'X-Restli-Protocol-Version': '2.0.0',
     });
     expect(request.mock.calls[0]?.[1]?.body).not.toContain('thumbnail');
+    request.mockResolvedValueOnce(
+      new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:share:thumbnail' } }),
+    );
+    await expect(
+      client.publishArticle({
+        credential,
+        text: 'Read this',
+        linkUrl: 'https://example.com/article',
+        title: 'Title',
+        thumbnail: 'urn:li:image:owner-verified',
+      }),
+    ).resolves.toBe('urn:li:share:thumbnail');
+    const thumbnailPost = JSON.parse(request.mock.calls[1]?.[1]?.body as string) as {
+      content: { article: { thumbnail?: string } };
+    };
+    expect(thumbnailPost.content.article.thumbnail).toBe('urn:li:image:owner-verified');
     request.mockResolvedValueOnce(new Response(null, { status: 201 }));
     await expect(
       client.publishArticle({
@@ -645,17 +661,18 @@ describe('LinkedIn member integration', () => {
       { kind: 'link', text: 'Read', linkUrl: 'https://example.com', title: '' },
     ])
       expect(() => parseLinkedInContent(content, [])).toThrow();
-    expect(() =>
+    expect(
       parseLinkedInContent(
-        {
-          kind: 'link',
-          text: 'Read',
-          linkUrl: 'https://example.com',
-          title: 'Title',
-        },
+        { kind: 'link', text: 'Read', linkUrl: 'https://example.com', title: 'Title' },
         ['media-id'],
       ),
-    ).toThrow();
+    ).toMatchObject({ kind: 'link', mediaId: 'media-id' });
+    expect(() =>
+      parseLinkedInContent(
+        { kind: 'link', text: 'Read', linkUrl: 'https://example.com', title: 'Title' },
+        ['media-id', 'other-media-id'],
+      ),
+    ).toThrow('one optional thumbnail');
   });
 
   it('classifies HTTP rejection and ambiguous provider failure from the actual publish client', async () => {

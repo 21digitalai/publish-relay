@@ -388,13 +388,15 @@ test('LinkedIn member image uses one JPEG or PNG in the shared Composer', async 
       }),
     }),
   );
-  await page.route('**/api/workflow/media', (route) =>
-    route.fulfill({
+  let uploads = 0;
+  await page.route('**/api/workflow/media', (route) => {
+    uploads += 1;
+    return route.fulfill({
       status: 201,
       contentType: 'application/json',
       body: JSON.stringify({ data: { id: mediaId }, error: null }),
-    }),
-  );
+    });
+  });
   let submitted: { content: { kind: string; text: string }; mediaIds: string[] } | undefined;
   await page.route('**/api/workflow/posts', (route) => {
     submitted = route.request().postDataJSON() as typeof submitted;
@@ -415,9 +417,19 @@ test('LinkedIn member image uses one JPEG or PNG in the shared Composer', async 
   await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   await page.getByLabel('Post body').fill('Member image post');
   await page.locator('#composer-media-upload').setInputFiles({
+    name: 'oversized.png',
+    mimeType: 'image/png',
+    buffer: Buffer.alloc(5_000_001),
+  });
+  await expect(
+    page.getByText('One or more files exceed the destination size limit.'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  expect(uploads).toBe(0);
+  await page.locator('#composer-media-upload').setInputFiles({
     name: 'image.png',
     mimeType: 'image/png',
-    buffer: Buffer.from('fixture image'),
+    buffer: Buffer.alloc(5_000_000),
   });
   await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
   await page.screenshot({ path: testInfo.outputPath('linkedin-image-ready.png'), fullPage: true });
@@ -427,6 +439,7 @@ test('LinkedIn member image uses one JPEG or PNG in the shared Composer', async 
     content: { kind: 'single_image', text: 'Member image post' },
     mediaIds: [mediaId],
   });
+  expect(uploads).toBe(1);
 });
 
 test('Composer separates same-name destinations by platform on desktop and mobile', async ({

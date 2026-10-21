@@ -16,6 +16,7 @@ import { hasExactInstagramLoginScopes } from '../providers/instagram-login-clien
 import {
   parseLinkedInContent,
   parseLinkedInImageContent,
+  parseLinkedInMultiImageContent,
   parseLinkedInVideoContent,
   validateLinkedInImageAsset,
   validateLinkedInVideoAsset,
@@ -270,6 +271,13 @@ async function resolveRevisionTargets(
             const media = mediaRows.find((item) => item.id === content.mediaId);
             if (!media) throw new Error('LinkedIn image media is unavailable');
             validateLinkedInImageAsset(media);
+          } else if (input.content.kind === 'multi_image') {
+            const content = parseLinkedInMultiImageContent(input.content, input.mediaIds);
+            for (const mediaId of content.mediaIds) {
+              const media = mediaRows.find((item) => item.id === mediaId);
+              if (!media) throw new Error('LinkedIn multi-image media is unavailable');
+              validateLinkedInImageAsset(media);
+            }
           } else {
             const content = parseLinkedInContent(input.content, input.mediaIds);
             if (content.kind === 'link' && content.mediaId) {

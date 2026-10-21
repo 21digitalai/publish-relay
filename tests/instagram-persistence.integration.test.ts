@@ -248,6 +248,127 @@ describe('Instagram staging persistence and signed media delivery', () => {
     expect(state.rows[0]).toMatchObject({ state: 'failed', count: 1 });
   });
 
+  it('holds a multi-image post until every ordered job-bound image is available', async () => {
+    const memberUrn = 'urn:li:person:member';
+    const secondMediaId = '00000000-0000-4000-8000-000000000414';
+    const revisionId = '00000000-0000-4000-8000-000000000415';
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'linkedin', member_urn = '${memberUrn}',
+        external_subject_id = '${memberUrn}', expires_at = '2030-01-01T00:00:00Z'
+        WHERE id = '00000000-0000-4000-8000-000000000405';
+      UPDATE provider_accounts SET destination_provider = 'linkedin',
+        provider_account_id = '${memberUrn}', remote_account_id = '${memberUrn}'
+        WHERE id = '00000000-0000-4000-8000-000000000406';
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+      VALUES ('${revisionId}', '${workspaceA}', '00000000-0000-4000-8000-000000000407',
+        2, '{"kind":"multi_image","text":"Gallery"}');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+      VALUES ('${secondMediaId}', '${workspaceA}', 'linkedin/second.png', 'hash-2', 'image/png', 5, 'ready');
+      INSERT INTO revision_media (workspace_id, revision_id, media_id, position) VALUES
+        ('${workspaceA}', '${revisionId}', '${mediaId}', 0),
+        ('${workspaceA}', '${revisionId}', '${secondMediaId}', 1);
+      UPDATE publication_jobs SET revision_id = '${revisionId}' WHERE id = '${jobId}';
+    `);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    const encrypted = await encryptCredential(
+      Buffer.from(
+        JSON.stringify({
+          accessToken: 'fixture-token',
+          expiresAt: '2030-01-01T00:00:00.000Z',
+          memberUrn,
+          scope: 'w_member_social',
+        }),
+      ),
+      keys,
+    );
+    await db
+      .update(credentials)
+      .set(encrypted)
+      .where(eq(credentials.id, '00000000-0000-4000-8000-000000000404'));
+    for (const [id, image] of [
+      [mediaId, 'urn:li:image:first'],
+      [secondMediaId, 'urn:li:image:second'],
+    ] as const) {
+      const artifact = new PostgresLinkedInVideoArtifactStore(db, {
+        workspaceId: workspaceA,
+        jobId,
+        mediaId: id,
+        memberUrn,
+        kind: 'image',
+      });
+      await artifact.ensure();
+      await artifact.recordUploaded(image);
+    }
+    let secondAvailable = false;
+    const request = vi.fn<typeof fetch>().mockImplementation((resource, init) => {
+      const url =
+        typeof resource === 'string'
+          ? resource
+          : resource instanceof URL
+            ? resource.href
+            : resource.url;
+      if (url.includes('/rest/images/')) {
+        const image = decodeURIComponent(url.split('/').pop() ?? '');
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: image,
+              owner: memberUrn,
+              status: image.endsWith(':second') && !secondAvailable ? 'PROCESSING' : 'AVAILABLE',
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (url.endsWith('/rest/posts'))
+        return Promise.resolve(
+          new Response(null, {
+            status: 201,
+            headers: { 'x-restli-id': 'urn:li:share:gallery' },
+          }),
+        );
+      throw new Error(`Unexpected request: ${url} ${String(init?.method)}`);
+    });
+    const runtime = {
+      database: db,
+      keys,
+      client: new LinkedInHttpClient({
+        clientId: 'fixture',
+        clientSecret: 'fixture',
+        fetch: request,
+      }),
+      source: { load: vi.fn() },
+      workerId: 'linkedin-gallery-fixture',
+      leaseMs: 30_000,
+    };
+    const now = new Date();
+    const posts = () =>
+      request.mock.calls.filter(([resource]) =>
+        (typeof resource === 'string'
+          ? resource
+          : resource instanceof URL
+            ? resource.href
+            : resource.url
+        ).endsWith('/rest/posts'),
+      );
+    await expect(dispatchDueLinkedInJobs(runtime, now)).resolves.toBe(0);
+    expect(posts()).toHaveLength(0);
+    secondAvailable = true;
+    await expect(dispatchDueLinkedInJobs(runtime, new Date(now.getTime() + 30_001))).resolves.toBe(
+      1,
+    );
+    expect(posts()).toHaveLength(1);
+    expect(JSON.parse(posts()[0]?.[1]?.body as string)).toMatchObject({
+      content: {
+        multiImage: { images: [{ id: 'urn:li:image:first' }, { id: 'urn:li:image:second' }] },
+      },
+    });
+    expect(runtime.source.load).not.toHaveBeenCalled();
+  });
+
   it('waits for LinkedIn video processing before one member post and survives a worker cycle', async () => {
     const memberUrn = 'urn:li:person:member';
     const videoUrn = 'urn:li:video:asset';

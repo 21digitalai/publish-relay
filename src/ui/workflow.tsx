@@ -2073,6 +2073,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                             files.some(
                               (file) =>
                                 (isLinkedInVideo && file.size > 500_000_000) ||
+                                (isLinkedInImage && file.size > 5_000_000) ||
                                 file.size >
                                   (file.type === 'video/mp4'
                                     ? isYouTube || isTikTok

@@ -291,6 +291,7 @@ async function dispatchJob(
         mediaId: context.content.mediaId,
         memberUrn: credential.memberUrn,
         kind: 'image',
+        now: () => now,
       });
       const staged = await stageLinkedInImage({
         artifact,

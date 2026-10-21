@@ -175,6 +175,79 @@ describe('Instagram staging persistence and signed media delivery', () => {
     ).rejects.toThrow('identity mismatch');
   });
 
+  it('fails closed after a persisted LinkedIn image readiness timeout without creating a post', async () => {
+    const memberUrn = 'urn:li:person:member';
+    const startedAt = new Date();
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'linkedin', member_urn = '${memberUrn}',
+        external_subject_id = '${memberUrn}', expires_at = '2030-01-01T00:00:00Z'
+        WHERE id = '00000000-0000-4000-8000-000000000405';
+      UPDATE provider_accounts SET destination_provider = 'linkedin',
+        provider_account_id = '${memberUrn}', remote_account_id = '${memberUrn}'
+        WHERE id = '00000000-0000-4000-8000-000000000406';
+      INSERT INTO post_revisions (id, workspace_id, post_id, revision_number, content)
+      VALUES ('00000000-0000-4000-8000-000000000413', '${workspaceA}',
+        '00000000-0000-4000-8000-000000000407', 2,
+        '{"kind":"single_image","text":"Photo"}');
+      INSERT INTO revision_media (workspace_id, revision_id, media_id, position)
+      VALUES ('${workspaceA}', '00000000-0000-4000-8000-000000000413', '${mediaId}', 0);
+      UPDATE publication_jobs SET revision_id = '00000000-0000-4000-8000-000000000413'
+        WHERE id = '${jobId}';
+    `);
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    const encrypted = await encryptCredential(
+      Buffer.from(
+        JSON.stringify({
+          accessToken: 'fixture-token',
+          expiresAt: '2030-01-01T00:00:00.000Z',
+          memberUrn,
+          scope: 'w_member_social',
+        }),
+      ),
+      keys,
+    );
+    await db
+      .update(credentials)
+      .set(encrypted)
+      .where(eq(credentials.id, '00000000-0000-4000-8000-000000000404'));
+    const artifact = new PostgresLinkedInVideoArtifactStore(db, {
+      workspaceId: workspaceA,
+      jobId,
+      mediaId,
+      memberUrn,
+      kind: 'image',
+      now: () => startedAt,
+    });
+    await artifact.ensure();
+    await artifact.recordUploaded('urn:li:image:pending');
+    const request = vi.fn<typeof fetch>();
+    const runtime = {
+      database: db,
+      keys,
+      client: new LinkedInHttpClient({
+        clientId: 'fixture',
+        clientSecret: 'fixture',
+        fetch: request,
+      }),
+      source: { load: vi.fn() },
+      workerId: 'linkedin-image-timeout-fixture',
+      leaseMs: 30_000,
+    };
+    await expect(
+      dispatchDueLinkedInJobs(runtime, new Date(startedAt.getTime() + 300_001)),
+    ).resolves.toBe(0);
+    expect(request).not.toHaveBeenCalled();
+    expect(runtime.source.load).not.toHaveBeenCalled();
+    const state = await database.query<{ state: string; count: number }>(`
+      SELECT state, (SELECT count(*)::int FROM publication_attempts WHERE job_id = '${jobId}') AS count
+      FROM publication_jobs WHERE id = '${jobId}'
+    `);
+    expect(state.rows[0]).toMatchObject({ state: 'failed', count: 1 });
+  });
+
   it('waits for LinkedIn video processing before one member post and survives a worker cycle', async () => {
     const memberUrn = 'urn:li:person:member';
     const videoUrn = 'urn:li:video:asset';

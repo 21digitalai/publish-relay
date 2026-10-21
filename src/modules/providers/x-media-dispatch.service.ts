@@ -500,7 +500,7 @@ export async function reconcileXJobs(runtime: XDispatchRuntime, now = new Date()
 export const dispatchDueXMedia = dispatchDueXJobs;
 
 export function createXMediaClientFactory(
-  options: Pick<XHttpClientOptions, 'consumerKey' | 'consumerSecret'>,
+  options: Pick<XHttpClientOptions, 'consumerKey' | 'consumerSecret' | 'onPostDenial'>,
 ): XMediaClientFactory {
   return (credential) => new XHttpClient(options).bindCredential(credential);
 }

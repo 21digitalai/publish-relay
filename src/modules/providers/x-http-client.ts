@@ -16,6 +16,16 @@ export interface XHttpClientOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   maxMediaStatusPolls?: number;
+  onPostDenial?: (diagnostic: XPostDenialDiagnostic) => void;
+}
+
+export interface XPostDenialDiagnostic {
+  event: 'x_post_denied';
+  status: 403;
+  requestId?: string;
+  title?: string;
+  detail?: string;
+  code?: number;
 }
 
 export interface XRequestToken {
@@ -77,14 +87,56 @@ function safeProviderReason(body: unknown): string | undefined {
   return parts.length > 0 ? parts.join(', ') : undefined;
 }
 
-async function toApiError(response: Response): Promise<XApiError> {
+function safePostDenialDiagnostic(response: Response, body: unknown): XPostDenialDiagnostic {
+  const problem = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const requestHeader =
+    response.headers.get('x-request-id') ?? response.headers.get('x-correlation-id');
+  const requestId =
+    requestHeader && /^[A-Za-z0-9_-]{1,128}$/.test(requestHeader) ? requestHeader : undefined;
+  const code = Array.isArray(problem.errors)
+    ? (problem.errors[0] as Record<string, unknown> | undefined)?.code
+    : undefined;
+  const title = ['Forbidden', 'Unauthorized', 'Not Authorized'].includes(String(problem.title))
+    ? String(problem.title)
+    : undefined;
+  const detail = [
+    'This user is not allowed to post a video longer than 20 minutes.',
+    'This user is not allowed to post a video longer than 125 minutes.',
+  ].includes(String(problem.detail))
+    ? String(problem.detail)
+    : undefined;
+  return {
+    event: 'x_post_denied',
+    status: 403,
+    ...(requestId ? { requestId } : {}),
+    ...(title ? { title } : {}),
+    ...(detail ? { detail } : {}),
+    ...(typeof code === 'number' && Number.isInteger(code) && code >= 0 && code <= 99999
+      ? { code }
+      : {}),
+  };
+}
+
+async function toApiError(
+  response: Response,
+  onPostDenial?: (diagnostic: XPostDenialDiagnostic) => void,
+): Promise<XApiError> {
   const retryAfterSeconds = retryAfter(response);
   let providerReason: string | undefined;
+  let body: unknown;
   if (response.headers.get('content-type')?.includes('json')) {
     try {
-      providerReason = safeProviderReason(await response.json());
+      body = await response.json();
+      providerReason = safeProviderReason(body);
     } catch {
       // Malformed provider error bodies retain only the safe HTTP classification.
+    }
+  }
+  if (response.status === 403 && onPostDenial) {
+    try {
+      onPostDenial(safePostDenialDiagnostic(response, body));
+    } catch {
+      // Diagnostics must never change the definite provider rejection.
     }
   }
   const message =
@@ -413,7 +465,12 @@ export class XHttpClient implements XClient, XMediaUploadClient {
     }
     if (allowNotFound && response.status === 404) return {} as T;
     if (!response.ok) {
-      const error = await toApiError(response);
+      const error = await toApiError(
+        response,
+        method === 'POST' && url === 'https://api.x.com/2/tweets'
+          ? this.options.onPostDenial
+          : undefined,
+      );
       throw new XRequestError(error.status, error.message, {
         ...(error.retryAfterSeconds === undefined
           ? {}

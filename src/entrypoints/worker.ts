@@ -94,6 +94,9 @@ const xRuntime = xCredentials
       createClient: createXMediaClientFactory({
         consumerKey: xCredentials.consumerKey,
         consumerSecret: xCredentials.consumerSecret,
+        onPostDenial: (diagnostic) => {
+          process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
+        },
       }),
       workerId: config.WORKER_ID ?? 'publish-relay-worker',
       leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),

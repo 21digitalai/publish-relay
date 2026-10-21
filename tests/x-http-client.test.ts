@@ -106,6 +106,7 @@ describe('X OAuth 1.0a HTTP client', () => {
   );
 
   it('retains only allowlisted X video denial evidence for post creation', async () => {
+    const onPostDenial = vi.fn();
     const request = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }))
@@ -120,12 +121,14 @@ describe('X OAuth 1.0a HTTP client', () => {
             request_id: 'private-request-sentinel',
           },
           403,
+          { 'x-request-id': 'request_123' },
         ),
       );
     const client = new XHttpClient({
       consumerKey: 'consumer',
       consumerSecret: 'secret',
       fetch: request,
+      onPostDenial,
     }).bindCredential(credential);
 
     const error = await client
@@ -137,26 +140,38 @@ describe('X OAuth 1.0a HTTP client', () => {
     );
     expect(String(error)).not.toContain('private-account-sentinel');
     expect(String(error)).not.toContain('private-request-sentinel');
+    expect(onPostDenial).toHaveBeenCalledWith({
+      event: 'x_post_denied',
+      status: 403,
+      requestId: 'request_123',
+      title: 'Forbidden',
+      detail: 'This user is not allowed to post a video longer than 20 minutes.',
+      code: 324,
+    });
   });
 
   it('discards arbitrary X 403 response detail and non-allowlisted codes', async () => {
+    const onPostDenial = vi.fn();
     const request = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ data: { id: '1', name: 'Daily', username: 'daily' } }))
       .mockResolvedValueOnce(
         response(
           {
+            title: 'customer@example.com',
             detail: 'account-secret-sentinel',
             type: 'https://evil.test/path',
             errors: [{ code: '123secret' }],
           },
           403,
+          { 'x-request-id': 'secret@example.com' },
         ),
       );
     const client = new XHttpClient({
       consumerKey: 'consumer',
       consumerSecret: 'secret',
       fetch: request,
+      onPostDenial,
     }).bindCredential(credential);
     const error = await client
       .createPost({ text: 'Video', mediaIds: ['media-1'], idempotencyKey: 'unknown-denial' })
@@ -164,6 +179,7 @@ describe('X OAuth 1.0a HTTP client', () => {
     expect(String(error)).toContain('(HTTP 403)');
     expect(String(error)).not.toContain('sentinel');
     expect(String(error)).not.toContain('evil.test');
+    expect(onPostDenial).toHaveBeenCalledWith({ event: 'x_post_denied', status: 403 });
   });
 
   it('does not submit an irreversible post when the identity preflight fails', async () => {

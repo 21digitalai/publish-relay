@@ -2730,6 +2730,7 @@ interface CalendarAccount {
   provider: string;
   destinationProvider: string;
   displayName: string;
+  handle?: string;
   originWorkspaceName?: string;
 }
 
@@ -2742,6 +2743,10 @@ function readCalendarSelection(params: URLSearchParams, key: string): string[] |
 function writeCalendarSelection(params: URLSearchParams, key: string, values: string[] | null) {
   if (values === null) params.delete(key);
   else params.set(key, values.join(','));
+}
+
+function calendarResultCount(count: number): string {
+  return `${String(count)} ${count === 1 ? 'post' : 'posts'} shown`;
 }
 
 function useCalendarAccounts(retry: number) {
@@ -2805,6 +2810,7 @@ export function CalendarPage() {
   );
   const [openFilter, setOpenFilter] = useState<'accounts' | 'statuses' | null>(null);
   const [filterAnnouncement, setFilterAnnouncement] = useState('');
+  const announceFilterResult = useRef(false);
   const [catalogRetry, setCatalogRetry] = useState(0);
   const accountCatalog = useCalendarAccounts(catalogRetry);
   const [timeZone, setTimeZone] = useState<string | null>(null);
@@ -2868,15 +2874,37 @@ export function CalendarPage() {
   }, [jobs, mirror.jobs]);
   const accountOptions = useMemo<CalendarFilterOption[]>(() => {
     const catalog = accountCatalog.accounts ?? [];
+    const duplicateNames = new Map<string, number>();
+    for (const account of catalog) {
+      const key = `${account.destinationProvider}:${account.displayName}`;
+      duplicateNames.set(key, (duplicateNames.get(key) ?? 0) + 1);
+    }
+    const seenNames = new Map<string, number>();
     return groupComposerDestinations(catalog).flatMap(([platform, accounts]) =>
-      accounts.map((account) => ({
-        id: account.id,
-        label: account.displayName,
-        ...(account.originWorkspaceName ? { detail: `From ${account.originWorkspaceName}` } : {}),
-        group: destinationPlatform(platform),
-      })),
+      accounts.map((account) => {
+        const key = `${platform}:${account.displayName}`;
+        const ordinal = (seenNames.get(key) ?? 0) + 1;
+        seenNames.set(key, ordinal);
+        const jobHandle = calendarJobs?.find((job) => job.providerAccountId === account.id)?.handle;
+        const handle = account.handle ?? jobHandle;
+        const detail = [
+          handle ? (handle.startsWith('@') ? handle : `@${handle}`) : null,
+          account.originWorkspaceName ? `From ${account.originWorkspaceName}` : null,
+          (duplicateNames.get(key) ?? 0) > 1
+            ? `Account ${String(ordinal)} of ${String(duplicateNames.get(key))}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        return {
+          id: account.id,
+          label: account.displayName,
+          ...(detail ? { detail } : {}),
+          group: destinationPlatform(platform),
+        };
+      }),
     );
-  }, [accountCatalog.accounts]);
+  }, [accountCatalog.accounts, calendarJobs]);
   const statusOptions = useMemo<CalendarFilterOption[]>(
     () => Object.entries(STATE_LABELS).map(([id, label]) => ({ id, label, state: id })),
     [],
@@ -2896,13 +2924,18 @@ export function CalendarPage() {
         (selectedStatuses === null || selectedStatuses.includes(job.state)),
     );
   }, [calendarJobs, accountCatalog.accounts, filtersInvalid, selectedAccounts, selectedStatuses]);
+  useEffect(() => {
+    if (!announceFilterResult.current || filteredJobs === null) return;
+    announceFilterResult.current = false;
+    setFilterAnnouncement(`${calendarResultCount(filteredJobs.length)} after filtering`);
+  }, [filteredJobs]);
   const changeFilter = (key: 'accounts' | 'statuses', values: string[] | null) => {
     const params = new URLSearchParams(window.location.search);
     writeCalendarSelection(params, key, values);
     window.history.pushState(null, '', `${window.location.pathname}?${params}`);
     if (key === 'accounts') setSelectedAccounts(values);
     else setSelectedStatuses(values);
-    setFilterAnnouncement('Calendar filters updated');
+    announceFilterResult.current = true;
   };
   const clearFilters = () => {
     const params = new URLSearchParams(window.location.search);
@@ -2911,7 +2944,7 @@ export function CalendarPage() {
     window.history.pushState(null, '', `${window.location.pathname}?${params}`);
     setSelectedAccounts(null);
     setSelectedStatuses(null);
-    setFilterAnnouncement('Calendar filters cleared');
+    announceFilterResult.current = true;
   };
   useEffect(() => {
     const restore = () => {
@@ -3046,8 +3079,10 @@ export function CalendarPage() {
               setOpenFilter(open ? 'statuses' : null);
             }}
           />
-          <span className="calendar-filter-count">{filteredJobs?.length ?? '…'} posts shown</span>
-          <span className="sr-only">{filteredJobs?.length ?? 0} posts shown</span>
+          <span className="calendar-filter-count">
+            {filteredJobs === null ? '… posts shown' : calendarResultCount(filteredJobs.length)}
+          </span>
+          <span className="sr-only">{calendarResultCount(filteredJobs?.length ?? 0)}</span>
           {(selectedAccounts !== null || selectedStatuses !== null) && (
             <button type="button" className="calendar-filter-clear" onClick={clearFilters}>
               Clear filters

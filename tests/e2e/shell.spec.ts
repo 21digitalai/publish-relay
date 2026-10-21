@@ -4497,6 +4497,9 @@ test('Calendar checkbox filters preserve account, status and URL state', async (
     page.getByRole('group', { name: 'Show accounts' }).getByRole('checkbox'),
   ).toHaveCount(3);
   await page.getByRole('checkbox', { name: /Studio Notes/ }).uncheck();
+  await expect(page.locator('span.sr-only[aria-live="polite"]')).toHaveText(
+    '1 post shown after filtering',
+  );
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: /Show accounts: 2 of 3 accounts/ })).toBeFocused();
   await expect(page.getByRole('link', { name: /Example Editorial, Scheduled/ })).toHaveCount(1);
@@ -4561,6 +4564,15 @@ test('Calendar account filter includes paginated exposed Pages without clipping'
             provider: 'x',
             destinationProvider: 'x',
             displayName: 'Example Editorial',
+            handle: 'editorial-one',
+            status: 'active',
+          },
+          {
+            id: '00000000-0000-4000-8000-000000000202',
+            provider: 'x',
+            destinationProvider: 'x',
+            displayName: 'Example Editorial',
+            handle: 'editorial-two',
             status: 'active',
           },
         ];
@@ -4622,11 +4634,17 @@ test('Calendar account filter includes paginated exposed Pages without clipping'
     }),
   );
   await page.goto(await workspacePath(page, 'calendar?mode=Day&date=2026-10-20'));
-  await expect(page.getByRole('button', { name: 'Show accounts: 2 accounts' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show accounts: 3 accounts' })).toBeVisible();
   await expect(
     page.getByRole('link', { name: /Shared Page, Scheduled.*from 21digital/ }),
   ).toHaveCount(1);
-  await page.getByRole('button', { name: 'Show accounts: 2 accounts' }).click();
+  await page.getByRole('button', { name: 'Show accounts: 3 accounts' }).click();
+  await expect(
+    page.getByRole('checkbox', { name: /Example Editorial.*@editorial-one.*Account 1 of 2/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('checkbox', { name: /Example Editorial.*@editorial-two.*Account 2 of 2/ }),
+  ).toBeVisible();
   await expect(page.getByText('Facebook Pages', { exact: true })).toBeVisible();
   const menu = page.locator('.calendar-filter-menu');
   const box = await menu.boundingBox();

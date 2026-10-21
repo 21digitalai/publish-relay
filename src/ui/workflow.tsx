@@ -898,8 +898,10 @@ function Composer({ onClose }: { onClose: () => void }) {
     (importedMedia.some((item) => !item.ready || !item.mimeType) ||
       isYouTube ||
       (isLinkedInOnly &&
-        (!(isLinkedInVideo || isLinkedInImage || isLinkedInMultiImage) ||
-          (isLinkedInMultiImage
+        (!(isLinkedInVideo || isLinkedInImage || isLinkedInMultiImage || isLinkedInArticle) ||
+          (isLinkedInArticle
+            ? draftMediaIds.length + mediaFiles.length > 1
+            : isLinkedInMultiImage
             ? draftMediaIds.length + mediaFiles.length < 2 ||
               draftMediaIds.length + mediaFiles.length > 20
             : draftMediaIds.length + mediaFiles.length !== 1) ||
@@ -974,6 +976,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       !includesMeta &&
       !isLinkedInVideo &&
       !isLinkedInImage &&
+      !isLinkedInArticle &&
       !isLinkedInMultiImage) ||
     importedMediaIncompatible ||
     (includesMeta && !allowedKinds.includes(contentKind)) ||
@@ -987,6 +990,11 @@ function Composer({ onClose }: { onClose: () => void }) {
     (includesMeta && contentKind === 'link' && !linkUrl.startsWith('https://')) ||
     (isLinkedInOnly && !allowedKinds.includes(contentKind)) ||
     (isLinkedInArticle && (!linkUrl.startsWith('https://') || !articleTitle.trim())) ||
+    (isLinkedInArticle &&
+      (mediaFiles.length + draftMediaIds.length > 1 ||
+        mediaFiles.some(
+          (file) => !['image/jpeg', 'image/png'].includes(file.type) || file.size > 5_000_000,
+        ))) ||
     (isLinkedInVideo &&
       (!videoTitle.trim() ||
         mediaFiles.length + draftMediaIds.length !== 1 ||
@@ -1964,8 +1972,11 @@ function Composer({ onClose }: { onClose: () => void }) {
                           : 'Choose exactly one MP4 video'
                         : isLinkedInVideo
                           ? (mediaFiles[0]?.name ?? 'Choose exactly one MP4 video')
-                          : isLinkedInImage
-                            ? (mediaFiles[0]?.name ?? 'Choose one JPEG or PNG image')
+                          : isLinkedInImage || isLinkedInArticle
+                            ? (mediaFiles[0]?.name ??
+                              (isLinkedInArticle
+                                ? 'Optional JPEG or PNG article thumbnail'
+                                : 'Choose one JPEG or PNG image'))
                             : isLinkedInMultiImage
                               ? `${String(mediaFiles.length + draftMediaIds.length)} of 2–20 images selected`
                               : includesMeta && contentKind !== 'link'
@@ -1981,6 +1992,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     isX ||
                     isLinkedInVideo ||
                     isLinkedInImage ||
+                    isLinkedInArticle ||
                     isLinkedInMultiImage ||
                     (includesMeta && contentKind !== 'link')) && (
                     <>
@@ -1994,7 +2006,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                         accept={
                           isTikTok || isYouTube || isLinkedInVideo
                             ? 'video/mp4'
-                            : isLinkedInImage || isLinkedInMultiImage
+                            : isLinkedInImage || isLinkedInArticle || isLinkedInMultiImage
                               ? 'image/jpeg,image/png'
                               : includesMeta
                                 ? META_IMAGE_MIME_TYPES.join(',')
@@ -2021,7 +2033,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                           const allowed =
                             isTikTok || isYouTube || isLinkedInVideo
                               ? ['video/mp4']
-                              : isLinkedInImage || isLinkedInMultiImage
+                              : isLinkedInImage || isLinkedInArticle || isLinkedInMultiImage
                                 ? ['image/jpeg', 'image/png']
                                 : includesMeta
                                   ? META_IMAGE_MIME_TYPES
@@ -2037,7 +2049,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                               setError,
                               includesMeta
                                 ? 'Choose a JPEG or PNG image for this destination.'
-                                : isLinkedInImage || isLinkedInMultiImage
+                                : isLinkedInImage || isLinkedInArticle || isLinkedInMultiImage
                                   ? 'Choose a JPEG or PNG image for LinkedIn.'
                                   : 'Choose a supported image, GIF, or MP4 file.',
                               'composer',
@@ -2054,7 +2066,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                             );
                             return;
                           }
-                          if (isLinkedInImage && files.length !== 1) {
+                          if ((isLinkedInImage || isLinkedInArticle) && files.length !== 1) {
                             showAnalyticsError(
                               setError,
                               'Choose exactly one JPEG or PNG image.',
@@ -2108,7 +2120,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                             files.some(
                               (file) =>
                                 (isLinkedInVideo && file.size > 500_000_000) ||
-                                ((isLinkedInImage || isLinkedInMultiImage) &&
+                                ((isLinkedInImage || isLinkedInArticle || isLinkedInMultiImage) &&
                                   file.size > 5_000_000) ||
                                 file.size >
                                   (file.type === 'video/mp4'

@@ -420,7 +420,7 @@ export class LinkedInHttpClient {
     credential: LinkedInCredential,
     text: string,
     content?:
-      | { article: { source: string; title: string; description?: string } }
+      | { article: { source: string; title: string; description?: string; thumbnail?: string } }
       | { multiImage: { images: { id: string }[] } }
       | { media: { id: string; title?: string } },
   ): Promise<string> {

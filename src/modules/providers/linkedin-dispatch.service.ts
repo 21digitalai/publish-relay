@@ -189,6 +189,10 @@ async function loadJob(runtime: LinkedInDispatchRuntime, workspaceId: string, jo
           throw new Error('LinkedIn multi-image media is unavailable');
         validateLinkedInImageAsset({ mimeType: media.mimeType, byteSize: media.byteSize });
       }
+    } else if (content.kind === 'link' && content.mediaId) {
+      if (!row.mimeType || row.byteSize === null || row.mediaState !== 'ready')
+        throw new Error('LinkedIn article thumbnail is unavailable');
+      validateLinkedInImageAsset({ mimeType: row.mimeType, byteSize: row.byteSize });
     } else if (content.kind === 'video') {
       if (!row.mimeType || row.byteSize === null || row.mediaState !== 'ready')
         throw new Error('LinkedIn video media is unavailable');
@@ -245,7 +249,10 @@ async function dispatchJob(
   let isImageJob = false;
   try {
     const context = await loadJob(runtime, job.workspaceId, job.id);
-    isImageJob = context.content.kind === 'single_image' || context.content.kind === 'multi_image';
+    isImageJob =
+      context.content.kind === 'single_image' ||
+      context.content.kind === 'multi_image' ||
+      (context.content.kind === 'link' && Boolean(context.content.mediaId));
     connectionId = context.connectionId;
     if (context.status !== 'active' || !context.expiresAt || context.expiresAt <= now) {
       await markReconnectRequired(runtime, job.workspaceId, context.connectionId);
@@ -299,6 +306,8 @@ async function dispatchJob(
           ? context.content.mediaIds
           : context.content.kind === 'single_image'
             ? [context.content.mediaId]
+            : context.content.kind === 'link' && context.content.mediaId
+              ? [context.content.mediaId]
             : [];
       for (const mediaId of imageMediaIds) {
         const artifact = new PostgresLinkedInVideoArtifactStore(runtime.database, {
@@ -344,7 +353,11 @@ async function dispatchJob(
     if (!attempt) return false;
     const externalPostId =
       context.content.kind === 'link'
-        ? await runtime.client.publishArticle({ credential, ...context.content })
+        ? await runtime.client.publishArticle({
+            credential,
+            ...context.content,
+            ...(images[0] ? { thumbnail: images[0] } : {}),
+          })
         : context.content.kind === 'video'
           ? await runtime.client.publishVideo({
               credential,

@@ -279,7 +279,12 @@ async function resolveRevisionTargets(
               validateLinkedInImageAsset(media);
             }
           } else {
-            parseLinkedInContent(input.content, input.mediaIds);
+            const content = parseLinkedInContent(input.content, input.mediaIds);
+            if (content.kind === 'link' && content.mediaId) {
+              const media = mediaRows.find((item) => item.id === content.mediaId);
+              if (!media) throw new Error('LinkedIn article thumbnail is unavailable');
+              validateLinkedInImageAsset(media);
+            }
           }
         } catch (error) {
           throw new PostValidationError(

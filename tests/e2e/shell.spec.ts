@@ -440,6 +440,73 @@ test('LinkedIn article optionally attaches one verified image through the shared
   expect(uploads).toBe(1);
 });
 
+test('LinkedIn article rejects an oversized imported thumbnail before scheduling', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  const draftId = '00000000-0000-4000-8000-000000000850';
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: '00000000-0000-4000-8000-000000000299',
+              provider: 'linkedin',
+              displayName: 'Member article profile',
+              status: 'active',
+              expiresAt: '2030-01-01T00:00:00Z',
+              capabilitySnapshot: { contentKinds: ['text', 'link', 'single_image'] },
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/workflow/drafts/${draftId}`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          label: 'Imported thumbnail',
+          mediaIds: ['00000000-0000-4000-8000-000000000851'],
+          media: [
+            {
+              id: '00000000-0000-4000-8000-000000000851',
+              mimeType: 'image/jpeg',
+              byteSize: 5_000_001,
+              durationMs: null,
+              ready: true,
+              previewUrl: null,
+            },
+          ],
+          postId: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  let posts = 0;
+  await page.route('**/api/workflow/posts', (route) => {
+    posts += 1;
+    return route.abort();
+  });
+  await page.goto(await workspacePath(page, `drafts/${draftId}`));
+  await selectComposerAccount(page, 'Member article profile');
+  await page.getByRole('button', { name: 'Article link' }).click();
+  await page.getByLabel('Post body').fill('Read this');
+  await page.getByLabel('HTTPS link').fill('https://example.com/story');
+  await page.getByLabel('Article title').fill('Story');
+  await expect(
+    page.getByText('Attached draft media is unavailable or unsupported for this destination.'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  expect(posts).toBe(0);
+});
+
 test('LinkedIn organic multi-image keeps ordered media in one destination', async ({
   page,
 }, testInfo) => {

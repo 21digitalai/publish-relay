@@ -507,6 +507,103 @@ test('LinkedIn article rejects an oversized imported thumbnail before scheduling
   expect(posts).toBe(0);
 });
 
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test(`LinkedIn article thumbnail recovers upload failure and replays uncertain post at ${String(viewport.width)}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await establishWorkspaceSession(page);
+    await page.route('**/api/provider-accounts', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            accounts: [
+              {
+                id: '00000000-0000-4000-8000-000000000299',
+                provider: 'linkedin',
+                displayName: 'Member article profile',
+                status: 'active',
+                expiresAt: '2030-01-01T00:00:00Z',
+                capabilitySnapshot: { contentKinds: ['text', 'link', 'single_image'] },
+              },
+            ],
+            nextCursor: null,
+          },
+          error: null,
+        }),
+      }),
+    );
+    let uploads = 0;
+    await page.route('**/api/workflow/media', (route) => {
+      uploads += 1;
+      return route.fulfill({
+        status: uploads === 1 ? 503 : 201,
+        contentType: 'application/json',
+        body:
+          uploads === 1
+            ? '{"error":"Upload unavailable"}'
+            : '{"data":{"id":"00000000-0000-4000-8000-000000000298"},"error":null}',
+      });
+    });
+    const posts: { key: string; body: string }[] = [];
+    await page.route('**/api/workflow/posts', (route) => {
+      posts.push({
+        key: route.request().headers()['idempotency-key'] ?? '',
+        body: route.request().postData() ?? '',
+      });
+      return route.fulfill({
+        status: posts.length === 1 ? 503 : 201,
+        contentType: 'application/json',
+        body:
+          posts.length === 1
+            ? '{"error":"Uncertain response"}'
+            : '{"data":{"jobs":[{}]},"error":null}',
+      });
+    });
+    await page.goto(await workspacePath(page, 'queue'));
+    await page.getByRole('button', { name: 'Create post' }).last().click();
+    await selectComposerAccount(page, 'Member article profile');
+    await page.getByRole('button', { name: 'Article link' }).click();
+    await page.getByLabel('Post body').fill('Read the full story');
+    await page.getByLabel('HTTPS link').fill('https://example.com/story');
+    await page.getByLabel('Article title').fill('Full story');
+    await page.locator('#composer-media-upload').setInputFiles({
+      name: 'thumbnail.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('thumbnail A'),
+    });
+    const schedule = page.getByRole('button', { name: 'Schedule 1 post' });
+    await schedule.click();
+    await expect(page.getByRole('alert')).toContainText('Upload unavailable');
+    await page.screenshot({ path: testInfo.outputPath('article-upload-error.png') });
+    expect(posts).toHaveLength(0);
+    await schedule.click();
+    await expect(page.getByRole('alert')).toContainText('Outcome uncertain');
+    await expect(page.getByText('Editing is paused')).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('article-uncertain.png') });
+    await page.locator('#composer-media-upload').setInputFiles({
+      name: 'thumbnail.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('thumbnail B'),
+    });
+    await expect(page.getByRole('alert')).toContainText('Confirm the previous request');
+    expect(uploads).toBe(2);
+    expect(posts).toHaveLength(1);
+    await page.getByRole('button', { name: 'Confirm previous request' }).click();
+    await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+    expect(uploads).toBe(2);
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toEqual(posts[0]);
+    expect((JSON.parse(posts[0]?.body ?? '{}') as { mediaIds: string[] }).mediaIds).toEqual([
+      '00000000-0000-4000-8000-000000000298',
+    ]);
+  });
+}
+
 test('LinkedIn organic multi-image keeps ordered media in one destination', async ({
   page,
 }, testInfo) => {

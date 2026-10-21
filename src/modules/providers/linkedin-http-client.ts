@@ -29,6 +29,18 @@ const videoStatusSchema = z.object({
   owner: z.string().regex(/^urn:li:person:[^\s]+$/),
   status: z.enum(['WAITING_UPLOAD', 'PROCESSING', 'PROCESSING_FAILED', 'AVAILABLE']),
 });
+const imageUploadSchema = z.object({
+  value: z.object({
+    image: z.string().regex(/^urn:li:image:[^\s]+$/),
+    uploadUrl: z.url(),
+    uploadUrlExpiresAt: z.number().int().positive(),
+  }),
+});
+const imageStatusSchema = z.object({
+  id: z.string().regex(/^urn:li:image:[^\s]+$/),
+  owner: z.string().regex(/^urn:li:person:[^\s]+$/),
+  status: z.enum(['WAITING_UPLOAD', 'PROCESSING', 'PROCESSING_FAILED', 'AVAILABLE']),
+});
 
 function videoHeaders(credential: LinkedInCredential): Record<string, string> {
   return {
@@ -167,6 +179,83 @@ export class LinkedInHttpClient {
 
   async publishText(input: { credential: LinkedInCredential; text: string }): Promise<string> {
     return this.publishPost(input.credential, input.text);
+  }
+
+  async uploadImage(input: {
+    credential: LinkedInCredential;
+    bytes: Buffer;
+    mimeType: string;
+  }): Promise<string> {
+    if (
+      !['image/jpeg', 'image/png'].includes(input.mimeType) ||
+      input.bytes.length < 1 ||
+      input.bytes.length > 5_000_000
+    )
+      throw new Error('LinkedIn image requires a JPEG or PNG up to 5 MB');
+    const initialized = await this.request(
+      'https://api.linkedin.com/rest/images?action=initializeUpload',
+      {
+        method: 'POST',
+        headers: videoHeaders(input.credential),
+        body: JSON.stringify({ initializeUploadRequest: { owner: input.credential.memberUrn } }),
+      },
+    );
+    if (!initialized.ok)
+      throw new LinkedInRequestError(
+        initialized.status,
+        classifyStatus(initialized.status),
+        `LinkedIn image initialization failed (HTTP ${String(initialized.status)})`,
+      );
+    const session = imageUploadSchema.parse(await initialized.json()).value;
+    if (session.uploadUrlExpiresAt <= this.now())
+      throw new Error('LinkedIn image upload URL expired');
+    const uploaded = await this.request(trustedUploadUrl(session.uploadUrl), {
+      method: 'PUT',
+      headers: { 'Content-Type': input.mimeType },
+      body: new Uint8Array(input.bytes),
+      redirect: 'error',
+    });
+    if (!uploaded.ok)
+      throw new LinkedInRequestError(
+        uploaded.status,
+        classifyStatus(uploaded.status),
+        `LinkedIn image upload failed (HTTP ${String(uploaded.status)})`,
+      );
+    return session.image;
+  }
+
+  async getImageStatus(input: {
+    credential: LinkedInCredential;
+    image: string;
+  }): Promise<'WAITING_UPLOAD' | 'PROCESSING' | 'PROCESSING_FAILED' | 'AVAILABLE'> {
+    if (!/^urn:li:image:[^\s]+$/.test(input.image)) throw new Error('Invalid LinkedIn image URN');
+    const response = await this.request(
+      `https://api.linkedin.com/rest/images/${encodeURIComponent(input.image)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${input.credential.accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+      },
+    );
+    if (!response.ok)
+      throw new LinkedInRequestError(
+        response.status,
+        classifyStatus(response.status),
+        `LinkedIn image status failed (HTTP ${String(response.status)})`,
+      );
+    const image = imageStatusSchema.parse(await response.json());
+    if (image.id !== input.image || image.owner !== input.credential.memberUrn)
+      throw new LinkedInRequestError(0, 'validation', 'LinkedIn image owner or identity mismatch');
+    return image.status;
+  }
+
+  async publishImage(input: {
+    credential: LinkedInCredential;
+    text: string;
+    image: string;
+  }): Promise<string> {
+    return this.publishPost(input.credential, input.text, { media: { id: input.image } });
   }
 
   async uploadVideo(input: { credential: LinkedInCredential; bytes: Buffer }): Promise<string> {
@@ -316,7 +405,7 @@ export class LinkedInHttpClient {
     text: string,
     content?:
       | { article: { source: string; title: string; description?: string } }
-      | { media: { id: string; title: string } },
+      | { media: { id: string; title?: string } },
   ): Promise<string> {
     const response = await this.request('https://api.linkedin.com/rest/posts', {
       method: 'POST',

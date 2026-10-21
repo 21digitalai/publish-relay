@@ -146,6 +146,35 @@ describe('Instagram staging persistence and signed media delivery', () => {
     await expect(unattached.ensure()).rejects.toThrow('not attached');
   });
 
+  it('persists an image artifact separately with member and job identity checks', async () => {
+    const scope = {
+      workspaceId: workspaceA,
+      jobId,
+      mediaId,
+      memberUrn: 'urn:li:person:member-1',
+      kind: 'image' as const,
+    };
+    const store = new PostgresLinkedInVideoArtifactStore(db, scope);
+    await expect(store.ensure()).resolves.toEqual({ phase: 'reserved', video: null });
+    await store.recordUploaded('urn:li:image:image-1');
+    await expect(new PostgresLinkedInVideoArtifactStore(db, scope).ensure()).resolves.toEqual({
+      phase: 'processing',
+      video: 'urn:li:image:image-1',
+    });
+    await expect(store.recordStatus('urn:li:image:other', 'AVAILABLE')).rejects.toThrow();
+    await store.recordStatus('urn:li:image:image-1', 'AVAILABLE');
+    await expect(store.ensure()).resolves.toEqual({
+      phase: 'available',
+      video: 'urn:li:image:image-1',
+    });
+    await expect(
+      new PostgresLinkedInVideoArtifactStore(db, {
+        ...scope,
+        memberUrn: 'urn:li:person:other',
+      }).ensure(),
+    ).rejects.toThrow('identity mismatch');
+  });
+
   it('waits for LinkedIn video processing before one member post and survives a worker cycle', async () => {
     const memberUrn = 'urn:li:person:member';
     const videoUrn = 'urn:li:video:asset';

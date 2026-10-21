@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   parseLinkedInContent,
+  parseLinkedInImageContent,
   parseLinkedInVideoContent,
+  validateLinkedInImageAsset,
   validateLinkedInTextContent,
   validateLinkedInVideoAsset,
 } from '../src/modules/providers/linkedin-content.js';
@@ -19,6 +21,141 @@ import {
 const options = { clientId: 'client-id', clientSecret: 'client-secret', now: () => 1_000 };
 
 describe('LinkedIn member integration', () => {
+  it('admits one bounded JPEG or PNG image with text', () => {
+    const mediaId = '00000000-0000-4000-8000-000000000123';
+    expect(
+      parseLinkedInImageContent({ kind: 'single_image', text: ' Picture ' }, [mediaId]),
+    ).toEqual({ kind: 'single_image', text: 'Picture', mediaId });
+    for (const ids of [[], [mediaId, mediaId]])
+      expect(() =>
+        parseLinkedInImageContent({ kind: 'single_image', text: 'Picture' }, ids),
+      ).toThrow();
+    expect(() => {
+      validateLinkedInImageAsset({ mimeType: 'image/png', byteSize: 5_000_000 });
+    }).not.toThrow();
+    for (const media of [
+      { mimeType: 'image/gif', byteSize: 100 },
+      { mimeType: 'image/jpeg', byteSize: 0 },
+      { mimeType: 'image/png', byteSize: 5_000_001 },
+    ])
+      expect(() => {
+        validateLinkedInImageAsset(media);
+      }).toThrow();
+  });
+
+  it('uses Images API upload, unversioned legacy readiness, and a member image post', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const image = 'urn:li:image:image-1';
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: {
+              image,
+              uploadUrl: 'https://www.linkedin.com/upload/image',
+              uploadUrlExpiresAt: 10_000,
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 201 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ id: image, owner: credential.memberUrn, status: 'AVAILABLE' }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:share:42' } }),
+      );
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(
+      client.uploadImage({ credential, bytes: Buffer.alloc(100), mimeType: 'image/png' }),
+    ).resolves.toBe(image);
+    expect(request.mock.calls[0]?.[0]).toBe(
+      'https://api.linkedin.com/rest/images?action=initializeUpload',
+    );
+    expect(request.mock.calls[1]?.[1]).toMatchObject({ method: 'PUT', redirect: 'error' });
+    await expect(client.getImageStatus({ credential, image })).resolves.toBe('AVAILABLE');
+    expect(request.mock.calls[2]?.[1]?.headers).not.toHaveProperty('Linkedin-Version');
+    await expect(client.publishImage({ credential, text: 'Picture', image })).resolves.toBe(
+      'urn:li:share:42',
+    );
+    expect(JSON.parse(request.mock.calls[3]?.[1]?.body as string)).toMatchObject({
+      author: credential.memberUrn,
+      content: { media: { id: image } },
+    });
+  });
+
+  it('fails closed when legacy image readiness is denied or mismatched', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const image = 'urn:li:image:image-1';
+    const denied = new LinkedInHttpClient({
+      ...options,
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 403 })),
+    });
+    await expect(denied.getImageStatus({ credential, image })).rejects.toMatchObject({
+      kind: 'auth',
+    });
+    const mismatch = new LinkedInHttpClient({
+      ...options,
+      fetch: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({ id: image, owner: 'urn:li:person:other', status: 'AVAILABLE' }),
+            { status: 200 },
+          ),
+        ),
+    });
+    await expect(mismatch.getImageStatus({ credential, image })).rejects.toThrow('mismatch');
+  });
+
+  it('does not create a post after an interrupted image upload and holds a missing post receipt', async () => {
+    const credential = {
+      accessToken: 'access',
+      expiresAt: new Date(3_601_000).toISOString(),
+      memberUrn: 'urn:li:person:member-1',
+      scope: 'w_member_social',
+    };
+    const image = 'urn:li:image:image-1';
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            value: {
+              image,
+              uploadUrl: 'https://www.linkedin.com/upload/image',
+              uploadUrlExpiresAt: 10_000,
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockRejectedValueOnce(new TypeError('upload interrupted'));
+    const client = new LinkedInHttpClient({ ...options, fetch: request });
+    await expect(
+      client.uploadImage({ credential, bytes: Buffer.alloc(100), mimeType: 'image/jpeg' }),
+    ).rejects.toThrow('upload interrupted');
+    expect(request).toHaveBeenCalledTimes(2);
+    request.mockResolvedValueOnce(new Response(null, { status: 201 }));
+    await expect(client.publishImage({ credential, text: 'Picture', image })).rejects.toMatchObject(
+      { outcomeUnknown: true },
+    );
+  });
   it('requires exactly one prepared media ID for explicit video content', () => {
     const mediaId = '00000000-0000-4000-8000-000000000123';
     const content = { kind: 'video', text: 'Watch', title: 'Demo' };

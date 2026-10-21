@@ -891,14 +891,19 @@ function Composer({ onClose }: { onClose: () => void }) {
     selected.length > 0 && selected.every((account) => account.provider === 'linkedin');
   const isLinkedInArticle = isLinkedInOnly && contentKind === 'link';
   const isLinkedInVideo = isLinkedInOnly && contentKind === 'video';
+  const isLinkedInImage = isLinkedInOnly && contentKind === 'single_image';
   const importedMediaIncompatible =
     draftMediaIds.length > 0 &&
     (importedMedia.some((item) => !item.ready || !item.mimeType) ||
       isYouTube ||
       (isLinkedInOnly &&
-        (!isLinkedInVideo ||
+        (!(isLinkedInVideo || isLinkedInImage) ||
           draftMediaIds.length + mediaFiles.length !== 1 ||
-          importedMedia.some((item) => item.mimeType !== 'video/mp4'))) ||
+          importedMedia.some((item) =>
+            isLinkedInVideo
+              ? item.mimeType !== 'video/mp4'
+              : !['image/jpeg', 'image/png'].includes(item.mimeType ?? ''),
+          ))) ||
       (includesMeta &&
         (contentKind === 'link' ||
           importedMedia.some((item) => !META_IMAGE_MIME_TYPES.includes(item.mimeType ?? '')))) ||
@@ -963,7 +968,8 @@ function Composer({ onClose }: { onClose: () => void }) {
       !isTikTok &&
       !isX &&
       !includesMeta &&
-      !isLinkedInVideo) ||
+      !isLinkedInVideo &&
+      !isLinkedInImage) ||
     importedMediaIncompatible ||
     (includesMeta && !allowedKinds.includes(contentKind)) ||
     (includesMeta &&
@@ -980,6 +986,9 @@ function Composer({ onClose }: { onClose: () => void }) {
       (!videoTitle.trim() ||
         mediaFiles.length + draftMediaIds.length !== 1 ||
         mediaFiles.some((file) => file.type !== 'video/mp4'))) ||
+    (isLinkedInImage &&
+      (mediaFiles.length + draftMediaIds.length !== 1 ||
+        mediaFiles.some((file) => !['image/jpeg', 'image/png'].includes(file.type)))) ||
     selectedAccounts.length !== 1 ||
     accountPickerOpen ||
     linkedinExpiresBeforeDispatch ||
@@ -1281,7 +1290,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                   }
                 : isLinkedInVideo
                   ? { kind: 'video', text: body.trim(), title: videoTitle.trim() }
-                  : { type: 'text', text: body.trim() },
+                  : isLinkedInImage
+                    ? { kind: 'single_image', text: body.trim() }
+                    : { type: 'text', text: body.trim() },
           mediaIds,
           providerAccountIds: selectedAccounts,
           scheduledAt: targetTime.toISOString(),
@@ -1938,18 +1949,21 @@ function Composer({ onClose }: { onClose: () => void }) {
                           : 'Choose exactly one MP4 video'
                         : isLinkedInVideo
                           ? (mediaFiles[0]?.name ?? 'Choose exactly one MP4 video')
-                          : includesMeta && contentKind !== 'link'
-                            ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
-                            : isX
-                              ? 'Up to four images, or one GIF or MP4 video'
-                              : selectedDestination
-                                ? 'Media is not supported for this account'
-                                : 'Select an account to add media'}
+                          : isLinkedInImage
+                            ? (mediaFiles[0]?.name ?? 'Choose one JPEG or PNG image')
+                            : includesMeta && contentKind !== 'link'
+                              ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
+                              : isX
+                                ? 'Up to four images, or one GIF or MP4 video'
+                                : selectedDestination
+                                  ? 'Media is not supported for this account'
+                                  : 'Select an account to add media'}
                   </span>
                   {(isTikTok ||
                     isYouTube ||
                     isX ||
                     isLinkedInVideo ||
+                    isLinkedInImage ||
                     (includesMeta && contentKind !== 'link')) && (
                     <>
                       <label className="secondary-button" htmlFor="composer-media-upload">
@@ -1962,9 +1976,11 @@ function Composer({ onClose }: { onClose: () => void }) {
                         accept={
                           isTikTok || isYouTube || isLinkedInVideo
                             ? 'video/mp4'
-                            : includesMeta
-                              ? META_IMAGE_MIME_TYPES.join(',')
-                              : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
+                            : isLinkedInImage
+                              ? 'image/jpeg,image/png'
+                              : includesMeta
+                                ? META_IMAGE_MIME_TYPES.join(',')
+                                : 'image/jpeg,image/png,image/webp,image/gif,video/mp4'
                         }
                         multiple={isX || (includesMeta && contentKind === 'carousel')}
                         onChange={(event) => {
@@ -1983,21 +1999,25 @@ function Composer({ onClose }: { onClose: () => void }) {
                           const allowed =
                             isTikTok || isYouTube || isLinkedInVideo
                               ? ['video/mp4']
-                              : includesMeta
-                                ? META_IMAGE_MIME_TYPES
-                                : [
-                                    'image/jpeg',
-                                    'image/png',
-                                    'image/webp',
-                                    'image/gif',
-                                    'video/mp4',
-                                  ];
+                              : isLinkedInImage
+                                ? ['image/jpeg', 'image/png']
+                                : includesMeta
+                                  ? META_IMAGE_MIME_TYPES
+                                  : [
+                                      'image/jpeg',
+                                      'image/png',
+                                      'image/webp',
+                                      'image/gif',
+                                      'video/mp4',
+                                    ];
                           if (files.some((file) => !allowed.includes(file.type))) {
                             showAnalyticsError(
                               setError,
                               includesMeta
                                 ? 'Choose a JPEG or PNG image for this destination.'
-                                : 'Choose a supported image, GIF, or MP4 file.',
+                                : isLinkedInImage
+                                  ? 'Choose a JPEG or PNG image for LinkedIn.'
+                                  : 'Choose a supported image, GIF, or MP4 file.',
                               'composer',
                               'validation',
                             );
@@ -2007,6 +2027,15 @@ function Composer({ onClose }: { onClose: () => void }) {
                             showAnalyticsError(
                               setError,
                               'Choose exactly one MP4 video.',
+                              'composer',
+                              'validation',
+                            );
+                            return;
+                          }
+                          if (isLinkedInImage && files.length !== 1) {
+                            showAnalyticsError(
+                              setError,
+                              'Choose exactly one JPEG or PNG image.',
                               'composer',
                               'validation',
                             );

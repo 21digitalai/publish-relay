@@ -28,6 +28,27 @@ const linkedInVideoSchema = z.object({
   title: z.string().trim().min(1).max(200),
 });
 
+const linkedInImageSchema = z.object({
+  kind: z.literal('single_image'),
+  text: z.string().trim().min(1).max(LINKEDIN_TEXT_MAX_LENGTH),
+});
+
+export function parseLinkedInImageContent(content: unknown, mediaIds: readonly string[]) {
+  const parsed = linkedInImageSchema.safeParse(content);
+  if (!parsed.success || mediaIds.length !== 1 || !mediaIds[0])
+    throw new Error('LinkedIn image requires text and exactly one prepared JPEG or PNG');
+  return { kind: 'single_image' as const, text: parsed.data.text, mediaId: mediaIds[0] };
+}
+
+export function validateLinkedInImageAsset(media: { mimeType: string; byteSize: number }): void {
+  if (
+    !['image/jpeg', 'image/png'].includes(media.mimeType) ||
+    media.byteSize < 1 ||
+    media.byteSize > 5_000_000
+  )
+    throw new Error('LinkedIn image requires a JPEG or PNG up to 5 MB');
+}
+
 /** The media ID is tenant-checked by admission before this stored content is dispatched. */
 export function parseLinkedInVideoContent(
   content: unknown,

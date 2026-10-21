@@ -15,7 +15,9 @@ import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.
 import { hasExactInstagramLoginScopes } from '../providers/instagram-login-client.js';
 import {
   parseLinkedInContent,
+  parseLinkedInImageContent,
   parseLinkedInVideoContent,
+  validateLinkedInImageAsset,
   validateLinkedInVideoAsset,
 } from '../providers/linkedin-content.js';
 import { publicationSettingsRegistry } from '../providers/publication-settings-registry.js';
@@ -263,6 +265,11 @@ async function resolveRevisionTargets(
             const media = mediaRows.find((item) => item.id === content.mediaId);
             if (!media) throw new Error('LinkedIn video media is unavailable');
             validateLinkedInVideoAsset(media);
+          } else if (input.content.kind === 'single_image') {
+            const content = parseLinkedInImageContent(input.content, input.mediaIds);
+            const media = mediaRows.find((item) => item.id === content.mediaId);
+            if (!media) throw new Error('LinkedIn image media is unavailable');
+            validateLinkedInImageAsset(media);
           } else {
             parseLinkedInContent(input.content, input.mediaIds);
           }

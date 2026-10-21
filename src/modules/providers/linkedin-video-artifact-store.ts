@@ -20,12 +20,17 @@ export class PostgresLinkedInVideoArtifactStore {
       jobId: string;
       mediaId: string;
       memberUrn: string;
+      kind?: 'video' | 'image';
       now?: () => Date;
     },
   ) {}
 
   private get key(): string {
-    return `linkedin:video:${this.scope.mediaId}`;
+    return `linkedin:${this.scope.kind ?? 'video'}:${this.scope.mediaId}`;
+  }
+
+  private get artifactKind(): string {
+    return `linkedin_${this.scope.kind ?? 'video'}`;
   }
 
   async ensure(): Promise<LinkedInVideoArtifact> {
@@ -57,10 +62,13 @@ export class PostgresLinkedInVideoArtifactStore {
           jobId: this.scope.jobId,
           mediaId: this.scope.mediaId,
           artifactKey: this.key,
-          artifactKind: 'linkedin_video',
+          artifactKind: this.artifactKind,
           artifactStatus: 'reserved',
           providerReference: this.scope.memberUrn,
-          expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+          expiresAt: new Date(
+            now.getTime() +
+              (this.scope.kind === 'image' ? 5 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000),
+          ),
         })
         .onConflictDoNothing();
       const [row] = await tx
@@ -75,7 +83,7 @@ export class PostgresLinkedInVideoArtifactStore {
         )
         .limit(1);
       if (
-        row?.artifactKind !== 'linkedin_video' ||
+        row?.artifactKind !== this.artifactKind ||
         row.mediaId !== this.scope.mediaId ||
         row.providerReference !== this.scope.memberUrn ||
         row.deletedAt
@@ -83,12 +91,19 @@ export class PostgresLinkedInVideoArtifactStore {
         throw new Error('LinkedIn video artifact identity mismatch');
       if (!['reserved', 'processing', 'available', 'failed'].includes(row.artifactStatus))
         throw new Error('LinkedIn video artifact phase is invalid');
+      if (
+        this.scope.kind === 'image' &&
+        row.artifactStatus === 'processing' &&
+        row.expiresAt <= now
+      )
+        throw new Error('LinkedIn image readiness timed out');
       return { phase: row.artifactStatus as LinkedInVideoPhase, video: row.externalObjectId };
     });
   }
 
   async recordUploaded(video: string): Promise<void> {
-    if (!/^urn:li:video:[^\s]+$/.test(video)) throw new Error('Invalid LinkedIn video URN');
+    if (!new RegExp(`^urn:li:${this.scope.kind ?? 'video'}:[^\\s]+$`).test(video))
+      throw new Error('Invalid LinkedIn media URN');
     const rows = await withTenantTransaction(this.database, this.scope, (tx) =>
       tx
         .update(providerStagingArtifacts)
@@ -102,7 +117,7 @@ export class PostgresLinkedInVideoArtifactStore {
             eq(providerStagingArtifacts.workspaceId, this.scope.workspaceId),
             eq(providerStagingArtifacts.jobId, this.scope.jobId),
             eq(providerStagingArtifacts.artifactKey, this.key),
-            eq(providerStagingArtifacts.artifactKind, 'linkedin_video'),
+            eq(providerStagingArtifacts.artifactKind, this.artifactKind),
             eq(providerStagingArtifacts.artifactStatus, 'reserved'),
             eq(providerStagingArtifacts.providerReference, this.scope.memberUrn),
           ),
@@ -125,7 +140,7 @@ export class PostgresLinkedInVideoArtifactStore {
             eq(providerStagingArtifacts.workspaceId, this.scope.workspaceId),
             eq(providerStagingArtifacts.jobId, this.scope.jobId),
             eq(providerStagingArtifacts.artifactKey, this.key),
-            eq(providerStagingArtifacts.artifactKind, 'linkedin_video'),
+            eq(providerStagingArtifacts.artifactKind, this.artifactKind),
             eq(providerStagingArtifacts.artifactStatus, 'processing'),
             eq(providerStagingArtifacts.externalObjectId, video),
             eq(providerStagingArtifacts.providerReference, this.scope.memberUrn),

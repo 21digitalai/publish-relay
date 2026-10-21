@@ -902,9 +902,9 @@ function Composer({ onClose }: { onClose: () => void }) {
           (isLinkedInArticle
             ? draftMediaIds.length + mediaFiles.length > 1
             : isLinkedInMultiImage
-            ? draftMediaIds.length + mediaFiles.length < 2 ||
-              draftMediaIds.length + mediaFiles.length > 20
-            : draftMediaIds.length + mediaFiles.length !== 1) ||
+              ? draftMediaIds.length + mediaFiles.length < 2 ||
+                draftMediaIds.length + mediaFiles.length > 20
+              : draftMediaIds.length + mediaFiles.length !== 1) ||
           importedMedia.some((item) =>
             isLinkedInVideo
               ? item.mimeType !== 'video/mp4'

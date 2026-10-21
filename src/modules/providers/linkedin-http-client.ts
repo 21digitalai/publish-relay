@@ -380,12 +380,16 @@ export class LinkedInHttpClient {
     linkUrl: string;
     title: string;
     description?: string;
+    thumbnail?: string;
   }): Promise<string> {
+    if (input.thumbnail && !/^urn:li:image:[^\s]+$/.test(input.thumbnail))
+      throw new Error('Invalid LinkedIn article thumbnail URN');
     return this.publishPost(input.credential, input.text, {
       article: {
         source: input.linkUrl,
         title: input.title,
         ...(input.description ? { description: input.description } : {}),
+        ...(input.thumbnail ? { thumbnail: input.thumbnail } : {}),
       },
     });
   }

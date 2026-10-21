@@ -308,7 +308,7 @@ async function dispatchJob(
             ? [context.content.mediaId]
             : context.content.kind === 'link' && context.content.mediaId
               ? [context.content.mediaId]
-            : [];
+              : [];
       for (const mediaId of imageMediaIds) {
         const artifact = new PostgresLinkedInVideoArtifactStore(runtime.database, {
           workspaceId: job.workspaceId,

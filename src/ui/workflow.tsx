@@ -908,7 +908,10 @@ function Composer({ onClose }: { onClose: () => void }) {
           importedMedia.some((item) =>
             isLinkedInVideo
               ? item.mimeType !== 'video/mp4'
-              : !['image/jpeg', 'image/png'].includes(item.mimeType ?? ''),
+              : !['image/jpeg', 'image/png'].includes(item.mimeType ?? '') ||
+                item.byteSize === null ||
+                item.byteSize < 1 ||
+                item.byteSize > 5_000_000,
           ))) ||
       (includesMeta &&
         (contentKind === 'link' ||

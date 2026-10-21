@@ -4455,3 +4455,187 @@ test.describe('Europe/Sofia DST scheduling', () => {
     expect(persistedSchedules).toEqual(['2027-10-31T00:30:00.000Z', '2027-10-31T01:30:00.000Z']);
   });
 });
+test('Calendar checkbox filters preserve account, status and URL state', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await establishWorkspaceSession(page);
+  await mockConnectedAccounts(page);
+  const accounts = [
+    ['00000000-0000-4000-8000-000000000201', 'Example Editorial', 'scheduled'],
+    ['00000000-0000-4000-8000-000000000202', 'Studio Notes', 'published'],
+  ];
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: accounts.map(([id, name, state], index) => ({
+            id: `job-${String(index)}`,
+            state,
+            needsAttention: false,
+            scheduledAt: '2026-10-20T10:00:00Z',
+            contentPreview: 'Calendar test post',
+            providerAccount: { id, displayName: name, handle: name, provider: 'x' },
+          })),
+          next: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/calendar/exposed-pages?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: '{"data":{"items":[],"next":null},"error":null}',
+    }),
+  );
+  await page.goto(await workspacePath(page, 'calendar?mode=Day&date=2026-10-20'));
+  await expect(page.getByRole('button', { name: 'Show accounts: 3 accounts' })).toBeVisible();
+  expect(errors).toEqual([]);
+  await page.getByRole('button', { name: 'Show accounts: 3 accounts' }).click();
+  await expect(
+    page.getByRole('group', { name: 'Show accounts' }).getByRole('checkbox'),
+  ).toHaveCount(3);
+  await page.getByRole('checkbox', { name: /Studio Notes/ }).uncheck();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: /Show accounts: 2 of 3 accounts/ })).toBeFocused();
+  await expect(page.getByRole('link', { name: /Example Editorial, Scheduled/ })).toHaveCount(1);
+  await expect(page.getByRole('link', { name: /Studio Notes, Published/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show statuses: All statuses' }).click();
+  await page.getByRole('checkbox', { name: 'Scheduled' }).uncheck();
+  await expect(page.getByText('No posts match these filters')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: /Show accounts: 2 of 3 accounts/ })).toBeVisible();
+  await expect(page.getByText('No posts match these filters')).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('button', { name: 'Show statuses: All statuses' })).toBeVisible();
+  for (const mode of ['Month', 'Week', 'Day', 'Timeline']) {
+    await page.getByRole('button', { name: mode, exact: true }).click();
+    await expect(
+      page
+        .getByLabel(`${mode} calendar`)
+        .getByRole('link', { name: /Example Editorial, Scheduled/ }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByLabel(`${mode} calendar`).getByRole('link', { name: /Studio Notes, Published/ }),
+    ).toHaveCount(0);
+  }
+  if (page.viewportSize()?.width === 390) {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      390,
+    );
+  }
+  await page.goto(await workspacePath(page, 'calendar?mode=Day&date=2026-10-20&statuses=unknown'));
+  await expect(page.getByText('Some saved filters are no longer available.')).toBeVisible();
+  await expect(page.getByRole('link', { name: /Example Editorial, Scheduled/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Reset filters' }).click();
+  await expect(page.getByRole('link', { name: /Example Editorial, Scheduled/ })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Show accounts: 3 accounts' }).click();
+  await page.getByRole('checkbox', { name: /Example Editorial/ }).uncheck();
+  await page.getByRole('checkbox', { name: /Studio Notes/ }).uncheck();
+  await page.getByRole('checkbox', { name: /Avery Studio/ }).uncheck();
+  await expect(page.getByText('No accounts selected')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('Calendar account filter includes paginated exposed Pages without clipping', async ({
+  page,
+}, testInfo) => {
+  await establishWorkspaceSession(page);
+  await page.route('**/api/provider-accounts*', (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    const accounts = cursor
+      ? [
+          {
+            id: '00000000-0000-4000-8000-000000000212',
+            provider: 'meta',
+            destinationProvider: 'facebook_page',
+            displayName: 'Shared Page',
+            originWorkspaceName: '21digital',
+            status: 'active',
+          },
+        ]
+      : [
+          {
+            id: '00000000-0000-4000-8000-000000000201',
+            provider: 'x',
+            destinationProvider: 'x',
+            displayName: 'Example Editorial',
+            status: 'active',
+          },
+        ];
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { accounts, nextCursor: cursor ? null : 'page2' },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/workflow/jobs?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: 'local-job',
+              state: 'scheduled',
+              needsAttention: false,
+              scheduledAt: '2026-10-20T10:00:00Z',
+              contentPreview: 'Local post',
+              providerAccount: {
+                id: '00000000-0000-4000-8000-000000000201',
+                displayName: 'Example Editorial',
+                handle: '',
+                provider: 'x',
+              },
+            },
+          ],
+          next: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route('**/api/workflow/calendar/exposed-pages?*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: 'shared-job',
+              providerAccountId: '00000000-0000-4000-8000-000000000212',
+              providerAccountName: 'Shared Page',
+              originWorkspaceName: '21digital',
+              state: 'scheduled',
+              scheduledAt: '2026-10-20T11:00:00Z',
+              contentPreview: 'Shared post',
+              mediaCount: 0,
+            },
+          ],
+          next: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(await workspacePath(page, 'calendar?mode=Day&date=2026-10-20'));
+  await expect(page.getByRole('button', { name: 'Show accounts: 2 accounts' })).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: /Shared Page, Scheduled.*from 21digital/ }),
+  ).toHaveCount(1);
+  await page.getByRole('button', { name: 'Show accounts: 2 accounts' }).click();
+  await expect(page.getByText('Facebook Pages', { exact: true })).toBeVisible();
+  const menu = page.locator('.calendar-filter-menu');
+  const box = await menu.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport) throw new Error('Calendar filter menu was not rendered');
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  await page.screenshot({ path: testInfo.outputPath('calendar-account-filter.png') });
+  await page.getByRole('checkbox', { name: /Shared Page.*From 21digital/ }).uncheck();
+  await expect(page.getByRole('link', { name: /Shared Page, Scheduled/ })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /Example Editorial, Scheduled/ })).toHaveCount(1);
+});

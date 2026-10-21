@@ -32,6 +32,7 @@ import { useCalendarMirror, type CalendarMirrorJob } from './calendar-mirror.js'
 import { calendarDateKey, calendarTime, calendarZonedMidnight } from './calendar-time.js';
 import { layoutCalendarBlocks } from './calendar-layout.js';
 import { getPostingAdapter } from './posting-adapter-registry.js';
+import { CalendarCheckboxFilter, type CalendarFilterOption } from './calendar-filters.js';
 
 type JobState =
   | 'scheduled'
@@ -623,8 +624,8 @@ function destinationName(destination: ComposerDestination): string {
   return `${destinationPlatform(destination.destinationProvider)} · ${destination.displayName}`;
 }
 
-function groupComposerDestinations(accounts: ComposerDestination[]) {
-  const groups = new Map<string, ComposerDestination[]>();
+function groupComposerDestinations<T extends { destinationProvider: string }>(accounts: T[]) {
+  const groups = new Map<string, T[]>();
   for (const account of accounts) {
     const platform = account.destinationProvider;
     const group = groups.get(platform) ?? [];
@@ -2724,9 +2725,88 @@ export function QueuePage() {
   );
 }
 
+interface CalendarAccount {
+  id: string;
+  provider: string;
+  destinationProvider: string;
+  displayName: string;
+  originWorkspaceName?: string;
+}
+
+function readCalendarSelection(params: URLSearchParams, key: string): string[] | null {
+  if (!params.has(key)) return null;
+  const value = params.get(key);
+  return value ? [...new Set(value.split(',').filter(Boolean))] : [];
+}
+
+function writeCalendarSelection(params: URLSearchParams, key: string, values: string[] | null) {
+  if (values === null) params.delete(key);
+  else params.set(key, values.join(','));
+}
+
+function useCalendarAccounts(retry: number) {
+  const [accounts, setAccounts] = useState<CalendarAccount[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    setAccounts(null);
+    setError(null);
+    void (async () => {
+      const found = new Map<string, CalendarAccount>();
+      let cursor: string | null = null;
+      for (let page = 0; page < 100; page += 1) {
+        const url = cursor
+          ? `/api/provider-accounts?cursor=${encodeURIComponent(cursor)}`
+          : '/api/provider-accounts';
+        const response = await fetch(url, { signal: controller.signal });
+        const result = (await response.json()) as {
+          data: {
+            accounts: (Omit<CalendarAccount, 'destinationProvider'> & {
+              destinationProvider?: string;
+            })[];
+            nextCursor: string | null;
+          } | null;
+          error: string | null;
+        };
+        if (!response.ok || !result.data)
+          throw new Error(result.error ?? 'Accounts could not be loaded');
+        for (const account of result.data.accounts) {
+          found.set(account.id, {
+            ...account,
+            destinationProvider: account.destinationProvider ?? account.provider,
+          });
+        }
+        cursor = result.data.nextCursor;
+        if (!cursor) {
+          if (!controller.signal.aborted) setAccounts([...found.values()]);
+          return;
+        }
+      }
+      throw new Error('Account catalog is too large to display completely');
+    })().catch((failure: unknown) => {
+      if (!controller.signal.aborted)
+        setError(failure instanceof Error ? failure.message : 'Accounts could not be loaded');
+    });
+    return () => {
+      controller.abort();
+    };
+  }, [retry]);
+  return { accounts, error };
+}
+
 export function CalendarPage() {
   const initialParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const [mode, setMode] = useState(initialParams.get('mode') ?? 'Week');
+  const [selectedAccounts, setSelectedAccounts] = useState<string[] | null>(() =>
+    readCalendarSelection(initialParams, 'accounts'),
+  );
+  const [selectedStatuses, setSelectedStatuses] = useState<string[] | null>(() =>
+    readCalendarSelection(initialParams, 'statuses'),
+  );
+  const [openFilter, setOpenFilter] = useState<'accounts' | 'statuses' | null>(null);
+  const [filterAnnouncement, setFilterAnnouncement] = useState('');
+  const [catalogRetry, setCatalogRetry] = useState(0);
+  const accountCatalog = useCalendarAccounts(catalogRetry);
   const [timeZone, setTimeZone] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [visibleDate, setVisibleDate] = useState(() => {
@@ -2786,17 +2866,90 @@ export function CalendarPage() {
     }
     return [...byId.values()];
   }, [jobs, mirror.jobs]);
+  const accountOptions = useMemo<CalendarFilterOption[]>(() => {
+    const catalog = accountCatalog.accounts ?? [];
+    return groupComposerDestinations(catalog).flatMap(([platform, accounts]) =>
+      accounts.map((account) => ({
+        id: account.id,
+        label: account.displayName,
+        ...(account.originWorkspaceName ? { detail: `From ${account.originWorkspaceName}` } : {}),
+        group: destinationPlatform(platform),
+      })),
+    );
+  }, [accountCatalog.accounts]);
+  const statusOptions = useMemo<CalendarFilterOption[]>(
+    () => Object.entries(STATE_LABELS).map(([id, label]) => ({ id, label, state: id })),
+    [],
+  );
+  const invalidAccounts =
+    selectedAccounts?.some((id) => !accountOptions.some((option) => option.id === id)) &&
+    accountCatalog.accounts !== null;
+  const invalidStatuses = selectedStatuses?.some((id) => !(id in STATE_LABELS));
+  const filtersInvalid = Boolean(invalidAccounts) || Boolean(invalidStatuses);
+  const filteredJobs = useMemo(() => {
+    if (!calendarJobs || !accountCatalog.accounts) return null;
+    if (filtersInvalid) return [];
+    return calendarJobs.filter(
+      (job) =>
+        job.providerAccountId !== undefined &&
+        (selectedAccounts === null || selectedAccounts.includes(job.providerAccountId)) &&
+        (selectedStatuses === null || selectedStatuses.includes(job.state)),
+    );
+  }, [calendarJobs, accountCatalog.accounts, filtersInvalid, selectedAccounts, selectedStatuses]);
+  const changeFilter = (key: 'accounts' | 'statuses', values: string[] | null) => {
+    const params = new URLSearchParams(window.location.search);
+    writeCalendarSelection(params, key, values);
+    window.history.pushState(null, '', `${window.location.pathname}?${params}`);
+    if (key === 'accounts') setSelectedAccounts(values);
+    else setSelectedStatuses(values);
+    setFilterAnnouncement('Calendar filters updated');
+  };
+  const clearFilters = () => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('accounts');
+    params.delete('statuses');
+    window.history.pushState(null, '', `${window.location.pathname}?${params}`);
+    setSelectedAccounts(null);
+    setSelectedStatuses(null);
+    setFilterAnnouncement('Calendar filters cleared');
+  };
   useEffect(() => {
-    const params = new URLSearchParams({
-      mode,
-      date: localDateKey(visibleDate),
-    });
+    const restore = () => {
+      const params = new URLSearchParams(window.location.search);
+      setMode(params.get('mode') ?? 'Week');
+      const date = params.get('date');
+      if (date) {
+        const parsed = new Date(`${date}T12:00:00`);
+        if (Number.isFinite(parsed.getTime())) setVisibleDate(startOfDay(parsed));
+      }
+      setSelectedAccounts(readCalendarSelection(params, 'accounts'));
+      setSelectedStatuses(readCalendarSelection(params, 'statuses'));
+      setOpenFilter(null);
+    };
+    window.addEventListener('popstate', restore);
+    return () => {
+      window.removeEventListener('popstate', restore);
+    };
+  }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('mode', mode);
+    params.set('date', localDateKey(visibleDate));
     window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
   }, [mode, visibleDate]);
   const moveVisibleDate = (date: Date, direction: number) =>
     mode === 'Month'
       ? addMonths(date, direction)
       : addDays(date, direction * (mode === 'Week' ? 7 : 1));
+  const navigateCalendar = (nextMode: string, nextDate: Date) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('mode', nextMode);
+    params.set('date', localDateKey(nextDate));
+    window.history.pushState(null, '', `${window.location.pathname}?${params}`);
+    setMode(nextMode);
+    setVisibleDate(nextDate);
+    setOpenFilter(null);
+  };
   return (
     <WorkspaceLayout active="calendar">
       <PublicationToastStack toasts={toasts} onDismiss={dismissToast} />
@@ -2810,7 +2963,7 @@ export function CalendarPage() {
             className="secondary-button"
             onClick={() => {
               const key = calendarDateKey(new Date(), timeZone ?? 'UTC');
-              setVisibleDate(new Date(`${key}T12:00:00`));
+              navigateCalendar(mode, new Date(`${key}T12:00:00`));
             }}
           >
             Today
@@ -2819,7 +2972,7 @@ export function CalendarPage() {
             className="icon-button"
             aria-label="Previous date"
             onClick={() => {
-              setVisibleDate((date) => moveVisibleDate(date, -1));
+              navigateCalendar(mode, moveVisibleDate(visibleDate, -1));
             }}
           >
             ←
@@ -2828,7 +2981,7 @@ export function CalendarPage() {
             className="icon-button"
             aria-label="Next date"
             onClick={() => {
-              setVisibleDate((date) => moveVisibleDate(date, 1));
+              navigateCalendar(mode, moveVisibleDate(visibleDate, 1));
             }}
           >
             →
@@ -2843,43 +2996,126 @@ export function CalendarPage() {
                 className={mode === label ? 'active' : ''}
                 key={label}
                 onClick={() => {
-                  setMode(label);
+                  navigateCalendar(label, visibleDate);
                 }}
               >
                 {label}
               </button>
             ))}
           </div>
-          <button className="filter-button">
-            {
-              new Set(
-                (calendarJobs ?? []).map(
-                  (job) => job.providerAccountId ?? `${job.provider}:${job.handle}`,
-                ),
-              ).size
-            }{' '}
-            accounts
-          </button>
-          <button className="filter-button">All statuses</button>
+          <CalendarCheckboxFilter
+            title="Show accounts"
+            summary={
+              accountCatalog.accounts === null
+                ? 'Accounts loading'
+                : selectedAccounts === null
+                  ? `${String(accountOptions.length)} accounts`
+                  : `${String(selectedAccounts.length)} of ${String(accountOptions.length)} accounts`
+            }
+            options={accountOptions}
+            selected={selectedAccounts}
+            onChange={(values) => {
+              changeFilter('accounts', values);
+            }}
+            open={openFilter === 'accounts'}
+            onOpenChange={(open) => {
+              setOpenFilter(open ? 'accounts' : null);
+            }}
+            loading={accountCatalog.accounts === null && !accountCatalog.error}
+            error={accountCatalog.error}
+            onRetry={() => {
+              setCatalogRetry((value) => value + 1);
+            }}
+          />
+          <CalendarCheckboxFilter
+            title="Show statuses"
+            summary={
+              selectedStatuses === null
+                ? 'All statuses'
+                : selectedStatuses.length
+                  ? `${String(selectedStatuses.length)} ${selectedStatuses.length === 1 ? 'status' : 'statuses'}`
+                  : 'No statuses'
+            }
+            options={statusOptions}
+            selected={selectedStatuses}
+            onChange={(values) => {
+              changeFilter('statuses', values);
+            }}
+            open={openFilter === 'statuses'}
+            onOpenChange={(open) => {
+              setOpenFilter(open ? 'statuses' : null);
+            }}
+          />
+          <span className="calendar-filter-count">{filteredJobs?.length ?? '…'} posts shown</span>
+          <span className="sr-only">{filteredJobs?.length ?? 0} posts shown</span>
+          {(selectedAccounts !== null || selectedStatuses !== null) && (
+            <button type="button" className="calendar-filter-clear" onClick={clearFilters}>
+              Clear filters
+            </button>
+          )}
         </div>
+        <span className="sr-only" aria-live="polite">
+          {filterAnnouncement}
+        </span>
+        {filtersInvalid && (
+          <div className="calendar-filter-notice" role="status">
+            Some saved filters are no longer available.{' '}
+            <button type="button" onClick={clearFilters}>
+              Reset filters
+            </button>
+          </div>
+        )}
         {loadError || mirror.error || sessionError ? (
           <div className="filter-empty" role="alert">
             <h2>Calendar unavailable</h2>
             <p>{loadError ?? mirror.error ?? sessionError}</p>
           </div>
-        ) : calendarJobs === null || !timeZone ? (
+        ) : accountCatalog.error ? (
+          <div className="filter-empty" role="alert">
+            <h2>Account filters unavailable</h2>
+            <p>{accountCatalog.error}</p>
+            <button
+              className="secondary-button"
+              onClick={() => {
+                setCatalogRetry((value) => value + 1);
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        ) : filteredJobs === null || !timeZone ? (
           <WorkflowLoading kind="calendar" label="Loading publication calendar" />
-        ) : mode === 'Month' ? (
-          <MonthCalendar jobs={calendarJobs} anchor={visibleDate} timeZone={timeZone} />
-        ) : mode === 'Timeline' ? (
-          <TimelineCalendar jobs={calendarJobs} anchor={visibleDate} timeZone={timeZone} />
         ) : (
-          <TimeCalendar
-            dayOnly={mode === 'Day'}
-            jobs={calendarJobs}
-            anchor={visibleDate}
-            timeZone={timeZone}
-          />
+          <>
+            {filteredJobs.length === 0 && (
+              <div className="calendar-filter-notice">
+                {selectedAccounts?.length === 0
+                  ? 'No accounts selected'
+                  : selectedStatuses?.length === 0
+                    ? 'No statuses selected'
+                    : calendarJobs?.length === 0
+                      ? 'Nothing scheduled yet'
+                      : 'No posts match these filters'}
+                {(selectedAccounts !== null || selectedStatuses !== null) && (
+                  <button type="button" onClick={clearFilters}>
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
+            {mode === 'Month' ? (
+              <MonthCalendar jobs={filteredJobs} anchor={visibleDate} timeZone={timeZone} />
+            ) : mode === 'Timeline' ? (
+              <TimelineCalendar jobs={filteredJobs} anchor={visibleDate} timeZone={timeZone} />
+            ) : (
+              <TimeCalendar
+                dayOnly={mode === 'Day'}
+                jobs={filteredJobs}
+                anchor={visibleDate}
+                timeZone={timeZone}
+              />
+            )}
+          </>
         )}
       </section>
     </WorkspaceLayout>

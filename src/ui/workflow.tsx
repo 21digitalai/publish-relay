@@ -898,11 +898,13 @@ function Composer({ onClose }: { onClose: () => void }) {
     (importedMedia.some((item) => !item.ready || !item.mimeType) ||
       isYouTube ||
       (isLinkedInOnly &&
-        (!(isLinkedInVideo || isLinkedInImage || isLinkedInArticle || isLinkedInMultiImage) ||
-          (isLinkedInMultiImage
-            ? draftMediaIds.length + mediaFiles.length < 2 ||
-              draftMediaIds.length + mediaFiles.length > 20
-            : draftMediaIds.length + mediaFiles.length !== 1) ||
+        (!(isLinkedInVideo || isLinkedInImage || isLinkedInMultiImage || isLinkedInArticle) ||
+          (isLinkedInArticle
+            ? draftMediaIds.length + mediaFiles.length > 1
+            : isLinkedInMultiImage
+              ? draftMediaIds.length + mediaFiles.length < 2 ||
+                draftMediaIds.length + mediaFiles.length > 20
+              : draftMediaIds.length + mediaFiles.length !== 1) ||
           importedMedia.some((item) =>
             isLinkedInVideo
               ? item.mimeType !== 'video/mp4'
@@ -977,8 +979,8 @@ function Composer({ onClose }: { onClose: () => void }) {
       !includesMeta &&
       !isLinkedInVideo &&
       !isLinkedInImage &&
-      !isLinkedInMultiImage &&
-      !isLinkedInArticle) ||
+      !isLinkedInArticle &&
+      !isLinkedInMultiImage) ||
     importedMediaIncompatible ||
     (includesMeta && !allowedKinds.includes(contentKind)) ||
     (includesMeta &&
@@ -1993,8 +1995,8 @@ function Composer({ onClose }: { onClose: () => void }) {
                     isX ||
                     isLinkedInVideo ||
                     isLinkedInImage ||
-                    isLinkedInMultiImage ||
                     isLinkedInArticle ||
+                    isLinkedInMultiImage ||
                     (includesMeta && contentKind !== 'link')) && (
                     <>
                       <label className="secondary-button" htmlFor="composer-media-upload">

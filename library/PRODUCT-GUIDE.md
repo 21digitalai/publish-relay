@@ -27,9 +27,10 @@ Users can register, connect multiple social accounts, schedule content through t
 - Facebook Page phase-one publishing: a canonical HTTPS link with optional message, or one JPEG/PNG image with a message. Text-only, multiple images, video, and advanced Page options remain later work.
 - Facebook Pages and Instagram have independent consent and grant paths. Instagram Login asks only
   for Instagram profile and content-publishing permissions and does not require selecting a Facebook
-  Page. Connection/discovery does not enable publishing by itself; the new Instagram Login destination
-  remains non-publishable until its publishing transport is reviewed and the exact saved grant,
-  permissions, credential, and account identity are verified for promotion. Instagram Login
+  Page. A successful Instagram Login callback activates the destination only after the exact
+  publishing scopes and eligible account identity are verified. Failed, partial, or mismatched
+  grants do not replace a connection. Existing unavailable grants require the separately reviewed
+  recovery promotion path; connection alone is not proof that a provider post succeeded. Instagram Login
   publishing accepts JPEG only under Meta's documented input contract; PNG support remains a
   separate unresolved conversion/product decision. Existing Facebook Login Instagram
   grants require fresh consent and do not migrate tokens. Instagram and Facebook jobs remain independent.

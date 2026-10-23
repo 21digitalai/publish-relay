@@ -94,7 +94,8 @@ export async function completeInstagramLogin(
             destinationProvider: 'instagram',
             displayName: grant.username,
             credentialId: credential.id,
-            availability: 'publishing_unavailable',
+            // exchangeCode has verified the exact grant and eligible provider identity.
+            availability: 'active',
           },
         ],
         requestId: input.requestId,

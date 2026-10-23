@@ -1656,7 +1656,7 @@ describe('credential and OAuth persistence', () => {
     );
     expect(before.rows).toHaveLength(1);
     expect(before.rows[0]).toMatchObject({
-      availability: 'publishing_unavailable',
+      availability: 'active',
       destination_provider: 'instagram',
       remote_account_id: 'ig-user-1',
       status: 'active',
@@ -1674,8 +1674,9 @@ describe('credential and OAuth persistence', () => {
       id: string;
       connection_id: string;
       credential_id: string;
+      availability: string;
     }>(
-      `select account.id, account.connection_id, account.credential_id
+      `select account.id, account.connection_id, account.credential_id, account.availability
        from provider_accounts account join provider_connections connection
          on connection.id = account.connection_id
        where connection.provider = 'instagram_login'`,
@@ -1683,6 +1684,7 @@ describe('credential and OAuth persistence', () => {
     expect(after.rows[0]?.id).toBe(before.rows[0]?.id);
     expect(after.rows[0]?.connection_id).toBe(before.rows[0]?.connection_id);
     expect(after.rows[0]?.credential_id).not.toBe(before.rows[0]?.credential_id);
+    expect(after.rows[0]?.availability).toBe('active');
     const credentials = await database.query<{ active: number; revoked: number }>(
       `select count(*) filter (where revoked_at is null)::int as active,
               count(*) filter (where revoked_at is not null)::int as revoked
@@ -1722,6 +1724,11 @@ describe('credential and OAuth persistence', () => {
     });
     const accountId = before.rows[0]?.id;
     if (!accountId) throw new Error('Missing Instagram Login account fixture');
+    // The operator recovery entrypoint still supports older, unavailable grants.
+    await database.query('UPDATE provider_accounts SET availability = $1 WHERE id = $2', [
+      'publishing_unavailable',
+      accountId,
+    ]);
     const connectionId = before.rows[0]?.connection_id;
     if (!connectionId) throw new Error('Missing Instagram Login connection fixture');
     const promotionInput = {
@@ -1962,7 +1969,7 @@ describe('credential and OAuth persistence', () => {
       {
         id: oldAccount.rows[0]?.id,
         provider: 'instagram_login',
-        availability: 'publishing_unavailable',
+        availability: 'active',
         disconnected_at: null,
       },
     ]);
@@ -2060,7 +2067,7 @@ describe('credential and OAuth persistence', () => {
     expect(after.rows[1]).toMatchObject({
       id: instagramId,
       provider: 'instagram_login',
-      availability: 'publishing_unavailable',
+      availability: 'active',
       status: 'active',
     });
     const pageTokens = await database.query<{ revoked_at: Date | null }>(

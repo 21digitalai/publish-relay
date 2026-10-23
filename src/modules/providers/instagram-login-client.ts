@@ -185,8 +185,7 @@ export class InstagramLoginClient {
       }),
       'token-exchange',
     );
-    if (INSTAGRAM_LOGIN_SCOPES.some((scope) => !short.permissions.includes(scope)))
-      throw new InstagramLoginPermissionError();
+    if (!hasExactInstagramLoginScopes(short.permissions)) throw new InstagramLoginPermissionError();
     const longUrl = new URL('https://graph.instagram.com/access_token');
     longUrl.search = new URLSearchParams({
       grant_type: 'ig_exchange_token',

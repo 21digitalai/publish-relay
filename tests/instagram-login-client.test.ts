@@ -193,6 +193,22 @@ describe('Instagram Login transport', () => {
       partial.client.exchangeCode({ code: 'code', redirectUri: callback }),
     ).rejects.toBeInstanceOf(InstagramLoginPermissionError);
     expect(partial.requests).toHaveLength(1);
+    const unexpectedScope = clientWithResponses([
+      {
+        data: [
+          {
+            access_token: 'short',
+            user_id: '123',
+            permissions:
+              'instagram_business_basic,instagram_business_content_publish,unrequested_scope',
+          },
+        ],
+      },
+    ]);
+    await expect(
+      unexpectedScope.client.exchangeCode({ code: 'code', redirectUri: callback }),
+    ).rejects.toBeInstanceOf(InstagramLoginPermissionError);
+    expect(unexpectedScope.requests).toHaveLength(1);
   });
 
   it('classifies provider HTTP and schema failures without retaining provider payloads', async () => {

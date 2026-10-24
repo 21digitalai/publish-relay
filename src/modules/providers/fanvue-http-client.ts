@@ -12,7 +12,7 @@ export const FANVUE_PUBLISHING_SCOPES = [
 const tokenSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),
-  token_type: z.literal('Bearer'),
+  token_type: z.string().refine((value) => value.toLowerCase() === 'bearer'),
   expires_in: z.number().int().positive(),
   scope: z.string().min(1),
 });
@@ -100,7 +100,7 @@ export class FanvueHttpClient {
   }
 
   async discoverCreator(accessToken: string): Promise<FanvueProfile> {
-    const response = await this.request('https://api.fanvue.com/v1/users/me', {
+    const response = await this.request('https://api.fanvue.com/users/me', {
       headers: { Authorization: `Bearer ${accessToken}`, 'X-Fanvue-API-Version': '2025-06-26' },
       redirect: 'error',
       signal: AbortSignal.timeout(this.options.timeoutMs ?? 15_000),

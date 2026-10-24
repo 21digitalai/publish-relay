@@ -38,7 +38,7 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
     let deniedScope = false;
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((url, options) => {
       const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
-      if (path.endsWith('/v1/users/me'))
+      if (path.endsWith('/users/me'))
         return Promise.resolve(
           new Response(
             JSON.stringify({ uuid: creatorId, displayName: 'Creator', isCreator: true }),

@@ -74,7 +74,7 @@ const application = createStandaloneApplication({
           new Response(
             JSON.stringify(
               (typeof url === 'string' ? url : url instanceof URL ? url.href : url.url).endsWith(
-                '/v1/users/me',
+                '/users/me',
               )
                 ? {
                     uuid: 'd6ed1cac-e0cd-4109-bf04-539cb8591838',

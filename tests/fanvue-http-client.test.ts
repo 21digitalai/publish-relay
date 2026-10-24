@@ -51,7 +51,7 @@ describe('Fanvue publishing-only OAuth transport', () => {
   });
 
   it('uses confidential Basic auth, original verifier, and rotating refresh token', async () => {
-    const { request, client } = fixture(token);
+    const { request, client } = fixture({ ...token, token_type: 'bearer' });
     await client.exchangeCode({ code: 'one-use-code', redirectUri, codeVerifier: 'verifier' });
     await client.refresh('old-refresh');
     for (const call of request.mock.calls) {
@@ -90,6 +90,7 @@ describe('Fanvue publishing-only OAuth transport', () => {
     const creator = { ...fan, isCreator: true, displayName: 'Creator' };
     const { client, request } = fixture(creator);
     await expect(client.discoverCreator('access')).resolves.toEqual(creator);
+    expect(request.mock.calls[0]?.[0]).toBe('https://api.fanvue.com/users/me');
     expect(request.mock.calls[0]?.[1]?.headers).toMatchObject({
       Authorization: 'Bearer access',
       'X-Fanvue-API-Version': '2025-06-26',
@@ -97,6 +98,13 @@ describe('Fanvue publishing-only OAuth transport', () => {
   });
 
   it('classifies invalid_grant without exposing provider error detail', async () => {
+    await expect(
+      fixture({ ...token, token_type: 'Basic' }).client.exchangeCode({
+        code: 'code',
+        redirectUri,
+        codeVerifier: 'verifier',
+      }),
+    ).rejects.toBeInstanceOf(FanvueRequestError);
     await expect(
       fixture({ error: 'invalid_grant', error_description: 'sensitive' }, 400).client.refresh(
         'old',

@@ -142,6 +142,8 @@ Auth uses a centered 440px panel on the canvas with a restrained violet radial g
 
 ## Connected accounts
 
+Fanvue is a separate option in the shared `PostingAdapterList` registry, visible only when the confidential OAuth client pair is configured. Its description states that the first connection grants publishing only and that messages/comments require separate consent. The existing account-row and reconnect/disconnect controls own its connected and reconnect-required states; no second provider-specific account screen is introduced. The Composer sees an empty Fanvue content-kind capability snapshot until posting dispatch is reviewed, so connection never implies a usable publish action.
+
 Connected X rows reuse the inline `.defaults-toggle` switch to save an account-scoped long-post self-declaration immediately. The switch defaults off, labels the choice as self-declared, warns that X may reject longer posts, and shows pending/error/saved states without claiming verified Premium access. Reconnect-required rows cannot edit it until reconnected.
 
 Origin-owned Facebook Page rows expose a `Share with workspaces` control in Accounts. Its anchored panel lists only other workspaces the current user owns; each workspace is a keyboard-operable checkbox button with explicit checked, saving, error, and confirmation states. The owner controls only visibility of the same Page connection, never a copied credential or account. Shared target rows show their origin label and omit origin-owned management actions. `src/ui/facebook-page-exposure-control.tsx` owns the panel and the paginated exposure selection load; AccountRow supplies the origin workspace identity.

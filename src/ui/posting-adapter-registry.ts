@@ -1,5 +1,5 @@
 export type PostingAdapterId =
-  'x' | 'youtube' | 'linkedin' | 'facebook_page' | 'instagram' | 'tiktok';
+  'x' | 'youtube' | 'linkedin' | 'facebook_page' | 'instagram' | 'tiktok' | 'fanvue';
 
 export interface PostingAdapterIcon {
   readonly viewBox: string;
@@ -94,6 +94,15 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
     auth: { kind: 'oauth', startPath: '/api/oauth/tiktok' },
     configuration: { requiredBeforeConnect: [] },
   },
+  {
+    id: 'fanvue',
+    label: 'Fanvue',
+    description: 'Connect publishing only. Messages and comments need separate permission.',
+    icon: { viewBox: '0 0 24 24', paths: ['M4 3h16v4H9v4h9v4H9v6H4V3Z'] },
+    enabled: true,
+    auth: { kind: 'oauth', startPath: '/api/oauth/fanvue' },
+    configuration: { requiredBeforeConnect: [] },
+  },
 ] as const;
 
 export function getEnabledPostingAdapters(
@@ -105,7 +114,9 @@ export function getEnabledPostingAdapters(
       (adapter.id !== 'linkedin' ||
         (typeof document !== 'undefined' && document.body.dataset.linkedinEnabled === 'true')) &&
       (adapter.id !== 'tiktok' ||
-        (typeof document !== 'undefined' && document.body.dataset.tiktokEnabled === 'true')),
+        (typeof document !== 'undefined' && document.body.dataset.tiktokEnabled === 'true')) &&
+      (adapter.id !== 'fanvue' ||
+        (typeof document !== 'undefined' && document.body.dataset.fanvueEnabled === 'true')),
   );
 }
 

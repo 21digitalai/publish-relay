@@ -31,6 +31,8 @@ const CAPABILITIES: Partial<Record<DestinationProvider, DestinationCapabilitySna
   tiktok: { schemaVersion: 1, contentKinds: [], media: {} },
   // Owner discovery is not proof of Public Profile posting access.
   snapchat: { schemaVersion: 1, contentKinds: [], media: {} },
+  // Base consent is available before Fanvue posting dispatch is reviewed.
+  fanvue: { schemaVersion: 1, contentKinds: [], media: {} },
 };
 
 export function destinationCapabilities(provider: string): DestinationCapabilitySnapshot {

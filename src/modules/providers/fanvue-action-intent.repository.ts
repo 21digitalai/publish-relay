@@ -86,12 +86,14 @@ export async function settleFanvueAction(
     workspaceId: string;
     accountId: string;
     clientActionId: string;
+    reservationId: string;
     result:
       | { state: 'confirmed'; providerObjectUuid: string }
       | { state: 'failed'; failureStatus: number }
       | { state: 'unknown' };
   },
 ): Promise<void> {
+  z.uuid().parse(input.reservationId);
   if (input.result.state === 'confirmed') z.uuid().parse(input.result.providerObjectUuid);
   if (input.result.state === 'failed')
     z.number().int().min(400).max(499).parse(input.result.failureStatus);
@@ -104,6 +106,7 @@ export async function settleFanvueAction(
           eq(fanvueActionIntents.workspaceId, input.workspaceId),
           eq(fanvueActionIntents.accountId, input.accountId),
           eq(fanvueActionIntents.clientActionId, input.clientActionId),
+          eq(fanvueActionIntents.id, input.reservationId),
           eq(fanvueActionIntents.state, 'reserved'),
         ),
       )

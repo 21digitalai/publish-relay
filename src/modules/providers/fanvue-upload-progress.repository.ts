@@ -16,7 +16,7 @@ import {
   type FanvueUploadSession,
 } from './fanvue-upload-session.js';
 
-interface FanvuePartProgressInput {
+interface FanvueUploadProgressInput {
   workspaceId: string;
   jobId: string;
   mediaId: string;
@@ -25,6 +25,9 @@ interface FanvuePartProgressInput {
   credentialId: string;
   credentialVersion: number;
   session: FanvueUploadSession;
+}
+
+interface FanvuePartProgressInput extends FanvueUploadProgressInput {
   partNumber: number;
 }
 
@@ -35,7 +38,7 @@ interface AdvanceFanvueUploadInput extends FanvuePartProgressInput {
 async function hasCurrentSession(
   transaction: NodePgDatabase,
   keys: MasterKeyProvider,
-  input: FanvuePartProgressInput,
+  input: FanvueUploadProgressInput,
   requireVersion: boolean,
 ): Promise<boolean> {
   const stored = await getActiveCredential(transaction, input.workspaceId, input.credentialId);
@@ -60,8 +63,12 @@ function expectedProgress(input: FanvuePartProgressInput) {
   return { expectedSegment, expectedByteOffset };
 }
 
-function eligibleArtifact(input: FanvuePartProgressInput, phase: string) {
-  const { expectedSegment, expectedByteOffset } = expectedProgress(input);
+function artifactAtProgress(
+  input: FanvueUploadProgressInput,
+  phase: string,
+  expectedSegment: number,
+  expectedByteOffset: number,
+) {
   return and(
     eq(providerStagingArtifacts.workspaceId, input.workspaceId),
     eq(providerStagingArtifacts.jobId, input.jobId),
@@ -91,6 +98,11 @@ function eligibleArtifact(input: FanvuePartProgressInput, phase: string) {
         )
     )`,
   );
+}
+
+function eligibleArtifact(input: FanvuePartProgressInput, phase: string) {
+  const { expectedSegment, expectedByteOffset } = expectedProgress(input);
+  return artifactAtProgress(input, phase, expectedSegment, expectedByteOffset);
 }
 
 /** Persist possible signed PUT intent before sending bytes; pending is never auto-retried. */
@@ -148,5 +160,49 @@ export async function advanceFanvueUploadProgress(
     );
     if (!rotated) throw new Error('Fanvue upload session version changed');
     return true;
+  });
+}
+
+/** Reserve the one provider completion PATCH after all part receipts are durable. */
+export async function reserveFanvueUploadCompletion(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  input: FanvueUploadProgressInput,
+): Promise<boolean> {
+  const session = parseFanvueUploadSession(input.session);
+  if (session.parts.length !== session.partCount)
+    throw new Error('Fanvue upload parts are incomplete');
+  return withTenantTransaction(database, input, async (transaction) => {
+    if (!(await hasCurrentSession(transaction, keys, input, true))) return false;
+    const [artifact] = await transaction
+      .update(providerStagingArtifacts)
+      .set({ uploadPhase: 'complete_pending', updatedAt: sql`clock_timestamp()` })
+      .where(artifactAtProgress(input, 'uploading', session.partCount, session.byteSize))
+      .returning({ id: providerStagingArtifacts.id });
+    return Boolean(artifact);
+  });
+}
+
+/** A lost completion response stays pending; only confirmed PATCH may advance. */
+export async function confirmFanvueUploadCompletion(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  input: FanvueUploadProgressInput,
+): Promise<boolean> {
+  const session = parseFanvueUploadSession(input.session);
+  if (session.parts.length !== session.partCount)
+    throw new Error('Fanvue upload parts are incomplete');
+  return withTenantTransaction(database, input, async (transaction) => {
+    if (!(await hasCurrentSession(transaction, keys, input, true))) return false;
+    const [artifact] = await transaction
+      .update(providerStagingArtifacts)
+      .set({
+        uploadPhase: 'processing',
+        externalObjectId: session.mediaUuid,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(artifactAtProgress(input, 'complete_pending', session.partCount, session.byteSize))
+      .returning({ id: providerStagingArtifacts.id });
+    return Boolean(artifact);
   });
 }

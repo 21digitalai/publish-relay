@@ -7,7 +7,9 @@ import { getActiveCredential } from '../src/modules/credentials/credential.repos
 import { decryptCredential, encryptCredential } from '../src/modules/credentials/envelope.js';
 import {
   advanceFanvueUploadProgress,
+  confirmFanvueUploadCompletion,
   reserveFanvueUploadPart,
+  reserveFanvueUploadCompletion,
 } from '../src/modules/providers/fanvue-upload-progress.repository.js';
 import type { FanvueUploadSession } from '../src/modules/providers/fanvue-upload-session.js';
 
@@ -55,6 +57,7 @@ beforeEach(async () => {
       id uuid PRIMARY KEY, workspace_id uuid NOT NULL, job_id uuid NOT NULL, media_id uuid,
       provider_reference_credential_id uuid, upload_phase text NOT NULL,
       next_segment integer NOT NULL, next_byte_offset bigint NOT NULL,
+      external_object_id text,
       expires_at timestamptz NOT NULL, deleted_at timestamptz,
       updated_at timestamptz NOT NULL DEFAULT now()
     );
@@ -135,6 +138,63 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Fanvue encrypted session and staging progress transaction', () => {
+  it('reserves completion once and confirms only the selected full session', async () => {
+    const completeSession = {
+      ...session,
+      parts: [
+        { PartNumber: 1, ETag: 'etag-one' },
+        { PartNumber: 2, ETag: 'etag-two' },
+      ],
+    };
+    const encrypted = await encryptCredential(Buffer.from(JSON.stringify(completeSession)), keys);
+    await postgres.query(
+      `UPDATE credentials SET key_version=$1, wrapped_key=$2, wrapped_key_nonce=$3,
+         wrapped_key_tag=$4, ciphertext=$5, nonce=$6, tag=$7, version=3 WHERE id=$8`,
+      [
+        encrypted.keyVersion,
+        encrypted.wrappedKey,
+        encrypted.wrappedKeyNonce,
+        encrypted.wrappedKeyTag,
+        encrypted.ciphertext,
+        encrypted.nonce,
+        encrypted.tag,
+        credentialId,
+      ],
+    );
+    await postgres.query(
+      `UPDATE provider_staging_artifacts SET next_segment=2, next_byte_offset=8 WHERE id=$1`,
+      [artifactId],
+    );
+    const completion = input({ session: completeSession, credentialVersion: 3 });
+    await expect(reserveFanvueUploadCompletion(database, keys, input())).rejects.toThrow(
+      'parts are incomplete',
+    );
+    expect(
+      await reserveFanvueUploadCompletion(database, keys, {
+        ...completion,
+        workspaceId: otherWorkspaceId,
+      }),
+    ).toBe(false);
+    expect(await reserveFanvueUploadCompletion(database, keys, completion)).toBe(true);
+    expect(await reserveFanvueUploadCompletion(database, keys, completion)).toBe(false);
+    expect(
+      await confirmFanvueUploadCompletion(database, keys, {
+        ...completion,
+        session: { ...completeSession, uploadId: 'wrong-upload' },
+      }),
+    ).toBe(false);
+    expect(await confirmFanvueUploadCompletion(database, keys, completion)).toBe(true);
+    expect(await confirmFanvueUploadCompletion(database, keys, completion)).toBe(false);
+    const result = await postgres.query<{ upload_phase: string; external_object_id: string }>(
+      'SELECT upload_phase, external_object_id FROM provider_staging_artifacts WHERE id=$1',
+      [artifactId],
+    );
+    expect(result.rows[0]).toEqual({
+      upload_phase: 'processing',
+      external_object_id: session.mediaUuid,
+    });
+  });
+
   it('commits one receipt and offset, refusing duplicate/stale progress', async () => {
     expect(
       await reserveFanvueUploadPart(

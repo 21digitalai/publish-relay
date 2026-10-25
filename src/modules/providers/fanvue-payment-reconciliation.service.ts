@@ -5,7 +5,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { FanvuePaymentSubscriptionClient } from './fanvue-payment-subscription-client.js';
 import {
   getFanvuePaymentSubscriptionForAccount,
-  reconcileAbsentFanvuePaymentSubscription,
+  reconcileDeletedFanvuePaymentSubscription,
 } from './fanvue-payment-subscription.repository.js';
 
 interface ProviderDestination {
@@ -52,7 +52,7 @@ export function findFanvuePaymentCallbackDestinations(
   });
 }
 
-/** Reconcile an uncertain create by provider listing and exact-ID deletion before releasing the row. */
+/** A missing list entry cannot settle an in-flight POST; only confirmed deletion releases it. */
 export async function reconcileFanvuePaymentCreation(
   database: NodePgDatabase,
   client: FanvuePaymentSubscriptionClient,
@@ -62,7 +62,7 @@ export async function reconcileFanvuePaymentCreation(
     accessToken: string;
     publicOrigin: string;
   },
-): Promise<'no_open_attempt' | 'reconciled'> {
+): Promise<'no_open_attempt' | 'pending' | 'reconciled'> {
   const row = await getFanvuePaymentSubscriptionForAccount(database, input);
   if (!row) return 'no_open_attempt';
   if (row.state !== 'creation_unknown' || row.providerSubscriptionId)
@@ -74,6 +74,7 @@ export async function reconcileFanvuePaymentCreation(
     input.publicOrigin,
     row.callbackHandleHash,
   );
+  if (matches.length === 0) return 'pending';
   for (const match of matches) await client.delete(input.accessToken, match.id);
   const remaining = findFanvuePaymentCallbackDestinations(
     await client.list(input.accessToken),
@@ -81,10 +82,10 @@ export async function reconcileFanvuePaymentCreation(
     row.callbackHandleHash,
   );
   if (remaining.length) throw new Error('Fanvue payment subscription remains at provider');
-  await reconcileAbsentFanvuePaymentSubscription(database, {
+  await reconcileDeletedFanvuePaymentSubscription(database, {
     workspaceId: input.workspaceId,
     id: row.id,
-    providerAbsenceConfirmed: true,
+    providerDeletionConfirmed: true,
   });
   return 'reconciled';
 }

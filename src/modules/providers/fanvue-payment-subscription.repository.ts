@@ -220,13 +220,13 @@ export async function cancelFanvuePaymentReservation(
   });
 }
 
-/** Release an ambiguous create only after the provider confirms this callback is absent. */
-export async function reconcileAbsentFanvuePaymentSubscription(
+/** Release a found ambiguous create only after exact matching provider deletion. */
+export async function reconcileDeletedFanvuePaymentSubscription(
   database: NodePgDatabase,
-  input: { workspaceId: string; id: string; providerAbsenceConfirmed: boolean },
+  input: { workspaceId: string; id: string; providerDeletionConfirmed: boolean },
 ): Promise<void> {
-  if (!input.providerAbsenceConfirmed)
-    throw new Error('Fanvue payment subscription requires provider absence proof');
+  if (!input.providerDeletionConfirmed)
+    throw new Error('Fanvue payment subscription requires confirmed provider deletion');
   await withTenantTransaction(database, input, async (transaction) => {
     const [cancelled] = await transaction
       .update(fanvuePaymentSubscriptions)

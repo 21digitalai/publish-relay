@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const repository = vi.hoisted(() => ({ get: vi.fn(), absent: vi.fn() }));
 vi.mock('../src/modules/providers/fanvue-payment-subscription.repository.js', () => ({
   getFanvuePaymentSubscriptionForAccount: repository.get,
-  reconcileAbsentFanvuePaymentSubscription: repository.absent,
+  reconcileDeletedFanvuePaymentSubscription: repository.absent,
 }));
 
 import {
@@ -89,5 +89,36 @@ describe('Fanvue payment creation reconciliation', () => {
       reconcileFanvuePaymentCreation({} as never, deleteFails as never, input),
     ).rejects.toThrow('provider unavailable');
     expect(repository.absent).not.toHaveBeenCalled();
+  });
+
+  it('keeps repeated empty lists pending until a late create appears and is deleted', async () => {
+    const input = {
+      workspaceId: '00000000-0000-4000-8000-000000000003',
+      accountId: '00000000-0000-4000-8000-000000000004',
+      accessToken: 'fixture',
+      publicOrigin: 'https://relay.test',
+    };
+    const client = {
+      list: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([match])
+        .mockResolvedValueOnce([]),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    expect(await reconcileFanvuePaymentCreation({} as never, client as never, input)).toBe(
+      'pending',
+    );
+    expect(await reconcileFanvuePaymentCreation({} as never, client as never, input)).toBe(
+      'pending',
+    );
+    expect(repository.absent).not.toHaveBeenCalled();
+    expect(client.delete).not.toHaveBeenCalled();
+    expect(await reconcileFanvuePaymentCreation({} as never, client as never, input)).toBe(
+      'reconciled',
+    );
+    expect(client.delete).toHaveBeenCalledExactlyOnceWith('fixture', match.id);
+    expect(repository.absent).toHaveBeenCalledOnce();
   });
 });

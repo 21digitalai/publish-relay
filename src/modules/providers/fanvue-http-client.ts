@@ -5,7 +5,9 @@ export const FANVUE_PUBLISHING_SCOPES = [
   'offline_access',
   'offline',
   'read:self',
+  'read:media',
   'write:media',
+  'read:post',
   'write:post',
 ] as const;
 

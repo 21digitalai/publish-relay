@@ -39,7 +39,9 @@ describe('Fanvue publishing-only OAuth transport', () => {
     );
     expect(url.origin).toBe('https://auth.fanvue.com');
     expect(url.searchParams.get('scope')).toBe(scope);
-    expect(url.searchParams.get('scope')).not.toMatch(/chat|comment|read:post|read:media/);
+    expect(url.searchParams.get('scope')).toContain('read:post');
+    expect(url.searchParams.get('scope')).toContain('read:media');
+    expect(url.searchParams.get('scope')).not.toMatch(/chat|comment/);
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(() =>
       client.authorizationUrl({
@@ -71,6 +73,16 @@ describe('Fanvue publishing-only OAuth transport', () => {
   });
 
   it('rejects missing publishing scope and non-creator identity', async () => {
+    await expect(
+      fixture({
+        ...token,
+        scope: scope.replace('read:media ', '').replace('read:post ', ''),
+      }).client.exchangeCode({
+        code: 'code',
+        redirectUri,
+        codeVerifier: 'verifier',
+      }),
+    ).rejects.toThrow('does not match the requested scopes');
     await expect(
       fixture({ ...token, scope: 'openid read:self' }).client.exchangeCode({
         code: 'code',

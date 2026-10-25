@@ -41,6 +41,13 @@ checks its embedded Page ID before calling the canonical Graph transport. The
 module's grant remains `unknown` by default, so this service fails closed
 until separate controlled provider evidence is recorded. It does not expose a
 browser/machine route or prove production inbox access.
+The shared account/credential verification now lives in
+`facebook-page-read-context.service.ts`; `facebook-comments-read.service.ts`
+uses it for Page-owned post listing with the separate Comments module and
+read-engagement scope. It does not expose visitor content or call post-comment
+reads without a proven selected Page-to-post ownership link. Both query
+services remain internal until authenticated routes and controlled Meta grant
+evidence are added.
 
 ## Facebook Page engagement authorization foundation
 

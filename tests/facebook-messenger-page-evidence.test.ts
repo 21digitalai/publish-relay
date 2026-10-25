@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  isMessengerPageEligible,
-  type MessengerPageEvidence,
-} from '../src/modules/providers/facebook-messenger-read.service.js';
+  isPageReadEligible,
+  type PageReadEvidence,
+} from '../src/modules/providers/facebook-page-read-context.service.js';
 
-const permitted: MessengerPageEvidence = {
-  accountId: 'selected-page',
+const permitted: PageReadEvidence = {
   pageId: '12345',
   credentialId: 'page-credential',
   availability: 'active',
@@ -20,7 +19,7 @@ const permitted: MessengerPageEvidence = {
 
 describe('Facebook Page Messenger read eligibility', () => {
   it('requires a selected Page token, an active optional module and the exact Meta grant', () => {
-    expect(isMessengerPageEligible(permitted)).toBe(true);
+    expect(isPageReadEligible(permitted, 'dms')).toBe(true);
     for (const denied of [
       { credentialId: null },
       { localEnabled: false },
@@ -33,7 +32,23 @@ describe('Facebook Page Messenger read eligibility', () => {
       { capabilitySnapshot: { tasks: ['CREATE_CONTENT'] } },
       { capabilitySnapshot: {} },
     ]) {
-      expect(isMessengerPageEligible({ ...permitted, ...denied })).toBe(false);
+      expect(isPageReadEligible({ ...permitted, ...denied }, 'dms')).toBe(false);
     }
+  });
+
+  it('requires the Comments read scope and selected Page task', () => {
+    expect(isPageReadEligible(permitted, 'comments')).toBe(true);
+    expect(
+      isPageReadEligible(
+        { ...permitted, scopes: ['pages_messaging', 'pages_manage_metadata'] },
+        'comments',
+      ),
+    ).toBe(false);
+    expect(
+      isPageReadEligible(
+        { ...permitted, capabilitySnapshot: { tasks: ['MESSAGING'] } },
+        'comments',
+      ),
+    ).toBe(false);
   });
 });

@@ -2533,7 +2533,9 @@ function Composer({ onClose }: { onClose: () => void }) {
                       ? scheduled
                         ? 'Confirm and schedule'
                         : 'Confirm and publish'
-                      : 'Schedule 1 post'}
+                      : scheduled
+                        ? 'Schedule 1 post'
+                        : 'Publish now'}
               </button>
             </footer>
           </>

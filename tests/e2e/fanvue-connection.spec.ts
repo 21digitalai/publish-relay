@@ -53,6 +53,17 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.getByRole('button', { name: 'Schedule 1 post' }).click();
   await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
 
+  await page.goto(`/w/${data.slug}/queue`);
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByRole('radio', { name: /Fanvue.*Fixture Creator/ }).click();
+  await page.getByRole('button', { name: 'Who can see this post' }).click();
+  await page.getByRole('option', { name: 'Followers and subscribers' }).click();
+  await page.getByLabel('Post body').fill('Immediate Fanvue fixture');
+  await page.getByRole('button', { name: 'Now', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Publish now' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Publish now' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+
   const requests: unknown[] = [];
   const mediaId = '00000000-0000-4000-8000-000000000027';
   await page.route('**/api/workflow/media', (route) =>

@@ -3,6 +3,10 @@ import { z } from 'zod';
 const idSchema = z.object({ id: z.string().min(1) });
 const permalinkSchema = z.object({ permalink_url: z.url() });
 const graphIdSchema = z.string().regex(/^[0-9]+(?:_[0-9]+)*$/);
+const conversationIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_]+$/)
+  .max(256);
 // Graph timestamps commonly use +0000 instead of ISO's +00:00 offset.
 const graphTimestampSchema = z
   .string()
@@ -19,6 +23,16 @@ const postCommentSchema = z.object({
   created_time: graphTimestampSchema,
   comment_count: z.number().int().nonnegative().optional(),
   like_count: z.number().int().nonnegative().optional(),
+});
+const conversationSchema = z.object({
+  id: conversationIdSchema,
+  updated_time: graphTimestampSchema.optional(),
+});
+const conversationMessageSchema = z.object({
+  id: z.string().min(1).max(256),
+  message: z.string().optional(),
+  created_time: graphTimestampSchema,
+  from: z.object({ id: z.string().min(1).max(256) }).optional(),
 });
 const graphPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({
@@ -179,6 +193,68 @@ export class FacebookHttpClient {
         createdAt: comment.created_time,
         replyCount: comment.comment_count ?? null,
         likeCount: comment.like_count ?? null,
+      })),
+      nextCursor: page.paging?.cursors?.after ?? null,
+    };
+  }
+
+  /** Messenger Page conversations; Meta does not support time-based pagination here. */
+  public async listPageConversations(input: {
+    pageId: string;
+    accessToken: string;
+    limit?: number;
+    after?: string;
+  }) {
+    const pageId = graphIdSchema.parse(input.pageId);
+    const limit = z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .parse(input.limit ?? 25);
+    const after = input.after ? z.string().min(1).max(2048).parse(input.after) : undefined;
+    const body = await this.get(
+      `/${pageId}/conversations`,
+      { fields: 'id,updated_time', limit: String(limit), ...(after ? { after } : {}) },
+      input.accessToken,
+    );
+    const page = graphPageSchema(conversationSchema).parse(body);
+    return {
+      conversations: page.data.map((item) => ({
+        id: item.id,
+        updatedAt: item.updated_time ?? null,
+      })),
+      nextCursor: page.paging?.cursors?.after ?? null,
+    };
+  }
+
+  /** Transport only: caller must bind the conversation to its selected Page. */
+  public async listConversationMessages(input: {
+    conversationId: string;
+    accessToken: string;
+    limit?: number;
+    after?: string;
+  }) {
+    const conversationId = conversationIdSchema.parse(input.conversationId);
+    const limit = z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .parse(input.limit ?? 25);
+    const after = input.after ? z.string().min(1).max(2048).parse(input.after) : undefined;
+    const body = await this.get(
+      `/${conversationId}/messages`,
+      { fields: 'id,message,created_time,from', limit: String(limit), ...(after ? { after } : {}) },
+      input.accessToken,
+    );
+    const page = graphPageSchema(conversationMessageSchema).parse(body);
+    return {
+      messages: page.data.map((item) => ({
+        id: item.id,
+        text: item.message ?? '',
+        createdAt: item.created_time,
+        senderId: item.from?.id ?? null,
       })),
       nextCursor: page.paging?.cursors?.after ?? null,
     };

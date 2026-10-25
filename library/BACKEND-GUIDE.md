@@ -19,6 +19,17 @@ have distinct Meta permission requirements. Do not expose these transport
 methods as agent/browser tools or claim live Graph proof until those checks
 and target-version fixtures are completed.
 
+The same pinned `FacebookHttpClient` owns bounded Messenger GET transport for
+Page conversations and conversation messages. It projects only stable
+conversation/message IDs, timestamps, text and sender Page-scoped ID; provider
+`paging.next`, raw profiles and token material are discarded. No read-receipt
+mutation is issued. These are not account-scoped Relay tools yet: the caller
+must prove the selected Page owns each conversation, its optional DMs module
+and provider scopes/tasks are verified, and the machine/browser principal has
+exact Page-local read authority. Meta documentation does not offer time-based
+pagination for Page conversations. A controlled Graph-version fixture and
+App Review/Page-task evidence remain required before live inbox claims.
+
 ## Facebook Page engagement authorization foundation
 
 Migration 0079 keeps optional Comments and Page DMs separate from the existing publishing connection and from cross-workspace Page exposures. `facebook_page_engagement_modules` is keyed to the canonical origin-owned Page; an absent row means both local modules disabled and provider grants unknown. Browser management may toggle only `localEnabled` for a Page owned by the current workspace. It cannot assert Meta scopes or Page task evidence; provider grant remains `unknown` until a separate verified provider evidence path exists. No module is called Connected merely because its local switch is on.

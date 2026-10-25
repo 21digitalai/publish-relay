@@ -220,6 +220,30 @@ export async function cancelFanvuePaymentReservation(
   });
 }
 
+/** Release a found ambiguous create only after exact matching provider deletion. */
+export async function reconcileDeletedFanvuePaymentSubscription(
+  database: NodePgDatabase,
+  input: { workspaceId: string; id: string; providerDeletionConfirmed: boolean },
+): Promise<void> {
+  if (!input.providerDeletionConfirmed)
+    throw new Error('Fanvue payment subscription requires confirmed provider deletion');
+  await withTenantTransaction(database, input, async (transaction) => {
+    const [cancelled] = await transaction
+      .update(fanvuePaymentSubscriptions)
+      .set({ state: 'disabled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(fanvuePaymentSubscriptions.workspaceId, input.workspaceId),
+          eq(fanvuePaymentSubscriptions.id, input.id),
+          eq(fanvuePaymentSubscriptions.state, 'creation_unknown'),
+          isNull(fanvuePaymentSubscriptions.providerSubscriptionId),
+        ),
+      )
+      .returning({ id: fanvuePaymentSubscriptions.id });
+    if (!cancelled) throw new Error('Fanvue payment subscription needs reconciliation');
+  });
+}
+
 export async function getFanvuePaymentSubscriptionForAccount(
   database: NodePgDatabase,
   input: { workspaceId: string; accountId: string },
@@ -229,6 +253,7 @@ export async function getFanvuePaymentSubscriptionForAccount(
       .select({
         id: fanvuePaymentSubscriptions.id,
         creatorUuid: fanvuePaymentSubscriptions.creatorUuid,
+        callbackHandleHash: fanvuePaymentSubscriptions.callbackHandleHash,
         providerSubscriptionId: fanvuePaymentSubscriptions.providerSubscriptionId,
         state: fanvuePaymentSubscriptions.state,
       })

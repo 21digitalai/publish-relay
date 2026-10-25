@@ -13,6 +13,7 @@ import {
   disableFanvuePaymentSubscription,
   getFanvuePaymentSubscriptionForAccount,
   markFanvueSubscriptionCreationUnknown,
+  reconcileDeletedFanvuePaymentSubscription,
   reserveFanvuePaymentSubscription,
 } from '../src/modules/providers/fanvue-payment-subscription.repository.js';
 
@@ -253,6 +254,13 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
       await expect(
         cancelFanvuePaymentReservation(database, { workspaceId, id: ambiguous.id }),
       ).rejects.toThrow('reconciliation');
+      await expect(
+        reconcileDeletedFanvuePaymentSubscription(database, {
+          workspaceId,
+          id: ambiguous.id,
+          providerDeletionConfirmed: false,
+        }),
+      ).rejects.toThrow('confirmed provider deletion');
       expect(await getFanvuePaymentSubscriptionForAccount(database, selected)).toMatchObject({
         id: ambiguous.id,
         state: 'creation_unknown',

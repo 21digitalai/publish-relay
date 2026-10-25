@@ -10,6 +10,23 @@ const subscriptionId = 'b6f0e6d2-1f0a-4f1e-9b3a-1c2d3e4f5a6b';
 const signingSecret = `whsec_${'a'.repeat(64)}`;
 
 describe('Fanvue payment subscription transport', () => {
+  it('lists bounded provider destinations and fails closed on an unknown response shape', async () => {
+    const item = {
+      id: subscriptionId,
+      url: 'https://relay.test/webhooks/fanvue/payments/opaque',
+      events: ['creator.payment.succeeded'],
+      createdAt: '2026-10-25T13:00:00Z',
+    };
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ data: [item] }));
+    const client = new FanvuePaymentSubscriptionClient(request);
+    expect(await client.list('token')).toEqual([item]);
+    expect(request.mock.calls[0]?.[1]?.method).toBe('GET');
+    request.mockResolvedValueOnce(Response.json({ unrelated: [] }));
+    await expect(client.list('token')).rejects.toBeInstanceOf(
+      FanvueSubscriptionOutcomeUnknownError,
+    );
+  });
+
   it('creates only the approved payment topic and returns the one-time secret', async () => {
     const request = vi
       .fn<typeof fetch>()

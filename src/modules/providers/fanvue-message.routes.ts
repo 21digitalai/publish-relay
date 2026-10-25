@@ -20,7 +20,9 @@ export const fanvueMessageRequestSchema = z.strictObject({
   clientActionId: z.uuid(),
   text: z.string().min(1).max(5000).optional(),
   mediaUuids: z.array(z.uuid()).min(1).max(10).optional(),
+  mediaIds: z.array(z.uuid()).min(1).max(10).optional(),
   mediaPreviewUuid: z.uuid().optional(),
+  mediaPreviewId: z.uuid().optional(),
   price: z.number().int().min(300).optional(),
 });
 
@@ -62,7 +64,9 @@ export function registerFanvueMessageRoutes(
           clientActionId: payload.clientActionId,
           ...(payload.text ? { text: payload.text } : {}),
           ...(payload.mediaUuids ? { mediaUuids: payload.mediaUuids } : {}),
+          ...(payload.mediaIds ? { mediaIds: payload.mediaIds } : {}),
           ...(payload.mediaPreviewUuid ? { mediaPreviewUuid: payload.mediaPreviewUuid } : {}),
+          ...(payload.mediaPreviewId ? { mediaPreviewId: payload.mediaPreviewId } : {}),
           ...(payload.price !== undefined ? { price: payload.price } : {}),
           actor: { type: principal.kind, id: principal.actorId },
         });

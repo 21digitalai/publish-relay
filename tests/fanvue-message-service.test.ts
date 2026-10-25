@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ledger = vi.hoisted(() => ({ reserve: vi.fn(), settle: vi.fn() }));
 const policy = vi.hoisted(() => ({ enforce: vi.fn(() => Promise.resolve()) }));
+const readyMedia = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock('../src/database/tenant-transaction.js', () => ({
   withTenantTransaction: (_db: unknown, _input: unknown, work: (transaction: unknown) => unknown) =>
     work({}),
@@ -12,6 +13,9 @@ vi.mock('../src/modules/policy/action-policy.js', () => ({
 vi.mock('../src/modules/providers/fanvue-action-intent.repository.js', () => ({
   reserveFanvueAction: ledger.reserve,
   settleFanvueAction: ledger.settle,
+}));
+vi.mock('../src/modules/providers/fanvue-dm-ready-media.repository.js', () => ({
+  getReadyFanvueDmMedia: readyMedia.get,
 }));
 
 import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
@@ -27,6 +31,7 @@ const input = {
 };
 const messageUuid = '00000000-0000-4000-8000-000000000005';
 const mediaUuid = '00000000-0000-4000-8000-000000000008';
+const localMediaId = '00000000-0000-4000-8000-000000000009';
 const events: string[] = [];
 const reads = {
   getExistingChatForMessage: vi.fn(() => {
@@ -54,6 +59,7 @@ beforeEach(() => {
     events.push('settle');
     return Promise.resolve();
   });
+  readyMedia.get.mockResolvedValue(new Map([[localMediaId, mediaUuid]]));
 });
 
 describe('Fanvue existing-chat text send command', () => {
@@ -159,6 +165,51 @@ describe('Fanvue existing-chat text send command', () => {
     ).rejects.toThrow();
     await expect(
       service.sendMessage({ ...input, mediaUuids: [mediaUuid], mediaPreviewUuid: mediaUuid }),
+    ).rejects.toThrow();
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('resolves exact ready local media through the same free and paid send command', async () => {
+    await expect(
+      service.sendMessage({ ...input, text: undefined, mediaIds: [localMediaId] }),
+    ).resolves.toEqual({ state: 'confirmed', messageUuid });
+    expect(readyMedia.get).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      clientActionId: input.clientActionId,
+      mediaIds: [localMediaId],
+    });
+    expect(client.sendMessage).toHaveBeenCalledWith('token', input.fanUuid, {
+      mediaUuids: [mediaUuid],
+    });
+    await expect(
+      service.sendMessage({
+        ...input,
+        clientActionId: localMediaId,
+        mediaIds: [localMediaId],
+        mediaPreviewId: localMediaId,
+        price: 300,
+      }),
+    ).resolves.toEqual({ state: 'confirmed', messageUuid });
+    expect(client.sendMessage).toHaveBeenLastCalledWith('token', input.fanUuid, {
+      text: 'Hello',
+      mediaUuids: [mediaUuid],
+      mediaPreviewUuid: mediaUuid,
+      price: 300,
+    });
+  });
+
+  it('denies missing or mixed local media before reserving a send intent', async () => {
+    readyMedia.get.mockResolvedValueOnce(new Map());
+    await expect(service.sendMessage({ ...input, mediaIds: [localMediaId] })).rejects.toThrow(
+      'not ready',
+    );
+    await expect(
+      service.sendMessage({ ...input, mediaIds: [localMediaId], mediaUuids: [mediaUuid] }),
+    ).rejects.toThrow();
+    await expect(
+      service.sendMessage({ ...input, mediaIds: [localMediaId], mediaPreviewId: localMediaId }),
     ).rejects.toThrow();
     expect(ledger.reserve).not.toHaveBeenCalled();
     expect(client.sendMessage).not.toHaveBeenCalled();

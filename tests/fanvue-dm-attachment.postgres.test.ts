@@ -24,6 +24,7 @@ import { reserveFanvueDmUploadPart } from '../src/modules/providers/fanvue-dm-up
 import { recordFanvueDmPartReceipt } from '../src/modules/providers/fanvue-dm-upload-part-receipt.repository.js';
 import { uploadFanvueDmPart } from '../src/modules/providers/fanvue-dm-upload-part.service.js';
 import { refreshFanvueDmReadiness } from '../src/modules/providers/fanvue-dm-upload-readiness.service.js';
+import { getReadyFanvueDmMedia } from '../src/modules/providers/fanvue-dm-ready-media.repository.js';
 import {
   loadFanvueDmUploadSession,
   openFanvueDmUploadRange,
@@ -392,6 +393,17 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
       );
       expect(ready.rows[0]?.state).toBe('ready');
       await expect(
+        getReadyFanvueDmMedia(db, { ...putKey, mediaIds: [putMediaId] }),
+      ).resolves.toEqual(new Map([[putMediaId, putUuid]]));
+      for (const deniedKey of [
+        { ...putKey, workspaceId: foreignWorkspaceId },
+        { ...putKey, clientActionId: randomUUID() },
+        { ...putKey, accountId: randomUUID() },
+      ])
+        await expect(
+          getReadyFanvueDmMedia(db, { ...deniedKey, mediaIds: [putMediaId] }),
+        ).resolves.toEqual(new Map());
+      await expect(
         refreshFanvueDmReadiness(db, client, { ...putKey, accessToken: 'fixture-token' }),
       ).rejects.toThrow('unavailable');
       await pool.query("UPDATE fanvue_dm_attachments SET state='processing' WHERE media_id=$1", [
@@ -417,6 +429,9 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         [putMediaId],
       );
       expect(failed.rows[0]?.state).toBe('failed');
+      await expect(
+        getReadyFanvueDmMedia(db, { ...putKey, mediaIds: [putMediaId] }),
+      ).resolves.toEqual(new Map());
 
       const completionLostMediaId = randomUUID();
       await pool.query(

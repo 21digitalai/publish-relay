@@ -10,6 +10,7 @@ import {
   settleFanvueAction,
   type FanvueActionReservation,
 } from './fanvue-action-intent.repository.js';
+import { getReadyFanvueDmMedia } from './fanvue-dm-ready-media.repository.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
 import { markFanvuePreSendError } from './fanvue-pre-send-error.js';
 import type { FanvueMessageClient } from './fanvue-message-client.js';
@@ -31,19 +32,30 @@ const messageCommand = textMessage
   .extend({
     text: z.string().min(1).max(5000).optional(),
     mediaUuids: z.array(z.uuid()).min(1).max(10).optional(),
+    mediaIds: z.array(z.uuid()).min(1).max(10).optional(),
     mediaPreviewUuid: z.uuid().optional(),
+    mediaPreviewId: z.uuid().optional(),
     price: z.number().int().min(300).optional(),
   })
   .superRefine((value, context) => {
-    if (!value.text && !value.mediaUuids?.length)
+    if (!value.text && !value.mediaUuids?.length && !value.mediaIds?.length)
       context.addIssue({ code: 'custom', message: 'Text or media is required' });
+    if (value.mediaUuids && value.mediaIds)
+      context.addIssue({ code: 'custom', message: 'Choose local or provider media, not both' });
     if (value.mediaUuids && new Set(value.mediaUuids).size !== value.mediaUuids.length)
       context.addIssue({ code: 'custom', message: 'Duplicate media is not allowed' });
-    if (value.price !== undefined && !value.mediaUuids?.length)
+    if (value.mediaIds && new Set(value.mediaIds).size !== value.mediaIds.length)
+      context.addIssue({ code: 'custom', message: 'Duplicate media is not allowed' });
+    if (value.price !== undefined && !value.mediaUuids?.length && !value.mediaIds?.length)
       context.addIssue({ code: 'custom', message: 'Priced messages require media' });
     if (
       value.mediaPreviewUuid &&
       (value.price === undefined || !value.mediaUuids?.includes(value.mediaPreviewUuid))
+    )
+      context.addIssue({ code: 'custom', message: 'Preview must be attached to priced media' });
+    if (
+      value.mediaPreviewId &&
+      (value.price === undefined || !value.mediaIds?.includes(value.mediaPreviewId))
     )
       context.addIssue({ code: 'custom', message: 'Preview must be attached to priced media' });
   });
@@ -91,16 +103,11 @@ export class FanvueMessageService {
   async sendMessage(input: z.input<typeof messageCommand>): Promise<FanvueTextMessageResult> {
     const command = messageCommand.parse(input);
     let accessToken: string;
+    let mediaUuids: string[] | undefined;
+    let mediaPreviewUuid: string | undefined;
     try {
       ({ accessToken } = await this.reads.getExistingChatForMessage(command));
-      for (const mediaUuid of command.mediaUuids ?? []) {
-        const media = await this.reads.getMediaStatus({
-          workspaceId: command.workspaceId,
-          accountId: command.accountId,
-          mediaUuid,
-        });
-        if (media.status !== 'ready') throw new FanvueMessageMediaUnavailableError();
-      }
+      ({ mediaUuids, mediaPreviewUuid } = await this.resolveMedia(command));
       await withTenantTransaction(this.database, command, (transaction) =>
         enforceWorkspaceAction(transaction, this.policy, {
           workspaceId: command.workspaceId,
@@ -118,8 +125,9 @@ export class FanvueMessageService {
         JSON.stringify({
           fanUuid: command.fanUuid,
           text: command.text,
-          mediaUuids: command.mediaUuids,
-          mediaPreviewUuid: command.mediaPreviewUuid,
+          mediaIds: command.mediaIds,
+          mediaUuids,
+          mediaPreviewUuid,
           price: command.price,
         }),
       )
@@ -139,8 +147,8 @@ export class FanvueMessageService {
     try {
       const message = await this.client.sendMessage(accessToken, command.fanUuid, {
         ...(command.text ? { text: command.text } : {}),
-        ...(command.mediaUuids ? { mediaUuids: command.mediaUuids } : {}),
-        ...(command.mediaPreviewUuid ? { mediaPreviewUuid: command.mediaPreviewUuid } : {}),
+        ...(mediaUuids ? { mediaUuids } : {}),
+        ...(mediaPreviewUuid ? { mediaPreviewUuid } : {}),
         ...(command.price !== undefined ? { price: command.price } : {}),
       });
       result = { state: 'confirmed', messageUuid: message.messageUuid };
@@ -160,5 +168,35 @@ export class FanvueMessageService {
       result: settlement,
     });
     return result;
+  }
+
+  private async resolveMedia(command: z.output<typeof messageCommand>) {
+    const ready = command.mediaIds
+      ? await getReadyFanvueDmMedia(this.database, {
+          workspaceId: command.workspaceId,
+          accountId: command.accountId,
+          clientActionId: command.clientActionId,
+          mediaIds: command.mediaIds,
+        })
+      : null;
+    if (command.mediaIds && ready?.size !== command.mediaIds.length)
+      throw new FanvueMessageMediaUnavailableError();
+    const mediaUuids = command.mediaIds
+      ? command.mediaIds.map((id) => ready?.get(id) ?? '')
+      : command.mediaUuids;
+    const mediaPreviewUuid = command.mediaPreviewId
+      ? ready?.get(command.mediaPreviewId)
+      : command.mediaPreviewUuid;
+    for (const mediaUuid of mediaUuids ?? []) {
+      if (!mediaUuid) throw new FanvueMessageMediaUnavailableError();
+      const media = await this.reads.getMediaStatus({
+        workspaceId: command.workspaceId,
+        accountId: command.accountId,
+        mediaUuid,
+      });
+      if (media.uuid !== mediaUuid || media.status !== 'ready')
+        throw new FanvueMessageMediaUnavailableError();
+    }
+    return { mediaUuids, mediaPreviewUuid };
   }
 }

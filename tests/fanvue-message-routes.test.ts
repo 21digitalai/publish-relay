@@ -20,6 +20,7 @@ const clientActionId = '00000000-0000-4000-8000-000000000004';
 const messageUuid = '00000000-0000-4000-8000-000000000005';
 const actorId = '00000000-0000-4000-8000-000000000006';
 const mediaUuid = '00000000-0000-4000-8000-000000000008';
+const localMediaId = '00000000-0000-4000-8000-000000000009';
 const url = `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages`;
 const headers = {
   authorization: 'Bearer pr_test.secret',
@@ -170,5 +171,32 @@ describe('Fanvue account-scoped machine text send', () => {
     });
     expect(belowMinimum.statusCode).toBe(400);
     expect(context.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('forwards selected local media and preview to the canonical command without exposing it back', async () => {
+    const context = fixture();
+    const response = await context.application.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: {
+        clientActionId,
+        mediaIds: [localMediaId],
+        mediaPreviewId: localMediaId,
+        price: 300,
+      },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(context.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId,
+        accountId,
+        clientActionId,
+        mediaIds: [localMediaId],
+        mediaPreviewId: localMediaId,
+        price: 300,
+      }),
+    );
+    expect(response.body).not.toMatch(/mediaIds|mediaPreviewId|providerMediaUuid|credential/);
   });
 });

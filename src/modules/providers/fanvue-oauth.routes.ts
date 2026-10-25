@@ -17,7 +17,7 @@ import {
 } from './fanvue-oauth.service.js';
 
 const callbackSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
-const deniedSchema = z.object({ state: z.string().min(1), error: z.literal('access_denied') });
+const deniedSchema = z.object({ state: z.string().min(1), error: z.string().min(1) });
 const connectSchema = z
   .object({
     readChatAccountId: z.uuid().optional(),
@@ -102,6 +102,8 @@ export function registerFanvueOauthRoutes(
       });
       if (!kind)
         return reply.code(400).send({ data: null, error: 'Fanvue connection attempt expired' });
+      if (denied.data.error === 'invalid_scope')
+        return reply.redirect('/app?oauth=fanvue-scope-unavailable');
       return kind === 'chat-read'
         ? reply.redirect('/app?oauth=fanvue-chat-read-denied')
         : kind === 'chat-send'

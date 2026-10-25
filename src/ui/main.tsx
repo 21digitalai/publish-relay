@@ -1444,6 +1444,8 @@ function AccountsPage() {
       'Fanvue message reading was not enabled. Authorization was cancelled. The selected account remains connected; try again when ready.',
     'fanvue-denied':
       'No Fanvue account was connected. Authorization was cancelled; start a new connection to try again.',
+    'fanvue-scope-unavailable':
+      'No Fanvue account was connected. This app is not allowed to request a required Fanvue permission. Ask the app owner to enable it before trying again.',
     'fanvue-chat-read-unavailable':
       'Fanvue message reading was not enabled. The selected account changed or was disconnected. Reconnect it, then try again.',
     'fanvue-chat-read-scope':

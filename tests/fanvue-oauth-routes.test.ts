@@ -284,4 +284,17 @@ describe('Fanvue OAuth HTTP boundary', () => {
     expect(response.headers.location).toBe('/app?oauth=fanvue-chat-read-denied');
     expect(completeFanvueOauthConnection).not.toHaveBeenCalled();
   });
+
+  it('consumes an invalid-scope callback and redirects without exposing provider details', async () => {
+    const app = application(true);
+    vi.mocked(completeFanvueOauthDenial).mockResolvedValueOnce('publishing');
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/fanvue/callback?state=state&error=invalid_scope&error_description=secret-detail',
+      headers: { cookie: session },
+    });
+    expect(response.headers.location).toBe('/app?oauth=fanvue-scope-unavailable');
+    expect(response.body).not.toContain('secret-detail');
+    expect(completeFanvueOauthConnection).not.toHaveBeenCalled();
+  });
 });

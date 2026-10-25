@@ -23,11 +23,16 @@ const connectSchema = z
     readChatAccountId: z.uuid().optional(),
     sendChatAccountId: z.uuid().optional(),
     paymentAccountId: z.uuid().optional(),
+    audienceAccountId: z.uuid().optional(),
   })
   .refine(
     (value) =>
-      [value.readChatAccountId, value.sendChatAccountId, value.paymentAccountId].filter(Boolean)
-        .length <= 1,
+      [
+        value.readChatAccountId,
+        value.sendChatAccountId,
+        value.paymentAccountId,
+        value.audienceAccountId,
+      ].filter(Boolean).length <= 1,
   );
 
 export function registerFanvueOauthRoutes(
@@ -70,6 +75,9 @@ export function registerFanvueOauthRoutes(
             ? { sendChatAccountId: body.data.sendChatAccountId }
             : {}),
           ...(body.data.paymentAccountId ? { paymentAccountId: body.data.paymentAccountId } : {}),
+          ...(body.data.audienceAccountId
+            ? { audienceAccountId: body.data.audienceAccountId }
+            : {}),
         },
         dependencies.actionPolicy,
       );
@@ -80,9 +88,11 @@ export function registerFanvueOauthRoutes(
           data: null,
           error: body.data.paymentAccountId
             ? 'Reconnect this Fanvue account and retry payment-signal permission'
-            : body.data.sendChatAccountId
-              ? 'Reconnect this Fanvue account and retry message-sending permission'
-              : 'Reconnect this Fanvue account and retry message-reading permission',
+            : body.data.audienceAccountId
+              ? 'Reconnect this Fanvue account and retry Audience permission'
+              : body.data.sendChatAccountId
+                ? 'Reconnect this Fanvue account and retry message-sending permission'
+                : 'Reconnect this Fanvue account and retry message-reading permission',
         });
       if (error instanceof ActionPolicyDeniedError)
         return reply.code(403).send({ data: null, error: error.message, code: error.code });
@@ -120,7 +130,9 @@ export function registerFanvueOauthRoutes(
           ? reply.redirect('/app?oauth=fanvue-chat-send-denied')
           : kind === 'payment'
             ? reply.redirect('/app?oauth=fanvue-payment-denied')
-            : reply.redirect('/app?oauth=fanvue-denied');
+            : kind === 'audience'
+              ? reply.redirect('/app?oauth=fanvue-audience-denied')
+              : reply.redirect('/app?oauth=fanvue-denied');
     }
     const query = callbackSchema.safeParse(request.query);
     if (!query.success)
@@ -145,9 +157,11 @@ export function registerFanvueOauthRoutes(
               ? '/app?oauth=fanvue-chat-read-connected'
               : 'consentKind' in result && result.consentKind === 'send-chat'
                 ? '/app?oauth=fanvue-chat-send-connected'
-                : 'consentKind' in result
-                  ? '/app?oauth=fanvue-payment-connected'
-                  : '/app?oauth=fanvue-connected',
+                : 'consentKind' in result && result.consentKind === 'audience'
+                  ? '/app?oauth=fanvue-audience-connected'
+                  : 'consentKind' in result
+                    ? '/app?oauth=fanvue-payment-connected'
+                    : '/app?oauth=fanvue-connected',
           )
         : await reply.code(400).send({
             data: null,
@@ -158,7 +172,9 @@ export function registerFanvueOauthRoutes(
         return reply.redirect(
           error.kind === 'payment'
             ? `/app?oauth=fanvue-payment-${error.reason}`
-            : `/app?oauth=fanvue-chat-${error.kind}-${error.reason}`,
+            : error.kind === 'audience'
+              ? `/app?oauth=fanvue-audience-${error.reason}`
+              : `/app?oauth=fanvue-chat-${error.kind}-${error.reason}`,
         );
       if (error instanceof ProviderDestinationConflictError)
         return reply.code(409).send({ data: null, error: error.message });

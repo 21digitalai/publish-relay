@@ -12,12 +12,13 @@ import {
 import type { FanvueHttpClient } from './fanvue-http-client.js';
 import type { FanvueReadClient } from './fanvue-read-client.js';
 
-export type FanvueReadModule = 'chat' | 'post' | 'media';
+export type FanvueReadModule = 'chat' | 'post' | 'media' | 'audience';
 
 const REQUIRED_SCOPES: Record<FanvueReadModule, string> = {
   chat: 'read:chat',
   post: 'read:post',
   media: 'read:media',
+  audience: 'read:fan',
 };
 
 export class FanvueReadUnavailableError extends Error {
@@ -39,6 +40,27 @@ export class FanvueReadService {
     private readonly oauthClient: FanvueHttpClient,
     private readonly readClient: FanvueReadClient,
   ) {}
+
+  async listFollowers(input: {
+    workspaceId: string;
+    accountId: string;
+    page?: number;
+    size?: number;
+  }) {
+    const token = await this.accessToken(input, 'audience');
+    return this.readClient.listFollowers(token, input);
+  }
+
+  async listSubscribers(input: {
+    workspaceId: string;
+    accountId: string;
+    page?: number;
+    size?: number;
+    cursor?: string;
+  }) {
+    const token = await this.accessToken(input, 'audience');
+    return this.readClient.listSubscribers(token, input);
+  }
 
   async listChats(input: {
     workspaceId: string;

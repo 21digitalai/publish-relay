@@ -86,6 +86,13 @@ describe.skipIf(!connectionString)('Fanvue read and DM account isolation on Post
       const accountId = accounts.rows[0]?.id;
       if (!accountId) throw new Error('Fanvue fixture account was not persisted');
       await expect(
+        service.listFollowers({ workspaceId: otherWorkspaceId, accountId }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
+      await expect(service.listFollowers({ workspaceId, accountId })).rejects.toMatchObject({
+        reason: 'scope_missing',
+      });
+      expect(providerRequest).not.toHaveBeenCalled();
+      await expect(
         service.listChats({ workspaceId: otherWorkspaceId, accountId }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });
       await expect(
@@ -115,6 +122,8 @@ describe.skipIf(!connectionString)('Fanvue read and DM account isolation on Post
           accountId,
           fanUuid: randomUUID(),
           clientActionId: randomUUID(),
+          audience: 'followers',
+          page: 1,
           actor: { type: 'user', id: userId },
         }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });

@@ -35,6 +35,8 @@ const localMediaId = '00000000-0000-4000-8000-000000000009';
 const events: string[] = [];
 const reads = {
   getChatCreateToken: vi.fn(() => Promise.resolve('token')),
+  listFollowers: vi.fn(() => Promise.resolve({ data: [{ uuid: input.fanUuid }] })),
+  listSubscribers: vi.fn(() => Promise.resolve({ data: [{ uuid: input.fanUuid }] })),
   getExistingChatForMessage: vi.fn(() => {
     events.push('preflight');
     return Promise.resolve({ accessToken: 'token' });
@@ -73,6 +75,8 @@ describe('Fanvue selected-fan chat creation', () => {
     accountId: input.accountId,
     fanUuid: input.fanUuid,
     clientActionId: input.clientActionId,
+    audience: 'followers' as const,
+    page: 1,
     actor: input.actor,
   };
 
@@ -82,6 +86,12 @@ describe('Fanvue selected-fan chat creation', () => {
       fanUuid: input.fanUuid,
     });
     expect(events).toEqual(['reserve', 'create', 'settle']);
+    expect(reads.listFollowers).toHaveBeenCalledWith({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      page: 1,
+      size: 50,
+    });
     expect(ledger.reserve).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ actionKind: 'chat_create', targetUuid: input.fanUuid }),
@@ -107,6 +117,30 @@ describe('Fanvue selected-fan chat creation', () => {
     await expect(service.createChat(selected)).rejects.toThrow('selected account unavailable');
     expect(ledger.reserve).not.toHaveBeenCalled();
     expect(client.createChat).not.toHaveBeenCalled();
+  });
+
+  it('denies a foreign, missing or shifted Audience selection before reservation', async () => {
+    reads.listFollowers.mockResolvedValueOnce({ data: [{ uuid: messageUuid }] });
+    await expect(service.createChat(selected)).rejects.toThrow('Selected fan');
+    reads.listFollowers.mockResolvedValueOnce({ data: [] });
+    await expect(service.createChat(selected)).rejects.toThrow('Selected fan');
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(client.createChat).not.toHaveBeenCalled();
+  });
+
+  it('requires the independent Audience read grant and supports subscriber cursor selection', async () => {
+    reads.listFollowers.mockRejectedValueOnce(new Error('read:fan scope missing'));
+    await expect(service.createChat(selected)).rejects.toThrow('read:fan scope missing');
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    await expect(
+      service.createChat({ ...selected, audience: 'subscribers', page: undefined, cursor: 'next' }),
+    ).resolves.toMatchObject({ state: 'confirmed' });
+    expect(reads.listSubscribers).toHaveBeenCalledWith({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      cursor: 'next',
+      size: 50,
+    });
   });
 
   it('preserves contactability denial and transport uncertainty', async () => {

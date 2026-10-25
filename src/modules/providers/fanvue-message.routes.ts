@@ -11,16 +11,27 @@ import { FanvueRequestError } from './fanvue-http-client.js';
 import {
   FanvueMessageActionConflictError,
   FanvueMessageMediaUnavailableError,
+  FanvueSelectedFanUnavailableError,
   type FanvueMessageService,
 } from './fanvue-message.service.js';
 import { FanvueReadUnavailableError } from './fanvue-read.service.js';
 
 const params = z.strictObject({ accountId: z.uuid(), fanUuid: z.uuid() });
 const chatParams = z.strictObject({ accountId: z.uuid() });
-export const fanvueCreateChatRequestSchema = z.strictObject({
-  fanUuid: z.uuid(),
-  clientActionId: z.uuid(),
-});
+export const fanvueCreateChatRequestSchema = z
+  .strictObject({
+    fanUuid: z.uuid(),
+    clientActionId: z.uuid(),
+    audience: z.enum(['followers', 'subscribers']),
+    page: z.number().int().positive().optional(),
+    cursor: z.string().min(1).max(1024).optional(),
+  })
+  .superRefine((value, context) => {
+    if ((value.page === undefined) === (value.cursor === undefined))
+      context.addIssue({ code: 'custom', message: 'Select one Audience page or cursor' });
+    if (value.audience === 'followers' && value.cursor !== undefined)
+      context.addIssue({ code: 'custom', message: 'Follower selection requires a page' });
+  });
 export const fanvueMessageRequestSchema = z.strictObject({
   clientActionId: z.uuid(),
   text: z.string().min(1).max(5000).optional(),
@@ -65,6 +76,8 @@ export function registerFanvueMessageRoutes(
         accountId: path.accountId,
         fanUuid: payload.fanUuid,
         clientActionId: payload.clientActionId,
+        audience: payload.audience,
+        ...(payload.page !== undefined ? { page: payload.page } : { cursor: payload.cursor }),
         actor: { type: principal.kind, id: principal.actorId },
       });
       if (result.state === 'failed' && result.failureStatus === 400)
@@ -147,6 +160,10 @@ function sendMessageError(error: unknown, request: FastifyRequest, reply: Fastif
     return reply.code(409).send(errorEnvelope('action_conflict', error.message, request.id));
   if (error instanceof FanvueMessageMediaUnavailableError)
     return reply.code(409).send(errorEnvelope('media_not_ready', error.message, request.id));
+  if (error instanceof FanvueSelectedFanUnavailableError)
+    return reply
+      .code(409)
+      .send(errorEnvelope('selected_fan_unavailable', error.message, request.id));
   if (error instanceof FanvueReadUnavailableError)
     return reply
       .code(error.reason === 'account_not_found' ? 404 : 409)

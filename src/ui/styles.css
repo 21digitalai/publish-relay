@@ -1127,6 +1127,24 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 0.875rem;
 }
+.fanvue-audience-control {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  padding: 12px 0;
+}
+.fanvue-audience-list {
+  min-width: 0;
+}
+.fanvue-audience-list ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.fanvue-audience-list li {
+  overflow-wrap: anywhere;
+}
 .fanvue-guidance-control {
   grid-column: 1 / -1;
   display: grid;

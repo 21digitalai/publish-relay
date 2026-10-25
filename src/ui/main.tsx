@@ -6,6 +6,7 @@ import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { EngagementProposalsPage } from './engagement-proposals.js';
 import { FacebookPageExposureControl } from './facebook-page-exposure-control.js';
+import { FanvueAudienceControl } from './fanvue-audience-control.js';
 import { FanvueGuidanceControl } from './fanvue-guidance-control.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
@@ -48,7 +49,12 @@ interface Account {
     categoryId?: string;
   };
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
-  fanvueModules?: { chatRead: boolean; chatSend: boolean; paymentRead: boolean };
+  fanvueModules?: {
+    chatRead: boolean;
+    chatSend: boolean;
+    paymentRead: boolean;
+    audienceRead: boolean;
+  };
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -1023,6 +1029,7 @@ function AccountRow({
   onEnableChatRead,
   onEnableChatSend,
   onEnablePaymentRead,
+  onEnableAudienceRead,
   onDefaultsSaved,
   originWorkspaceId,
   canManageAccount,
@@ -1034,6 +1041,7 @@ function AccountRow({
   onEnableChatRead: () => void;
   onEnableChatSend: () => void;
   onEnablePaymentRead: () => void;
+  onEnableAudienceRead: () => void;
   onDefaultsSaved: (account: Account) => void;
   originWorkspaceId: string | null;
   canManageAccount: boolean;
@@ -1179,6 +1187,21 @@ function AccountRow({
         {!account.isExposed &&
           account.provider.toLowerCase() === 'fanvue' &&
           !needsReconnect &&
+          (account.fanvueModules?.audienceRead ? (
+            <span className="fanvue-audience-read-status" role="status">
+              Audience enabled
+            </span>
+          ) : (
+            <button
+              className="fanvue-audience-read-enable secondary-button"
+              onClick={onEnableAudienceRead}
+            >
+              Allow Audience access
+            </button>
+          ))}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
           (account.fanvueModules?.paymentRead ? (
             <span className="fanvue-payment-read-status" role="status">
               Payment signals enabled
@@ -1204,6 +1227,9 @@ function AccountRow({
       {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && canManageAccount && (
         <FanvueGuidanceControl accountId={account.id} />
       )}
+      {!account.isExposed &&
+        account.provider.toLowerCase() === 'fanvue' &&
+        account.fanvueModules?.audienceRead && <FanvueAudienceControl accountId={account.id} />}
       {!account.isExposed &&
         account.destinationProvider === 'facebook_page' &&
         originWorkspaceId && (
@@ -1488,6 +1514,17 @@ function AccountsPage() {
       'Fanvue payment signals were not enabled. The required permission was not granted.',
     'fanvue-payment-account-mismatch':
       'Fanvue payment signals were not enabled. A different creator signed in.',
+    'fanvue-audience-denied': 'Fanvue Audience was not enabled. Authorization was cancelled.',
+    'fanvue-audience-app-scope':
+      'Fanvue Audience was not enabled. This app is not allowed to request read:fan.',
+    'fanvue-audience-provider-error':
+      'Fanvue Audience was not enabled because authorization failed.',
+    'fanvue-audience-unavailable':
+      'Fanvue Audience was not enabled. The selected account changed or disconnected.',
+    'fanvue-audience-scope':
+      'Fanvue Audience was not enabled. The required permission was not granted.',
+    'fanvue-audience-account-mismatch':
+      'Fanvue Audience was not enabled. A different creator signed in.',
     'instagram-denied':
       'No Instagram account was connected. Instagram authorization was not completed. Start a new connection to try again.',
     'instagram-expired':
@@ -1930,6 +1967,23 @@ function AccountsPage() {
                                 error instanceof Error
                                   ? error.message
                                   : 'Could not start Fanvue payment-signal permission',
+                                'connection',
+                                'unknown',
+                              );
+                            },
+                          );
+                        }}
+                        onEnableAudienceRead={() => {
+                          const adapter = getPostingAdapter('fanvue');
+                          if (!adapter) return;
+                          setActionError(null);
+                          void beginAdapterConnection(adapter, account.id, 'read-audience').catch(
+                            (error: unknown) => {
+                              showAnalyticsError(
+                                setActionError,
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Could not start Fanvue Audience permission',
                                 'connection',
                                 'unknown',
                               );

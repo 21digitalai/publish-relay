@@ -8,6 +8,7 @@ import {
 } from '../src/modules/identity/api-key.service.js';
 import {
   FanvueMessageActionConflictError,
+  FanvueSelectedFanUnavailableError,
   type FanvueMessageService,
 } from '../src/modules/providers/fanvue-message.service.js';
 import { registerFanvueMessageRoutes } from '../src/modules/providers/fanvue-message.routes.js';
@@ -63,7 +64,7 @@ function fixture(allowed = true) {
 
 describe('Fanvue selected-fan chat creation route', () => {
   const chatUrl = `/api/v1/fanvue/accounts/${accountId}/chats`;
-  const payload = { fanUuid, clientActionId };
+  const payload = { fanUuid, clientActionId, audience: 'followers', page: 1 };
 
   it('binds account, fan and actor without sending a message', async () => {
     const context = fixture();
@@ -118,6 +119,27 @@ describe('Fanvue selected-fan chat creation route', () => {
     });
     expect(response.statusCode).toBe(401);
     expect(context.createChat).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale selection and malformed Audience selectors', async () => {
+    const context = fixture();
+    context.createChat.mockRejectedValueOnce(new FanvueSelectedFanUnavailableError());
+    const stale = await context.application.inject({
+      method: 'POST',
+      url: chatUrl,
+      headers,
+      payload,
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ error: { code: 'selected_fan_unavailable' } });
+    const malformed = await context.application.inject({
+      method: 'POST',
+      url: chatUrl,
+      headers,
+      payload: { ...payload, cursor: 'unexpected' },
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(context.createChat).toHaveBeenCalledTimes(1);
   });
 });
 

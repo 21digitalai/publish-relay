@@ -59,13 +59,25 @@ const messageCommand = textMessage
     )
       context.addIssue({ code: 'custom', message: 'Preview must be attached to priced media' });
   });
-const createChatCommand = textMessage.pick({
-  workspaceId: true,
-  accountId: true,
-  fanUuid: true,
-  clientActionId: true,
-  actor: true,
-});
+const createChatCommand = textMessage
+  .pick({
+    workspaceId: true,
+    accountId: true,
+    fanUuid: true,
+    clientActionId: true,
+    actor: true,
+  })
+  .extend({
+    audience: z.enum(['followers', 'subscribers']),
+    page: z.number().int().positive().optional(),
+    cursor: z.string().min(1).max(1024).optional(),
+  })
+  .superRefine((value, context) => {
+    if ((value.page === undefined) === (value.cursor === undefined))
+      context.addIssue({ code: 'custom', message: 'Select one Audience page or cursor' });
+    if (value.audience === 'followers' && value.cursor !== undefined)
+      context.addIssue({ code: 'custom', message: 'Follower selection requires a page' });
+  });
 
 export type FanvueTextMessageResult =
   | { state: 'confirmed'; messageUuid: string }
@@ -81,6 +93,12 @@ export class FanvueMessageActionConflictError extends Error {
 export class FanvueMessageMediaUnavailableError extends Error {
   constructor() {
     super('Fanvue media is not ready for this account');
+  }
+}
+
+export class FanvueSelectedFanUnavailableError extends Error {
+  constructor() {
+    super('Selected fan is no longer on this account Audience page');
   }
 }
 
@@ -112,6 +130,23 @@ export class FanvueMessageService {
   > {
     const command = createChatCommand.parse(input);
     const accessToken = await this.reads.getChatCreateToken(command);
+    const audience =
+      command.audience === 'followers'
+        ? await this.reads.listFollowers({
+            workspaceId: command.workspaceId,
+            accountId: command.accountId,
+            ...(command.page !== undefined ? { page: command.page } : {}),
+            size: 50,
+          })
+        : await this.reads.listSubscribers({
+            workspaceId: command.workspaceId,
+            accountId: command.accountId,
+            ...(command.page !== undefined ? { page: command.page } : {}),
+            ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+            size: 50,
+          });
+    if (!audience.data.some((person) => person.uuid === command.fanUuid))
+      throw new FanvueSelectedFanUnavailableError();
     await withTenantTransaction(this.database, command, (transaction) =>
       enforceWorkspaceAction(transaction, this.policy, {
         workspaceId: command.workspaceId,
@@ -128,7 +163,15 @@ export class FanvueMessageService {
       actionKind: 'chat_create' as const,
       targetUuid: command.fanUuid,
       requestFingerprint: createHash('sha256')
-        .update(JSON.stringify({ operation: 'chat_create', fanUuid: command.fanUuid }))
+        .update(
+          JSON.stringify({
+            operation: 'chat_create',
+            fanUuid: command.fanUuid,
+            audience: command.audience,
+            page: command.page,
+            cursor: command.cursor,
+          }),
+        )
         .digest('hex'),
     };
     const reservation = await reserveFanvueAction(this.database, intent);

@@ -23,6 +23,8 @@ const MUTATIONS = new Set([
 const ROUTES = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
+  'fanvue:followers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/followers' },
+  'fanvue:subscribers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/subscribers' },
   'fanvue-guidance:show': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/guidance' },
   'fanvue-guidance:set': {
     method: 'PATCH',
@@ -72,6 +74,31 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ];
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
+  'fanvue:followers': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'pagination',
+    'page',
+    'size',
+    'hasMore',
+    'uuid',
+    'handle',
+    'displayName',
+    'relationship',
+    'subscriptionStatus',
+  ]),
+  'fanvue:subscribers': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'pagination',
+    'page',
+    'size',
+    'hasMore',
+    'nextCursor',
+    'uuid',
+    'handle',
+    'displayName',
+    'relationship',
+    'subscriptionStatus',
+  ]),
   'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue:create-chat': new Set([...ENVELOPE_OUTPUT_KEYS, 'fanUuid', 'failureStatus']),
@@ -425,15 +452,23 @@ function jobState(body) {
 }
 function routePath(route, command, id, flags) {
   const path = route.path.replace(':id', encodeURIComponent(id ?? ''));
-  if (command !== 'posts:list' && command !== 'destinations:list' && command !== 'publishes:list')
+  if (
+    command !== 'posts:list' &&
+    command !== 'destinations:list' &&
+    command !== 'publishes:list' &&
+    command !== 'fanvue:followers' &&
+    command !== 'fanvue:subscribers'
+  )
     return path;
   const query = new URLSearchParams();
   const names =
     command === 'destinations:list'
       ? ['cursor']
-      : command === 'publishes:list'
-        ? ['cursor', 'limit', 'states', 'providerAccountId', 'scheduledAfter', 'scheduledBefore']
-        : ['cursor', 'limit'];
+      : command === 'fanvue:followers' || command === 'fanvue:subscribers'
+        ? ['page', 'size', 'cursor']
+        : command === 'publishes:list'
+          ? ['cursor', 'limit', 'states', 'providerAccountId', 'scheduledAfter', 'scheduledBefore']
+          : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
     if (typeof value === 'string') query.set(name, value);

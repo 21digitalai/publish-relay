@@ -62,6 +62,16 @@ function readRoutes(service: FanvueReadService) {
     read: (input: ReadInput) => Promise<unknown>;
   }[] = [
     {
+      path: '/api/v1/fanvue/accounts/:accountId/followers',
+      capability: 'fanvue:audience:read',
+      read: (input) => service.listFollowers(input),
+    },
+    {
+      path: '/api/v1/fanvue/accounts/:accountId/subscribers',
+      capability: 'fanvue:audience:read',
+      read: (input) => service.listSubscribers(input),
+    },
+    {
       path: '/api/v1/fanvue/accounts/:accountId/chats',
       capability: 'fanvue:chats:read',
       read: (input) => service.listChats(input),

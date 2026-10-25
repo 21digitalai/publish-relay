@@ -18,7 +18,6 @@ interface AdvanceFanvueUploadInput {
   session: FanvueUploadSession;
   partNumber: number;
   etag: string;
-  now: Date;
 }
 
 /** Commit an encrypted part receipt and its offset together, or preserve both old values. */
@@ -45,7 +44,7 @@ export async function advanceFanvueUploadProgress(
       .set({
         nextSegment: input.partNumber,
         nextByteOffset: receipt.nextByteOffset,
-        updatedAt: input.now,
+        updatedAt: sql`clock_timestamp()`,
       })
       .where(
         and(
@@ -56,7 +55,7 @@ export async function advanceFanvueUploadProgress(
           eq(providerStagingArtifacts.uploadPhase, 'uploading'),
           eq(providerStagingArtifacts.nextSegment, expectedSegment),
           eq(providerStagingArtifacts.nextByteOffset, expectedByteOffset),
-          gt(providerStagingArtifacts.expiresAt, input.now),
+          gt(providerStagingArtifacts.expiresAt, sql`clock_timestamp()`),
           isNull(providerStagingArtifacts.deletedAt),
           sql`EXISTS (
             SELECT 1 FROM publication_jobs job
@@ -66,7 +65,7 @@ export async function advanceFanvueUploadProgress(
               AND job.id = ${input.jobId}
               AND job.state = 'leased'
               AND job.lease_owner = ${input.leaseOwner}
-              AND job.lease_expires_at > ${input.now}
+              AND job.lease_expires_at > clock_timestamp()
               AND account.destination_provider = 'fanvue'
               AND account.availability = 'active'
               AND account.disconnected_at IS NULL

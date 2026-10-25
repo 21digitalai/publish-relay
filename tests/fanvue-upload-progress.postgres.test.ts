@@ -14,7 +14,6 @@ const accountId = '00000000-0000-4000-8000-000000000003';
 const jobId = '00000000-0000-4000-8000-000000000004';
 const artifactId = '00000000-0000-4000-8000-000000000005';
 const credentialId = '00000000-0000-4000-8000-000000000006';
-const now = new Date('2026-10-25T09:00:00.000Z');
 const keys = { currentVersion: () => 'v1', getKey: () => Promise.resolve(Buffer.alloc(32, 7)) };
 const session: FanvueUploadSession = {
   uploadId: 'upload-one',
@@ -29,6 +28,7 @@ let postgres: PGlite;
 let database: NodePgDatabase;
 
 beforeEach(async () => {
+  const expiresAt = new Date(Date.now() + 60_000);
   postgres = new PGlite();
   await postgres.exec(`
     CREATE TABLE credentials (
@@ -68,14 +68,14 @@ beforeEach(async () => {
   ]);
   await postgres.query(
     `INSERT INTO publication_jobs VALUES ($1, $2, $3, 'leased', 'worker-one', $4)`,
-    [jobId, workspaceId, accountId, new Date(now.getTime() + 60_000)],
+    [jobId, workspaceId, accountId, expiresAt],
   );
   await postgres.query(
     `INSERT INTO provider_staging_artifacts (
        id, workspace_id, job_id, provider_reference_credential_id, upload_phase,
        next_segment, next_byte_offset, expires_at
      ) VALUES ($1, $2, $3, $4, 'uploading', 0, 0, $5)`,
-    [artifactId, workspaceId, jobId, credentialId, new Date(now.getTime() + 60_000)],
+    [artifactId, workspaceId, jobId, credentialId, expiresAt],
   );
   database = drizzle(postgres) as unknown as NodePgDatabase;
 });
@@ -109,7 +109,6 @@ function input(overrides: Record<string, unknown> = {}) {
     session,
     partNumber: 1,
     etag: 'etag-one',
-    now,
     ...overrides,
   };
 }
@@ -152,9 +151,30 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
     for (const denied of [
       input({ workspaceId: otherWorkspaceId }),
       input({ leaseOwner: 'worker-two' }),
-      input({ now: new Date(now.getTime() + 120_000) }),
     ])
       expect(await advanceFanvueUploadProgress(database, keys, denied)).toBe(false);
+    await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
+      new Date(Date.now() - 60_000),
+      jobId,
+    ]);
+    expect(
+      await advanceFanvueUploadProgress(database, keys, input({ now: new Date(2000, 0, 1) })),
+    ).toBe(false);
+    await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
+      new Date(Date.now() + 60_000),
+      jobId,
+    ]);
+    await postgres.query('UPDATE provider_staging_artifacts SET expires_at=$1 WHERE id=$2', [
+      new Date(Date.now() - 60_000),
+      artifactId,
+    ]);
+    expect(
+      await advanceFanvueUploadProgress(database, keys, input({ now: new Date(2000, 0, 1) })),
+    ).toBe(false);
+    await postgres.query('UPDATE provider_staging_artifacts SET expires_at=$1 WHERE id=$2', [
+      new Date(Date.now() + 60_000),
+      artifactId,
+    ]);
     await postgres.query('INSERT INTO publication_attempts VALUES ($1, $2)', [workspaceId, jobId]);
     expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(false);
     expect(await progress()).toEqual({ segment: 0, offset: 0, version: 1 });

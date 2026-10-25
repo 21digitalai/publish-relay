@@ -12,6 +12,7 @@ import {
   setPageEngagementModule,
 } from '../providers/facebook-page-engagement.service.js';
 import {
+  IneligiblePageEngagementCapabilitiesError,
   listPageEngagementPrincipals,
   setPageEngagementPrincipalGrants,
 } from '../providers/facebook-page-engagement-grants.service.js';
@@ -139,13 +140,20 @@ export function registerProviderAccountRoutes(
     const body = engagementGrantSchema.safeParse(request.body);
     if (!params.success || !body.success)
       return reply.code(400).send({ data: null, error: 'Invalid Page access selection' });
-    const saved = await setPageEngagementPrincipalGrants(dependencies.database, {
-      workspaceId: identity.workspaceId,
-      accountId: params.data.accountId,
-      userId: identity.userId,
-      requestId: request.id,
-      ...body.data,
-    });
+    let saved: boolean;
+    try {
+      saved = await setPageEngagementPrincipalGrants(dependencies.database, {
+        workspaceId: identity.workspaceId,
+        accountId: params.data.accountId,
+        userId: identity.userId,
+        requestId: request.id,
+        ...body.data,
+      });
+    } catch (error) {
+      if (error instanceof IneligiblePageEngagementCapabilitiesError)
+        return reply.code(400).send({ data: null, error: error.message });
+      throw error;
+    }
     void reply.header('Cache-Control', 'no-store');
     return saved
       ? { data: { saved: true }, error: null }

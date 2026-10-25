@@ -18,6 +18,12 @@ import {
 
 type PrincipalKind = 'api-key' | 'delegated';
 
+export class IneligiblePageEngagementCapabilitiesError extends Error {
+  constructor() {
+    super('Selected Page access exceeds the credential capabilities');
+  }
+}
+
 export interface PageEngagementPrincipal {
   kind: PrincipalKind;
   id: string;
@@ -181,16 +187,29 @@ export async function setPageEngagementPrincipalGrants(
     const [principal] =
       input.principalKind === 'api-key'
         ? await transaction
-            .select({ id: apiKeys.id })
+            .select({ id: apiKeys.id, scopes: apiKeys.capabilities })
             .from(apiKeys)
             .where(principalCriteria)
             .limit(1)
         : await transaction
-            .select({ id: delegatedGrants.id })
+            .select({
+              id: delegatedGrants.id,
+              scopes: delegatedGrants.scopes,
+              allowed: registeredClients.allowedScopes,
+            })
             .from(delegatedGrants)
+            .innerJoin(registeredClients, eq(delegatedGrants.clientId, registeredClients.id))
             .where(principalCriteria)
             .limit(1);
     if (!principal) return false;
+    if (
+      input.capabilities.some(
+        (capability) =>
+          !principal.scopes.includes(capability) ||
+          ('allowed' in principal && !(principal.allowed as string[]).includes(capability)),
+      )
+    )
+      throw new IneligiblePageEngagementCapabilitiesError();
     await transaction
       .insert(facebookPageEngagementModules)
       .values({ workspaceId: input.workspaceId, accountId: input.accountId })

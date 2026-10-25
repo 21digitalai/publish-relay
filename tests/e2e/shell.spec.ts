@@ -4506,7 +4506,10 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
     }
     await route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ data: { items: keys, eligibleCapabilities }, error: null }),
+      body: JSON.stringify({
+        data: { items: keys, eligibleCapabilities, defaultCapabilities: eligibleCapabilities },
+        error: null,
+      }),
     });
   });
   await page.route('**/api/settings/delegated-grants**', async (route) => {
@@ -4638,6 +4641,44 @@ test('manages workspace settings and API keys with one-time secret and revoke fe
   await expect(page.getByText('No applications connected.')).toBeVisible();
   await expect(page.getByRole('status')).toContainText('Application connection revoked');
   expect(grantRevokeRequests).toBe(1);
+});
+
+test('new API key creation resets engagement permissions to server defaults', async ({ page }) => {
+  const created: string[][] = [];
+  const defaultCapabilities = ['destinations:read'];
+  await establishWorkspaceSession(page);
+  await page.route('**/api/settings/api-keys', async (route) => {
+    if (route.request().method() === 'POST') {
+      created.push((route.request().postDataJSON() as { capabilities: string[] }).capabilities);
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { token: 'one-time-token' }, error: null }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [],
+          eligibleCapabilities: [...defaultCapabilities, 'comments:send'],
+          defaultCapabilities,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto(await workspacePath(page, 'settings/automation'));
+  const sendPermission = page.getByRole('button', { name: 'comments:send' });
+  await sendPermission.click();
+  await page.getByLabel('Key name').fill('First key');
+  await page.getByRole('button', { name: 'Create key' }).click();
+  await expect(sendPermission).toHaveAttribute('aria-pressed', 'false');
+  await page.getByLabel('Key name').fill('Second key');
+  await page.getByRole('button', { name: 'Create key' }).click();
+  await expect.poll(() => created.length).toBe(2);
+  expect(created).toEqual([['destinations:read', 'comments:send'], ['destinations:read']]);
 });
 
 test('renders truthful job-detail loading, alternate state, workspace routing, and errors', async ({

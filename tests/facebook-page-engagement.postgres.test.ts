@@ -185,6 +185,30 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
           userId: user,
         }),
       ).toBeNull();
+      await expect(
+        setPageEngagementPrincipalGrants(database, {
+          workspaceId: owner,
+          accountId: page,
+          userId: user,
+          requestId: 'ineligible-key',
+          principalKind: 'api-key',
+          principalId: legacyKey,
+          capabilities: ['comments:read'],
+        }),
+      ).rejects.toThrow('Selected Page access exceeds the credential capabilities');
+      await pool.query(
+        "UPDATE api_keys SET capabilities=ARRAY['destinations:read', 'comments:read'] WHERE id=$1",
+        [legacyKey],
+      );
+      expect(
+        (
+          await listPageEngagementPrincipals(database, {
+            workspaceId: owner,
+            accountId: page,
+            userId: user,
+          })
+        )?.find((item) => item.id === legacyKey)?.capabilities,
+      ).toEqual([]);
       const allowed = (
         accountId: string,
         actorId: string,
@@ -228,15 +252,17 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
         `UPDATE delegated_grants SET scopes=ARRAY['destinations:read', 'comments:propose'] WHERE id=$1`,
         [legacyDelegatedGrant],
       );
-      await setPageEngagementPrincipalGrants(database, {
-        workspaceId: owner,
-        accountId: page,
-        userId: user,
-        requestId: 'legacy-delegated-row',
-        principalKind: 'delegated',
-        principalId: legacyDelegatedGrant,
-        capabilities: ['comments:propose'],
-      });
+      await expect(
+        setPageEngagementPrincipalGrants(database, {
+          workspaceId: owner,
+          accountId: page,
+          userId: user,
+          requestId: 'ineligible-delegated',
+          principalKind: 'delegated',
+          principalId: legacyDelegatedGrant,
+          capabilities: ['comments:propose'],
+        }),
+      ).rejects.toThrow('Selected Page access exceeds the credential capabilities');
       expect(
         await authorizePageEngagement(database, {
           workspaceId: owner,
@@ -261,6 +287,10 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
       expect(
         principals?.find((item) => item.id === legacyDelegatedGrant)?.eligibleCapabilities,
       ).toEqual([]);
+      await pool.query(
+        "UPDATE registered_clients SET allowed_scopes=ARRAY['destinations:read', 'comments:propose'] WHERE id=$1",
+        [legacyClientId],
+      );
       expect(
         await authorizePageEngagement(database, {
           workspaceId: owner,

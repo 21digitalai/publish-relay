@@ -1964,6 +1964,7 @@ function SettingsPage() {
   const settingsLoadErrorReported = useRef(false);
   const [secret, setSecret] = useState<string | null>(null);
   const [eligibleCapabilities, setEligibleCapabilities] = useState<string[]>([]);
+  const [defaultCapabilities, setDefaultCapabilities] = useState<string[]>([]);
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [editingKey, setEditingKey] = useState<{
     id: string;
@@ -2004,6 +2005,7 @@ function SettingsPage() {
       throw new Error(result.error ?? 'API keys could not be loaded');
     setKeys(result.data.items);
     setEligibleCapabilities(result.data.eligibleCapabilities);
+    setDefaultCapabilities(result.data.defaultCapabilities);
     setKeyListRefreshFailed(false);
   };
   useEffect(() => {
@@ -2028,6 +2030,7 @@ function SettingsPage() {
           };
           setKeys(keyData.items);
           setEligibleCapabilities(keyData.eligibleCapabilities);
+          setDefaultCapabilities(keyData.defaultCapabilities);
           setCapabilities([...keyData.defaultCapabilities]);
         } else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
         else {
@@ -2177,6 +2180,7 @@ function SettingsPage() {
         throw new Error(result.error ?? 'API key could not be created');
       setSecret(result.data.token);
       setLabel('');
+      setCapabilities([...defaultCapabilities]);
       setMessage('API key created');
       try {
         await loadApiKeys();

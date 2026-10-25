@@ -47,7 +47,7 @@ interface Account {
     categoryId?: string;
   };
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
-  fanvueModules?: { chatRead: boolean; chatSend: boolean };
+  fanvueModules?: { chatRead: boolean; chatSend: boolean; paymentRead: boolean };
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -1021,6 +1021,7 @@ function AccountRow({
   onReconnect,
   onEnableChatRead,
   onEnableChatSend,
+  onEnablePaymentRead,
   onDefaultsSaved,
   originWorkspaceId,
 }: {
@@ -1030,6 +1031,7 @@ function AccountRow({
   onReconnect: () => void;
   onEnableChatRead: () => void;
   onEnableChatSend: () => void;
+  onEnablePaymentRead: () => void;
   onDefaultsSaved: (account: Account) => void;
   originWorkspaceId: string | null;
 }) {
@@ -1169,6 +1171,21 @@ function AccountRow({
           ) : (
             <button className="fanvue-chat-send-enable secondary-button" onClick={onEnableChatSend}>
               Allow message sending
+            </button>
+          ))}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
+          (account.fanvueModules?.paymentRead ? (
+            <span className="fanvue-payment-read-status" role="status">
+              Payment signals enabled
+            </span>
+          ) : (
+            <button
+              className="fanvue-payment-read-enable secondary-button"
+              onClick={onEnablePaymentRead}
+            >
+              Allow payment signals
             </button>
           ))}
       </div>
@@ -1441,6 +1458,14 @@ function AccountsPage() {
       'Fanvue message sending was not enabled. The required permission was not granted.',
     'fanvue-chat-send-account-mismatch':
       'Fanvue message sending was not enabled. A different creator signed in.',
+    'fanvue-payment-denied':
+      'Fanvue payment signals were not enabled. Authorization was cancelled; the selected account remains connected.',
+    'fanvue-payment-unavailable':
+      'Fanvue payment signals were not enabled. The selected account changed or disconnected.',
+    'fanvue-payment-scope':
+      'Fanvue payment signals were not enabled. The required permission was not granted.',
+    'fanvue-payment-account-mismatch':
+      'Fanvue payment signals were not enabled. A different creator signed in.',
     'instagram-denied':
       'No Instagram account was connected. Instagram authorization was not completed. Start a new connection to try again.',
     'instagram-expired':
@@ -1491,6 +1516,7 @@ function AccountsPage() {
   const oauthError = oauthResult ? oauthErrorMessages[oauthResult] : undefined;
   const fanvueChatReadConnected = oauthResult === 'fanvue-chat-read-connected';
   const fanvueChatSendConnected = oauthResult === 'fanvue-chat-send-connected';
+  const fanvuePaymentConnected = oauthResult === 'fanvue-payment-connected';
   const oauthErrorReported = useRef(false);
   useEffect(() => {
     if (oauthError && !oauthErrorReported.current) {
@@ -1735,6 +1761,12 @@ function AccountsPage() {
               Fanvue message sending is connected for the selected account.
             </div>
           )}
+          {fanvuePaymentConnected && (
+            <div className="account-module-success" role="status">
+              Fanvue payment signals are enabled for the selected account. No customer messages or
+              content are sent.
+            </div>
+          )}
           <div className="account-toolbar">
             <label className="search-control">
               <span aria-hidden="true">⌕</span>
@@ -1858,6 +1890,23 @@ function AccountsPage() {
                                 error instanceof Error
                                   ? error.message
                                   : 'Could not start Fanvue message-sending permission',
+                                'connection',
+                                'unknown',
+                              );
+                            },
+                          );
+                        }}
+                        onEnablePaymentRead={() => {
+                          const adapter = getPostingAdapter('fanvue');
+                          if (!adapter) return;
+                          setActionError(null);
+                          void beginAdapterConnection(adapter, account.id, 'read-payments').catch(
+                            (error: unknown) => {
+                              showAnalyticsError(
+                                setActionError,
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Could not start Fanvue payment-signal permission',
                                 'connection',
                                 'unknown',
                               );

@@ -11,7 +11,7 @@ export function getCsrfToken(): string {
 export async function beginAdapterConnection(
   adapter: PostingAdapterConfig,
   accountId?: string,
-  option?: 'read-chat' | 'send-chat',
+  option?: 'read-chat' | 'send-chat' | 'read-payments',
 ): Promise<void> {
   emitAnalyticsAction('provider_connect_attempted', { provider: adapter.id });
   const response = await fetch(adapter.auth.startPath, {
@@ -22,9 +22,11 @@ export async function beginAdapterConnection(
         ? { readChatAccountId: accountId }
         : option === 'send-chat' && adapter.id === 'fanvue' && accountId
           ? { sendChatAccountId: accountId }
-          : accountId && adapter.id === 'linkedin'
-            ? { accountId }
-            : {},
+          : option === 'read-payments' && adapter.id === 'fanvue' && accountId
+            ? { paymentAccountId: accountId }
+            : accountId && adapter.id === 'linkedin'
+              ? { accountId }
+              : {},
     ),
   });
   const result = (await response.json()) as {

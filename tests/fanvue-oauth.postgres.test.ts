@@ -8,6 +8,7 @@ import {
   FanvueHttpClient,
   FANVUE_PUBLISHING_SCOPES,
   FANVUE_CHAT_READ_SCOPES,
+  FANVUE_PAYMENT_SCOPE,
 } from '../src/modules/providers/fanvue-http-client.js';
 import {
   beginFanvueOauthConnection,
@@ -39,6 +40,8 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
     let refreshCalls = 0;
     let deniedScope = false;
     let moduleScope = false;
+    let paymentScope = false;
+    let paymentGranted = false;
     let discoveredCreatorId = creatorId;
     let disconnectOnProfileAccountId: string | null = null;
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (url, options) => {
@@ -82,8 +85,13 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
             scope: deniedScope
               ? 'openid offline_access offline read:self'
               : moduleScope
-                ? FANVUE_CHAT_READ_SCOPES.join(' ')
-                : scope,
+                ? [
+                    ...FANVUE_CHAT_READ_SCOPES,
+                    ...(paymentGranted ? [FANVUE_PAYMENT_SCOPE] : []),
+                  ].join(' ')
+                : paymentScope
+                  ? [...FANVUE_CHAT_READ_SCOPES, FANVUE_PAYMENT_SCOPE].join(' ')
+                  : scope,
           }),
         ),
       );
@@ -218,6 +226,41 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
         id: accountId,
         scopes: [...FANVUE_CHAT_READ_SCOPES],
       });
+      await expect(
+        beginFanvueOauthConnection(database, keys, client, {
+          workspaceId: otherWorkspaceId,
+          userId,
+          paymentAccountId: accountId,
+          callbackUrl: 'https://publishrelay.app/api/oauth/fanvue/callback',
+          requestId: randomUUID(),
+        }),
+      ).rejects.toThrow();
+      const payment = await beginFanvueOauthConnection(database, keys, client, {
+        workspaceId,
+        userId,
+        paymentAccountId: accountId,
+        callbackUrl: 'https://publishrelay.app/api/oauth/fanvue/callback',
+        requestId: randomUUID(),
+      });
+      expect(
+        new Set(new URL(payment.authorizationUrl).searchParams.get('scope')?.split(' ')),
+      ).toEqual(new Set([...FANVUE_CHAT_READ_SCOPES, FANVUE_PAYMENT_SCOPE]));
+      paymentScope = true;
+      const paid = await completeFanvueOauthConnection(database, keys, client, {
+        ...callback,
+        state: new URL(payment.authorizationUrl).searchParams.get('state') ?? '',
+      });
+      expect(paid && 'consentKind' in paid ? paid.consentKind : null).toBe('payment');
+      paymentScope = false;
+      paymentGranted = true;
+      const paymentUpgrade = await pool.query<{ scopes: string[] }>(
+        'SELECT scopes FROM provider_connections WHERE id=$1',
+        [owner.id],
+      );
+      expect(paymentUpgrade.rows[0]?.scopes).toEqual([
+        ...FANVUE_CHAT_READ_SCOPES,
+        FANVUE_PAYMENT_SCOPE,
+      ]);
       const credentialBeforeMismatch = await pool.query<{ credential_id: string }>(
         'SELECT credential_id FROM provider_connections WHERE id=$1',
         [owner.id],

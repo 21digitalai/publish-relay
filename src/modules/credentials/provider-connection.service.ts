@@ -1,5 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { eq } from 'drizzle-orm';
 
+import { workspaces } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
   allowAllActionPolicy,
@@ -29,6 +31,7 @@ export async function connectProvider(
     scopes?: readonly string[];
     accessExpiresAt?: Date;
     refreshExpiresAt?: Date;
+    beforeReplace?: (transaction: NodePgDatabase) => Promise<void>;
   },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{
@@ -50,6 +53,15 @@ export async function connectProvider(
     { workspaceId: input.workspaceId, userId: input.userId },
     async (transaction) => {
       await assertActiveMembership(transaction, input.workspaceId, input.userId);
+      if (input.beforeReplace) {
+        // Serialize consent completion with account disconnect/revoke and base reconnect.
+        await transaction
+          .select({ id: workspaces.id })
+          .from(workspaces)
+          .where(eq(workspaces.id, input.workspaceId))
+          .for('update');
+        await input.beforeReplace(transaction);
+      }
       const credential = await createCredential(transaction, input.workspaceId, encrypted);
       const connection = await replaceProviderConnection(transaction, {
         workspaceId: input.workspaceId,

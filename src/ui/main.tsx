@@ -46,6 +46,7 @@ interface Account {
     categoryId?: string;
   };
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
+  fanvueModules?: { chatRead: boolean };
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -64,6 +65,7 @@ interface AccountDto {
   capabilitySnapshot?: { contentKinds: string[] };
   adapterDefaults: Account['adapterDefaults'];
   xLongPosts?: Account['xLongPosts'];
+  fanvueModules?: Account['fanvueModules'];
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -91,6 +93,7 @@ function mapAccountDto(account: AccountDto): Account {
                 : account.provider,
     destinationProvider: account.destinationProvider ?? account.provider,
     ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
+    ...(account.fanvueModules ? { fanvueModules: account.fanvueModules } : {}),
     name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
     handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
     health:
@@ -1003,6 +1006,7 @@ function AccountRow({
   onDisconnect,
   onRevokeGrant,
   onReconnect,
+  onEnableChatRead,
   onDefaultsSaved,
   originWorkspaceId,
 }: {
@@ -1010,6 +1014,7 @@ function AccountRow({
   onDisconnect: (account: Account) => void;
   onRevokeGrant: (account: Account) => void;
   onReconnect: () => void;
+  onEnableChatRead: () => void;
   onDefaultsSaved: (account: Account) => void;
   originWorkspaceId: string | null;
 }) {
@@ -1126,7 +1131,26 @@ function AccountRow({
             {account.grantFamily ? 'Disconnect Meta grant' : 'Revoke Meta connection'}
           </button>
         )}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
+          (account.fanvueModules?.chatRead ? (
+            <span className="fanvue-chat-read-status" role="status">
+              Message reading enabled
+            </span>
+          ) : (
+            <button className="fanvue-chat-read-enable secondary-button" onClick={onEnableChatRead}>
+              Allow message reading
+            </button>
+          ))}
       </div>
+      {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && !needsReconnect && (
+        <p className="account-module-note">
+          {account.fanvueModules?.chatRead
+            ? 'Read-only Fanvue message access is enabled for this account. Sending remains off.'
+            : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
+        </p>
+      )}
       {!account.isExposed &&
         account.destinationProvider === 'facebook_page' &&
         originWorkspaceId && (
@@ -1369,6 +1393,16 @@ function AccountRow({
 function AccountsPage() {
   const oauthResult = new URLSearchParams(window.location.search).get('oauth');
   const oauthErrorMessages: Record<string, string> = {
+    'fanvue-chat-read-denied':
+      'Fanvue message reading was not enabled. Authorization was cancelled. The selected account remains connected; try again when ready.',
+    'fanvue-denied':
+      'No Fanvue account was connected. Authorization was cancelled; start a new connection to try again.',
+    'fanvue-chat-read-unavailable':
+      'Fanvue message reading was not enabled. The selected account changed or was disconnected. Reconnect it, then try again.',
+    'fanvue-chat-read-scope':
+      'Fanvue message reading was not enabled. The required read-only permission was not granted. Review the permission and try again.',
+    'fanvue-chat-read-account-mismatch':
+      'Fanvue message reading was not enabled. A different creator signed in. Switch to the selected creator account and try again.',
     'instagram-denied':
       'No Instagram account was connected. Instagram authorization was not completed. Start a new connection to try again.',
     'instagram-expired':
@@ -1417,6 +1451,7 @@ function AccountsPage() {
       'No Instagram account was connected. This destination is linked to another connection. Contact support to resolve the conflict.',
   };
   const oauthError = oauthResult ? oauthErrorMessages[oauthResult] : undefined;
+  const fanvueChatReadConnected = oauthResult === 'fanvue-chat-read-connected';
   const oauthErrorReported = useRef(false);
   useEffect(() => {
     if (oauthError && !oauthErrorReported.current) {
@@ -1650,6 +1685,12 @@ function AccountsPage() {
               {oauthError}
             </div>
           )}
+          {fanvueChatReadConnected && (
+            <div className="account-module-success" role="status">
+              Fanvue message reading is connected for the selected account. Sending messages remains
+              off.
+            </div>
+          )}
           <div className="account-toolbar">
             <label className="search-control">
               <span aria-hidden="true">⌕</span>
@@ -1744,6 +1785,23 @@ function AccountsPage() {
                               'connection',
                               'validation',
                             );
+                        }}
+                        onEnableChatRead={() => {
+                          const adapter = getPostingAdapter('fanvue');
+                          if (!adapter) return;
+                          setActionError(null);
+                          void beginAdapterConnection(adapter, account.id, 'read-chat').catch(
+                            (error: unknown) => {
+                              showAnalyticsError(
+                                setActionError,
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Could not start Fanvue message-reading permission',
+                                'connection',
+                                'unknown',
+                              );
+                            },
+                          );
                         }}
                         onDefaultsSaved={(updated) => {
                           setAccounts((current) =>

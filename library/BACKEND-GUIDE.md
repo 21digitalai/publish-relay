@@ -32,6 +32,15 @@ and provider scopes/tasks are verified, and the machine/browser principal has
 exact Page-local read authority. Meta documentation does not offer time-based
 pagination for Page conversations. A controlled Graph-version fixture and
 App Review/Page-task evidence remain required before live inbox claims.
+`facebook-messenger-read.service.ts` is the account-scoped Page-conversation
+query boundary. It resolves only an origin-owned, connected Facebook Page in
+the selected workspace; requires the optional DMs module, verified grant,
+active Facebook Pages connection with all three Messenger scopes and the
+selected Page's MESSAGING task; then decrypts only that Page's credential and
+checks its embedded Page ID before calling the canonical Graph transport. The
+module's grant remains `unknown` by default, so this service fails closed
+until separate controlled provider evidence is recorded. It does not expose a
+browser/machine route or prove production inbox access.
 
 ## Facebook Page engagement authorization foundation
 

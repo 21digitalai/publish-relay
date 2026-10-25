@@ -51,7 +51,26 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
          VALUES ($1, $2, $3, 'creator', 'Creator', 'fanvue', 'creator')`,
         [accountId, workspaceId, connectionId],
       );
-      expect((await reserveFanvueAction(database, input)).kind).toBe('new');
+      const reserved = await reserveFanvueAction(database, input);
+      expect(reserved.kind).toBe('new');
+      if (reserved.kind !== 'new') throw new Error('First reservation was not new');
+      const replays = await Promise.all([
+        reserveFanvueAction(database, input),
+        reserveFanvueAction(database, input),
+      ]);
+      for (const replay of replays) {
+        expect(replay).toMatchObject({ kind: 'existing', state: 'reserved' });
+        expect(replay).not.toHaveProperty('id');
+      }
+      await expect(
+        settleFanvueAction(database, {
+          workspaceId,
+          accountId,
+          clientActionId: input.clientActionId,
+          reservationId: randomUUID(),
+          result: { state: 'confirmed', providerObjectUuid: randomUUID() },
+        }),
+      ).rejects.toThrow('not reserved');
       expect(await reserveFanvueAction(database, input)).toMatchObject({
         kind: 'existing',
         state: 'reserved',
@@ -63,6 +82,7 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
         workspaceId,
         accountId,
         clientActionId: input.clientActionId,
+        reservationId: reserved.id,
         result: { state: 'unknown' },
       });
       expect(await reserveFanvueAction(database, input)).toMatchObject({
@@ -75,16 +95,20 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
           workspaceId,
           accountId,
           clientActionId: input.clientActionId,
+          reservationId: reserved.id,
           result: { state: 'confirmed', providerObjectUuid: randomUUID() },
         }),
       ).rejects.toThrow('not reserved');
       const confirmedAction = { ...input, clientActionId: randomUUID() };
       const providerObjectUuid = randomUUID();
-      expect((await reserveFanvueAction(database, confirmedAction)).kind).toBe('new');
+      const confirmedReservation = await reserveFanvueAction(database, confirmedAction);
+      if (confirmedReservation.kind !== 'new')
+        throw new Error('Confirmation reservation was not new');
       await settleFanvueAction(database, {
         workspaceId,
         accountId,
         clientActionId: confirmedAction.clientActionId,
+        reservationId: confirmedReservation.id,
         result: { state: 'confirmed', providerObjectUuid },
       });
       expect(await reserveFanvueAction(database, confirmedAction)).toMatchObject({
@@ -93,11 +117,13 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
         providerObjectUuid,
       });
       const deniedAction = { ...input, clientActionId: randomUUID() };
-      expect((await reserveFanvueAction(database, deniedAction)).kind).toBe('new');
+      const deniedReservation = await reserveFanvueAction(database, deniedAction);
+      if (deniedReservation.kind !== 'new') throw new Error('Denial reservation was not new');
       await settleFanvueAction(database, {
         workspaceId,
         accountId,
         clientActionId: deniedAction.clientActionId,
+        reservationId: deniedReservation.id,
         result: { state: 'failed', failureStatus: 403 },
       });
       expect(await reserveFanvueAction(database, deniedAction)).toMatchObject({

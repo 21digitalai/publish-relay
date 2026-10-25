@@ -62,3 +62,14 @@ export async function releaseUnstartedFanvueDmAttachment(
     return (result.rowCount ?? 0) > 0;
   });
 }
+
+export async function getFanvueDmAttachmentState(database: NodePgDatabase, key: AttachmentKey) {
+  return withTenantTransaction(database, key, async (transaction) => {
+    const result = await transaction.execute<{ state: string }>(sql`
+      select state from fanvue_dm_attachments
+      where workspace_id = ${key.workspaceId} and account_id = ${key.accountId}
+        and client_action_id = ${key.clientActionId} and media_id = ${key.mediaId}
+    `);
+    return result.rows[0]?.state ?? null;
+  });
+}

@@ -250,6 +250,55 @@ describe.skipIf(!connectionString)('Fanvue read and DM account isolation on Post
           requestId: randomUUID(),
         },
       );
+      await expect(
+        service.getDmMediaUploadToken({ workspaceId: otherWorkspaceId, accountId }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
+      const noUploadScopes = sendScopes.filter((scope) => scope !== 'write:media');
+      await connectProvider(
+        database,
+        keys,
+        {
+          discoverAccounts: () =>
+            Promise.resolve([{ providerAccountId: creatorId, displayName: 'Creator' }]),
+        },
+        {
+          workspaceId,
+          userId,
+          provider: 'fanvue',
+          externalSubjectId: creatorId,
+          accessToken: JSON.stringify({ ...token, scope: noUploadScopes.join(' ') }),
+          scopes: noUploadScopes,
+          accessExpiresAt: new Date(Date.now() + 3_600_000),
+          requestId: randomUUID(),
+        },
+      );
+      await expect(service.getDmMediaUploadToken({ workspaceId, accountId })).rejects.toMatchObject(
+        {
+          reason: 'scope_missing',
+        },
+      );
+      const uploadScopes = sendScopes;
+      await connectProvider(
+        database,
+        keys,
+        {
+          discoverAccounts: () =>
+            Promise.resolve([{ providerAccountId: creatorId, displayName: 'Creator' }]),
+        },
+        {
+          workspaceId,
+          userId,
+          provider: 'fanvue',
+          externalSubjectId: creatorId,
+          accessToken: JSON.stringify({ ...token, scope: uploadScopes.join(' ') }),
+          scopes: uploadScopes,
+          accessExpiresAt: new Date(Date.now() + 3_600_000),
+          requestId: randomUUID(),
+        },
+      );
+      await expect(service.getDmMediaUploadToken({ workspaceId, accountId })).resolves.toBe(
+        'access',
+      );
       const fanUuid = randomUUID();
       const mediaUuid = randomUUID();
       const messageUuid = randomUUID();

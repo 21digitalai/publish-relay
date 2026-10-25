@@ -87,6 +87,11 @@ export class FanvueReadService {
     return this.readClient.getMediaStatus(token, input.mediaUuid);
   }
 
+  /** DM media staging requires the selected creator's chat and media grants together. */
+  async getDmMediaUploadToken(input: { workspaceId: string; accountId: string }) {
+    return this.accessToken(input, 'media', ['write:media', 'read:chat', 'write:chat']);
+  }
+
   async listPosts(input: {
     workspaceId: string;
     accountId: string;

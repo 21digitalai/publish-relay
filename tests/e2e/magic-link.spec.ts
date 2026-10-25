@@ -86,7 +86,9 @@ test('Continue retries after a network failure without consuming the link', asyn
   await page.goto('/login');
   await page.getByLabel('Email').fill(`retry-${crypto.randomUUID()}@example.test`);
   await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
-  const url = await page.getByRole('link', { name: 'Open development sign-in link' }).getAttribute('href');
+  const url = await page
+    .getByRole('link', { name: 'Open development sign-in link' })
+    .getAttribute('href');
   if (!url) throw new Error('Development link was not rendered');
   let interrupted = false;
   await page.route('**/api/auth/magic-link/verify', async (route) => {

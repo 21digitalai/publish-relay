@@ -8,6 +8,7 @@ import { getActiveCredential, rotateCredential } from '../credentials/credential
 import {
   decryptCredential,
   encryptCredential,
+  type EncryptedCredential,
   type MasterKeyProvider,
 } from '../credentials/envelope.js';
 import {
@@ -111,16 +112,25 @@ async function recordRefreshFailure(
   });
 }
 
-export async function getFreshFanvueToken(
+type RefreshReservation =
+  | { kind: 'fresh'; token: FanvueToken }
+  | {
+      kind: 'reserved';
+      token: FanvueToken;
+      connectionId: string;
+      credentialId: string;
+      credentialVersion: number;
+    };
+
+async function reserveFanvueRefresh(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
-  client: FanvueHttpClient,
-  input: { workspaceId: string; creatorId: string; now?: Date },
-): Promise<FanvueToken> {
-  const now = input.now ?? new Date();
-  const reservation = await withTenantTransaction(database, input, async (transaction) => {
+  input: { workspaceId: string; creatorId: string },
+  now: Date,
+): Promise<RefreshReservation | null> {
+  return withTenantTransaction(database, input, async (transaction) => {
     // Commit quarantine before presenting Fanvue's single-use token to the network.
-    const rows = await transaction
+    const [connection] = await transaction
       .select()
       .from(providerConnections)
       .where(
@@ -134,7 +144,6 @@ export async function getFreshFanvueToken(
       )
       .for('update')
       .limit(1);
-    const connection = rows[0];
     if (!connection) return null;
     const stored = await getActiveCredential(
       transaction,
@@ -154,7 +163,7 @@ export async function getFreshFanvueToken(
       connection.accessExpiresAt &&
       connection.accessExpiresAt.getTime() > now.getTime() + REFRESH_SKEW_MS
     )
-      return { kind: 'fresh' as const, token };
+      return { kind: 'fresh', token };
     await markReconnection(transaction, {
       workspaceId: input.workspaceId,
       connectionId: connection.id,
@@ -162,49 +171,24 @@ export async function getFreshFanvueToken(
       now,
     });
     return {
-      kind: 'reserved' as const,
+      kind: 'reserved',
       token,
       connectionId: connection.id,
       credentialId: connection.credentialId,
       credentialVersion: stored.version,
     };
   });
-  if (!reservation) {
-    if (await awaitConcurrentRefresh(database, input))
-      return getFreshFanvueToken(database, keys, client, input);
-    throw new Error('Fanvue account requires reconnection');
-  }
-  if (reservation.kind === 'fresh') return reservation.token;
-  const failureContext = {
-    workspaceId: input.workspaceId,
-    connectionId: reservation.connectionId,
-    credentialId: reservation.credentialId,
-    now,
-  };
-  let refreshed: FanvueToken;
-  try {
-    refreshed = await client.refresh(reservation.token.refresh_token);
-  } catch (error) {
-    await recordRefreshFailure(database, {
-      ...failureContext,
-      code:
-        error instanceof FanvueRequestError && error.code === 'invalid_grant'
-          ? 'invalid_grant'
-          : 'refresh_uncertain',
-    });
-    throw new Error('Fanvue account requires reconnection');
-  }
-  const encoded = Buffer.from(JSON.stringify(refreshed));
-  let encrypted;
-  try {
-    encrypted = await encryptCredential(encoded, keys);
-  } catch {
-    await recordRefreshFailure(database, { ...failureContext, code: 'refresh_persistence_failed' });
-    throw new Error('Fanvue account requires reconnection');
-  } finally {
-    encoded.fill(0);
-  }
-  const saved = await withTenantTransaction(database, input, async (transaction) => {
+}
+
+async function persistFanvueRefresh(
+  database: NodePgDatabase,
+  input: { workspaceId: string; creatorId: string },
+  reservation: Extract<RefreshReservation, { kind: 'reserved' }>,
+  refreshed: FanvueToken,
+  encrypted: EncryptedCredential,
+  now: Date,
+): Promise<boolean> {
+  return withTenantTransaction(database, input, async (transaction) => {
     const [pending] = await transaction
       .select({ id: providerConnections.id })
       .from(providerConnections)
@@ -257,6 +241,52 @@ export async function getFreshFanvueToken(
       );
     return true;
   });
+}
+
+export async function getFreshFanvueToken(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  client: FanvueHttpClient,
+  input: { workspaceId: string; creatorId: string; now?: Date },
+): Promise<FanvueToken> {
+  const now = input.now ?? new Date();
+  const reservation = await reserveFanvueRefresh(database, keys, input, now);
+  if (!reservation) {
+    if (await awaitConcurrentRefresh(database, input))
+      return getFreshFanvueToken(database, keys, client, input);
+    throw new Error('Fanvue account requires reconnection');
+  }
+  if (reservation.kind === 'fresh') return reservation.token;
+  const failureContext = {
+    workspaceId: input.workspaceId,
+    connectionId: reservation.connectionId,
+    credentialId: reservation.credentialId,
+    now,
+  };
+  let refreshed: FanvueToken;
+  try {
+    refreshed = await client.refresh(reservation.token.refresh_token);
+  } catch (error) {
+    await recordRefreshFailure(database, {
+      ...failureContext,
+      code:
+        error instanceof FanvueRequestError && error.code === 'invalid_grant'
+          ? 'invalid_grant'
+          : 'refresh_uncertain',
+    });
+    throw new Error('Fanvue account requires reconnection');
+  }
+  const encoded = Buffer.from(JSON.stringify(refreshed));
+  let encrypted;
+  try {
+    encrypted = await encryptCredential(encoded, keys);
+  } catch {
+    await recordRefreshFailure(database, { ...failureContext, code: 'refresh_persistence_failed' });
+    throw new Error('Fanvue account requires reconnection');
+  } finally {
+    encoded.fill(0);
+  }
+  const saved = await persistFanvueRefresh(database, input, reservation, refreshed, encrypted, now);
   if (!saved) throw new Error('Fanvue account requires reconnection');
   return refreshed;
 }

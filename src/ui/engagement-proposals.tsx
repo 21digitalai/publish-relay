@@ -66,6 +66,7 @@ export function EngagementProposalsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const dismissTrigger = useRef<HTMLButtonElement>(null);
   const approveTrigger = useRef<HTMLButtonElement>(null);
+  const activeProposalRef = useRef<string | null>(null);
 
   const loadPage = useCallback(async (cursor?: string) => {
     const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
@@ -101,10 +102,12 @@ export function EngagementProposalsPage() {
 
   useEffect(() => {
     if (!selectedId) {
+      activeProposalRef.current = null;
       setDetail(null);
       return;
     }
     let active = true;
+    activeProposalRef.current = null;
     setDetail(null);
     setMediaStates({});
     setDetailFailed(false);
@@ -113,6 +116,7 @@ export function EngagementProposalsPage() {
       .then((proposal) => {
         if (!active) return;
         setDetail(proposal);
+        activeProposalRef.current = `${proposal.id}:${String(proposal.revision)}`;
         setDraft(proposal.content.text);
         setSendUncertain(false);
       })
@@ -158,6 +162,7 @@ export function EngagementProposalsPage() {
         setDetail(null);
         setNotice('Proposal dismissed. No message was sent.');
       } else {
+        activeProposalRef.current = `${updated.id}:${String(updated.revision)}`;
         setDetail({
           ...updated,
           accountDisplayName: detail.accountDisplayName,
@@ -225,6 +230,7 @@ export function EngagementProposalsPage() {
 
   const stageMedia = async (mediaId: string) => {
     if (!detail || mediaPending) return;
+    const proposalKey = `${detail.id}:${String(detail.revision)}`;
     setMediaPending(mediaId);
     setError(null);
     try {
@@ -236,14 +242,17 @@ export function EngagementProposalsPage() {
           body: JSON.stringify({ expectedRevision: detail.revision }),
         },
       );
-      setMediaStates((current) => ({ ...current, [mediaId]: result.state }));
+      if (activeProposalRef.current === proposalKey)
+        setMediaStates((current) => ({ ...current, [mediaId]: result.state }));
     } catch (failure) {
-      setMediaStates((current) => ({ ...current, [mediaId]: 'unknown' }));
-      setError(
-        failure instanceof Error
-          ? `${failure.message}. Attachment outcome may be unknown; refresh the proposal before another attempt.`
-          : 'Attachment outcome may be unknown; refresh the proposal before another attempt.',
-      );
+      if (activeProposalRef.current === proposalKey) {
+        setMediaStates((current) => ({ ...current, [mediaId]: 'unknown' }));
+        setError(
+          failure instanceof Error
+            ? `${failure.message}. Attachment outcome may be unknown; refresh the proposal before another attempt.`
+            : 'Attachment outcome may be unknown; refresh the proposal before another attempt.',
+        );
+      }
     } finally {
       setMediaPending(null);
     }
@@ -260,6 +269,8 @@ export function EngagementProposalsPage() {
 
   const canApprove =
     detail?.status === 'pending' &&
+    selectedId === detail.id &&
+    activeProposalRef.current === `${detail.id}:${String(detail.revision)}` &&
     detail.canApprove &&
     document.body.dataset.fanvueEnabled === 'true' &&
     detail.provider === 'fanvue' &&
@@ -336,6 +347,7 @@ export function EngagementProposalsPage() {
                   type="button"
                   aria-pressed={selectedId === item.id}
                   onClick={() => {
+                    if (selectedId !== item.id) activeProposalRef.current = null;
                     setSelectedId(item.id);
                   }}
                 >
@@ -424,13 +436,14 @@ export function EngagementProposalsPage() {
                     {detail.content.mediaIds.map((mediaId, index) => (
                       <div className="engagement-proposal-attachment" key={mediaId}>
                         <a
+                          className="engagement-proposal-media-preview"
                           href={`/api/workflow/media/${mediaId}`}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
                           Preview attachment {index + 1}
                         </a>
-                        <span role="status">
+                        <span className="engagement-proposal-media-status" role="status">
                           {mediaStates[mediaId] === 'ready'
                             ? 'Ready to send'
                             : mediaStates[mediaId] === 'unknown'
@@ -450,7 +463,7 @@ export function EngagementProposalsPage() {
                           mediaStates[mediaId] !== 'unknown' &&
                           mediaStates[mediaId] !== 'failed' && (
                             <button
-                              className="secondary-button engagement-proposal-stage-media"
+                              className="engagement-proposal-stage-media secondary-button"
                               type="button"
                               disabled={Boolean(mediaPending) || saving || !detail.canApprove}
                               onClick={() => {

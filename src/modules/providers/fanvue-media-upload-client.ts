@@ -68,15 +68,20 @@ export class FanvueMediaUploadClient {
     const destination = new URL(url);
     if (destination.protocol !== 'https:' || destination.username || destination.password)
       throw new Error('Invalid Fanvue signed part URL');
-    const response = await this.request(destination, {
-      method: 'PUT',
-      body: Uint8Array.from(bytes),
-      redirect: 'error',
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await this.request(destination, {
+        method: 'PUT',
+        body: Uint8Array.from(bytes),
+        redirect: 'error',
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch {
+      throw new FanvueRequestError(502, 'transport_failure');
+    }
     if (!response.ok) throw new FanvueRequestError(response.status);
     const etag = response.headers.get('etag');
-    if (!etag) throw new Error('Fanvue uploaded part has no ETag');
+    if (!etag) throw new FanvueRequestError(502, 'invalid_response');
     return etag;
   }
 
@@ -114,18 +119,29 @@ export class FanvueMediaUploadClient {
     schema: T,
   ): Promise<z.infer<T>> {
     if (!accessToken) throw new Error('Fanvue access token is required');
-    const response = await this.request(`https://api.fanvue.com${path}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'X-Fanvue-API-Version': '2025-06-26',
-        'Content-Type': 'application/json',
-      },
-      redirect: 'error',
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await this.request(`https://api.fanvue.com${path}`, {
+        ...options,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Fanvue-API-Version': '2025-06-26',
+          'Content-Type': 'application/json',
+        },
+        redirect: 'error',
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch {
+      throw new FanvueRequestError(502, 'transport_failure');
+    }
     if (!response.ok) throw new FanvueRequestError(response.status);
-    const parsed = schema.safeParse(await response.json());
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new FanvueRequestError(502, 'invalid_response');
+    }
+    const parsed = schema.safeParse(body);
     if (!parsed.success) throw new FanvueRequestError(response.status, 'invalid_response');
     return parsed.data;
   }

@@ -86,4 +86,38 @@ describe('Fanvue multipart media transport', () => {
     ).rejects.toThrow('Invalid Fanvue signed part URL');
     expect(request).not.toHaveBeenCalled();
   });
+
+  it('classifies transport loss and malformed provider responses without leaking bodies', async () => {
+    const lost = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('private signed URL'));
+    const lostClient = new FanvueMediaUploadClient(lost);
+    await expect(
+      lostClient.putPart('https://uploads.example.test/part', Buffer.from('x')),
+    ).rejects.toMatchObject({
+      status: 502,
+      code: 'transport_failure',
+    });
+    await expect(lostClient.getStatus('token', mediaUuid)).rejects.toMatchObject({
+      status: 502,
+      code: 'transport_failure',
+    });
+    const malformed = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('private malformed body'));
+    await expect(
+      new FanvueMediaUploadClient(malformed).getStatus('token', mediaUuid),
+    ).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+    });
+    const noEtag = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+    await expect(
+      new FanvueMediaUploadClient(noEtag).putPart(
+        'https://uploads.example.test/part',
+        Buffer.from('x'),
+      ),
+    ).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+    });
+  });
 });

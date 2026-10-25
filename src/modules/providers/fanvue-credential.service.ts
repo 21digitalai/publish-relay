@@ -12,7 +12,7 @@ import {
   type MasterKeyProvider,
 } from '../credentials/envelope.js';
 import {
-  assertFanvuePublishingScopes,
+  assertFanvueReadGrantScopes,
   fanvueTokenSchema,
   FanvueRequestError,
   type FanvueHttpClient,
@@ -22,6 +22,12 @@ import {
 const REFRESH_SKEW_MS = 5 * 60_000;
 const REFRESH_POLL_MS = 500;
 const REFRESH_POLL_ATTEMPTS = 30;
+
+export class FanvueReconnectionRequiredError extends Error {
+  constructor() {
+    super('Fanvue account requires reconnection');
+  }
+}
 
 async function awaitConcurrentRefresh(
   database: NodePgDatabase,
@@ -158,7 +164,7 @@ async function reserveFanvueRefresh(
     } finally {
       plaintext.fill(0);
     }
-    assertFanvuePublishingScopes(token.scope);
+    assertFanvueReadGrantScopes(token.scope);
     if (
       connection.accessExpiresAt &&
       connection.accessExpiresAt.getTime() > now.getTime() + REFRESH_SKEW_MS
@@ -222,7 +228,7 @@ async function persistFanvueRefresh(
       .update(providerConnections)
       .set({
         status: 'active',
-        scopes: assertFanvuePublishingScopes(refreshed.scope),
+        scopes: assertFanvueReadGrantScopes(refreshed.scope),
         accessExpiresAt: new Date(now.getTime() + refreshed.expires_in * 1000),
         lastRefreshedAt: now,
         lastErrorCode: null,
@@ -254,7 +260,7 @@ export async function getFreshFanvueToken(
   if (!reservation) {
     if (await awaitConcurrentRefresh(database, input))
       return getFreshFanvueToken(database, keys, client, input);
-    throw new Error('Fanvue account requires reconnection');
+    throw new FanvueReconnectionRequiredError();
   }
   if (reservation.kind === 'fresh') return reservation.token;
   const failureContext = {
@@ -274,7 +280,7 @@ export async function getFreshFanvueToken(
           ? 'invalid_grant'
           : 'refresh_uncertain',
     });
-    throw new Error('Fanvue account requires reconnection');
+    throw new FanvueReconnectionRequiredError();
   }
   const encoded = Buffer.from(JSON.stringify(refreshed));
   let encrypted;
@@ -282,11 +288,11 @@ export async function getFreshFanvueToken(
     encrypted = await encryptCredential(encoded, keys);
   } catch {
     await recordRefreshFailure(database, { ...failureContext, code: 'refresh_persistence_failed' });
-    throw new Error('Fanvue account requires reconnection');
+    throw new FanvueReconnectionRequiredError();
   } finally {
     encoded.fill(0);
   }
   const saved = await persistFanvueRefresh(database, input, reservation, refreshed, encrypted, now);
-  if (!saved) throw new Error('Fanvue account requires reconnection');
+  if (!saved) throw new FanvueReconnectionRequiredError();
   return refreshed;
 }

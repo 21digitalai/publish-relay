@@ -11,12 +11,19 @@ export function getCsrfToken(): string {
 export async function beginAdapterConnection(
   adapter: PostingAdapterConfig,
   accountId?: string,
+  option?: 'read-chat',
 ): Promise<void> {
   emitAnalyticsAction('provider_connect_attempted', { provider: adapter.id });
   const response = await fetch(adapter.auth.startPath, {
     method: 'POST',
     headers: { 'x-csrf-token': getCsrfToken(), 'content-type': 'application/json' },
-    body: JSON.stringify(accountId && adapter.id === 'linkedin' ? { accountId } : {}),
+    body: JSON.stringify(
+      option === 'read-chat' && adapter.id === 'fanvue' && accountId
+        ? { readChatAccountId: accountId }
+        : accountId && adapter.id === 'linkedin'
+          ? { accountId }
+          : {},
+    ),
   });
   const result = (await response.json()) as {
     data: { authorizationUrl: string } | null;

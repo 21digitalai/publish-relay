@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   FANVUE_PUBLISHING_SCOPES,
+  FANVUE_CHAT_READ_SCOPES,
   FanvueHttpClient,
   FanvueRequestError,
 } from '../src/modules/providers/fanvue-http-client.js';
@@ -32,6 +33,48 @@ function fixture(body: unknown, status = 200) {
 }
 
 describe('Fanvue publishing-only OAuth transport', () => {
+  it('accepts known chat-read scope on refresh but rejects unknown or duplicate scopes', async () => {
+    const expanded = FANVUE_CHAT_READ_SCOPES.join(' ');
+    await expect(fixture({ ...token, scope: expanded }).client.refresh('old')).resolves.toMatchObject({
+      scope: expanded,
+    });
+    await expect(
+      fixture({ ...token, scope: `${expanded} write:chat` }).client.refresh('old'),
+    ).rejects.toThrow('unsupported scopes');
+    await expect(
+      fixture({ ...token, scope: `${expanded} read:chat` }).client.refresh('old'),
+    ).rejects.toThrow('unsupported scopes');
+  });
+  it('requests an explicit chat-read module without requesting send authority', async () => {
+    const moduleScope = FANVUE_CHAT_READ_SCOPES.join(' ');
+    const { client } = fixture({ ...token, scope: moduleScope });
+    const url = new URL(
+      client.authorizationUrl({
+        redirectUri,
+        state: 's'.repeat(43),
+        codeChallenge: 'challenge',
+        readChat: true,
+      }),
+    );
+    expect(url.searchParams.get('scope')).toBe(moduleScope);
+    expect(moduleScope).not.toContain('write:chat');
+    await expect(
+      client.exchangeCode({
+        code: 'module-code',
+        redirectUri,
+        codeVerifier: 'verifier',
+        readChat: true,
+      }),
+    ).resolves.toMatchObject({ scope: moduleScope });
+    await expect(
+      fixture(token).client.exchangeCode({
+        code: 'missing-chat',
+        redirectUri,
+        codeVerifier: 'verifier',
+        readChat: true,
+      }),
+    ).rejects.toThrow('chat-read grant');
+  });
   it('requests only base scopes and mandatory S256 PKCE', () => {
     const { client } = fixture(token);
     const url = new URL(
@@ -39,7 +82,9 @@ describe('Fanvue publishing-only OAuth transport', () => {
     );
     expect(url.origin).toBe('https://auth.fanvue.com');
     expect(url.searchParams.get('scope')).toBe(scope);
-    expect(url.searchParams.get('scope')).not.toMatch(/chat|comment|read:post|read:media/);
+    expect(url.searchParams.get('scope')).toContain('read:post');
+    expect(url.searchParams.get('scope')).toContain('read:media');
+    expect(url.searchParams.get('scope')).not.toMatch(/chat|comment/);
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(() =>
       client.authorizationUrl({
@@ -71,6 +116,16 @@ describe('Fanvue publishing-only OAuth transport', () => {
   });
 
   it('rejects missing publishing scope and non-creator identity', async () => {
+    await expect(
+      fixture({
+        ...token,
+        scope: scope.replace('read:media ', '').replace('read:post ', ''),
+      }).client.exchangeCode({
+        code: 'code',
+        redirectUri,
+        codeVerifier: 'verifier',
+      }),
+    ).rejects.toThrow('does not match the requested scopes');
     await expect(
       fixture({ ...token, scope: 'openid read:self' }).client.exchangeCode({
         code: 'code',

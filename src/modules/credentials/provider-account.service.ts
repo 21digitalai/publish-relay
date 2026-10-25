@@ -35,6 +35,7 @@ export interface ProviderAccountSummary {
   capabilityFreshness: 'fresh' | 'stale' | 'unknown';
   adapterDefaults: unknown;
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
+  fanvueModules?: { chatRead: boolean };
   updatedAt: Date;
   expiresAt?: Date | null;
   originWorkspaceName?: string;
@@ -120,6 +121,7 @@ export function listProviderAccountsPage(
                 destinationProvider: providerAccounts.destinationProvider,
                 displayName: providerAccounts.displayName,
                 status: providerConnections.status,
+                scopes: providerConnections.scopes,
                 availability: providerAccounts.availability,
                 remoteParentAccountId: providerAccounts.remoteParentAccountId,
                 capabilitiesCheckedAt: providerAccounts.capabilitiesCheckedAt,
@@ -172,6 +174,7 @@ export function listProviderAccountsPage(
           accessExpiresAt,
           refreshExpiresAt,
           disconnectedAt,
+          scopes,
           xLongPostsAllowed,
           showOtherWorkspacePosts,
           ...row
@@ -188,6 +191,17 @@ export function listProviderAccountsPage(
                   verified: false as const,
                 }
               : null,
+          ...(row.provider === 'fanvue'
+            ? {
+                fanvueModules: {
+                  chatRead:
+                    row.status === 'active' &&
+                    row.availability === 'active' &&
+                    Array.isArray(scopes) &&
+                    scopes.includes('read:chat'),
+                },
+              }
+            : {}),
           status:
             disconnectedAt && row.provider === 'tiktok'
               ? 'disconnected'

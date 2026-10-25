@@ -2,8 +2,14 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/modules/providers/fanvue-oauth.service.js', () => ({
+  FanvueModuleConsentError: class extends Error {
+    constructor(public readonly reason: string) {
+      super(reason);
+    }
+  },
   beginFanvueOauthConnection: vi.fn(),
   completeFanvueOauthConnection: vi.fn(),
+  completeFanvueOauthDenial: vi.fn(),
 }));
 
 import { createStandaloneApplication } from '../src/application/create-application.js';
@@ -14,6 +20,8 @@ import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 import {
   beginFanvueOauthConnection,
   completeFanvueOauthConnection,
+  completeFanvueOauthDenial,
+  FanvueModuleConsentError,
 } from '../src/modules/providers/fanvue-oauth.service.js';
 
 const applications = [] as ReturnType<typeof createStandaloneApplication>[];
@@ -121,5 +129,67 @@ describe('Fanvue OAuth HTTP boundary', () => {
     const conflict = await callback();
     expect(conflict.statusCode).toBe(409);
     expect(conflict.body).not.toContain('secret-code');
+  });
+
+  it('keeps optional message-reading consent on the selected account and confirms its separate result', async () => {
+    const app = application(true);
+    const accountId = '7104f230-83a9-4ce7-9fbc-cd1b42b0dc6a';
+    vi.mocked(beginFanvueOauthConnection).mockResolvedValue({
+      authorizationUrl: 'https://www.fanvue.com/v2/auth/authorize/',
+      expiresAt: new Date('2026-10-02'),
+    });
+    const start = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/fanvue',
+      headers: csrf,
+      payload: { readChatAccountId: accountId },
+    });
+    expect(start.statusCode).toBe(200);
+    expect(beginFanvueOauthConnection).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ readChatAccountId: accountId }),
+      expect.anything(),
+    );
+    vi.mocked(completeFanvueOauthConnection).mockResolvedValueOnce({
+      connectionId: 'id',
+      accounts: [],
+      consentKind: 'read-chat',
+    });
+    const callback = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/fanvue/callback?state=state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(callback.headers.location).toBe('/app?oauth=fanvue-chat-read-connected');
+  });
+
+  it('returns actionable account results for rejected chat-read scope, changed creator, and stale account', async () => {
+    const app = application(true);
+    for (const reason of ['scope', 'account-mismatch', 'unavailable'] as const) {
+      vi.mocked(completeFanvueOauthConnection).mockRejectedValueOnce(
+        new FanvueModuleConsentError(reason),
+      );
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/oauth/fanvue/callback?state=state&code=secret-code',
+        headers: { cookie: session },
+      });
+      expect(response.headers.location).toBe(`/app?oauth=fanvue-chat-read-${reason}`);
+      expect(response.body).not.toContain('secret-code');
+    }
+  });
+
+  it('consumes a cancelled module grant and returns to the account with a specific recovery state', async () => {
+    const app = application(true);
+    vi.mocked(completeFanvueOauthDenial).mockResolvedValueOnce('chat-read');
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/fanvue/callback?state=state&error=access_denied',
+      headers: { cookie: session },
+    });
+    expect(response.headers.location).toBe('/app?oauth=fanvue-chat-read-denied');
+    expect(completeFanvueOauthConnection).not.toHaveBeenCalled();
   });
 });

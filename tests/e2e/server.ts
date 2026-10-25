@@ -17,6 +17,7 @@ import { withTenantTransaction } from '../../src/database/tenant-transaction.js'
 import { FakeProviderConnectionAdapter } from '../../src/modules/credentials/provider-adapter.js';
 import {
   FanvueHttpClient,
+  FANVUE_CHAT_READ_SCOPES,
   FANVUE_PUBLISHING_SCOPES,
 } from '../../src/modules/providers/fanvue-http-client.js';
 import { connectProvider } from '../../src/modules/credentials/provider-connection.service.js';
@@ -69,7 +70,7 @@ const application = createStandaloneApplication({
     client: new FanvueHttpClient({
       clientId: 'fixture-client',
       clientSecret: 'fixture-secret',
-      fetch: (url) =>
+      fetch: (url, options) =>
         Promise.resolve(
           new Response(
             JSON.stringify(
@@ -86,7 +87,11 @@ const application = createStandaloneApplication({
                     refresh_token: 'fixture-refresh',
                     token_type: 'Bearer',
                     expires_in: 3600,
-                    scope: FANVUE_PUBLISHING_SCOPES.join(' '),
+                    scope:
+                      options?.body instanceof URLSearchParams &&
+                      options.body.get('code') === 'fixture-chat-read'
+                        ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                        : FANVUE_PUBLISHING_SCOPES.join(' '),
                   },
             ),
           ),

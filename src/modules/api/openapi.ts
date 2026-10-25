@@ -13,6 +13,7 @@ import {
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
 import { fanvueMessageRequestSchema } from '../providers/fanvue-message.routes.js';
+import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
 import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
@@ -146,6 +147,20 @@ const fanvuePaymentSignalCollectionSchema = z.object({
     )
     .max(50),
   nextCursor: z.string().nullable(),
+});
+const engagementProposalSchema = z.object({
+  id: z.uuid(),
+  accountId: z.uuid(),
+  provider: z.string(),
+  kind: z.enum(['dm', 'comment']),
+  targetId: z.string(),
+  sourceContext: z.record(z.string(), z.unknown()),
+  content: z.record(z.string(), z.unknown()),
+  proposerType: z.enum(['user', 'api_key', 'delegated']),
+  status: z.string(),
+  revision: z.number().int(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
 });
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
@@ -409,6 +424,35 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing fanvue:payments:read capability' },
             '429': { description: 'Read rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/engagement-proposals': {
+        post: {
+          operationId: 'createEngagementProposal',
+          description:
+            'Stage a DM or comment proposal for optional human review; this never sends to a provider.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(createEngagementProposalSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Proposal staged',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(engagementProposalSchema)),
+                },
+              },
+            },
+            '400': { description: 'Invalid proposal input' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing engagement:propose capability' },
+            '409': { description: 'Account unavailable or action ID conflict' },
+            '429': { description: 'Mutation rate limit exceeded' },
           },
         },
       },

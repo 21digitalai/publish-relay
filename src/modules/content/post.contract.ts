@@ -32,6 +32,7 @@ export const destinationCreatePostRequestSchema = z.union([
   destinationRequestFor(targetOptions[3]),
   destinationRequestFor(targetOptions[4]),
   destinationRequestFor(targetOptions[5]),
+  destinationRequestFor(targetOptions[6]),
 ]);
 
 export const createPostRequestSchema = z.union([

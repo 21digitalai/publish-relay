@@ -73,7 +73,7 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
         'UPDATE provider_connections SET scopes=\'["read:self","read:creator"]\'::jsonb WHERE id=$1',
         [connectionId],
       );
-      const reserved = await reserveFanvuePaymentSubscription(database, selected);
+      let reserved = await reserveFanvuePaymentSubscription(database, selected);
       expect(reserved.callbackHandle).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(await resolveFanvuePaymentCallback(database, keys, reserved.callbackHandle)).toEqual({
         state: 'probe_pending',
@@ -110,22 +110,50 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
       await expect(
         markFanvueSubscriptionCreationUnknown(database, { workspaceId, id: reserved.id }),
       ).rejects.toThrow('not ready');
-      await pool.query(
+      const revocation = await pool.connect();
+      await revocation.query('BEGIN');
+      await revocation.query(
         'UPDATE provider_connections SET scopes=\'["read:self"]\'::jsonb WHERE id=$1',
         [connectionId],
       );
-      await expect(
-        activateFanvuePaymentSubscription(database, keys, {
-          workspaceId,
-          id: reserved.id,
-          providerSubscriptionId: 'must-not-activate',
-          signingSecret: 'fixture',
-        }),
-      ).rejects.toThrow('unavailable');
+      const activation = activateFanvuePaymentSubscription(database, keys, {
+        workspaceId,
+        id: reserved.id,
+        providerSubscriptionId: 'must-delete-after-revoke',
+        signingSecret: 'must-not-retain',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        (
+          await pool.query<{ state: string }>(
+            'SELECT state FROM fanvue_payment_subscriptions WHERE id=$1',
+            [reserved.id],
+          )
+        ).rows[0]?.state,
+      ).toBe('creation_unknown');
+      await revocation.query('COMMIT');
+      revocation.release();
+      await activation;
+      expect(await getFanvuePaymentSubscriptionForAccount(database, selected)).toMatchObject({
+        state: 'deletion_required',
+        providerSubscriptionId: 'must-delete-after-revoke',
+      });
+      const revokedRow = await pool.query<{ signing_credential_id: string | null }>(
+        'SELECT signing_credential_id FROM fanvue_payment_subscriptions WHERE id=$1',
+        [reserved.id],
+      );
+      expect(revokedRow.rows[0]?.signing_credential_id).toBeNull();
+      await disableFanvuePaymentSubscription(database, {
+        workspaceId,
+        id: reserved.id,
+        providerSubscriptionId: 'must-delete-after-revoke',
+      });
       await pool.query(
         'UPDATE provider_connections SET scopes=\'["read:self","read:creator"]\'::jsonb WHERE id=$1',
         [connectionId],
       );
+      reserved = await reserveFanvuePaymentSubscription(database, selected);
+      await markFanvueSubscriptionCreationUnknown(database, { workspaceId, id: reserved.id });
       const signingSecret = 'returned-once-fixture-secret';
       await activateFanvuePaymentSubscription(database, keys, {
         workspaceId,

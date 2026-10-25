@@ -20,10 +20,10 @@ interface SelectedAccount {
   creatorUuid: string;
 }
 
-async function requirePaymentAccount(
+async function hasPaymentAccount(
   database: NodePgDatabase,
   input: SelectedAccount,
-): Promise<void> {
+): Promise<boolean> {
   const [account] = await database
     .select({ id: providerAccounts.id })
     .from(providerAccounts)
@@ -49,8 +49,17 @@ async function requirePaymentAccount(
         sql`${providerConnections.scopes} @> ${JSON.stringify(['read:self', FANVUE_PAYMENT_SCOPE])}::jsonb`,
       ),
     )
+    .for('update')
     .limit(1);
-  if (!account) throw new Error('Fanvue payment creator account is unavailable');
+  return Boolean(account);
+}
+
+async function requirePaymentAccount(
+  database: NodePgDatabase,
+  input: SelectedAccount,
+): Promise<void> {
+  if (!(await hasPaymentAccount(database, input)))
+    throw new Error('Fanvue payment creator account is unavailable');
 }
 
 /** A one-use callback handle is returned only when its tenant-bound reservation is created. */
@@ -153,13 +162,24 @@ export async function activateFanvuePaymentSubscription(
       .for('update')
       .limit(1);
     if (!pending) throw new Error('Fanvue payment subscription needs reconciliation');
-    // A provider create may succeed after local consent is revoked. Retain the
-    // ambiguous row for provider deletion, but never activate its signing key.
-    await requirePaymentAccount(transaction, {
+    // A confirmed provider create after local revocation still needs an exact
+    // provider ID for deletion. Never activate or retain its signing secret.
+    const authorized = await hasPaymentAccount(transaction, {
       workspaceId: input.workspaceId,
       accountId: pending.accountId,
       creatorUuid: pending.creatorUuid,
     });
+    if (!authorized) {
+      await transaction
+        .update(fanvuePaymentSubscriptions)
+        .set({
+          providerSubscriptionId: input.providerSubscriptionId,
+          state: 'deletion_required',
+          updatedAt: new Date(),
+        })
+        .where(eq(fanvuePaymentSubscriptions.id, pending.id));
+      return;
+    }
     const credential = await createCredential(transaction, input.workspaceId, encrypted);
     await transaction
       .update(fanvuePaymentSubscriptions)
@@ -255,7 +275,7 @@ export async function disableFanvuePaymentSubscription(
   input: { workspaceId: string; id: string; providerSubscriptionId: string },
 ): Promise<void> {
   await withTenantTransaction(database, input, async (transaction) => {
-    const [active] = await transaction
+    const [current] = await transaction
       .select({ signingCredentialId: fanvuePaymentSubscriptions.signingCredentialId })
       .from(fanvuePaymentSubscriptions)
       .where(
@@ -263,13 +283,12 @@ export async function disableFanvuePaymentSubscription(
           eq(fanvuePaymentSubscriptions.workspaceId, input.workspaceId),
           eq(fanvuePaymentSubscriptions.id, input.id),
           eq(fanvuePaymentSubscriptions.providerSubscriptionId, input.providerSubscriptionId),
-          eq(fanvuePaymentSubscriptions.state, 'active'),
+          sql`${fanvuePaymentSubscriptions.state} IN ('active', 'deletion_required')`,
         ),
       )
       .for('update')
       .limit(1);
-    if (!active?.signingCredentialId)
-      throw new Error('Fanvue payment subscription deletion needs reconciliation');
+    if (!current) throw new Error('Fanvue payment subscription deletion needs reconciliation');
     await transaction
       .update(fanvuePaymentSubscriptions)
       .set({ state: 'disabled', updatedAt: new Date() })
@@ -279,6 +298,12 @@ export async function disableFanvuePaymentSubscription(
           eq(fanvuePaymentSubscriptions.id, input.id),
         ),
       );
-    await revokeCredential(transaction, input.workspaceId, active.signingCredentialId, new Date());
+    if (current.signingCredentialId)
+      await revokeCredential(
+        transaction,
+        input.workspaceId,
+        current.signingCredentialId,
+        new Date(),
+      );
   });
 }

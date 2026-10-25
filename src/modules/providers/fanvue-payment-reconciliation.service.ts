@@ -13,23 +13,42 @@ interface ProviderDestination {
   url: string;
 }
 
+function parseCallbackOrigin(publicOrigin: string): URL {
+  const origin = new URL(publicOrigin);
+  if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash)
+    throw new Error('Fanvue callback origin must be an HTTPS origin');
+  return origin;
+}
+
+function callbackHandle(destinationUrl: string, origin: URL): string | null {
+  const url = new URL(destinationUrl);
+  const prefix = '/webhooks/fanvue/payments/';
+  if (url.origin !== origin.origin || url.search || url.hash || !url.pathname.startsWith(prefix))
+    return null;
+  const handle = url.pathname.slice(prefix.length);
+  return /^[A-Za-z0-9_-]{43}$/.test(handle) ? handle : null;
+}
+
+export function hasFanvuePaymentCallbackAtOrigin(
+  destinations: readonly ProviderDestination[],
+  publicOrigin: string,
+): boolean {
+  const origin = parseCallbackOrigin(publicOrigin);
+  return destinations.some((destination) => callbackHandle(destination.url, origin) !== null);
+}
+
 /** Match only this Relay origin and the exact one-use callback, never another creator's URL. */
 export function findFanvuePaymentCallbackDestinations(
   destinations: readonly ProviderDestination[],
   publicOrigin: string,
   callbackHandleHash: string,
 ): ProviderDestination[] {
-  const origin = new URL(publicOrigin);
-  if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash)
-    throw new Error('Fanvue callback origin must be an HTTPS origin');
-  const prefix = '/webhooks/fanvue/payments/';
+  const origin = parseCallbackOrigin(publicOrigin);
   return destinations.filter((destination) => {
-    const url = new URL(destination.url);
-    if (url.origin !== origin.origin || url.search || url.hash || !url.pathname.startsWith(prefix))
-      return false;
-    const handle = url.pathname.slice(prefix.length);
-    if (!/^[A-Za-z0-9_-]{43}$/.test(handle)) return false;
-    return createHash('sha256').update(handle).digest('hex') === callbackHandleHash;
+    const handle = callbackHandle(destination.url, origin);
+    return (
+      handle !== null && createHash('sha256').update(handle).digest('hex') === callbackHandleHash
+    );
   });
 }
 

@@ -39,4 +39,23 @@ describe('Fanvue encrypted upload-session payload', () => {
       parseFanvueUploadSession({ ...first.state, parts: [{ PartNumber: 2, ETag: 'etag' }] }),
     ).toThrow('inconsistent');
   });
+
+  it('rejects more receipts than the planned part count and oversized ETags', () => {
+    const initial = createFanvueUploadSession(6, { ...provider, totalParts: 1 });
+    const completed = appendFanvuePartReceipt(initial, 1, 'etag');
+    expect(() => appendFanvuePartReceipt(completed.state, 2, 'extra')).toThrow('not next');
+    expect(() =>
+      parseFanvueUploadSession({
+        ...completed.state,
+        parts: [...completed.state.parts, { PartNumber: 2, ETag: 'extra' }],
+      }),
+    ).toThrow('inconsistent');
+    expect(() => appendFanvuePartReceipt(initial, 1, 'x'.repeat(1025))).toThrow('not next');
+    expect(() =>
+      parseFanvueUploadSession({
+        ...initial,
+        parts: [{ PartNumber: 1, ETag: 'x'.repeat(1025) }],
+      }),
+    ).toThrow();
+  });
 });

@@ -9,7 +9,12 @@ const sessionSchema = z.strictObject({
   partSize: z.number().int().positive(),
   partCount: z.number().int().positive().max(256),
   parts: z
-    .array(z.strictObject({ PartNumber: z.number().int().positive(), ETag: z.string().min(1) }))
+    .array(
+      z.strictObject({
+        PartNumber: z.number().int().positive(),
+        ETag: z.string().min(1).max(1024),
+      }),
+    )
     .max(256),
 });
 
@@ -44,6 +49,8 @@ export function parseFanvueUploadSession(value: unknown): FanvueUploadSession {
     totalParts: state.partCount,
   });
   if (plan.partCount !== state.partCount) throw new Error('Fanvue upload progress is inconsistent');
+  if (state.parts.length > state.partCount)
+    throw new Error('Fanvue upload part receipts are inconsistent');
   for (const [index, part] of state.parts.entries())
     if (part.PartNumber !== index + 1)
       throw new Error('Fanvue upload part receipts are inconsistent');
@@ -56,7 +63,12 @@ export function appendFanvuePartReceipt(
   etag: string,
 ): { state: FanvueUploadSession; nextByteOffset: number } {
   const current = parseFanvueUploadSession(state);
-  if (partNumber !== current.parts.length + 1 || !etag)
+  if (
+    partNumber !== current.parts.length + 1 ||
+    partNumber > current.partCount ||
+    !etag ||
+    etag.length > 1024
+  )
     throw new Error('Fanvue upload part is not next in sequence');
   const range = fanvuePartRange(current, partNumber);
   return {

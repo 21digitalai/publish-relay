@@ -90,5 +90,21 @@ describe('Fanvue post transport', () => {
     await expect(timeout.createPost('token', body)).rejects.toBeInstanceOf(
       FanvuePostOutcomeUnknownError,
     );
+    const unexpectedSuccess = new FanvuePostClient(
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify(result), { status: 200 })),
+    );
+    await expect(unexpectedSuccess.createPost('token', body)).rejects.toBeInstanceOf(
+      FanvuePostOutcomeUnknownError,
+    );
+    const malformedSuccess = new FanvuePostClient(
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify({ uuid: postUuid }), { status: 201 })),
+    );
+    await expect(malformedSuccess.createPost('token', body)).rejects.toBeInstanceOf(
+      FanvuePostOutcomeUnknownError,
+    );
   });
 });

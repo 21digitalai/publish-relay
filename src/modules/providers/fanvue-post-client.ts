@@ -57,6 +57,7 @@ export class FanvuePostClient {
     }
     if (response.status >= 500) throw new FanvuePostOutcomeUnknownError();
     if (!response.ok) throw new FanvueRequestError(response.status);
+    if (response.status !== 201) throw new FanvuePostOutcomeUnknownError();
     try {
       const parsed = postResult.safeParse(await response.json());
       if (!parsed.success) throw new Error('Invalid Fanvue post response');

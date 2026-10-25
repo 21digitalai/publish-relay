@@ -12,8 +12,14 @@ import {
   type ClaimedJob,
 } from '../scheduler/job.repository.js';
 import { calculateFullJitterDelay } from '../scheduler/retry-policy.js';
-import { getFinalizedFanvueMediaUuids } from './fanvue-artifact.repository.js';
-import { getFreshFanvueToken } from './fanvue-credential.service.js';
+import {
+  getFinalizedFanvueMediaUuids,
+  getFanvueStagingProgress,
+} from './fanvue-artifact.repository.js';
+import {
+  FanvueReconnectionRequiredError,
+  getFreshFanvueToken,
+} from './fanvue-credential.service.js';
 import {
   assertFanvueDispatchPreflight,
   loadFanvueDispatchContext,
@@ -66,7 +72,7 @@ async function dispatchClaimedFanvueJob(
 ): Promise<boolean> {
   const identity = { workspaceId: job.workspaceId, jobId: job.id, leaseOwner: runtime.workerId };
   let attempt: Awaited<ReturnType<typeof startDispatchAttempt>> = null;
-  let stagingStarted = false;
+  let currentMediaId: string | null = null;
   try {
     const context = await loadFanvueDispatchContext(runtime.database, identity);
     const token = await getFreshFanvueToken(runtime.database, runtime.keys, runtime.oauthClient, {
@@ -75,7 +81,7 @@ async function dispatchClaimedFanvueJob(
       now,
     });
     for (const mediaId of context.content.mediaIds) {
-      stagingStarted = true;
+      currentMediaId = mediaId;
       const state = await stageFanvueJobMedia(
         runtime.database,
         runtime.storage,
@@ -129,16 +135,45 @@ async function dispatchClaimedFanvueJob(
     if (!finished) throw new FanvuePostOutcomeUnknownError();
     return true;
   } catch (error) {
-    if (!attempt && (stagingStarted || error instanceof FanvueStagingPendingError)) {
-      const deferredAt = new Date();
-      await deferLeasedJob(runtime.database, {
-        workspaceId: job.workspaceId,
-        jobId: job.id,
-        workerId: runtime.workerId,
-        now: deferredAt,
-        retryAt: new Date(deferredAt.getTime() + STAGING_RECHECK_MS),
-      });
-      return false;
+    if (!attempt && currentMediaId) {
+      let phase: string | undefined;
+      if (error instanceof FanvueStagingPendingError) phase = error.phase;
+      else {
+        try {
+          phase = (
+            await getFanvueStagingProgress(runtime.database, runtime.keys, {
+              ...identity,
+              mediaId: currentMediaId,
+            })
+          )?.phase;
+        } catch {
+          phase = undefined;
+        }
+      }
+      if (phase === 'session_pending' || phase === 'put_pending' || phase === 'complete_pending') {
+        attempt = await startDispatchAttempt(runtime.database, {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          workerId: runtime.workerId,
+          fingerprint: deriveJobIdempotencyKey({
+            jobId: job.id,
+            revisionId: job.revisionId,
+            providerAccountId: job.providerAccountId,
+          }),
+          now: new Date(),
+        });
+        if (!attempt) return false;
+        await finishDispatchAttempt(runtime.database, {
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          attemptId: attempt.attemptId,
+          outcome: 'unknown',
+          reconciliationKey: `fanvue-stage:${job.id}:${currentMediaId}`,
+          redactedError: `Fanvue media staging ${phase} requires reconciliation; post not sent`,
+          now: new Date(),
+        });
+        return false;
+      }
     }
     if (!attempt) {
       // No post call was made. Record a definite failure only if this lease still owns the job.
@@ -158,8 +193,11 @@ async function dispatchClaimedFanvueJob(
         workspaceId: job.workspaceId,
         jobId: job.id,
         attemptId: attempt.attemptId,
-        outcome: 'validation',
-        redactedError: 'Fanvue pre-post validation or staging failed',
+        outcome: error instanceof FanvueReconnectionRequiredError ? 'auth' : 'validation',
+        redactedError:
+          error instanceof FanvueReconnectionRequiredError
+            ? 'Fanvue account requires reconnection before post'
+            : 'Fanvue pre-post validation or staging failed',
         now: new Date(),
       });
       return false;

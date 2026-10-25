@@ -174,7 +174,9 @@ export async function getFanvueStagingProgress(
     `);
     const artifact = result.rows[0];
     if (!artifact) return null;
-    if (!artifact.credentialId) return { ...artifact, session: null, credentialVersion: null };
+    if (artifact.phase !== 'uploading')
+      return { ...artifact, session: null, credentialVersion: null };
+    if (!artifact.credentialId) throw new Error('Fanvue upload session credential is unavailable');
     const stored = await getActiveCredential(transaction, input.workspaceId, artifact.credentialId);
     if (!stored) throw new Error('Fanvue upload session credential is unavailable');
     const plaintext = await decryptCredential(stored, keys);

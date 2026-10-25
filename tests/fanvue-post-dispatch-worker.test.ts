@@ -15,13 +15,19 @@ vi.mock('../src/modules/providers/fanvue-dispatch-context.repository.js', () => 
   assertFanvueDispatchPreflight: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('../src/modules/providers/fanvue-credential.service.js', () => ({
+  FanvueReconnectionRequiredError: class extends Error {},
   getFreshFanvueToken: vi.fn(() => Promise.resolve({ access_token: 'test-token' })),
 }));
 vi.mock('../src/modules/providers/fanvue-artifact.repository.js', () => ({
   getFinalizedFanvueMediaUuids: vi.fn(() => Promise.resolve(new Map())),
+  getFanvueStagingProgress: vi.fn(() => Promise.resolve({ phase: 'finalized' })),
 }));
 vi.mock('../src/modules/providers/fanvue-stage-job-media.service.js', () => ({
-  FanvueStagingPendingError: class extends Error {},
+  FanvueStagingPendingError: class extends Error {
+    constructor(public readonly phase: string) {
+      super(phase);
+    }
+  },
   stageFanvueJobMedia: vi.fn(() => Promise.resolve('ready')),
 }));
 
@@ -32,11 +38,16 @@ import {
   startDispatchAttempt,
 } from '../src/modules/scheduler/job.repository.js';
 import { getFinalizedFanvueMediaUuids } from '../src/modules/providers/fanvue-artifact.repository.js';
+import {
+  getFreshFanvueToken,
+  FanvueReconnectionRequiredError,
+} from '../src/modules/providers/fanvue-credential.service.js';
 import { loadFanvueDispatchContext } from '../src/modules/providers/fanvue-dispatch-context.repository.js';
 import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
 import { dispatchDueFanvueJobs } from '../src/modules/providers/fanvue-post-dispatch.service.js';
 import { FanvuePostOutcomeUnknownError } from '../src/modules/providers/fanvue-post-client.js';
 import { stageFanvueJobMedia } from '../src/modules/providers/fanvue-stage-job-media.service.js';
+import { FanvueStagingPendingError } from '../src/modules/providers/fanvue-stage-job-media.service.js';
 
 const mediaId = '00000000-0000-4000-8000-000000000001';
 const providerMediaId = '00000000-0000-4000-8000-000000000002';
@@ -62,6 +73,8 @@ const now = new Date('2026-10-25T10:00:00Z');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getFreshFanvueToken).mockResolvedValue({ access_token: 'test-token' } as never);
+  vi.mocked(stageFanvueJobMedia).mockResolvedValue('ready');
   vi.mocked(claimDueJobs).mockResolvedValue([job] as never);
   vi.mocked(loadFanvueDispatchContext).mockResolvedValue({
     creatorId: 'creator-1',
@@ -120,6 +133,49 @@ it('defers processing media without reserving a post attempt', async () => {
   await expect(dispatchDueFanvueJobs(runtime, now)).resolves.toBe(0);
   expect(deferLeasedJob).toHaveBeenCalledOnce();
   expect(startDispatchAttempt).not.toHaveBeenCalled();
+  expect(createPost).not.toHaveBeenCalled();
+});
+
+it('holds ambiguous staging intent for reconciliation without retrying a post', async () => {
+  vi.mocked(loadFanvueDispatchContext).mockResolvedValue({
+    creatorId: 'creator-1',
+    content: { schemaVersion: 1, kind: 'post', audience: 'subscribers', mediaIds: [mediaId] },
+  });
+  vi.mocked(stageFanvueJobMedia).mockRejectedValue(new FanvueStagingPendingError('put_pending'));
+  await expect(dispatchDueFanvueJobs(runtime, now)).resolves.toBe(0);
+  expect(finishDispatchAttempt).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      outcome: 'unknown',
+      reconciliationKey: `fanvue-stage:job-1:${mediaId}`,
+    }),
+  );
+  expect(deferLeasedJob).not.toHaveBeenCalled();
+  expect(createPost).not.toHaveBeenCalled();
+});
+
+it('fails definite pre-post staging errors without a retry loop', async () => {
+  vi.mocked(loadFanvueDispatchContext).mockResolvedValue({
+    creatorId: 'creator-1',
+    content: { schemaVersion: 1, kind: 'post', audience: 'subscribers', mediaIds: [mediaId] },
+  });
+  vi.mocked(stageFanvueJobMedia).mockRejectedValue(new Error('unsupported media'));
+  await expect(dispatchDueFanvueJobs(runtime, now)).resolves.toBe(0);
+  expect(finishDispatchAttempt).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ outcome: 'validation' }),
+  );
+  expect(deferLeasedJob).not.toHaveBeenCalled();
+  expect(createPost).not.toHaveBeenCalled();
+});
+
+it('records missing creator consent as auth, not invalid content', async () => {
+  vi.mocked(getFreshFanvueToken).mockRejectedValue(new FanvueReconnectionRequiredError());
+  await expect(dispatchDueFanvueJobs(runtime, now)).resolves.toBe(0);
+  expect(finishDispatchAttempt).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ outcome: 'auth' }),
+  );
   expect(createPost).not.toHaveBeenCalled();
 });
 

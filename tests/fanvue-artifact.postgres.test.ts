@@ -150,6 +150,24 @@ describe('Fanvue staging progress', () => {
     ).toBeNull();
   });
 
+  it('does not decrypt an obsolete credential for processing or finalized media', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    const unavailableCredentialId = '00000000-0000-4000-8000-000000000008';
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='processing', provider_reference_credential_id=$1, external_object_id=$2 WHERE id=$3",
+      [unavailableCredentialId, '00000000-0000-4000-8000-000000000006', artifactId],
+    );
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe('processing');
+    await postgres.query("UPDATE provider_staging_artifacts SET upload_phase='finalized'");
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe('finalized');
+    await expect(
+      stageFanvueJobMedia(database, {} as MediaStorage, {} as FanvueMediaUploadClient, keys, {
+        ...selected,
+        accessToken: 'test',
+      }),
+    ).resolves.toBe('ready');
+  });
+
   it('denies a detached media artifact or an already-started post attempt', async () => {
     await reserveFanvueStagingArtifact(database, input);
     await postgres.query('DELETE FROM revision_media');

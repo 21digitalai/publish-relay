@@ -169,4 +169,23 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
       },
     }),
   ]);
+
+  await page.route('**/api/provider-accounts', async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { data: { accounts: Record<string, unknown>[] } };
+    for (const account of body.data.accounts) {
+      if (account.destinationProvider === 'fanvue') {
+        account.capabilitySnapshot = { schemaVersion: 1, contentKinds: [], media: {} };
+      }
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto(`/w/${data.slug}/queue`);
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByRole('radio', { name: /Fanvue.*Fixture Creator/ }).click();
+  await page.getByRole('button', { name: 'Who can see this post' }).click();
+  await page.getByRole('option', { name: 'Subscribers', exact: true }).click();
+  await page.getByLabel('Post body').fill('Blocked by capability snapshot');
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  expect(requests).toHaveLength(1);
 });

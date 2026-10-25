@@ -1257,3 +1257,34 @@ export const fanvuePaymentReceipts = pgTable(
     }).onDelete('restrict'),
   ],
 );
+
+export const fanvuePaymentSubscriptions = pgTable(
+  'fanvue_payment_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    creatorUuid: uuid('creator_uuid').notNull(),
+    callbackHandleHash: text('callback_handle_hash').notNull(),
+    providerSubscriptionId: text('provider_subscription_id'),
+    signingCredentialId: uuid('signing_credential_id'),
+    state: text('state').notNull().default('probe_pending'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_payment_subscriptions_handle_unique').on(table.callbackHandleHash),
+    uniqueIndex('fanvue_payment_subscriptions_account_open_unique')
+      .on(table.workspaceId, table.accountId)
+      .where(sql`${table.state} <> 'disabled'`),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_payment_subscriptions_account_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.signingCredentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'fanvue_payment_subscriptions_signing_credential_fk',
+    }).onDelete('restrict'),
+  ],
+);

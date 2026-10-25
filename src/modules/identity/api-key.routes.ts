@@ -4,7 +4,11 @@ import { z } from 'zod';
 import { errorEnvelope, successEnvelope } from '../api/contract.js';
 import type { ApiRateLimiter } from '../api/rate-limit.js';
 import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
-import { API_KEY_CAPABILITIES, type ApiKeyCapability } from './api-key.js';
+import {
+  API_KEY_CAPABILITIES,
+  DEFAULT_API_KEY_CAPABILITIES,
+  type ApiKeyCapability,
+} from './api-key.js';
 import type { ApiKeyPrincipal, ApiKeyService } from './api-key.service.js';
 import type { AuthService } from './auth.service.js';
 import { authorizeRequest, CSRF_COOKIE } from './auth.routes.js';
@@ -112,6 +116,7 @@ export function registerApiKeyRoutes(
       data: {
         items: await service.list(identity.workspaceId, identity.userId),
         eligibleCapabilities: API_KEY_CAPABILITIES,
+        defaultCapabilities: DEFAULT_API_KEY_CAPABILITIES,
       },
       error: null,
     };

@@ -11,6 +11,7 @@ import {
 function applicationWithHandler(
   apiKeys: ApiKeyService,
   delegatedAuthorization?: DelegatedAuthorizationService,
+  requiredCapability: 'destinations:read' | 'comments:read' = 'destinations:read',
 ) {
   const application = Fastify();
   application.get('/', async (request, reply) => {
@@ -19,7 +20,7 @@ function applicationWithHandler(
         request,
         apiKeys,
         delegatedAuthorization,
-        'destinations:read',
+        requiredCapability,
       );
       return principal ?? (await reply.code(401).send({ error: 'unauthorized' }));
     } catch (error) {
@@ -131,6 +132,32 @@ describe('machine authentication boundary', () => {
       },
     });
     expect(missingScope.statusCode).toBe(403);
+  });
+
+  it('does not inherit Page engagement from a destinations-only delegated consent', async () => {
+    const apiKeys = { authenticate: vi.fn().mockResolvedValue(null) } as unknown as ApiKeyService;
+    const delegatedAuthorization = {
+      authenticate: vi.fn().mockResolvedValue({
+        grantId: 'legacy-grant',
+        workspaceId,
+        userId: 'user-1',
+        clientId: 'legacy-client',
+        scopes: ['destinations:read'],
+      }),
+    } as unknown as DelegatedAuthorizationService;
+    const response = await applicationWithHandler(
+      apiKeys,
+      delegatedAuthorization,
+      'comments:read',
+    ).inject({
+      method: 'GET',
+      url: '/',
+      headers: {
+        authorization: 'Bearer delegated-token',
+        'x-publish-relay-workspace': workspaceId,
+      },
+    });
+    expect(response.statusCode).toBe(403);
   });
 
   it('rejects an abbreviated workspace ID before querying for an API key', async () => {

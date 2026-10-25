@@ -8,6 +8,7 @@ import {
   facebookPageEngagementGrants,
   facebookPageEngagementModules,
   providerAccounts,
+  registeredClients,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
@@ -22,6 +23,7 @@ export interface PageEngagementPrincipal {
   id: string;
   label: string;
   capabilities: PageEngagementCapability[];
+  eligibleCapabilities: PageEngagementCapability[];
 }
 
 function ownedPage(workspaceId: string, accountId: string) {
@@ -46,7 +48,7 @@ export async function listPageEngagementPrincipals(
     if (!page) return null;
     const now = new Date();
     const keys = await transaction
-      .select({ id: apiKeys.id, label: apiKeys.label })
+      .select({ id: apiKeys.id, label: apiKeys.label, scopes: apiKeys.capabilities })
       .from(apiKeys)
       .where(
         and(
@@ -58,8 +60,14 @@ export async function listPageEngagementPrincipals(
       .orderBy(apiKeys.createdAt, apiKeys.id)
       .limit(100);
     const grants = await transaction
-      .select({ id: delegatedGrants.id, label: delegatedGrants.clientId })
+      .select({
+        id: delegatedGrants.id,
+        label: delegatedGrants.clientId,
+        scopes: delegatedGrants.scopes,
+        allowed: registeredClients.allowedScopes,
+      })
       .from(delegatedGrants)
+      .innerJoin(registeredClients, eq(delegatedGrants.clientId, registeredClients.id))
       .where(
         and(
           eq(delegatedGrants.workspaceId, input.workspaceId),
@@ -114,12 +122,18 @@ export async function listPageEngagementPrincipals(
         id: key.id,
         label: key.label,
         capabilities: capabilitiesFor('api-key', key.id),
+        eligibleCapabilities: PAGE_ENGAGEMENT_CAPABILITIES.filter((capability) =>
+          key.scopes.includes(capability),
+        ),
       })),
       ...grants.map((grant) => ({
         kind: 'delegated' as const,
         id: grant.id,
         label: grant.label,
         capabilities: capabilitiesFor('delegated', grant.id),
+        eligibleCapabilities: PAGE_ENGAGEMENT_CAPABILITIES.filter(
+          (capability) => grant.scopes.includes(capability) && grant.allowed.includes(capability),
+        ),
       })),
     ];
   });

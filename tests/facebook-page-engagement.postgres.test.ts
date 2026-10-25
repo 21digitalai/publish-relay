@@ -48,6 +48,8 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
     const legacyKey = randomUUID();
     const clientId = randomUUID();
     const delegatedGrant = randomUUID();
+    const legacyClientId = randomUUID();
+    const legacyDelegatedGrant = randomUUID();
     const principal = { kind: 'api-key' as const, actorId: key, workspaceId: owner };
     try {
       await pool.query(
@@ -86,18 +88,36 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
         await pool.query(
           `INSERT INTO api_keys
             (id, workspace_id, created_by_user_id, label, prefix, secret_hash, capabilities)
-            VALUES ($1, $2, $3, 'Fixture', $4, 'hash', ARRAY['destinations:read'])`,
-          [id, owner, user, id],
+            VALUES ($1, $2, $3, 'Fixture', $4, 'hash', $5)`,
+          [
+            id,
+            owner,
+            user,
+            id,
+            id === key
+              ? ['destinations:read', 'comments:read', 'comments:send']
+              : ['destinations:read'],
+          ],
         );
       await pool.query(
         `INSERT INTO registered_clients (id, display_name, client_type, redirect_uris, allowed_scopes)
-          VALUES ($1, 'Fixture', 'public', ARRAY['https://example.test/callback'], ARRAY['destinations:read'])`,
+          VALUES ($1, 'Fixture', 'public', ARRAY['https://example.test/callback'], ARRAY['destinations:read', 'comments:propose'])`,
         [clientId],
       );
       await pool.query(
         `INSERT INTO delegated_grants (id, workspace_id, user_id, client_id, scopes)
-          VALUES ($1, $2, $3, $4, ARRAY['destinations:read'])`,
+          VALUES ($1, $2, $3, $4, ARRAY['destinations:read', 'comments:propose'])`,
         [delegatedGrant, owner, user, clientId],
+      );
+      await pool.query(
+        `INSERT INTO registered_clients (id, display_name, client_type, redirect_uris, allowed_scopes)
+          VALUES ($1, 'Legacy', 'public', ARRAY['https://example.test/callback'], ARRAY['destinations:read'])`,
+        [legacyClientId],
+      );
+      await pool.query(
+        `INSERT INTO delegated_grants (id, workspace_id, user_id, client_id, scopes)
+          VALUES ($1, $2, $3, $4, ARRAY['destinations:read'])`,
+        [legacyDelegatedGrant, owner, user, legacyClientId],
       );
 
       expect(
@@ -204,6 +224,19 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
         principalId: delegatedGrant,
         capabilities: ['comments:propose'],
       });
+      await pool.query(
+        `UPDATE delegated_grants SET scopes=ARRAY['destinations:read', 'comments:propose'] WHERE id=$1`,
+        [legacyDelegatedGrant],
+      );
+      await setPageEngagementPrincipalGrants(database, {
+        workspaceId: owner,
+        accountId: page,
+        userId: user,
+        requestId: 'legacy-delegated-row',
+        principalKind: 'delegated',
+        principalId: legacyDelegatedGrant,
+        capabilities: ['comments:propose'],
+      });
       expect(
         await authorizePageEngagement(database, {
           workspaceId: owner,
@@ -218,6 +251,22 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
           accountId: page,
           principal: { kind: 'delegated', actorId: delegatedGrant, workspaceId: owner },
           capability: 'comments:send',
+        }),
+      ).toBe(false);
+      const principals = await listPageEngagementPrincipals(database, {
+        workspaceId: owner,
+        accountId: page,
+        userId: user,
+      });
+      expect(
+        principals?.find((item) => item.id === legacyDelegatedGrant)?.eligibleCapabilities,
+      ).toEqual([]);
+      expect(
+        await authorizePageEngagement(database, {
+          workspaceId: owner,
+          accountId: page,
+          principal: { kind: 'delegated', actorId: legacyDelegatedGrant, workspaceId: owner },
+          capability: 'comments:propose',
         }),
       ).toBe(false);
       expect(await allowed(page, legacyKey, 'comments:read')).toBe(false);
@@ -295,6 +344,7 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
       await pool.query('DELETE FROM provider_connections WHERE workspace_id = $1', [owner]);
       await pool.query('DELETE FROM delegated_grants WHERE workspace_id = $1', [owner]);
       await pool.query('DELETE FROM registered_clients WHERE id = $1', [clientId]);
+      await pool.query('DELETE FROM registered_clients WHERE id = $1', [legacyClientId]);
       await pool.query('DELETE FROM api_keys WHERE workspace_id = $1', [owner]);
       await pool.query('DELETE FROM credentials WHERE workspace_id = $1', [owner]);
       await deleteFixtureAudit(pool, owner);

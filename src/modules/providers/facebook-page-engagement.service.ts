@@ -8,17 +8,12 @@ import {
   facebookPageEngagementGrants,
   facebookPageEngagementModules,
   providerAccounts,
+  registeredClients,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { PAGE_ENGAGEMENT_CAPABILITIES } from '../identity/api-key.js';
 
-export const PAGE_ENGAGEMENT_CAPABILITIES = [
-  'comments:read',
-  'comments:propose',
-  'comments:send',
-  'dms:read',
-  'dms:propose',
-  'dms:send',
-] as const;
+export { PAGE_ENGAGEMENT_CAPABILITIES };
 export type PageEngagementCapability = (typeof PAGE_ENGAGEMENT_CAPABILITIES)[number];
 export type PageEngagementModule = 'comments' | 'dms';
 export type ProviderGrantEvidence = 'unknown' | 'missing' | 'verified';
@@ -159,7 +154,7 @@ export async function authorizePageEngagement(
       const [active] =
         input.principal.kind === 'api-key'
           ? await transaction
-              .select({ id: apiKeys.id })
+              .select({ scopes: apiKeys.capabilities })
               .from(apiKeys)
               .where(
                 and(
@@ -171,8 +166,9 @@ export async function authorizePageEngagement(
               )
               .limit(1)
           : await transaction
-              .select({ id: delegatedGrants.id })
+              .select({ scopes: delegatedGrants.scopes, allowed: registeredClients.allowedScopes })
               .from(delegatedGrants)
+              .innerJoin(registeredClients, eq(delegatedGrants.clientId, registeredClients.id))
               .where(
                 and(
                   eq(delegatedGrants.workspaceId, input.workspaceId),
@@ -181,7 +177,12 @@ export async function authorizePageEngagement(
                 ),
               )
               .limit(1);
-      if (!active) return false;
+      if (!active?.scopes.includes(input.capability)) return false;
+      if (
+        'allowed' in active &&
+        (!Array.isArray(active.allowed) || !active.allowed.includes(input.capability))
+      )
+        return false;
       const [result] = await transaction
         .select({
           enabled:

@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 const PREFIX_BYTES = 6;
 const SECRET_BYTES = 32;
 
-export const API_KEY_CAPABILITIES = [
+export const DEFAULT_API_KEY_CAPABILITIES = [
   'destinations:read',
   'schedules:read',
   'schedules:write',
@@ -11,6 +11,20 @@ export const API_KEY_CAPABILITIES = [
   'publishes:submit',
   'publishes:retry',
   'audit:read',
+] as const;
+
+export const PAGE_ENGAGEMENT_CAPABILITIES = [
+  'comments:read',
+  'comments:propose',
+  'comments:send',
+  'dms:read',
+  'dms:propose',
+  'dms:send',
+] as const;
+
+export const API_KEY_CAPABILITIES = [
+  ...DEFAULT_API_KEY_CAPABILITIES,
+  ...PAGE_ENGAGEMENT_CAPABILITIES,
 ] as const;
 
 export type ApiKeyCapability = (typeof API_KEY_CAPABILITIES)[number];

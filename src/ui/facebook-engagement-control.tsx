@@ -13,6 +13,7 @@ interface Principal {
   id: string;
   label: string;
   capabilities: Capability[];
+  eligibleCapabilities: Capability[];
 }
 const capabilityChoices: { value: Capability; label: string }[] = [
   { value: 'comments:read', label: 'Read comments' },
@@ -38,6 +39,11 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
 
   useEffect(() => {
     let current = true;
+    setState(null);
+    setPrincipals(null);
+    setShowPrincipals(false);
+    setEditing(null);
+    setError(null);
     void fetch(`/api/provider-accounts/${accountId}/engagement`)
       .then(async (response) => {
         if (!response.ok) throw new Error('Page modules could not be loaded');
@@ -183,31 +189,39 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
                   {editing?.principal.id === principal.id &&
                   editing.principal.kind === principal.kind ? (
                     <div className="api-key-permission-editor">
+                      {principal.eligibleCapabilities.length === 0 && (
+                        <small>
+                          No engagement scope is enabled for this credential. Add it to the API key
+                          or reconnect the application with that scope first.
+                        </small>
+                      )}
                       <div className="capability-grid">
-                        {capabilityChoices.map((choice) => (
-                          <button
-                            type="button"
-                            key={choice.value}
-                            className={`capability-button ${editing.capabilities.includes(choice.value) ? 'active' : ''}`}
-                            aria-pressed={editing.capabilities.includes(choice.value)}
-                            disabled={savingGrants}
-                            onClick={() => {
-                              setEditing(
-                                (current) =>
-                                  current && {
-                                    ...current,
-                                    capabilities: current.capabilities.includes(choice.value)
-                                      ? current.capabilities.filter(
-                                          (value) => value !== choice.value,
-                                        )
-                                      : [...current.capabilities, choice.value],
-                                  },
-                              );
-                            }}
-                          >
-                            {choice.label}
-                          </button>
-                        ))}
+                        {capabilityChoices
+                          .filter((choice) => principal.eligibleCapabilities.includes(choice.value))
+                          .map((choice) => (
+                            <button
+                              type="button"
+                              key={choice.value}
+                              className={`capability-button ${editing.capabilities.includes(choice.value) ? 'active' : ''}`}
+                              aria-pressed={editing.capabilities.includes(choice.value)}
+                              disabled={savingGrants}
+                              onClick={() => {
+                                setEditing(
+                                  (current) =>
+                                    current && {
+                                      ...current,
+                                      capabilities: current.capabilities.includes(choice.value)
+                                        ? current.capabilities.filter(
+                                            (value) => value !== choice.value,
+                                          )
+                                        : [...current.capabilities, choice.value],
+                                    },
+                                );
+                              }}
+                            >
+                              {choice.label}
+                            </button>
+                          ))}
                       </div>
                       <button
                         type="button"

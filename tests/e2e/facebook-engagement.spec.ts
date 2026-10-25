@@ -63,7 +63,15 @@ test('Page owner manages separate local modules and explicit agent access', asyn
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        data: [{ kind: 'api-key', id: keyId, label: 'Review agent', capabilities }],
+        data: [
+          {
+            kind: 'api-key',
+            id: keyId,
+            label: 'Review agent',
+            capabilities,
+            eligibleCapabilities: ['comments:read', 'comments:propose'],
+          },
+        ],
         error: null,
       }),
     }),
@@ -132,5 +140,32 @@ test('Page owner manages separate local modules and explicit agent access', asyn
   );
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
     testInfo.project.name === 'mobile' ? 390 : 1440,
+  );
+  await page.route('**/api/settings/api-keys', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [],
+          eligibleCapabilities: ['destinations:read', 'comments:read', 'dms:send'],
+          defaultCapabilities: ['destinations:read'],
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.goto(`/w/${data.slug}/settings/automation`);
+  const createKey = page.locator('.settings-card').filter({ hasText: 'Create API key' });
+  await expect(createKey.getByRole('button', { name: 'destinations:read' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(createKey.getByRole('button', { name: 'comments:read' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+  await expect(createKey.getByRole('button', { name: 'dms:send' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
   );
 });

@@ -1,7 +1,12 @@
 import type { FastifyRequest } from 'fastify';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import type { DelegatedAuthorizationService } from '../delegated-authorization/delegated-authorization.service.js';
+import {
+  authorizePageEngagement,
+  type PageEngagementCapability,
+} from '../providers/facebook-page-engagement.service.js';
 import type { ApiKeyCapability } from './api-key.js';
 import type { ApiKeyPrincipal, ApiKeyService } from './api-key.service.js';
 
@@ -66,4 +71,33 @@ export async function authorizeMachineRequest(
     capabilities: delegated.scopes as ApiKeyCapability[],
     accessExpiresAt: delegated.accessExpiresAt,
   };
+}
+
+export async function authorizePageEngagementRequest(
+  request: FastifyRequest,
+  apiKeys: ApiKeyService,
+  delegatedAuthorization: DelegatedAuthorizationService | undefined,
+  database: NodePgDatabase,
+  accountId: string,
+  capability: PageEngagementCapability,
+): Promise<MachinePrincipal | null> {
+  const principal = await authorizeMachineRequest(
+    request,
+    apiKeys,
+    delegatedAuthorization,
+    capability,
+  );
+  if (!principal) return null;
+  const allowed = await authorizePageEngagement(database, {
+    workspaceId: principal.workspaceId,
+    accountId,
+    principal: {
+      kind: principal.kind,
+      actorId: principal.actorId,
+      workspaceId: principal.workspaceId,
+    },
+    capability,
+  });
+  if (!allowed) throw new MachineAuthorizationError('Page engagement access is unavailable');
+  return principal;
 }

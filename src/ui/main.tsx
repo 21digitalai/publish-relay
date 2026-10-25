@@ -1139,7 +1139,7 @@ function AccountRow({
         )}
       {!account.isExposed &&
         account.destinationProvider === 'facebook_page' &&
-        originWorkspaceId && <FacebookEngagementControl accountId={account.id} />}
+        originWorkspaceId && <FacebookEngagementControl key={account.id} accountId={account.id} />}
       {account.destinationProvider === 'facebook_page' && originWorkspaceId && (
         <div className="account-calendar-visibility x-long-post-setting">
           <button
@@ -1993,7 +1993,11 @@ function SettingsPage() {
   const loadApiKeys = async () => {
     const response = await fetch('/api/settings/api-keys');
     const result = (await response.json()) as {
-      data: { items: ManagedApiKey[]; eligibleCapabilities: string[] } | null;
+      data: {
+        items: ManagedApiKey[];
+        eligibleCapabilities: string[];
+        defaultCapabilities: string[];
+      } | null;
       error: string | null;
     };
     if (!response.ok || !result.data)
@@ -2017,10 +2021,14 @@ function SettingsPage() {
         const result = (await primary.json()) as { data: unknown; error: string | null };
         if (!primary.ok) throw new Error(result.error ?? 'Settings could not be loaded');
         if (isAutomation) {
-          const keyData = result.data as { items: ManagedApiKey[]; eligibleCapabilities: string[] };
+          const keyData = result.data as {
+            items: ManagedApiKey[];
+            eligibleCapabilities: string[];
+            defaultCapabilities: string[];
+          };
           setKeys(keyData.items);
           setEligibleCapabilities(keyData.eligibleCapabilities);
-          setCapabilities([...keyData.eligibleCapabilities]);
+          setCapabilities([...keyData.defaultCapabilities]);
         } else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
         else {
           setWorkspace(result.data as typeof workspace);
@@ -2413,7 +2421,7 @@ function SettingsPage() {
             <div className="advanced-capabilities">
               <p className="field-label">Permissions</p>
               <p className="field-hint">
-                All available permissions are on by default. Turn off any this key should not have.
+                Publishing permissions start on. Engagement permissions require an explicit choice.
               </p>
               <div className="capability-grid">
                 {eligibleCapabilities.map((capability) => {

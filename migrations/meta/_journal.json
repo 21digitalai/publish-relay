@@ -561,6 +561,13 @@
       "when": 1792890000000,
       "tag": "0079_fanvue_action_intents",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1792927500000,
+      "tag": "0080_fanvue_payment_receipts",
+      "breakpoints": true
     }
   ]
 }

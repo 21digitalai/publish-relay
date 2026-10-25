@@ -372,6 +372,19 @@ Migration 0073 owns Page-wide advisory occupancy. `list_facebook_page_occupancy`
 
 Selected Meta remote-grant revoke reserves the connection with durable `revoking` status before calling Meta. Workspace-row locking serializes that reservation with subject reconnect, local account disconnect, and post creation/revision admission. A `revoking` connection cannot receive new jobs or credentials; active/reconciliation jobs block reservation. The selected credential ID is rechecked at finalization, which atomically disconnects linked accounts and revokes authority/Page credentials. Transient remote failure or remote-success/local-failure leaves `revoking` in place: retry uses the same credential, treats Meta already-invalid grant responses as success, and finishes local cleanup without replacing a newer grant. A completed `revoked` retry is idempotent. The API returns a recovery-oriented pending message rather than silently reopening admission.
 
+## Fanvue payment receipt foundation
+
+`fanvue_payment_receipts` (migration 0080) is an account-scoped, append-only projection of
+verified `creator.payment.succeeded` facts. The receipt repository accepts only a caller-selected
+workspace/account and a separately signature-verified, allowlisted payment signal; it rechecks
+that an active Fanvue connection and selected creator both match the event creator before insert.
+The `(workspace, account, event)` unique key deduplicates deliveries without rewriting facts,
+and a changed event under the same ID is an error. Forced tenant RLS and the account composite
+foreign key keep the receipt within Core tenancy. Tips preserve their provider source/context;
+they never imply a message purchase or an offer match. This repository does not discover
+cross-tenant webhook destinations, subscribe to live webhooks, or expose an API by itself; those
+need separate verified account mapping and read-scope consent.
+
 ## External draft handoff
 
 The authenticated `GET /api/workflow/drafts/:draftId` browser detail projects only ordered attached media ID, MIME type, byte size, verified duration, ready flag, and a workspace-authenticated preview URL for ready media. It does not expose storage keys, hashes, credentials, source actor/client IDs, or arbitrary media metadata. Missing media metadata remains explicit rather than inferred from attachment count; Composer removal is local selection, not a mutation of the source draft.

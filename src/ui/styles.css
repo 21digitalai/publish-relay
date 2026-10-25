@@ -1063,6 +1063,16 @@ textarea:focus-visible {
 .x-long-post-setting .field-error {
   color: var(--danger);
 }
+.facebook-engagement-principals,
+.facebook-engagement-principal-list {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+.facebook-engagement-principal-list .api-key-row {
+  align-items: center;
+}
 .x-long-post-toggle {
   text-align: left;
 }

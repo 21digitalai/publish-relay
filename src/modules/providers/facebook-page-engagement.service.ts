@@ -1,8 +1,10 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   auditEvents,
+  apiKeys,
+  delegatedGrants,
   facebookPageEngagementGrants,
   facebookPageEngagementModules,
   providerAccounts,
@@ -154,6 +156,32 @@ export async function authorizePageEngagement(
     database,
     { workspaceId: input.workspaceId },
     async (transaction) => {
+      const [active] =
+        input.principal.kind === 'api-key'
+          ? await transaction
+              .select({ id: apiKeys.id })
+              .from(apiKeys)
+              .where(
+                and(
+                  eq(apiKeys.workspaceId, input.workspaceId),
+                  eq(apiKeys.id, input.principal.actorId),
+                  isNull(apiKeys.revokedAt),
+                  or(isNull(apiKeys.expiresAt), gt(apiKeys.expiresAt, new Date())),
+                ),
+              )
+              .limit(1)
+          : await transaction
+              .select({ id: delegatedGrants.id })
+              .from(delegatedGrants)
+              .where(
+                and(
+                  eq(delegatedGrants.workspaceId, input.workspaceId),
+                  eq(delegatedGrants.id, input.principal.actorId),
+                  isNull(delegatedGrants.revokedAt),
+                ),
+              )
+              .limit(1);
+      if (!active) return false;
       const [result] = await transaction
         .select({
           enabled:

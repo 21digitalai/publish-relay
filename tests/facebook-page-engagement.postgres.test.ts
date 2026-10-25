@@ -9,6 +9,10 @@ import {
   readPageEngagementState,
   setPageEngagementModule,
 } from '../src/modules/providers/facebook-page-engagement.service.js';
+import {
+  listPageEngagementPrincipals,
+  setPageEngagementPrincipalGrants,
+} from '../src/modules/providers/facebook-page-engagement-grants.service.js';
 
 const connectionString = process.env.POSTGRES_FACEBOOK_ENGAGEMENT_TEST_URL;
 
@@ -120,11 +124,47 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
         (await readPageEngagementState(database, { workspaceId: owner, accountId: sibling }))
           ?.comments.localEnabled,
       ).toBe(false);
-      await pool.query(
-        `INSERT INTO facebook_page_engagement_grants (workspace_id, account_id, api_key_id, capability)
-          VALUES ($1, $2, $3, 'comments:read')`,
-        [owner, page, key],
+      expect(
+        await setPageEngagementPrincipalGrants(database, {
+          workspaceId: other,
+          accountId: page,
+          userId: user,
+          requestId: 'wrong-workspace',
+          principalKind: 'api-key',
+          principalId: key,
+          capabilities: ['comments:read'],
+        }),
+      ).toBe(false);
+      expect(
+        await setPageEngagementPrincipalGrants(database, {
+          workspaceId: owner,
+          accountId: page,
+          userId: user,
+          requestId: 'grant-read',
+          principalKind: 'api-key',
+          principalId: key,
+          capabilities: ['comments:read'],
+        }),
+      ).toBe(true);
+      expect(
+        await listPageEngagementPrincipals(database, {
+          workspaceId: owner,
+          accountId: page,
+          userId: user,
+        }),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'api-key', id: key, capabilities: ['comments:read'] }),
+          expect.objectContaining({ kind: 'api-key', id: legacyKey, capabilities: [] }),
+        ]),
       );
+      expect(
+        await listPageEngagementPrincipals(database, {
+          workspaceId: other,
+          accountId: page,
+          userId: user,
+        }),
+      ).toBeNull();
       const allowed = (
         accountId: string,
         actorId: string,
@@ -155,12 +195,15 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
       expect(await allowed(page, key, 'comments:read')).toBe(true);
       expect(await allowed(page, key, 'comments:send')).toBe(false);
       expect(await allowed(page, key, 'dms:read')).toBe(false);
-      await pool.query(
-        `INSERT INTO facebook_page_engagement_grants
-          (workspace_id, account_id, delegated_grant_id, capability)
-          VALUES ($1, $2, $3, 'comments:propose')`,
-        [owner, page, delegatedGrant],
-      );
+      await setPageEngagementPrincipalGrants(database, {
+        workspaceId: owner,
+        accountId: page,
+        userId: user,
+        requestId: 'grant-propose',
+        principalKind: 'delegated',
+        principalId: delegatedGrant,
+        capabilities: ['comments:propose'],
+      });
       expect(
         await authorizePageEngagement(database, {
           workspaceId: owner,
@@ -196,6 +239,53 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
         enabled: false,
       });
       expect(await allowed(page, key, 'comments:read')).toBe(false);
+      await setPageEngagementModule(database, {
+        workspaceId: owner,
+        accountId: page,
+        userId: user,
+        requestId: 'fixture-comments-on-again',
+        module: 'comments',
+        enabled: true,
+      });
+      await setPageEngagementPrincipalGrants(database, {
+        workspaceId: owner,
+        accountId: page,
+        userId: user,
+        requestId: 'remove-read',
+        principalKind: 'api-key',
+        principalId: key,
+        capabilities: [],
+      });
+      expect(await allowed(page, key, 'comments:read')).toBe(false);
+      await setPageEngagementPrincipalGrants(database, {
+        workspaceId: owner,
+        accountId: page,
+        userId: user,
+        requestId: 'grant-send',
+        principalKind: 'api-key',
+        principalId: key,
+        capabilities: ['comments:send'],
+      });
+      expect(await allowed(page, key, 'comments:send')).toBe(true);
+      await pool.query('UPDATE api_keys SET revoked_at=now() WHERE id=$1', [key]);
+      expect(await allowed(page, key, 'comments:send')).toBe(false);
+      const listed = await listPageEngagementPrincipals(database, {
+        workspaceId: owner,
+        accountId: page,
+        userId: user,
+      });
+      expect(listed?.some((item) => item.kind === 'api-key' && item.id === key)).toBe(false);
+      await pool.query('UPDATE delegated_grants SET revoked_at=now() WHERE id=$1', [
+        delegatedGrant,
+      ]);
+      expect(
+        await authorizePageEngagement(database, {
+          workspaceId: owner,
+          accountId: page,
+          principal: { kind: 'delegated', actorId: delegatedGrant, workspaceId: owner },
+          capability: 'comments:propose',
+        }),
+      ).toBe(false);
     } finally {
       await pool.query(
         'DELETE FROM provider_account_exposures WHERE workspace_id = ANY($1::uuid[])',

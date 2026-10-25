@@ -1137,9 +1137,9 @@ function AccountRow({
             originWorkspaceId={originWorkspaceId}
           />
         )}
-      {!account.isExposed && account.destinationProvider === 'facebook_page' && (
-        <FacebookEngagementControl accountId={account.id} />
-      )}
+      {!account.isExposed &&
+        account.destinationProvider === 'facebook_page' &&
+        originWorkspaceId && <FacebookEngagementControl accountId={account.id} />}
       {account.destinationProvider === 'facebook_page' && originWorkspaceId && (
         <div className="account-calendar-visibility x-long-post-setting">
           <button

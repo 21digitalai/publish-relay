@@ -7,9 +7,14 @@ import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
 import {
+  PAGE_ENGAGEMENT_CAPABILITIES,
   readPageEngagementState,
   setPageEngagementModule,
 } from '../providers/facebook-page-engagement.service.js';
+import {
+  listPageEngagementPrincipals,
+  setPageEngagementPrincipalGrants,
+} from '../providers/facebook-page-engagement-grants.service.js';
 import type { MasterKeyProvider } from './envelope.js';
 import type { TikTokHttpClient } from '../providers/tiktok-http-client.js';
 import { TikTokRequestError } from '../providers/tiktok-http-client.js';
@@ -39,6 +44,14 @@ const calendarVisibilitySchema = z.strictObject({ showPosts: z.boolean() });
 const engagementModuleSchema = z.strictObject({
   module: z.enum(['comments', 'dms']),
   enabled: z.boolean(),
+});
+const engagementGrantSchema = z.strictObject({
+  principalKind: z.enum(['api-key', 'delegated']),
+  principalId: z.uuid(),
+  capabilities: z
+    .array(z.enum(PAGE_ENGAGEMENT_CAPABILITIES))
+    .max(6)
+    .refine((items) => new Set(items).size === items.length),
 });
 
 export function registerProviderAccountRoutes(
@@ -90,6 +103,53 @@ export function registerProviderAccountRoutes(
     return state
       ? { data: state, error: null }
       : reply.code(404).send({ data: null, error: 'Owned Facebook Page not found' });
+  });
+
+  application.get(
+    '/api/provider-accounts/:accountId/engagement/principals',
+    async (request, reply) => {
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      const params = accountParamsSchema.safeParse(request.params);
+      if (!params.success)
+        return reply.code(400).send({ data: null, error: 'Invalid Page account' });
+      const principals = await listPageEngagementPrincipals(dependencies.database, {
+        workspaceId: identity.workspaceId,
+        accountId: params.data.accountId,
+        userId: identity.userId,
+      });
+      void reply.header('Cache-Control', 'no-store');
+      return principals
+        ? { data: principals, error: null }
+        : reply.code(404).send({ data: null, error: 'Owned Facebook Page not found' });
+    },
+  );
+
+  application.put('/api/provider-accounts/:accountId/engagement/grants', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (
+      !verifyCsrfToken(
+        request.cookies[CSRF_COOKIE],
+        request.headers['x-csrf-token'] as string | undefined,
+      )
+    )
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const params = accountParamsSchema.safeParse(request.params);
+    const body = engagementGrantSchema.safeParse(request.body);
+    if (!params.success || !body.success)
+      return reply.code(400).send({ data: null, error: 'Invalid Page access selection' });
+    const saved = await setPageEngagementPrincipalGrants(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      accountId: params.data.accountId,
+      userId: identity.userId,
+      requestId: request.id,
+      ...body.data,
+    });
+    void reply.header('Cache-Control', 'no-store');
+    return saved
+      ? { data: { saved: true }, error: null }
+      : reply.code(404).send({ data: null, error: 'Owned Page or active credential not found' });
   });
 
   application.get('/api/provider-accounts', async (request, reply) => {

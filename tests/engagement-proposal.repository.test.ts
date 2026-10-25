@@ -13,6 +13,7 @@ import {
 import type { AuthService } from '../src/modules/identity/auth.service.js';
 import { registerEngagementProposalRoutes } from '../src/modules/providers/engagement-proposal.routes.js';
 import { registerEngagementApprovalRoutes } from '../src/modules/providers/engagement-approval.routes.js';
+import { markFanvuePreSendError } from '../src/modules/providers/fanvue-pre-send-error.js';
 
 import {
   claimEngagementProposal,
@@ -360,6 +361,28 @@ describe('engagement proposal foundation', () => {
         'pending',
       );
       expect(sendText).not.toHaveBeenCalled();
+      const preflightProposal = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: fanvueAccount,
+        clientActionId: '00000000-0000-4000-8000-000000000223',
+        provider: 'fanvue',
+        kind: 'dm',
+        targetId: fanvuePost,
+        content: { text: 'Preflight rejected' },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      sendText.mockRejectedValueOnce(markFanvuePreSendError(new Error('write:chat unavailable')));
+      const preflightResponse = await app.inject({
+        method: 'POST',
+        url: `/api/engagement-proposals/${preflightProposal.id}/approve`,
+        headers: approvedHeaders,
+        payload: approvalPayload,
+      });
+      expect(preflightResponse.statusCode).toBe(409);
+      expect((await getEngagementProposal(database, workspace, preflightProposal.id))?.status).toBe(
+        'pending',
+      );
       const messageProposal = await createEngagementProposal(database, {
         workspaceId: workspace,
         accountId: fanvueAccount,
@@ -379,7 +402,7 @@ describe('engagement proposal foundation', () => {
       });
       expect(unknown.statusCode).toBe(202);
       expect(unknown.json()).toMatchObject({ data: { status: 'unknown' } });
-      expect(sendText).toHaveBeenCalledTimes(1);
+      expect(sendText).toHaveBeenCalledTimes(2);
       expect((await getEngagementProposal(database, workspace, messageProposal.id))?.status).toBe(
         'unknown',
       );
@@ -553,7 +576,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('6');
+      ).toBe('7');
     } finally {
       await client.close();
     }

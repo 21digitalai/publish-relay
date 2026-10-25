@@ -5,10 +5,12 @@ import {
   claimEngagementProposal,
   EngagementProposalError,
   getEngagementProposal,
+  releaseEngagementProposalClaim,
   settleEngagementProposal,
 } from './engagement-proposal.repository.js';
 import type { FanvueCommentService } from './fanvue-comment.service.js';
 import type { FanvueMessageService } from './fanvue-message.service.js';
+import { isFanvuePreSendError } from './fanvue-pre-send-error.js';
 
 export interface EngagementSendCommands {
   comments: Pick<FanvueCommentService, 'send'>;
@@ -81,7 +83,8 @@ async function sendProposal(
     return sent.state === 'confirmed'
       ? { state: 'confirmed', providerObjectUuid: sent.messageUuid }
       : sent;
-  } catch {
+  } catch (error) {
+    if (isFanvuePreSendError(error)) throw error;
     // A thrown command can have reached the provider; never turn it into a retryable state.
     return { state: 'unknown' };
   }
@@ -101,13 +104,25 @@ export async function approveEngagementProposal(
     id: input.proposalId,
     expectedRevision: input.expectedRevision,
   });
-  const result = await sendProposal(commands, {
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-    accountId: claimed.accountId,
-    clientActionId: claimed.clientActionId,
-    ...sendable,
-  });
+  let result: SendResult;
+  try {
+    result = await sendProposal(commands, {
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      accountId: claimed.accountId,
+      clientActionId: claimed.clientActionId,
+      ...sendable,
+    });
+  } catch (error) {
+    if (!isFanvuePreSendError(error)) throw error;
+    await releaseEngagementProposalClaim(database, {
+      workspaceId: input.workspaceId,
+      id: claimed.id,
+      clientActionId: claimed.clientActionId,
+      expectedRevision: claimed.revision,
+    });
+    throw new EngagementProposalError('Fanvue send permission or destination is unavailable', 409);
+  }
   const status = result.state === 'confirmed' ? 'sent' : result.state;
   const settled = await settleEngagementProposal(database, {
     workspaceId: input.workspaceId,

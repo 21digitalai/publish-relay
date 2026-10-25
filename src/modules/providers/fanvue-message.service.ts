@@ -11,6 +11,7 @@ import {
   type FanvueActionReservation,
 } from './fanvue-action-intent.repository.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
+import { markFanvuePreSendError } from './fanvue-pre-send-error.js';
 import type { FanvueMessageClient } from './fanvue-message-client.js';
 import type { FanvueReadService } from './fanvue-read.service.js';
 
@@ -89,24 +90,29 @@ export class FanvueMessageService {
 
   async sendMessage(input: z.input<typeof messageCommand>): Promise<FanvueTextMessageResult> {
     const command = messageCommand.parse(input);
-    const { accessToken } = await this.reads.getExistingChatForMessage(command);
-    for (const mediaUuid of command.mediaUuids ?? []) {
-      const media = await this.reads.getMediaStatus({
-        workspaceId: command.workspaceId,
-        accountId: command.accountId,
-        mediaUuid,
-      });
-      if (media.status !== 'ready') throw new FanvueMessageMediaUnavailableError();
+    let accessToken: string;
+    try {
+      ({ accessToken } = await this.reads.getExistingChatForMessage(command));
+      for (const mediaUuid of command.mediaUuids ?? []) {
+        const media = await this.reads.getMediaStatus({
+          workspaceId: command.workspaceId,
+          accountId: command.accountId,
+          mediaUuid,
+        });
+        if (media.status !== 'ready') throw new FanvueMessageMediaUnavailableError();
+      }
+      await withTenantTransaction(this.database, command, (transaction) =>
+        enforceWorkspaceAction(transaction, this.policy, {
+          workspaceId: command.workspaceId,
+          actor: command.actor,
+          action: 'engagement.send',
+          request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
+          requestedProviderAccountIds: [command.accountId],
+        }),
+      );
+    } catch (cause) {
+      throw markFanvuePreSendError(cause);
     }
-    await withTenantTransaction(this.database, command, (transaction) =>
-      enforceWorkspaceAction(transaction, this.policy, {
-        workspaceId: command.workspaceId,
-        actor: command.actor,
-        action: 'engagement.send',
-        request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
-        requestedProviderAccountIds: [command.accountId],
-      }),
-    );
     const requestFingerprint = createHash('sha256')
       .update(
         JSON.stringify({

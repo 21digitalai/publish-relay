@@ -12,6 +12,7 @@ import {
 } from './fanvue-action-intent.repository.js';
 import type { FanvueCommentClient } from './fanvue-comment-client.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
+import { markFanvuePreSendError } from './fanvue-pre-send-error.js';
 import type { FanvueReadService } from './fanvue-read.service.js';
 
 const sendInput = z.strictObject({
@@ -58,16 +59,21 @@ export class FanvueCommentService {
 
   async send(input: z.input<typeof sendInput>): Promise<FanvueCommentResult> {
     const command = sendInput.parse(input);
-    const { accessToken } = await this.reads.getOwnedPostForComment(command);
-    await withTenantTransaction(this.database, command, (transaction) =>
-      enforceWorkspaceAction(transaction, this.policy, {
-        workspaceId: command.workspaceId,
-        actor: command.actor,
-        action: 'engagement.send',
-        request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
-        requestedProviderAccountIds: [command.accountId],
-      }),
-    );
+    let accessToken: string;
+    try {
+      ({ accessToken } = await this.reads.getOwnedPostForComment(command));
+      await withTenantTransaction(this.database, command, (transaction) =>
+        enforceWorkspaceAction(transaction, this.policy, {
+          workspaceId: command.workspaceId,
+          actor: command.actor,
+          action: 'engagement.send',
+          request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
+          requestedProviderAccountIds: [command.accountId],
+        }),
+      );
+    } catch (cause) {
+      throw markFanvuePreSendError(cause);
+    }
     const requestFingerprint = createHash('sha256')
       .update(JSON.stringify({ postUuid: command.postUuid, text: command.text }))
       .digest('hex');

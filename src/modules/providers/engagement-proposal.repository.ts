@@ -347,6 +347,30 @@ export async function claimEngagementProposal(
   });
 }
 
+/** Roll back only a proven pre-send failure; no provider request or intent exists. */
+export async function releaseEngagementProposalClaim(
+  database: NodePgDatabase,
+  input: { workspaceId: string; id: string; clientActionId: string; expectedRevision: number },
+) {
+  return withTenantTransaction(database, { workspaceId: input.workspaceId }, async (tx) => {
+    const [released] = await tx
+      .update(engagementProposals)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.id),
+          eq(engagementProposals.clientActionId, input.clientActionId),
+          eq(engagementProposals.revision, input.expectedRevision),
+          eq(engagementProposals.status, 'sending'),
+        ),
+      )
+      .returning();
+    if (!released) throw new EngagementProposalError('Proposal send is stale or unavailable', 409);
+    return released;
+  });
+}
+
 /** A lost settlement leaves sending visible and must never authorize an automatic resend. */
 export async function settleEngagementProposal(
   database: NodePgDatabase,

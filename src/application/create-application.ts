@@ -37,6 +37,8 @@ import { registerYouTubeOauthRoutes } from '../modules/providers/youtube-oauth.r
 import type { LinkedInHttpClient } from '../modules/providers/linkedin-http-client.js';
 import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth.routes.js';
 import type { MetaHttpClient, MetaPermission } from '../modules/providers/meta-http-client.js';
+import type { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
+import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-page-read.routes.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
@@ -80,6 +82,10 @@ interface MetaOauthOptions {
   callbackUrl: string;
   familyPermissions?: Partial<Record<'facebook_pages' | 'instagram', readonly MetaPermission[]>>;
 }
+interface FacebookReadOptions {
+  keys: MasterKeyProvider;
+  client: FacebookHttpClient;
+}
 interface InstagramOauthOptions {
   keys: MasterKeyProvider;
   client: InstagramLoginClient;
@@ -109,6 +115,7 @@ export interface CoreApplicationOptions {
   youtubeOauth?: YouTubeOauthOptions;
   linkedinOauth?: LinkedInOauthOptions;
   metaOauth?: MetaOauthOptions;
+  facebookRead?: FacebookReadOptions;
   instagramOauth?: InstagramOauthOptions;
   tiktokOauth?: TikTokOauthOptions;
   snapchatOauth?: SnapchatOauthOptions;
@@ -181,6 +188,14 @@ function registerMachineApiRoutes(
       ? { keys: options.tiktokOauth.keys, client: options.tiktokOauth.client }
       : undefined,
   );
+  if (options.facebookRead)
+    registerFacebookPageReadRoutes(
+      application,
+      { database, ...options.facebookRead },
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
   if (!config.CURSOR_SIGNING_SECRET)
     throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
   registerPostRoutes(

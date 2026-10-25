@@ -12,6 +12,12 @@ import { decryptCredential, type MasterKeyProvider } from '../credentials/envelo
 
 export type PageReadModule = 'comments' | 'dms';
 
+export class PageReadUnavailableError extends Error {
+  constructor() {
+    super('Facebook Page engagement access is unavailable');
+  }
+}
+
 export interface PageReadEvidence {
   pageId: string;
   credentialId: string | null;
@@ -120,14 +126,14 @@ export async function withPageReadToken<T>(
 ): Promise<T> {
   const page = await loadPageReadEvidence(runtime.database, input);
   if (!page || !isPageReadEligible(page, input.module) || !page.credentialId)
-    throw new Error('Facebook Page engagement access is unavailable');
+    throw new PageReadUnavailableError();
   const credentialId = page.credentialId;
   const stored = await withTenantTransaction(
     runtime.database,
     { workspaceId: input.workspaceId },
     (transaction) => getActiveCredential(transaction, input.workspaceId, credentialId),
   );
-  if (!stored) throw new Error('Facebook Page engagement access is unavailable');
+  if (!stored) throw new PageReadUnavailableError();
   const plaintext = await decryptCredential(stored, runtime.keys);
   try {
     const credential = JSON.parse(plaintext.toString('utf8')) as {
@@ -139,7 +145,7 @@ export async function withPageReadToken<T>(
       typeof credential.accessToken !== 'string' ||
       credential.accessToken.length === 0
     )
-      throw new Error('Facebook Page engagement access is unavailable');
+      throw new PageReadUnavailableError();
     return await read(page.pageId, credential.accessToken);
   } finally {
     plaintext.fill(0);

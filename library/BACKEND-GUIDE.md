@@ -46,8 +46,17 @@ The shared account/credential verification now lives in
 uses it for Page-owned post listing with the separate Comments module and
 read-engagement scope. It does not expose visitor content or call post-comment
 reads without a proven selected Page-to-post ownership link. Both query
-services remain internal until authenticated routes and controlled Meta grant
-evidence are added.
+services require authenticated callers and controlled Meta grant evidence.
+The machine-only read endpoints `/api/v1/destinations/:accountId/facebook-posts`
+and `/facebook-conversations` require the corresponding exact Page-local
+`comments:read` or `dms:read` principal grant through
+`authorizePageEngagementRequest`; they then use the shared Page credential
+guard before Graph GET. Each accepts a maximum 100-row `limit` and provider
+`after` cursor, and returns only allowlisted post or conversation summaries and
+`nextCursor`. Provider failures return sanitized error envelopes; Page tokens,
+Graph paging URLs, and raw provider bodies never reach callers. Browser routes,
+arbitrary post-comment/conversation-message reads, and controlled provider proof
+remain separate work; current unknown grant state denies both endpoints.
 
 ## Facebook Page engagement authorization foundation
 

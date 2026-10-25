@@ -26,6 +26,7 @@ import {
   parseMetaFamilyPermissions,
 } from '../modules/providers/meta-http-client.js';
 import { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
+import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import type { CoreApplicationOptions } from './create-application.js';
 
@@ -148,6 +149,16 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                     }
                   : {}),
               },
+            },
+          }
+        : {}),
+      ...(config.PUBLISH_RELAY_META_GRAPH_VERSION
+        ? {
+            facebookRead: {
+              keys: masterKeys,
+              client: new FacebookHttpClient({
+                graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+              }),
             },
           }
         : {}),

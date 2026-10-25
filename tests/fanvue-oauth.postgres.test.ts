@@ -30,7 +30,7 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
     const token = (refresh: string) => ({
       access_token: `access-${refresh}`,
       refresh_token: refresh,
-      token_type: 'Bearer',
+      token_type: 'bearer',
       expires_in: 3600,
       scope,
     });
@@ -139,6 +139,7 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
         [1, 2].map(() => getFreshFanvueToken(database, keys, client, { workspaceId, creatorId })),
       );
       expect([first?.refresh_token, second?.refresh_token]).toEqual(['rotated', 'rotated']);
+      expect(first?.token_type).toBe('bearer');
       expect(refreshCalls).toBe(1);
       const after = await pool.query<{ version: number }>(
         'SELECT version FROM credentials WHERE id=$1',
@@ -192,6 +193,32 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
         [workspaceId, siblingId],
       );
       expect(sibling.rows[0]?.status).toBe('active');
+      await pool.query(
+        'UPDATE provider_connections SET access_expires_at=$1 WHERE workspace_id=$2 AND external_subject_id=$3',
+        [new Date('2026-01-01'), workspaceId, siblingId],
+      );
+      let ambiguousCalls = 0;
+      fetchMock.mockImplementation(() => {
+        ambiguousCalls++;
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'server_error' }), { status: 503 }),
+        );
+      });
+      await expect(
+        getFreshFanvueToken(database, keys, client, { workspaceId, creatorId: siblingId }),
+      ).rejects.toThrow('requires reconnection');
+      await expect(
+        getFreshFanvueToken(database, keys, client, { workspaceId, creatorId: siblingId }),
+      ).rejects.toThrow('requires reconnection');
+      expect(ambiguousCalls).toBe(1);
+      const ambiguous = await pool.query<{ status: string; last_error_code: string }>(
+        'SELECT status, last_error_code FROM provider_connections WHERE workspace_id=$1 AND external_subject_id=$2',
+        [workspaceId, siblingId],
+      );
+      expect(ambiguous.rows[0]).toMatchObject({
+        status: 'reauth_required',
+        last_error_code: 'refresh_uncertain',
+      });
     } finally {
       await pool.end();
     }

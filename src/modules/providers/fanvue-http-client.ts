@@ -9,7 +9,7 @@ export const FANVUE_PUBLISHING_SCOPES = [
   'write:post',
 ] as const;
 
-const tokenSchema = z.object({
+export const fanvueTokenSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),
   token_type: z.string().refine((value) => value.toLowerCase() === 'bearer'),
@@ -23,7 +23,7 @@ const profileSchema = z.object({
   isCreator: z.boolean(),
 });
 
-export type FanvueToken = z.infer<typeof tokenSchema>;
+export type FanvueToken = z.infer<typeof fanvueTokenSchema>;
 export type FanvueProfile = z.infer<typeof profileSchema>;
 
 export class FanvueRequestError extends Error {
@@ -134,7 +134,7 @@ export class FanvueHttpClient {
         error.success ? (error.data.error ?? null) : null,
       );
     }
-    const token = tokenSchema.safeParse(body);
+    const token = fanvueTokenSchema.safeParse(body);
     if (!token.success) throw new FanvueRequestError(response.status);
     assertFanvuePublishingScopes(token.data.scope);
     return token.data;

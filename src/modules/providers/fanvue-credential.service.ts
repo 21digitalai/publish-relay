@@ -1,6 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { z } from 'zod';
 
 import { providerAccounts, providerConnections } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -12,18 +11,12 @@ import {
 } from '../credentials/envelope.js';
 import {
   assertFanvuePublishingScopes,
+  fanvueTokenSchema,
   FanvueRequestError,
   type FanvueHttpClient,
   type FanvueToken,
 } from './fanvue-http-client.js';
 
-const storedTokenSchema = z.object({
-  access_token: z.string().min(1),
-  refresh_token: z.string().min(1),
-  token_type: z.literal('Bearer'),
-  expires_in: z.number().int().positive(),
-  scope: z.string().min(1),
-});
 const REFRESH_SKEW_MS = 5 * 60_000;
 
 async function markReconnection(
@@ -91,7 +84,7 @@ export async function getFreshFanvueToken(
     const plaintext = await decryptCredential(stored, keys);
     let token: FanvueToken;
     try {
-      token = storedTokenSchema.parse(JSON.parse(plaintext.toString('utf8')));
+      token = fanvueTokenSchema.parse(JSON.parse(plaintext.toString('utf8')));
     } finally {
       plaintext.fill(0);
     }
@@ -107,7 +100,6 @@ export async function getFreshFanvueToken(
     } catch (error) {
       // A transport failure may mean Fanvue rotated the token but the response was lost.
       // Never replay that single-use refresh token or affect another creator connection.
-      if (error instanceof FanvueRequestError && error.status >= 500) throw error;
       if (error instanceof FanvueRequestError && error.status === 429) throw error;
       await markReconnection(transaction, {
         workspaceId: input.workspaceId,

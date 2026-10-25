@@ -1,5 +1,89 @@
 import { expect, test } from '@playwright/test';
 
+test('late stage result from another proposal cannot unlock reused media', async ({ page }) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Race Review Owner',
+      email: `race-review-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Race Review Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const firstId = '00000000-0000-4000-8000-000000000381';
+  const secondId = '00000000-0000-4000-8000-000000000382';
+  const mediaId = '00000000-0000-4000-8000-000000000383';
+  const targetId = '00000000-0000-4000-8000-000000000384';
+  let releaseFirst: (() => void) | undefined;
+  let firstStarted = false;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/stage')) {
+      if (path.includes(firstId)) {
+        firstStarted = true;
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { state: 'ready' },
+          error: null,
+        }),
+      });
+      return;
+    }
+    const list = path.endsWith('/api/engagement-proposals');
+    const ids = [firstId, secondId];
+    const data = list
+      ? {
+          items: ids.map((id, index) => ({
+            id,
+            accountDisplayName: 'Mira Studio',
+            provider: 'fanvue',
+            kind: 'dm',
+            status: 'pending',
+            sourcePreview: 'Hi',
+            contentPreview: `Proposal ${String(index + 1)}`,
+            createdAt: '2026-10-25T12:00:00Z',
+          })),
+          nextCursor: null,
+        }
+      : {
+          id: path.includes(firstId) ? firstId : secondId,
+          accountDisplayName: 'Mira Studio',
+          provider: 'fanvue',
+          kind: 'dm',
+          targetId,
+          sourceContext: { text: 'Hi' },
+          content: { text: 'Reply', mediaIds: [mediaId] },
+          revision: 1,
+          status: 'pending',
+          canApprove: true,
+        };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: /Proposal 1/ }).click();
+  await page.getByRole('button', { name: 'Prepare attachment' }).click();
+  await expect.poll(() => firstStarted).toBe(true);
+  await page.getByRole('button', { name: /Proposal 2/ }).click();
+  releaseFirst?.();
+  await expect(page.getByText('Not prepared for sending')).toBeVisible();
+  const approve = page.getByRole('button', { name: 'Approve and send', exact: true });
+  await expect(approve).toBeDisabled();
+  await page.getByRole('button', { name: 'Prepare attachment' }).click();
+  await expect(page.getByText('Ready to send')).toBeVisible();
+  await expect(approve).toBeEnabled();
+});
+
 test('priced Fanvue DM media requires explicit ready staging before approval', async ({
   page,
 }, testInfo) => {

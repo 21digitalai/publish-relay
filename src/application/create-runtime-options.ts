@@ -27,6 +27,7 @@ import {
 } from '../modules/providers/meta-http-client.js';
 import { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
+import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
 import type { CoreApplicationOptions } from './create-application.js';
 
 const DEFAULT_STAGING_STALE_MS = 86_400_000;
@@ -55,6 +56,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required when OAuth providers are enabled');
   if (config.PUBLISH_RELAY_INSTAGRAM_APP_ID && !publicOrigin)
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required for Instagram Login');
+  if (config.PUBLISH_RELAY_FANVUE_CLIENT_ID && !publicOrigin)
+    throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required for Fanvue OAuth');
   if (
     Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID) !==
     Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET)
@@ -176,6 +179,20 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                 '/api/oauth/tiktok/callback',
                 tiktokCredentials.publicOrigin,
               ).toString(),
+            },
+          }
+        : {}),
+      ...(config.PUBLISH_RELAY_FANVUE_CLIENT_ID &&
+      config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET &&
+      publicOrigin
+        ? {
+            fanvueOauth: {
+              keys: masterKeys,
+              client: new FanvueHttpClient({
+                clientId: config.PUBLISH_RELAY_FANVUE_CLIENT_ID,
+                clientSecret: config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET,
+              }),
+              callbackUrl: new URL('/api/oauth/fanvue/callback', publicOrigin).toString(),
             },
           }
         : {}),

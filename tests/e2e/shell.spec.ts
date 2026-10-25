@@ -104,6 +104,18 @@ async function mockConnectedAccounts(page: Page) {
   );
 }
 
+async function mockCalendarAccounts(
+  page: Page,
+  accounts: { id: string; provider: string; displayName: string }[],
+) {
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { accounts, nextCursor: null }, error: null }),
+    }),
+  );
+}
+
 async function mockMetaDestinations(page: Page) {
   await page.route('**/api/provider-accounts', (route) =>
     route.fulfill({
@@ -3666,6 +3678,10 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  await mockCalendarAccounts(page, [
+    { id: 'calendar-avery', provider: 'x', displayName: 'Avery Editorial' },
+    { id: 'calendar-studio', provider: 'x', displayName: 'Studio Notes' },
+  ]);
   const activePath = await workspacePath(page, 'calendar?mode=Week&date=2026-09-01');
   const activeSlug = activePath.split('/')[2] ?? '';
   await page.route('**/api/workspaces/current', (route) =>
@@ -3692,28 +3708,48 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
               state: 'dispatching',
               scheduledAt: '2026-09-01T09:15:00+03:00',
               contentPreview: 'Morning dispatch',
-              providerAccount: { displayName: 'Avery Editorial', handle: 'avery', provider: 'x' },
+              providerAccount: {
+                id: 'calendar-avery',
+                displayName: 'Avery Editorial',
+                handle: 'avery',
+                provider: 'x',
+              },
             },
             {
               id: 'avery-lunch',
               state: 'retry_wait',
               scheduledAt: '2026-09-01T09:30:00+03:00',
               contentPreview: 'Lunch retry',
-              providerAccount: { displayName: 'Avery Editorial', handle: 'avery', provider: 'x' },
+              providerAccount: {
+                id: 'calendar-avery',
+                displayName: 'Avery Editorial',
+                handle: 'avery',
+                provider: 'x',
+              },
             },
             {
               id: 'studio-next-day',
               state: 'failed',
               scheduledAt: '2026-09-02T10:45:00+03:00',
               contentPreview: 'Next day failure',
-              providerAccount: { displayName: 'Studio Notes', handle: 'studio', provider: 'x' },
+              providerAccount: {
+                id: 'calendar-studio',
+                displayName: 'Studio Notes',
+                handle: 'studio',
+                provider: 'x',
+              },
             },
             {
               id: 'studio-weekend',
               state: 'scheduled',
               scheduledAt: '2026-09-06T11:00:00+03:00',
               contentPreview: 'Sunday publication',
-              providerAccount: { displayName: 'Studio Notes', handle: 'studio', provider: 'x' },
+              providerAccount: {
+                id: 'calendar-studio',
+                displayName: 'Studio Notes',
+                handle: 'studio',
+                provider: 'x',
+              },
             },
           ],
         },
@@ -3790,7 +3826,7 @@ test('projects live calendar jobs by date, time, account lane, and active worksp
     route.fulfill({ contentType: 'application/json', body: '{"data":{"items":[]},"error":null}' }),
   );
   await page.reload();
-  await expect(page.getByRole('button', { name: '0 accounts' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '2 accounts' })).toBeVisible();
   await expect(page.locator('.timeline-calendar')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('calendar-empty.png'), fullPage: true });
 
@@ -3993,6 +4029,14 @@ test('paginates an older calendar week past 100 local jobs and deduplicates the 
   page,
 }) => {
   await establishWorkspaceSession(page);
+  await mockCalendarAccounts(page, [
+    {
+      id: '00000000-0000-4000-8000-000000000812',
+      provider: 'facebook',
+      displayName: 'Sneji Eli Geri',
+    },
+    { id: 'calendar-other', provider: 'x', displayName: 'Other account' },
+  ]);
   let targetWorkspace = false;
   let secondPageRequests = 0;
   await page.route('**/api/workspaces/current', (route) =>
@@ -4023,7 +4067,12 @@ test('paginates an older calendar week past 100 local jobs and deduplicates the 
       59 - (index % 6) * 10,
     ).padStart(2, '0')}:00.000Z`,
     contentPreview: `Later job ${String(index)}`,
-    providerAccount: { displayName: 'Other account', handle: 'other', provider: 'x' },
+    providerAccount: {
+      id: 'calendar-other',
+      displayName: 'Other account',
+      handle: 'other',
+      provider: 'x',
+    },
   }));
   const latestJob = laterJobs[0];
   const lastJob = laterJobs.at(-1);
@@ -4140,6 +4189,9 @@ test('refreshes background publication outcomes without replaying historical toa
   page,
 }, testInfo) => {
   await establishWorkspaceSession(page);
+  await mockCalendarAccounts(page, [
+    { id: 'calendar-avery', provider: 'x', displayName: 'Avery Editorial' },
+  ]);
   const activeSlug = (await workspacePath(page, 'queue')).split('/')[2] ?? '';
   await page.clock.install();
   let state = 'scheduled';
@@ -4156,7 +4208,12 @@ test('refreshes background publication outcomes without replaying historical toa
               state,
               scheduledAt: '2026-10-01T12:00:00Z',
               contentPreview: 'Publication update',
-              providerAccount: { displayName: 'Avery Editorial', handle: 'avery', provider: 'x' },
+              providerAccount: {
+                id: 'calendar-avery',
+                displayName: 'Avery Editorial',
+                handle: 'avery',
+                provider: 'x',
+              },
             },
           ],
         },
@@ -4214,6 +4271,9 @@ test('refreshes background publication outcomes without replaying historical toa
 
 test('shows published jobs as success across calendar modes after reload', async ({ page }) => {
   await establishWorkspaceSession(page);
+  await mockCalendarAccounts(page, [
+    { id: 'calendar-editorial', provider: 'x', displayName: 'Example Editorial' },
+  ]);
   await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -4226,6 +4286,7 @@ test('shows published jobs as success across calendar modes after reload', async
               scheduledAt: '2026-09-01T09:15:00+03:00',
               contentPreview: 'Published update',
               providerAccount: {
+                id: 'calendar-editorial',
                 displayName: 'Example Editorial',
                 handle: 'exampleeditorial',
                 provider: 'x',
@@ -4258,6 +4319,10 @@ test('keeps late immediate publications inside the Week and Day calendar grid', 
   page,
 }) => {
   await establishWorkspaceSession(page);
+  await mockCalendarAccounts(page, [
+    { id: 'calendar-evening', provider: 'meta', displayName: 'Evening Page' },
+    { id: 'calendar-night', provider: 'meta', displayName: 'Night Page' },
+  ]);
   await page.route('**/api/workflow/jobs?*', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -4269,14 +4334,24 @@ test('keeps late immediate publications inside the Week and Day calendar grid', 
               state: 'published',
               scheduledAt: '2026-10-19T21:15:00Z',
               contentPreview: 'Evening Facebook post',
-              providerAccount: { displayName: 'Evening Page', handle: '', provider: 'meta' },
+              providerAccount: {
+                id: 'calendar-evening',
+                displayName: 'Evening Page',
+                handle: '',
+                provider: 'meta',
+              },
             },
             {
               id: 'last-minute-published-job',
               state: 'published',
               scheduledAt: '2026-10-19T23:59:00Z',
               contentPreview: 'Last-minute Facebook post',
-              providerAccount: { displayName: 'Night Page', handle: '', provider: 'meta' },
+              providerAccount: {
+                id: 'calendar-night',
+                displayName: 'Night Page',
+                handle: '',
+                provider: 'meta',
+              },
             },
           ],
           next: null,

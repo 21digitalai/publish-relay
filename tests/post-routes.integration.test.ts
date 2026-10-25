@@ -679,6 +679,68 @@ describe('browser workflow PostgreSQL boundary', () => {
     cookie: `publish_relay_session=${workspaceId}.browser-token`,
   };
 
+  it('admits a paid Fanvue media post only for its ready selected account', async () => {
+    const mediaId = '00000000-0000-4000-8000-000000000890';
+    await database.exec(`
+      UPDATE provider_connections SET provider = 'fanvue' WHERE workspace_id = '${workspaceId}';
+      UPDATE provider_accounts SET destination_provider = 'fanvue'
+        WHERE id = '${providerAccountId}';
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+        VALUES ('${mediaId}', '${workspaceId}', 'clip.jpg', 'clip-hash', 'image/jpeg', 10, 'ready');
+    `);
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=fanvue-csrf`,
+      'x-csrf-token': 'fanvue-csrf',
+    };
+    const payload = {
+      destination: { provider: 'fanvue', providerAccountId },
+      content: {
+        schemaVersion: 1,
+        kind: 'post',
+        audience: 'subscribers',
+        text: 'Paid clip',
+        mediaIds: [mediaId],
+        price: 300,
+      },
+      scheduledAt: '2026-09-02T10:00:00.000Z',
+    };
+    const send = (key: string, body: Record<string, unknown>) =>
+      application.inject({
+        method: 'POST',
+        url: '/api/workflow/posts',
+        headers: { ...headers, 'idempotency-key': key },
+        payload: body,
+      });
+    const created = await send('fanvue-paid-ready', payload);
+    expect(created.statusCode).toBe(201);
+    const rows = await database.query<{ effective_payload: Record<string, unknown> }>(
+      `SELECT effective_payload FROM publication_jobs WHERE workspace_id = '${workspaceId}'`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.effective_payload).toMatchObject({
+      kind: 'post',
+      audience: 'subscribers',
+      price: 300,
+      mediaIds: [mediaId],
+    });
+    const foreign = await send('fanvue-foreign-account', {
+      ...payload,
+      destination: { provider: 'fanvue', providerAccountId: foreignProviderAccountId },
+    });
+    expect(foreign.statusCode).toBe(400);
+    await database.exec(`UPDATE media_objects SET state = 'temporary' WHERE id = '${mediaId}'`);
+    const notReady = await send('fanvue-media-not-ready', payload);
+    expect(notReady.statusCode).toBe(400);
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM publication_jobs WHERE workspace_id = '${workspaceId}'`,
+        )
+      ).rows[0]?.count,
+    ).toBe(1);
+  });
+
   it('rejects a disconnected Meta destination while its sibling remains schedulable', async () => {
     const facebookId = '00000000-0000-4000-8000-000000000890';
     const imageId = '00000000-0000-4000-8000-000000000891';

@@ -101,6 +101,25 @@ const linkedinContent = z.discriminatedUnion('kind', [
   }),
 ]);
 
+export const fanvueContentSchema = z
+  .object({
+    schemaVersion: version,
+    kind: z.literal('post'),
+    audience: z.enum(['subscribers', 'followers-and-subscribers']),
+    text: z.string().max(5000).optional(),
+    mediaIds: z.array(mediaId).max(20).default([]),
+    mediaPreviewId: mediaId.optional(),
+    price: z.number().int().min(300).optional(),
+  })
+  .superRefine((content, context) => {
+    if (!content.text && content.mediaIds.length === 0)
+      context.addIssue({ code: 'custom', message: 'Fanvue post requires text or media' });
+    if (content.price !== undefined && content.mediaIds.length === 0)
+      context.addIssue({ code: 'custom', message: 'Fanvue paid post requires media' });
+    if (content.mediaPreviewId && !content.mediaIds.includes(content.mediaPreviewId))
+      context.addIssue({ code: 'custom', message: 'Fanvue preview must be attached media' });
+  });
+
 export const publicationTargetSchema = z.discriminatedUnion('provider', [
   z.object({ provider: z.literal('x'), providerAccountId: accountId, content: xContent }),
   z.object({
@@ -123,6 +142,11 @@ export const publicationTargetSchema = z.discriminatedUnion('provider', [
     provider: z.literal('linkedin'),
     providerAccountId: accountId,
     content: linkedinContent,
+  }),
+  z.object({
+    provider: z.literal('fanvue'),
+    providerAccountId: accountId,
+    content: fanvueContentSchema,
   }),
   // Fixture-only until Snap allowlisting and a dedicated admission route exist.
   z.object({

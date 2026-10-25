@@ -1,0 +1,284 @@
+import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
+import type { MediaStorage } from '../src/modules/content/media-storage.js';
+import {
+  getFinalizedFanvueMediaUuids,
+  getFanvueStagingProgress,
+  reserveFanvueStagingArtifact,
+} from '../src/modules/providers/fanvue-artifact.repository.js';
+import { getFanvueJobMediaMetadata } from '../src/modules/providers/fanvue-job-media-source.js';
+import type { FanvueMediaUploadClient } from '../src/modules/providers/fanvue-media-upload-client.js';
+import {
+  FanvueStagingPendingError,
+  stageFanvueJobMedia,
+} from '../src/modules/providers/fanvue-stage-job-media.service.js';
+
+const workspaceId = '00000000-0000-4000-8000-000000000001';
+const accountId = '00000000-0000-4000-8000-000000000002';
+const jobId = '00000000-0000-4000-8000-000000000003';
+const revisionId = '00000000-0000-4000-8000-000000000004';
+const mediaId = '00000000-0000-4000-8000-000000000005';
+const input = {
+  workspaceId,
+  jobId,
+  mediaId,
+  leaseOwner: 'worker-one',
+  expiresAt: new Date(Date.now() + 60_000),
+};
+let postgres: PGlite;
+let database: NodePgDatabase;
+
+beforeEach(async () => {
+  postgres = new PGlite();
+  await postgres.exec(`
+    CREATE TABLE provider_accounts (
+      id uuid PRIMARY KEY, workspace_id uuid NOT NULL, destination_provider text NOT NULL,
+      availability text NOT NULL, disconnected_at timestamptz
+    );
+    CREATE TABLE publication_jobs (
+      id uuid PRIMARY KEY, workspace_id uuid NOT NULL, provider_account_id uuid NOT NULL,
+      revision_id uuid NOT NULL, state text NOT NULL, lease_owner text, lease_expires_at timestamptz
+    );
+    CREATE TABLE revision_media (workspace_id uuid NOT NULL, revision_id uuid NOT NULL, media_id uuid NOT NULL);
+    CREATE TABLE media_objects (
+      id uuid PRIMARY KEY, workspace_id uuid NOT NULL, storage_key text NOT NULL, sha256 text NOT NULL,
+      byte_size bigint NOT NULL, mime_type text NOT NULL, state text NOT NULL, deleted_at timestamptz
+    );
+    CREATE TABLE publication_attempts (workspace_id uuid NOT NULL, job_id uuid NOT NULL,
+      finished_at timestamptz, outcome text);
+    CREATE TABLE provider_staging_artifacts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL, job_id uuid NOT NULL,
+      media_id uuid NOT NULL, provider_reference text NOT NULL, expires_at timestamptz NOT NULL,
+      upload_phase text NOT NULL DEFAULT 'initialized', provider_reference_credential_id uuid,
+      deleted_at timestamptz, external_object_id text,
+      UNIQUE (workspace_id, job_id, media_id)
+    );
+  `);
+  await postgres.query(`INSERT INTO provider_accounts VALUES ($1,$2,'fanvue','active',NULL)`, [
+    accountId,
+    workspaceId,
+  ]);
+  await postgres.query(
+    `INSERT INTO publication_jobs VALUES ($1,$2,$3,$4,'leased','worker-one',$5)`,
+    [jobId, workspaceId, accountId, revisionId, new Date(Date.now() + 60_000)],
+  );
+  await postgres.query(
+    `INSERT INTO media_objects VALUES ($1,$2,'key','hash',8,'image/jpeg','ready',NULL)`,
+    [mediaId, workspaceId],
+  );
+  await postgres.query(`INSERT INTO revision_media VALUES ($1,$2,$3)`, [
+    workspaceId,
+    revisionId,
+    mediaId,
+  ]);
+  database = drizzle(postgres) as unknown as NodePgDatabase;
+});
+
+describe('Fanvue finalized media map', () => {
+  const mediaUuid = '00000000-0000-4000-8000-000000000006';
+  const selected = { workspaceId, jobId, leaseOwner: 'worker-one' };
+
+  it('returns only a finalized attached artifact for the selected lease', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    expect(artifactId).not.toBeNull();
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='finalized', external_object_id=$1 WHERE id=$2",
+      [mediaUuid, artifactId],
+    );
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(
+      new Map([[mediaId, mediaUuid]]),
+    );
+    expect(
+      await getFinalizedFanvueMediaUuids(database, { ...selected, leaseOwner: 'another-worker' }),
+    ).toEqual(new Map());
+  });
+
+  it('excludes detached, disconnected, expired and attempted jobs', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='finalized', external_object_id=$1 WHERE id=$2",
+      [mediaUuid, artifactId],
+    );
+    await postgres.query('DELETE FROM revision_media');
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
+    await postgres.query('INSERT INTO revision_media VALUES ($1,$2,$3)', [
+      workspaceId,
+      revisionId,
+      mediaId,
+    ]);
+    await postgres.query('UPDATE provider_accounts SET disconnected_at=now()');
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
+    await postgres.query('UPDATE provider_accounts SET disconnected_at=NULL');
+    await postgres.query('UPDATE publication_jobs SET lease_expires_at=now()');
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
+    await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1', [
+      new Date(Date.now() + 60_000),
+    ]);
+    await postgres.query('INSERT INTO publication_attempts VALUES ($1,$2)', [workspaceId, jobId]);
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
+  });
+});
+
+describe('Fanvue staging progress', () => {
+  const keys = {} as MasterKeyProvider;
+  const selected = { workspaceId, jobId, mediaId, leaseOwner: 'worker-one' };
+
+  it('reads the exact pending artifact without inventing an upload session', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    expect(await getFanvueStagingProgress(database, keys, selected)).toEqual({
+      artifactId,
+      phase: 'initialized',
+      mediaUuid: null,
+      credentialId: null,
+      session: null,
+      credentialVersion: null,
+    });
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='session_pending' WHERE id=$1",
+      [artifactId],
+    );
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe(
+      'session_pending',
+    );
+    expect(
+      await getFanvueStagingProgress(database, keys, { ...selected, leaseOwner: 'other' }),
+    ).toBeNull();
+  });
+
+  it('does not decrypt an obsolete credential for processing or finalized media', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    const unavailableCredentialId = '00000000-0000-4000-8000-000000000008';
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='processing', provider_reference_credential_id=$1, external_object_id=$2 WHERE id=$3",
+      [unavailableCredentialId, '00000000-0000-4000-8000-000000000006', artifactId],
+    );
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe('processing');
+    await postgres.query("UPDATE provider_staging_artifacts SET upload_phase='finalized'");
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe('finalized');
+    await expect(
+      stageFanvueJobMedia(database, {} as MediaStorage, {} as FanvueMediaUploadClient, keys, {
+        ...selected,
+        accessToken: 'test',
+      }),
+    ).resolves.toBe('ready');
+  });
+
+  it('denies a detached media artifact or an already-started post attempt', async () => {
+    await reserveFanvueStagingArtifact(database, input);
+    await postgres.query('DELETE FROM revision_media');
+    expect(await getFanvueStagingProgress(database, keys, selected)).toBeNull();
+    await postgres.query('INSERT INTO revision_media VALUES ($1,$2,$3)', [
+      workspaceId,
+      revisionId,
+      mediaId,
+    ]);
+    await postgres.query('INSERT INTO publication_attempts VALUES ($1,$2)', [workspaceId, jobId]);
+    expect(await getFanvueStagingProgress(database, keys, selected)).toBeNull();
+  });
+
+  it('reuses finalized media after a definite 429 but holds unknown posts', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='finalized', external_object_id=$1 WHERE id=$2",
+      ['00000000-0000-4000-8000-000000000006', artifactId],
+    );
+    await postgres.query("INSERT INTO publication_attempts VALUES ($1,$2,now(),'rate_limit')", [
+      workspaceId,
+      jobId,
+    ]);
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe('finalized');
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(
+      new Map([[mediaId, '00000000-0000-4000-8000-000000000006']]),
+    );
+    await postgres.query("UPDATE publication_attempts SET outcome='unknown'");
+    expect(await getFanvueStagingProgress(database, keys, selected)).toBeNull();
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
+  });
+});
+
+describe('Fanvue staging resumption boundary', () => {
+  const keys = {} as MasterKeyProvider;
+  const storage = {} as MediaStorage;
+  const client = {} as FanvueMediaUploadClient;
+  const selected = { workspaceId, jobId, mediaId, leaseOwner: 'worker-one', accessToken: 'test' };
+
+  it('does not replay an uncertain provider session creation', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='session_pending' WHERE id=$1",
+      [artifactId],
+    );
+    await expect(stageFanvueJobMedia(database, storage, client, keys, selected)).rejects.toEqual(
+      new FanvueStagingPendingError('session_pending'),
+    );
+  });
+
+  it('recognizes finalized media without repeating any upload call', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='finalized', external_object_id=$1 WHERE id=$2",
+      ['00000000-0000-4000-8000-000000000006', artifactId],
+    );
+    await expect(stageFanvueJobMedia(database, storage, client, keys, selected)).resolves.toBe(
+      'ready',
+    );
+  });
+});
+
+afterEach(async () => postgres.close());
+
+describe('Fanvue guarded artifact insertion', () => {
+  it('creates one artifact only for an eligible selected job/media', async () => {
+    const first = await reserveFanvueStagingArtifact(database, input);
+    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await reserveFanvueStagingArtifact(database, input)).toBe(first);
+    const rows = await postgres.query('SELECT id FROM provider_staging_artifacts');
+    expect(rows.rows).toHaveLength(1);
+  });
+
+  it('rejects a foreign-provider or pending artifact on retry', async () => {
+    const first = await reserveFanvueStagingArtifact(database, input);
+    expect(first).not.toBeNull();
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET provider_reference='youtube:resumable' WHERE id=$1",
+      [first],
+    );
+    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET provider_reference='fanvue:multipart', upload_phase='session_pending' WHERE id=$1",
+      [first],
+    );
+    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
+  });
+
+  it('leaves no artifact when the lease expires after a successful preflight', async () => {
+    expect(await getFanvueJobMediaMetadata(database, input)).toEqual({
+      byteSize: 8,
+      mimeType: 'image/jpeg',
+    });
+    await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
+      new Date(Date.now() - 60_000),
+      jobId,
+    ]);
+    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
+    const rows = await postgres.query('SELECT id FROM provider_staging_artifacts');
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  it('denies disconnected account and recorded attempt', async () => {
+    await postgres.query('UPDATE provider_accounts SET disconnected_at=now() WHERE id=$1', [
+      accountId,
+    ]);
+    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
+    await postgres.query('UPDATE provider_accounts SET disconnected_at=NULL WHERE id=$1', [
+      accountId,
+    ]);
+    await postgres.query('INSERT INTO publication_attempts VALUES ($1,$2)', [workspaceId, jobId]);
+    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
+  });
+});

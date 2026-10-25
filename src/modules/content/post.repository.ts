@@ -11,6 +11,7 @@ import {
 } from '../../database/schema.js';
 import { loadPostAccounts } from './exposed-post-accounts.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
+import { fanvueContentSchema } from './publication-target.js';
 import { normalizeFacebookPhaseOneContent } from '../providers/facebook-content.js';
 import { hasExactInstagramLoginScopes } from '../providers/instagram-login-client.js';
 import {
@@ -74,6 +75,21 @@ export function buildMetaEffectivePayload(
     }
   }
   throw new PostValidationError('Unsupported Meta destination');
+}
+
+export function buildFanvueEffectivePayload(
+  content: Record<string, unknown>,
+  mediaIds: readonly string[],
+  mediaMimeTypes: readonly string[],
+) {
+  const parsed = fanvueContentSchema.safeParse(content);
+  if (!parsed.success) throw new PostValidationError('Invalid Fanvue post content');
+  if (!isDeepStrictEqual(parsed.data.mediaIds, mediaIds))
+    throw new PostValidationError('Fanvue post media does not match selected attachments');
+  const allowed = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4']);
+  if (!mediaMimeTypes.every((mimeType) => allowed.has(mimeType)))
+    throw new PostValidationError('Fanvue post media type is unsupported');
+  return parsed.data;
 }
 
 export interface PostRevisionInput {
@@ -221,6 +237,11 @@ async function resolveRevisionTargets(
     input.providerAccountIds.map((accountId) => {
       const account = accountsById.get(accountId);
       if (!account) throw new PostValidationError('Provider account is unavailable');
+      if (account.destinationProvider === 'fanvue')
+        return [
+          accountId,
+          buildFanvueEffectivePayload(input.content, input.mediaIds, mediaMimeTypes),
+        ] as const;
       if (account.provider !== 'meta' && account.provider !== 'instagram_login')
         return [accountId, null] as const;
       if (account.provider === 'instagram_login') {

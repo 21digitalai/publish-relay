@@ -143,6 +143,8 @@ Auth uses a centered 440px panel on the canvas with a restrained violet radial g
 
 ## Connected accounts
 
+Fanvue is a separate option in the shared `PostingAdapterList` registry, visible only when the confidential OAuth client pair is configured. Its description states that the first connection grants publishing only and that messages/comments require separate consent. The existing account-row and reconnect/disconnect controls own its connected and reconnect-required states; no second provider-specific account screen is introduced. The Composer sees an empty Fanvue content-kind capability snapshot until posting dispatch is reviewed, so connection never implies a usable publish action.
+
 Connected X rows reuse the inline `.defaults-toggle` switch to save an account-scoped long-post self-declaration immediately. The switch defaults off, labels the choice as self-declared, warns that X may reject longer posts, and shows pending/error/saved states without claiming verified Premium access. Reconnect-required rows cannot edit it until reconnected.
 
 Origin-owned Facebook Page rows expose a `Share with workspaces` control in Accounts. Its anchored panel lists only other workspaces the current user owns; each workspace is a keyboard-operable checkbox button with explicit checked, saving, error, and confirmation states. The owner controls only visibility of the same Page connection, never a copied credential or account. Shared target rows show their origin label and omit origin-owned management actions. `src/ui/facebook-page-exposure-control.tsx` owns the panel and the paginated exposure selection load; AccountRow supplies the origin workspace identity.
@@ -166,6 +168,16 @@ Facebook Pages and Instagram are separate picker entries and reconnect paths. Fa
 - Account rows load from the tenant-scoped account API. Connect and reconnect use provider-specific secure OAuth redirects for X, YouTube, and Meta; successful callbacks return to the protected workspace. One Meta group renders separate `Instagram · identity` and `Facebook · Page` destinations. `reauth_required`, `permission_lost`, and `remote_missing` destinations remain visible with reconnect guidance and cannot be selected for new schedules. YouTube rows expose an inline destination-defaults form for visibility, Made for Kids, and subscriber notification so routine schedules need only sparse overrides. Saving is explicit, disables during submission, and keeps errors inline. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
 
 ## Composer
+
+Fanvue uses the same destination-first Composer sheet, account picker, body, media upload,
+schedule, uncertain-request recovery, and receipt as other destinations. After selecting a
+Fanvue creator, the `.fanvue-post-options` fieldset requires an explicit audience choice:
+subscribers or followers and subscribers. The `.fanvue-price-field` accepts optional USD
+with at most two decimals; empty is free, and a paid post requires attached media and at
+least the provider's $3.00 minimum. The existing hidden media picker supports up to 20
+JPEG, PNG, GIF, WebP, or MP4 items. These controls serialize one destination-owned `post`
+content request through the shared browser post endpoint; they do not grant engagement
+permissions or impose agent approval policy.
 
 After active-workspace account loading, the composer shows a focused account gate when no active destination exists. The gate links to that workspace's Accounts route and hides all post controls; loading and fetch-error states remain distinct, with an inline Retry for errors.
 

@@ -49,15 +49,19 @@ describe('Fanvue read transport', () => {
     expect(() => client.listMessages('token', '../other')).toThrow();
   });
 
-  it('classifies provider failure without returning provider body', async () => {
-    const request = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response('secret', { status: 429 }));
-    await expect(new FanvueReadClient(request).listChats('token')).rejects.toMatchObject({
-      status: 429,
-    });
-    expect(request).toHaveBeenCalledTimes(1);
-  });
+  it.each([400, 401, 403, 429, 503])(
+    'classifies HTTP %i without returning provider body',
+    async (status) => {
+      const request = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response('private provider detail', { status }));
+      await expect(new FanvueReadClient(request).listChats('token')).rejects.toMatchObject({
+        status,
+        message: `Fanvue request failed (HTTP ${String(status)})`,
+      });
+      expect(request).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each([
     ['network rejection', new TypeError('private network detail')],

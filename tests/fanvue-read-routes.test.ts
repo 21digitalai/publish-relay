@@ -102,6 +102,25 @@ describe('Fanvue agent read boundary', () => {
     expect(response.body).not.toContain('invalid_response');
   });
 
+  it.each([
+    [400, 502],
+    [401, 409],
+    [403, 409],
+    [429, 429],
+    [503, 502],
+  ])('maps provider HTTP %i to safe Relay HTTP %i', async (providerStatus, relayStatus) => {
+    const context = fixture(['fanvue:chats:read']);
+    context.listMessages.mockRejectedValue(new FanvueRequestError(providerStatus));
+    const response = await context.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages`,
+      headers,
+    });
+    expect(response.statusCode).toBe(relayStatus);
+    expect(response.json()).toMatchObject({ error: { code: 'provider_read_failed' } });
+    expect(response.body).not.toContain('Fanvue request failed');
+  });
+
   it('rejects absent workspace preflight before any read', async () => {
     const context = fixture(['fanvue:chats:read']);
     const response = await context.application.inject({

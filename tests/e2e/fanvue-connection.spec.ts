@@ -58,4 +58,11 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
   await expect(page.getByText('Message reading enabled')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Allow message reading' })).toHaveCount(0);
+  const accountsResponse = await page.request.get('/api/provider-accounts');
+  const accounts = (await accountsResponse.json()) as {
+    data: { accounts: Array<Record<string, unknown>> };
+  };
+  const fanvueAccount = accounts.data.accounts.find((account) => account.provider === 'fanvue');
+  expect(fanvueAccount?.fanvueModules).toEqual({ chatRead: true });
+  expect(fanvueAccount).not.toHaveProperty('scopes');
 });

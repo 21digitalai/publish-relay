@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
+import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { enforceWorkspaceAction, type ActionPolicy } from '../policy/action-policy.js';
 import {
   reserveFanvueAction,
   settleFanvueAction,
@@ -18,6 +20,10 @@ const textMessage = z.strictObject({
   fanUuid: z.uuid(),
   clientActionId: z.uuid(),
   text: z.string().min(1).max(5000),
+  actor: z.strictObject({
+    type: z.enum(['user', 'api-key', 'delegated']),
+    id: z.uuid(),
+  }),
 });
 
 export type FanvueTextMessageResult =
@@ -42,11 +48,21 @@ export class FanvueMessageService {
     private readonly database: NodePgDatabase,
     private readonly reads: FanvueReadService,
     private readonly client: FanvueMessageClient,
+    private readonly policy: ActionPolicy,
   ) {}
 
   async sendText(input: z.input<typeof textMessage>): Promise<FanvueTextMessageResult> {
     const command = textMessage.parse(input);
     const { accessToken } = await this.reads.getExistingChatForMessage(command);
+    await withTenantTransaction(this.database, command, (transaction) =>
+      enforceWorkspaceAction(transaction, this.policy, {
+        workspaceId: command.workspaceId,
+        actor: command.actor,
+        action: 'engagement.send',
+        request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
+        requestedProviderAccountIds: [command.accountId],
+      }),
+    );
     const requestFingerprint = createHash('sha256')
       .update(JSON.stringify({ fanUuid: command.fanUuid, text: command.text }))
       .digest('hex');

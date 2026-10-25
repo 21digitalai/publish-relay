@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ledger = vi.hoisted(() => ({ reserve: vi.fn(), settle: vi.fn() }));
+const policy = vi.hoisted(() => ({ enforce: vi.fn(() => Promise.resolve()) }));
+vi.mock('../src/database/tenant-transaction.js', () => ({
+  withTenantTransaction: (_db: unknown, _input: unknown, work: (transaction: unknown) => unknown) =>
+    work({}),
+}));
+vi.mock('../src/modules/policy/action-policy.js', () => ({
+  enforceWorkspaceAction: policy.enforce,
+}));
 vi.mock('../src/modules/providers/fanvue-action-intent.repository.js', () => ({
   reserveFanvueAction: ledger.reserve,
   settleFanvueAction: ledger.settle,
@@ -15,6 +23,7 @@ const input = {
   fanUuid: '00000000-0000-4000-8000-000000000003',
   clientActionId: '00000000-0000-4000-8000-000000000004',
   text: 'Hello',
+  actor: { type: 'api-key' as const, id: '00000000-0000-4000-8000-000000000007' },
 };
 const messageUuid = '00000000-0000-4000-8000-000000000005';
 const events: string[] = [];
@@ -30,7 +39,7 @@ const client = {
     return Promise.resolve({ messageUuid });
   }),
 };
-const service = new FanvueMessageService({} as never, reads as never, client as never);
+const service = new FanvueMessageService({} as never, reads as never, client as never, {} as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,6 +58,11 @@ describe('Fanvue existing-chat text send command', () => {
   it('preflights selected creator/fan and commits intent before one text-only send', async () => {
     await expect(service.sendText(input)).resolves.toEqual({ state: 'confirmed', messageUuid });
     expect(events).toEqual(['preflight', 'reserve', 'send', 'settle']);
+    expect(policy.enforce).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ action: 'engagement.send', actor: input.actor }),
+    );
     expect(reads.getExistingChatForMessage).toHaveBeenCalledWith(input);
     expect(client.sendMessage).toHaveBeenCalledWith('token', input.fanUuid, { text: input.text });
     expect(ledger.settle).toHaveBeenCalledWith(
@@ -60,6 +74,13 @@ describe('Fanvue existing-chat text send command', () => {
   it('never reserves or sends without account, chat or write-scope reach', async () => {
     reads.getExistingChatForMessage.mockRejectedValueOnce(new Error('scope missing'));
     await expect(service.sendText(input)).rejects.toThrow('scope missing');
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('never reserves or sends when the neutral action policy denies', async () => {
+    policy.enforce.mockRejectedValueOnce(new Error('policy denied'));
+    await expect(service.sendText(input)).rejects.toThrow('policy denied');
     expect(ledger.reserve).not.toHaveBeenCalled();
     expect(client.sendMessage).not.toHaveBeenCalled();
   });

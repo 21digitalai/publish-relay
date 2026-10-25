@@ -10,6 +10,7 @@ export const ACTION_NAMES = [
   'publication.revise',
   'publication.reschedule',
   'publication.retry',
+  'engagement.send',
 ] as const;
 
 export type ActionName = (typeof ACTION_NAMES)[number];

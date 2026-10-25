@@ -5,6 +5,7 @@ import pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import {
+  findFanvueAction,
   reserveFanvueAction,
   settleFanvueAction,
 } from '../src/modules/providers/fanvue-action-intent.repository.js';
@@ -53,6 +54,10 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
       );
       const reserved = await reserveFanvueAction(database, input);
       expect(reserved.kind).toBe('new');
+      expect(await findFanvueAction(database, input)).toMatchObject({
+        kind: 'existing',
+        state: 'reserved',
+      });
       if (reserved.kind !== 'new') throw new Error('First reservation was not new');
       const replays = await Promise.all([
         reserveFanvueAction(database, input),
@@ -78,6 +83,9 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
       expect(
         await reserveFanvueAction(database, { ...input, requestFingerprint: 'b'.repeat(64) }),
       ).toEqual({ kind: 'conflict' });
+      expect(
+        await findFanvueAction(database, { ...input, requestFingerprint: 'b'.repeat(64) }),
+      ).toEqual({ kind: 'conflict' });
       await settleFanvueAction(database, {
         workspaceId,
         accountId,
@@ -90,6 +98,13 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
         state: 'unknown',
         providerObjectUuid: null,
       });
+      expect(await findFanvueAction(database, input)).toMatchObject({
+        kind: 'existing',
+        state: 'unknown',
+      });
+      expect(
+        await findFanvueAction(database, { ...input, clientActionId: randomUUID() }),
+      ).toBeNull();
       await expect(
         settleFanvueAction(database, {
           workspaceId,
@@ -116,6 +131,14 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
         state: 'confirmed',
         providerObjectUuid,
       });
+      expect(await findFanvueAction(database, confirmedAction)).toMatchObject({
+        kind: 'existing',
+        state: 'confirmed',
+        providerObjectUuid,
+      });
+      expect(
+        await findFanvueAction(database, { ...confirmedAction, workspaceId: otherWorkspaceId }),
+      ).toBeNull();
       const chatCreate = {
         ...input,
         clientActionId: randomUUID(),

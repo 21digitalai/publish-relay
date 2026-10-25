@@ -25,6 +25,7 @@ export const fanvueCreateChatRequestSchema = z
     audience: z.enum(['followers', 'subscribers']),
     page: z.number().int().positive().optional(),
     cursor: z.string().min(1).max(1024).optional(),
+    size: z.number().int().min(1).max(50).default(15),
   })
   .superRefine((value, context) => {
     if ((value.page === undefined) === (value.cursor === undefined))
@@ -77,6 +78,7 @@ export function registerFanvueMessageRoutes(
         fanUuid: payload.fanUuid,
         clientActionId: payload.clientActionId,
         audience: payload.audience,
+        size: payload.size,
         ...(payload.page !== undefined ? { page: payload.page } : { cursor: payload.cursor }),
         actor: { type: principal.kind, id: principal.actorId },
       });

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { enforceWorkspaceAction, type ActionPolicy } from '../policy/action-policy.js';
 import {
+  findFanvueAction,
   reserveFanvueAction,
   settleFanvueAction,
   type FanvueActionReservation,
@@ -71,6 +72,7 @@ const createChatCommand = textMessage
     audience: z.enum(['followers', 'subscribers']),
     page: z.number().int().positive().optional(),
     cursor: z.string().min(1).max(1024).optional(),
+    size: z.number().int().min(1).max(50).default(15),
   })
   .superRefine((value, context) => {
     if ((value.page === undefined) === (value.cursor === undefined))
@@ -112,6 +114,21 @@ function replayResult(reservation: FanvueActionReservation): FanvueTextMessageRe
   return { state: 'unknown' };
 }
 
+function replayChatCreate(
+  reservation: FanvueActionReservation,
+):
+  | { state: 'confirmed'; fanUuid: string }
+  | { state: 'failed'; failureStatus: number }
+  | { state: 'unknown' } {
+  if (reservation.kind === 'conflict') throw new FanvueMessageActionConflictError();
+  if (reservation.kind === 'new') throw new Error('Expected an existing Fanvue chat action');
+  if (reservation.state === 'confirmed' && reservation.providerObjectUuid)
+    return { state: 'confirmed', fanUuid: reservation.providerObjectUuid };
+  if (reservation.state === 'failed' && reservation.failureStatus)
+    return { state: 'failed', failureStatus: reservation.failureStatus };
+  return { state: 'unknown' };
+}
+
 /** Existing provider media is account-scoped and rechecked before the same durable send intent. */
 export class FanvueMessageService {
   constructor(
@@ -130,23 +147,6 @@ export class FanvueMessageService {
   > {
     const command = createChatCommand.parse(input);
     const accessToken = await this.reads.getChatCreateToken(command);
-    const audience =
-      command.audience === 'followers'
-        ? await this.reads.listFollowers({
-            workspaceId: command.workspaceId,
-            accountId: command.accountId,
-            ...(command.page !== undefined ? { page: command.page } : {}),
-            size: 50,
-          })
-        : await this.reads.listSubscribers({
-            workspaceId: command.workspaceId,
-            accountId: command.accountId,
-            ...(command.page !== undefined ? { page: command.page } : {}),
-            ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
-            size: 50,
-          });
-    if (!audience.data.some((person) => person.uuid === command.fanUuid))
-      throw new FanvueSelectedFanUnavailableError();
     await withTenantTransaction(this.database, command, (transaction) =>
       enforceWorkspaceAction(transaction, this.policy, {
         workspaceId: command.workspaceId,
@@ -170,19 +170,32 @@ export class FanvueMessageService {
             audience: command.audience,
             page: command.page,
             cursor: command.cursor,
+            size: command.size,
           }),
         )
         .digest('hex'),
     };
+    const existing = await findFanvueAction(this.database, intent);
+    if (existing) return replayChatCreate(existing);
+    const audience =
+      command.audience === 'followers'
+        ? await this.reads.listFollowers({
+            workspaceId: command.workspaceId,
+            accountId: command.accountId,
+            ...(command.page !== undefined ? { page: command.page } : {}),
+            size: command.size,
+          })
+        : await this.reads.listSubscribers({
+            workspaceId: command.workspaceId,
+            accountId: command.accountId,
+            ...(command.page !== undefined ? { page: command.page } : {}),
+            ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+            size: command.size,
+          });
+    if (!audience.data.some((person) => person.uuid === command.fanUuid))
+      throw new FanvueSelectedFanUnavailableError();
     const reservation = await reserveFanvueAction(this.database, intent);
-    if (reservation.kind !== 'new') {
-      if (reservation.kind === 'conflict') throw new FanvueMessageActionConflictError();
-      if (reservation.state === 'confirmed' && reservation.providerObjectUuid)
-        return { state: 'confirmed', fanUuid: reservation.providerObjectUuid };
-      if (reservation.state === 'failed' && reservation.failureStatus)
-        return { state: 'failed', failureStatus: reservation.failureStatus };
-      return { state: 'unknown' };
-    }
+    if (reservation.kind !== 'new') return replayChatCreate(reservation);
     let result:
       | { state: 'confirmed'; providerObjectUuid: string }
       | { state: 'failed'; failureStatus: number }

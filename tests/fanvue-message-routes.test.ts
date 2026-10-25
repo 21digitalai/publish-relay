@@ -80,6 +80,7 @@ describe('Fanvue selected-fan chat creation route', () => {
       workspaceId,
       accountId,
       ...payload,
+      size: 15,
       actor: { type: 'api-key', id: actorId },
     });
     expect(context.sendMessage).not.toHaveBeenCalled();
@@ -139,6 +140,14 @@ describe('Fanvue selected-fan chat creation route', () => {
       payload: { ...payload, cursor: 'unexpected' },
     });
     expect(malformed.statusCode).toBe(400);
+    expect(context.createChat).toHaveBeenCalledTimes(1);
+    const badSize = await context.application.inject({
+      method: 'POST',
+      url: chatUrl,
+      headers,
+      payload: { ...payload, size: 51 },
+    });
+    expect(badSize.statusCode).toBe(400);
     expect(context.createChat).toHaveBeenCalledTimes(1);
   });
 });

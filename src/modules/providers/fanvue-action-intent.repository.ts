@@ -27,6 +27,61 @@ export type FanvueActionReservation =
       failureStatus: number | null;
     };
 
+function matchExistingAction(
+  stored: {
+    actionKind: FanvueActionKind;
+    targetUuid: string;
+    requestFingerprint: string;
+    state: FanvueActionState;
+    providerObjectUuid: string | null;
+    failureStatus: number | null;
+  },
+  input: FanvueActionInput,
+): FanvueActionReservation {
+  if (
+    stored.actionKind !== input.actionKind ||
+    stored.targetUuid !== input.targetUuid ||
+    stored.requestFingerprint !== input.requestFingerprint
+  )
+    return { kind: 'conflict' };
+  return {
+    kind: 'existing',
+    state: stored.state,
+    providerObjectUuid: stored.providerObjectUuid,
+    failureStatus: stored.failureStatus,
+  };
+}
+
+/** Read-only receipt lookup before mutable provider preflight; never creates an intent. */
+export async function findFanvueAction(
+  database: NodePgDatabase,
+  input: FanvueActionInput,
+): Promise<FanvueActionReservation | null> {
+  return withTenantTransaction(database, input, async (transaction) => {
+    const rows = await transaction
+      .select({
+        actionKind: fanvueActionIntents.actionKind,
+        targetUuid: fanvueActionIntents.targetUuid,
+        requestFingerprint: fanvueActionIntents.requestFingerprint,
+        state: fanvueActionIntents.state,
+        providerObjectUuid: fanvueActionIntents.providerObjectUuid,
+        failureStatus: fanvueActionIntents.failureStatus,
+      })
+      .from(fanvueActionIntents)
+      .where(
+        and(
+          eq(fanvueActionIntents.workspaceId, input.workspaceId),
+          eq(fanvueActionIntents.accountId, input.accountId),
+          eq(fanvueActionIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    return rows[0]
+      ? matchExistingAction(rows[0] as Parameters<typeof matchExistingAction>[0], input)
+      : null;
+  });
+}
+
 /** Commit this reservation before the provider POST. An existing reserved row is ambiguous. */
 export async function reserveFanvueAction(
   database: NodePgDatabase,
@@ -64,18 +119,7 @@ export async function reserveFanvueAction(
       .limit(1);
     const stored = rows[0];
     if (!stored) throw new Error('Fanvue action reservation disappeared');
-    if (
-      stored.actionKind !== input.actionKind ||
-      stored.targetUuid !== input.targetUuid ||
-      stored.requestFingerprint !== input.requestFingerprint
-    )
-      return { kind: 'conflict' };
-    return {
-      kind: 'existing',
-      state: stored.state as FanvueActionState,
-      providerObjectUuid: stored.providerObjectUuid,
-      failureStatus: stored.failureStatus,
-    };
+    return matchExistingAction(stored as Parameters<typeof matchExistingAction>[0], input);
   });
 }
 

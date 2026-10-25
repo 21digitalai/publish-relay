@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ledger = vi.hoisted(() => ({ reserve: vi.fn(), settle: vi.fn() }));
+const ledger = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), settle: vi.fn() }));
 const policy = vi.hoisted(() => ({ enforce: vi.fn(() => Promise.resolve()) }));
 const readyMedia = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock('../src/database/tenant-transaction.js', () => ({
@@ -11,6 +11,7 @@ vi.mock('../src/modules/policy/action-policy.js', () => ({
   enforceWorkspaceAction: policy.enforce,
 }));
 vi.mock('../src/modules/providers/fanvue-action-intent.repository.js', () => ({
+  findFanvueAction: ledger.find,
   reserveFanvueAction: ledger.reserve,
   settleFanvueAction: ledger.settle,
 }));
@@ -57,6 +58,9 @@ const service = new FanvueMessageService({} as never, reads as never, client as 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  reads.listFollowers.mockReset().mockResolvedValue({ data: [{ uuid: input.fanUuid }] });
+  reads.listSubscribers.mockReset().mockResolvedValue({ data: [{ uuid: input.fanUuid }] });
+  ledger.find.mockResolvedValue(null);
   events.length = 0;
   ledger.reserve.mockImplementation(() => {
     events.push('reserve');
@@ -90,7 +94,7 @@ describe('Fanvue selected-fan chat creation', () => {
       workspaceId: input.workspaceId,
       accountId: input.accountId,
       page: 1,
-      size: 50,
+      size: 15,
     });
     expect(ledger.reserve).toHaveBeenCalledWith(
       expect.anything(),
@@ -100,17 +104,56 @@ describe('Fanvue selected-fan chat creation', () => {
   });
 
   it('does not replay an unknown provider outcome or a conflicting action ID', async () => {
-    ledger.reserve.mockResolvedValueOnce({
+    ledger.find.mockResolvedValueOnce({
       kind: 'existing',
       state: 'unknown',
       providerObjectUuid: null,
       failureStatus: null,
     });
     await expect(service.createChat(selected)).resolves.toEqual({ state: 'unknown' });
-    ledger.reserve.mockResolvedValueOnce({ kind: 'conflict' });
+    ledger.find.mockResolvedValueOnce({ kind: 'conflict' });
     await expect(service.createChat(selected)).rejects.toThrow('conflicts');
     expect(client.createChat).not.toHaveBeenCalled();
   });
+
+  it('rechecks the exact nondefault page size and denies a shifted or mismatched page', async () => {
+    await expect(service.createChat({ ...selected, page: 2, size: 25 })).resolves.toMatchObject({
+      state: 'confirmed',
+    });
+    expect(reads.listFollowers).toHaveBeenCalledWith({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      page: 2,
+      size: 25,
+    });
+    reads.listFollowers.mockResolvedValueOnce({ data: [{ uuid: messageUuid }] });
+    await expect(service.createChat({ ...selected, page: 2, size: 15 })).rejects.toThrow(
+      'Selected fan',
+    );
+    expect(client.createChat).toHaveBeenCalledTimes(1);
+    expect(ledger.reserve).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['confirmed', 'unknown'] as const)(
+    'returns a %s receipt after Audience membership shifts without another provider call',
+    async (state) => {
+      ledger.find.mockResolvedValueOnce({
+        kind: 'existing',
+        state,
+        providerObjectUuid: state === 'confirmed' ? input.fanUuid : null,
+        failureStatus: null,
+      });
+      reads.listFollowers.mockResolvedValueOnce({ data: [] });
+      await expect(service.createChat(selected)).resolves.toEqual(
+        state === 'confirmed'
+          ? { state: 'confirmed', fanUuid: input.fanUuid }
+          : { state: 'unknown' },
+      );
+      expect(reads.listFollowers).not.toHaveBeenCalled();
+      expect(ledger.reserve).not.toHaveBeenCalled();
+      expect(client.createChat).not.toHaveBeenCalled();
+    },
+  );
 
   it('does not reserve or create when selected account permission is denied', async () => {
     reads.getChatCreateToken.mockRejectedValueOnce(new Error('selected account unavailable'));
@@ -139,7 +182,7 @@ describe('Fanvue selected-fan chat creation', () => {
       workspaceId: input.workspaceId,
       accountId: input.accountId,
       cursor: 'next',
-      size: 50,
+      size: 15,
     });
   });
 

@@ -45,6 +45,11 @@ An explicit chat-read module re-consent starts from an active workspace-owned Fa
 
 Fanvue is a distinct Core destination with a publishing-only base consent. `fanvue-http-client.ts` owns confidential-client Basic-auth authorization-code/PKCE transport and the pinned `2025-06-26` API version; the base requests `openid offline_access offline read:self read:media write:media read:post write:post`, never chat/comment scopes. The callback consumes the existing tenant/user-bound one-use OAuth state and encrypted verifier, requires an exact returned scope set, and discovers `/users/me` creator UUID before `connectProvider` atomically stores the encrypted token pair and subject-keyed account. Denial or failed validation cannot replace a prior grant. `fanvue-credential.service.ts` first locks the exact tenant/creator connection and commits a `refresh_pending` reconnect quarantine before presenting its single-use refresh token to Fanvue. A successful response atomically rotates the encrypted credential and restores that connection's active status; concurrent callers wait for this outcome without replaying the old token. Any provider ambiguity, process death, or failed post-call database commit leaves the old grant quarantined and requires reconnection. A lost refresh response cannot be safely replayed after Fanvue's grace window. Runtime routes and picker are enabled only when both Fanvue client environment keys are configured. This foundation alone does not authorize live OAuth or posting and never supplies provider tokens to agents.
 
+`fanvue-webhook-signature.ts` verifies the documented `X-Fanvue-Signature` HMAC-SHA256 over timestamp, period and exact raw request bytes. It accepts rotation MACs against configured old/new secrets with constant-time comparison, rejects malformed or repeated timestamps and enforces a 300-second skew bound. The `X-Fanvue-Topic` header is not signed and cannot select a payment event or account. The eventual receiver must handle Fanvue's narrow unsigned subscription verification probe separately, verify all deliveries before parsing their signed bodies, durably dedupe/store mapped events before 2xx, and process asynchronously; this helper alone does not activate a webhook.
+
+`fanvue-payment-event.ts` projects only signed `creator.payment.succeeded` facts: event and invoice IDs, creator/fan IDs, source, gross minor units/currency, paid/event timestamps, post/message UUIDs and tip context. It drops purchaser email, handle, tracking and unrelated metadata. A tip with `tip_context=message` is merely not-on-post, not proof of a chat origin or an offer match. The receiver must verify the raw signature before parsing and map the creator UUID to an authorized connected account before persisting or exposing any payment signal.
+
+
 ## Accepted foundation
 
 - Migration 0059 introduces `provider_account_exposures` as a stable workspace/account grant with nullable revocation and default-on `show_other_workspace_posts`. It backfills every origin self-exposure and creates self-exposure for future accounts; reconnect does not reactivate revoked target rows. `publication_jobs` now references the exposure pair rather than requiring the account's origin workspace, so a later authorized cross-workspace admission service can create target-owned jobs without copying the account or credential. This migration alone does not grant cross-workspace use: application admission and credential resolution must explicitly enforce an active exposure and origin/target ownership before enabling target selection.
@@ -427,6 +432,16 @@ The token client reports exact-scope mismatches as `FanvueScopeError`; the OAuth
 service translates selected-account read/send mismatches to `FanvueModuleConsentError` so the
 callback redirects to the matching inline recovery state. Transport and provider failures
 remain distinct errors and must not be mislabeled as denied consent.
+## Fanvue payment receipt foundation
+
+`fanvue_payment_receipts` (migration 0080) is an account-scoped, append-only projection of
+verified `creator.payment.succeeded` facts. The receipt repository accepts only a caller-selected
+workspace/account and a separately signature-verified, allowlisted payment signal; it rechecks
+that an active Fanvue connection and selected creator both match the event creator before insert.
+The `(workspace, account, event)` unique key deduplicates deliveries without rewriting facts,
+and a changed event under the same ID is an error. Forced tenant RLS and the account composite
+foreign key keep the receipt within Core tenancy. Tips preserve their provider source/context;
+they never imply a message purchase or an offer match. `GET /api/v1/fanvue/accounts/:accountId/payment-signals` requires a distinct `fanvue:payments:read` API-key/delegated capability and exact workspace header. It returns only account-filtered, allowlisted provider facts in a 50-row keyset page; fingerprints, credential data and unrelated account fields never leave the server. This is a read-only surface over already receipted facts, not proof that a webhook was subscribed or received. The receiver still needs signature-before-parse, verified cross-tenant creator mapping and optional read:creator consent before live activation.
 
 ## External draft handoff
 

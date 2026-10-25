@@ -1180,3 +1180,44 @@ export const fanvueActionIntents = pgTable(
     }).onDelete('restrict'),
   ],
 );
+
+export const fanvuePaymentReceipts = pgTable(
+  'fanvue_payment_receipts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    eventId: uuid('event_id').notNull(),
+    eventFingerprint: text('event_fingerprint').notNull(),
+    creatorUuid: uuid('creator_uuid').notNull(),
+    fanUuid: uuid('fan_uuid').notNull(),
+    invoiceId: text('invoice_id').notNull(),
+    source: text('source').notNull(),
+    grossMinor: integer('gross_minor').notNull(),
+    currency: text('currency'),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    eventAt: timestamp('event_at', { withTimezone: true }).notNull(),
+    postUuid: uuid('post_uuid'),
+    messageUuid: uuid('message_uuid'),
+    tipContext: text('tip_context'),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('fanvue_payment_receipts_event_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.eventId,
+    ),
+    index('fanvue_payment_receipts_account_paid_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.eventAt,
+      table.id,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_payment_receipts_account_fk',
+    }).onDelete('restrict'),
+  ],
+);

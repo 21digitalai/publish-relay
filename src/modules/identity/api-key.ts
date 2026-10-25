@@ -15,6 +15,7 @@ export const API_KEY_CAPABILITIES = [
   'fanvue:chats:send',
   'fanvue:posts:read',
   'fanvue:media:read',
+  'fanvue:media:upload',
   'fanvue:comments:send',
   'fanvue:payments:read',
   'engagement:propose',

@@ -13,6 +13,7 @@ import {
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
 import { fanvueMessageRequestSchema } from '../providers/fanvue-message.routes.js';
+import { fanvueDmStageRequestSchema } from '../providers/fanvue-dm-stage.routes.js';
 import { fanvueCommentRequestSchema } from '../providers/fanvue-comment.routes.js';
 import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
 import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
@@ -447,6 +448,45 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '403': { description: 'Missing fanvue:chats:send capability' },
             '409': { description: 'Account, media or action unavailable' },
             '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/dm-media/stage': {
+        post: {
+          operationId: 'stageFanvueDmMedia',
+          description:
+            'Advance one phase of exact account/action/local-media DM staging. Repeat only with the same IDs; unknown outcome is not safe to replay.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: openApiJsonSchema(fanvueDmStageRequestSchema),
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Local media is ready for the canonical DM send command' },
+            '202': {
+              description: 'One phase advanced, or upload is processing, unknown, or failed',
+            },
+            '400': { description: 'Invalid account/action/media identifier shape' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:media:upload capability' },
+            '404': { description: 'Account unavailable to this workspace' },
+            '409': {
+              description: 'Media, provider consent, or stage unavailable; inspect before retry',
+            },
+            '429': { description: 'Mutation rate limit exceeded' },
+            '502': { description: 'Provider stage failed; inspect state before retry' },
           },
         },
       },

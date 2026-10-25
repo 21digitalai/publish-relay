@@ -52,6 +52,9 @@ import { registerFanvueCommentRoutes } from '../modules/providers/fanvue-comment
 import { FanvueMessageClient } from '../modules/providers/fanvue-message-client.js';
 import { FanvueMessageService } from '../modules/providers/fanvue-message.service.js';
 import { registerFanvueMessageRoutes } from '../modules/providers/fanvue-message.routes.js';
+import { registerFanvueDmStageRoutes } from '../modules/providers/fanvue-dm-stage.routes.js';
+import { stageFanvueDmMediaStep } from '../modules/providers/fanvue-dm-stage-step.service.js';
+import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
 import {
   registerFanvueBrowserReadRoutes,
   registerFanvueReadRoutes,
@@ -227,6 +230,17 @@ function registerMachineApiRoutes(
       rateLimiter,
       delegatedAuthorization,
     );
+    if (mediaStorage) {
+      const uploadClient = new FanvueMediaUploadClient();
+      const keys = options.fanvueOauth.keys;
+      registerFanvueDmStageRoutes(
+        application,
+        (input) => stageFanvueDmMediaStep(database, mediaStorage, uploadClient, keys, reads, input),
+        apiKeys,
+        rateLimiter,
+        delegatedAuthorization,
+      );
+    }
   }
   if (!config.CURSOR_SIGNING_SECRET)
     throw new Error('CURSOR_SIGNING_SECRET is required for API routes');

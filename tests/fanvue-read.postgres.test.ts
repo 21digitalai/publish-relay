@@ -180,20 +180,26 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
       );
       const completeConcurrentRefresh = new Promise<void>((resolve, reject) => {
         setTimeout(() => {
-          void pool
-            .query(
-              "UPDATE provider_connections SET status='active', last_error_code=NULL, access_expires_at=now()+interval '1 hour' WHERE workspace_id=$1 AND external_subject_id=$2",
-              [workspaceId, siblingCreatorId],
-            )
-            .then(() =>
-              pool.query(
+          void (async () => {
+            const client = await pool.connect();
+            try {
+              await client.query('BEGIN');
+              await client.query(
+                "UPDATE provider_connections SET status='active', last_error_code=NULL, access_expires_at=now()+interval '1 hour' WHERE workspace_id=$1 AND external_subject_id=$2",
+                [workspaceId, siblingCreatorId],
+              );
+              await client.query(
                 "UPDATE provider_accounts SET availability='active' WHERE workspace_id=$1 AND id=$2",
                 [workspaceId, siblingAccountId],
-              ),
-            )
-            .then(() => {
-              resolve();
-            }, reject);
+              );
+              await client.query('COMMIT');
+            } catch (error) {
+              await client.query('ROLLBACK');
+              throw error;
+            } finally {
+              client.release();
+            }
+          })().then(resolve, reject);
         }, 50);
       });
       await expect(

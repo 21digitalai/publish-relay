@@ -28,6 +28,40 @@ const media = z.object({
   status: z.enum(['created', 'processing', 'ready', 'error']),
   errorReason: z.string().nullish(),
 });
+const postSummary = z
+  .object({
+    uuid: z.uuid(),
+    createdAt: z.string(),
+    publishedAt: z.string().nullish(),
+    text: z.string().nullish(),
+    audience: z.enum(['subscribers', 'followers-and-subscribers']),
+    price: z.number().nonnegative().nullish(),
+    mediaUuids: z.array(z.uuid()),
+    commentsCount: z.number().int().nonnegative(),
+  })
+  .transform(({ text, ...post }) => ({ ...post, textPreview: text?.slice(0, 280) ?? null }));
+const postDetail = z.object({
+  uuid: z.uuid(),
+  createdAt: z.string(),
+  publishedAt: z.string().nullish(),
+  text: z.string().nullish(),
+  audience: z.enum(['subscribers', 'followers-and-subscribers']),
+  price: z.number().nonnegative().nullish(),
+  mediaUuids: z.array(z.uuid()),
+  mediaPreviewUuid: z.uuid().nullish(),
+});
+const comment = z.object({
+  uuid: z.uuid(),
+  text: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string().nullish(),
+  user: z.object({ uuid: z.uuid(), handle: z.string(), displayName: z.string() }).nullable(),
+});
+const offsetPagination = z.object({
+  page: z.number().int().positive(),
+  size: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
 
 function page(value: number, name: string, maximum: number): number {
   if (!Number.isInteger(value) || value < 1 || value > maximum)
@@ -51,7 +85,11 @@ export class FanvueReadClient {
       size: String(page(options.size ?? 15, 'size', 50)),
     });
     if (options.unreadOnly) query.set('filter', 'unread');
-    return this.get(accessToken, `/chats?${query}`, z.object({ data: z.array(chat) }));
+    return this.get(
+      accessToken,
+      `/chats?${query}`,
+      z.object({ data: z.array(chat), pagination: offsetPagination }),
+    );
   }
 
   listMessages(
@@ -68,7 +106,7 @@ export class FanvueReadClient {
     return this.get(
       accessToken,
       `/chats/${id}/messages?${query}`,
-      z.object({ data: z.array(message) }),
+      z.object({ data: z.array(message), pagination: offsetPagination }),
     );
   }
 
@@ -77,12 +115,52 @@ export class FanvueReadClient {
       page: String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)),
       size: String(page(options.size ?? 15, 'size', 50)),
     });
-    return this.get(accessToken, `/media?${query}`, z.object({ data: z.array(media) }));
+    return this.get(
+      accessToken,
+      `/media?${query}`,
+      z.object({ data: z.array(media), pagination: offsetPagination }),
+    );
   }
 
   getMediaStatus(accessToken: string, mediaUuid: string) {
     const id = z.uuid().parse(mediaUuid);
     return this.get(accessToken, `/media/${id}`, media);
+  }
+
+  listPosts(accessToken: string, options: { cursor?: string; size?: number } = {}) {
+    const query = new URLSearchParams({ size: String(page(options.size ?? 15, 'size', 50)) });
+    if (options.cursor) query.set('cursor', z.string().min(1).max(1024).parse(options.cursor));
+    return this.get(
+      accessToken,
+      `/v1/posts?${query}`,
+      z.object({
+        data: z.array(postSummary),
+        nextCursor: z.string().nullable(),
+      }),
+    );
+  }
+
+  getPost(accessToken: string, postUuid: string) {
+    const id = z.uuid().parse(postUuid);
+    return this.get(accessToken, `/v1/posts/${id}`, postDetail);
+  }
+
+  listComments(
+    accessToken: string,
+    postUuid: string,
+    options: { cursor?: string; size?: number } = {},
+  ) {
+    const id = z.uuid().parse(postUuid);
+    const query = new URLSearchParams({ size: String(page(options.size ?? 15, 'size', 50)) });
+    if (options.cursor) query.set('cursor', z.string().min(1).max(1024).parse(options.cursor));
+    return this.get(
+      accessToken,
+      `/v1/posts/${id}/comments?${query}`,
+      z.object({
+        data: z.array(comment),
+        nextCursor: z.string().nullable(),
+      }),
+    );
   }
 
   private async get<T extends z.ZodType>(

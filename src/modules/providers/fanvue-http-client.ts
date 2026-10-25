@@ -45,6 +45,23 @@ export function assertFanvuePublishingScopes(scope: string): string[] {
   return granted;
 }
 
+export function assertFanvueReadGrantScopes(scope: string): string[] {
+  const granted = scope.split(/\s+/).filter(Boolean);
+  const allowed = new Set<string>([
+    ...FANVUE_PUBLISHING_SCOPES,
+    'read:chat',
+    'read:post',
+    'read:media',
+  ]);
+  if (
+    new Set(granted).size !== granted.length ||
+    granted.some((value) => !allowed.has(value)) ||
+    FANVUE_PUBLISHING_SCOPES.some((required) => !granted.includes(required))
+  )
+    throw new Error('Fanvue grant is missing publishing authority or has unsupported scopes');
+  return granted;
+}
+
 export class FanvueHttpClient {
   private readonly request: typeof fetch;
 

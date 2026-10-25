@@ -30,6 +30,7 @@ describe('Fanvue read transport', () => {
             ).includes('/messages')
               ? [message]
               : [{ user: person, isRead: false, unreadMessagesCount: 2 }],
+            pagination: { page: 2, size: 1, hasMore: true },
           }),
         ),
       ),
@@ -37,7 +38,7 @@ describe('Fanvue read transport', () => {
     const client = new FanvueReadClient(request);
     await expect(
       client.listChats('token', { page: 2, size: 50, unreadOnly: true }),
-    ).resolves.toMatchObject({ data: [{ unreadMessagesCount: 2 }] });
+    ).resolves.toMatchObject({ data: [{ unreadMessagesCount: 2 }], pagination: { hasMore: true } });
     const messages = await client.listMessages('token', person.uuid, { page: 3 });
     expect(messages.data[0]).toMatchObject({ pricing: { USD: { price: 1500 } } });
     expect(messages.data[0]).not.toHaveProperty('expiringMediaUrl');
@@ -68,12 +69,19 @@ describe('Fanvue read transport', () => {
     const request = vi.fn<typeof fetch>().mockImplementation((url) => {
       const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       return Promise.resolve(
-        new Response(JSON.stringify(path.includes('/media?') ? { data: [item] } : item)),
+        new Response(
+          JSON.stringify(
+            path.includes('/media?')
+              ? { data: [item], pagination: { page: 2, size: 1, hasMore: false } }
+              : item,
+          ),
+        ),
       );
     });
     const client = new FanvueReadClient(request);
     await expect(client.listMedia('token', { page: 2, size: 20 })).resolves.toEqual({
       data: [{ uuid: mediaUuid, status: 'ready' }],
+      pagination: { page: 2, size: 1, hasMore: false },
     });
     await expect(client.getMediaStatus('token', mediaUuid)).resolves.toEqual({
       uuid: mediaUuid,
@@ -81,5 +89,58 @@ describe('Fanvue read transport', () => {
     });
     expect(request.mock.calls[0]?.[0]).toContain('page=2&size=20');
     expect(() => client.getMediaStatus('token', '../other')).toThrow();
+  });
+
+  it('returns bounded post summaries and cursor-paginated comments', async () => {
+    const postUuid = '123e4567-e89b-12d3-a456-426614174000';
+    const post = {
+      uuid: postUuid,
+      createdAt: '2025-01-01T12:00:00.000Z',
+      publishedAt: '2025-01-01T12:00:00.000Z',
+      text: 'x'.repeat(5000),
+      audience: 'subscribers',
+      price: 300,
+      mediaUuids: [],
+      mediaPreviewUuid: null,
+      commentsCount: 1,
+      credential: 'private',
+    };
+    const comment = {
+      uuid: '550e8400-e29b-41d4-a716-446655440001',
+      text: 'Hello',
+      createdAt: '2025-01-02T12:00:00.000Z',
+      updatedAt: null,
+      user: { ...person, displayName: 'Fan' },
+      privateNote: 'private',
+    };
+    const request = vi.fn<typeof fetch>().mockImplementation((url) => {
+      const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            path.includes('/comments?')
+              ? { data: [comment], nextCursor: 'next-comment' }
+              : path.includes('/posts?')
+                ? { data: [post], nextCursor: 'next-post' }
+                : post,
+          ),
+        ),
+      );
+    });
+    const client = new FanvueReadClient(request);
+    const posts = await client.listPosts('token', { size: 2, cursor: 'prior' });
+    expect(posts.nextCursor).toBe('next-post');
+    expect(posts.data[0]?.textPreview).toHaveLength(280);
+    expect(posts.data[0]).not.toHaveProperty('text');
+    expect(posts.data[0]).not.toHaveProperty('credential');
+    const detail = await client.getPost('token', postUuid);
+    expect(detail.text).toHaveLength(5000);
+    expect(detail).not.toHaveProperty('credential');
+    const comments = await client.listComments('token', postUuid, { cursor: 'next-comment' });
+    expect(comments.nextCursor).toBe('next-comment');
+    expect(comments.data[0]).not.toHaveProperty('privateNote');
+    expect(request.mock.calls[0]?.[0]).toContain('cursor=prior');
+    expect(request.mock.calls[2]?.[0]).toContain('cursor=next-comment');
+    expect(() => client.listComments('token', '../other')).toThrow();
   });
 });

@@ -422,6 +422,8 @@ Migration 0086 introduces `fanvue_dm_attachments` as a dedicated workspace/accou
 
 `fanvue-dm-upload-source.ts` reads only an exact `uploading` account/action/media binding whose selected creator connection is still active and whose local media remains ready. It decrypts the tenant credential into the existing validated Fanvue multipart session and checks the provider UUID and byte size against the attachment. Its local range reader uses `MediaStorage.openVerifiedRange` with stored key/hash/size and rejects out-of-bounds ranges before opening bytes. This is a source/receipt boundary, not permission to PUT a part: each future external mutation still needs a durable part intent and current account/consent check immediately before dispatch.
 
+`reserveFanvueDmUploadPart` validates the next one-based part against that encrypted session, then atomically changes only the same ready account/action/media binding from `uploading` to `unknown` before any signed PUT. It rechecks the credential version, ready media and current creator connection in the reservation transaction. A duplicate or later reservation cannot replay an uncertain PUT. This slice records only intent; the external PUT, encrypted ETag rotation, completion PATCH and provider readiness remain separate reviewable steps. The presence of an upload credential distinguishes an uncertain part from an uncertain session create without silently resolving either.
+
 `POST /api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages` is the account-scoped,
 machine command for text or selected ready provider media. It requires `fanvue:chats:send`, separately from read/propose access,
 and derives workspace and actor from the authenticated API key or delegated grant. The route

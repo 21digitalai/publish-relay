@@ -19,6 +19,7 @@ import {
   releaseUnstartedFanvueDmAttachment,
 } from '../src/modules/providers/fanvue-dm-attachment.repository.js';
 import { initializeFanvueDmUpload } from '../src/modules/providers/fanvue-dm-upload-init.service.js';
+import { reserveFanvueDmUploadPart } from '../src/modules/providers/fanvue-dm-upload-part-intent.repository.js';
 import {
   loadFanvueDmUploadSession,
   openFanvueDmUploadRange,
@@ -254,6 +255,19 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
       await pool.query('UPDATE provider_connections SET revoked_at=NULL WHERE id=$1', [
         connectionId,
       ]);
+      const part = await reserveFanvueDmUploadPart(db, keys, { ...uploadKey, partNumber: 1 });
+      expect(part?.range).toMatchObject({ start: 0, end: 11, byteLength: 12 });
+      await expect(
+        reserveFanvueDmUploadPart(db, keys, {
+          ...uploadKey,
+          partNumber: 1,
+        }),
+      ).rejects.toThrow('unavailable');
+      const pendingPart = await pool.query<{ state: string }>(
+        'SELECT state FROM fanvue_dm_attachments WHERE media_id=$1',
+        [uploadMediaId],
+      );
+      expect(pendingPart.rows[0]?.state).toBe('unknown');
 
       const unknownMediaId = randomUUID();
       await pool.query(

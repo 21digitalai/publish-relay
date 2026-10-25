@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   FANVUE_PUBLISHING_SCOPES,
   FANVUE_CHAT_READ_SCOPES,
+  FANVUE_PAYMENT_SCOPE,
   FanvueHttpClient,
   FanvueRequestError,
 } from '../src/modules/providers/fanvue-http-client.js';
@@ -33,6 +34,41 @@ function fixture(body: unknown, status = 200) {
 }
 
 describe('Fanvue publishing-only OAuth transport', () => {
+  it('requests optional creator payment scope without dropping existing chat grants', async () => {
+    const existingScopes = [...FANVUE_CHAT_READ_SCOPES, 'write:chat'];
+    const paymentScope = [...existingScopes, FANVUE_PAYMENT_SCOPE].join(' ');
+    const { client } = fixture({ ...token, scope: paymentScope });
+    const url = new URL(
+      client.authorizationUrl({
+        redirectUri,
+        state: 's'.repeat(43),
+        codeChallenge: 'challenge',
+        payment: true,
+        existingScopes,
+      }),
+    );
+    expect(new Set(url.searchParams.get('scope')?.split(' '))).toEqual(
+      new Set(paymentScope.split(' ')),
+    );
+    await expect(
+      client.exchangeCode({
+        code: 'payment-code',
+        redirectUri,
+        codeVerifier: 'verifier',
+        payment: true,
+        requiredScopes: [...existingScopes, FANVUE_PAYMENT_SCOPE],
+      }),
+    ).resolves.toMatchObject({ scope: paymentScope });
+    await expect(
+      fixture({ ...token, scope: existingScopes.join(' ') }).client.exchangeCode({
+        code: 'missing-payment',
+        redirectUri,
+        codeVerifier: 'verifier',
+        payment: true,
+        requiredScopes: [...existingScopes, FANVUE_PAYMENT_SCOPE],
+      }),
+    ).rejects.toThrow('payment grant');
+  });
   it('accepts known chat scopes on refresh but rejects duplicate scopes', async () => {
     const expanded = FANVUE_CHAT_READ_SCOPES.join(' ');
     await expect(

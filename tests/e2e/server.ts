@@ -19,6 +19,7 @@ import {
   FanvueHttpClient,
   FANVUE_CHAT_READ_SCOPES,
   FANVUE_CHAT_SEND_SCOPES,
+  FANVUE_PAYMENT_SCOPE,
   FANVUE_PUBLISHING_SCOPES,
 } from '../../src/modules/providers/fanvue-http-client.js';
 import { connectProvider } from '../../src/modules/credentials/provider-connection.service.js';
@@ -90,18 +91,24 @@ const application = createStandaloneApplication({
                     expires_in: 3600,
                     scope:
                       options?.body instanceof URLSearchParams &&
-                      options.body.get('code') === 'fixture-chat-read'
-                        ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                      options.body.get('code') === 'fixture-payment'
+                        ? [...FANVUE_CHAT_SEND_SCOPES, FANVUE_PAYMENT_SCOPE].join(' ')
                         : options?.body instanceof URLSearchParams &&
-                            options.body.get('code') === 'fixture-chat-read-no-scope'
-                          ? FANVUE_PUBLISHING_SCOPES.join(' ')
+                            options.body.get('code') === 'fixture-payment-no-scope'
+                          ? FANVUE_CHAT_SEND_SCOPES.join(' ')
                           : options?.body instanceof URLSearchParams &&
-                              options.body.get('code') === 'fixture-chat-send-no-scope'
+                              options.body.get('code') === 'fixture-chat-read'
                             ? FANVUE_CHAT_READ_SCOPES.join(' ')
                             : options?.body instanceof URLSearchParams &&
-                                options.body.get('code') === 'fixture-chat-send'
-                              ? FANVUE_CHAT_SEND_SCOPES.join(' ')
-                              : FANVUE_PUBLISHING_SCOPES.join(' '),
+                                options.body.get('code') === 'fixture-chat-read-no-scope'
+                              ? FANVUE_PUBLISHING_SCOPES.join(' ')
+                              : options?.body instanceof URLSearchParams &&
+                                  options.body.get('code') === 'fixture-chat-send-no-scope'
+                                ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                                : options?.body instanceof URLSearchParams &&
+                                    options.body.get('code') === 'fixture-chat-send'
+                                  ? FANVUE_CHAT_SEND_SCOPES.join(' ')
+                                  : FANVUE_PUBLISHING_SCOPES.join(' '),
                   },
             ),
           ),

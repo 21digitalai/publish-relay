@@ -12,6 +12,7 @@ export const FANVUE_PUBLISHING_SCOPES = [
 ] as const;
 export const FANVUE_CHAT_READ_SCOPES = [...FANVUE_PUBLISHING_SCOPES, 'read:chat'] as const;
 export const FANVUE_CHAT_SEND_SCOPES = [...FANVUE_CHAT_READ_SCOPES, 'write:chat'] as const;
+export const FANVUE_PAYMENT_SCOPE = 'read:creator';
 
 export const fanvueTokenSchema = z.object({
   access_token: z.string().min(1),
@@ -40,7 +41,7 @@ export class FanvueRequestError extends Error {
 }
 
 export class FanvueScopeError extends Error {
-  constructor(public readonly grant: 'publishing' | 'chat_read' | 'chat_send') {
+  constructor(public readonly grant: 'publishing' | 'chat_read' | 'chat_send' | 'payment') {
     super(`Fanvue ${grant.replace('_', '-')} grant does not match the requested scopes`);
   }
 }
@@ -83,6 +84,7 @@ export function assertFanvueReadGrantScopes(scope: string): string[] {
     'write:chat',
     'read:post',
     'read:media',
+    FANVUE_PAYMENT_SCOPE,
   ]);
   if (
     new Set(granted).size !== granted.length ||
@@ -115,6 +117,8 @@ export class FanvueHttpClient {
     codeChallenge: string;
     readChat?: boolean;
     sendChat?: boolean;
+    payment?: boolean;
+    existingScopes?: readonly string[];
   }): string {
     if (
       new URL(input.redirectUri).protocol !== 'https:' ||
@@ -126,15 +130,24 @@ export class FanvueHttpClient {
     url.searchParams.set('client_id', this.options.clientId);
     url.searchParams.set('redirect_uri', input.redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set(
-      'scope',
-      (input.sendChat
-        ? FANVUE_CHAT_SEND_SCOPES
-        : input.readChat
-          ? FANVUE_CHAT_READ_SCOPES
-          : FANVUE_PUBLISHING_SCOPES
-      ).join(' '),
-    );
+    const required = input.sendChat
+      ? FANVUE_CHAT_SEND_SCOPES
+      : input.readChat
+        ? FANVUE_CHAT_READ_SCOPES
+        : input.payment
+          ? [...FANVUE_PUBLISHING_SCOPES, FANVUE_PAYMENT_SCOPE]
+          : FANVUE_PUBLISHING_SCOPES;
+    const scopes = input.existingScopes
+      ? [...new Set([...required, ...input.existingScopes])]
+      : [...required];
+    if (
+      input.existingScopes &&
+      scopes.some(
+        (scope) => !new Set<string>([...FANVUE_CHAT_SEND_SCOPES, FANVUE_PAYMENT_SCOPE]).has(scope),
+      )
+    )
+      throw new Error('Unsupported existing Fanvue scope');
+    url.searchParams.set('scope', scopes.join(' '));
     url.searchParams.set('state', input.state);
     url.searchParams.set('code_challenge', input.codeChallenge);
     url.searchParams.set('code_challenge_method', 'S256');
@@ -147,6 +160,8 @@ export class FanvueHttpClient {
     codeVerifier: string;
     readChat?: boolean;
     sendChat?: boolean;
+    payment?: boolean;
+    requiredScopes?: readonly string[];
   }): Promise<FanvueToken> {
     if (!input.code || !input.codeVerifier)
       throw new Error('Fanvue OAuth code and verifier are required');
@@ -157,7 +172,14 @@ export class FanvueHttpClient {
         redirect_uri: input.redirectUri,
         code_verifier: input.codeVerifier,
       },
-      input.sendChat ? 'chat_send' : input.readChat ? 'chat_read' : 'publishing',
+      input.payment
+        ? 'payment'
+        : input.sendChat
+          ? 'chat_send'
+          : input.readChat
+            ? 'chat_read'
+            : 'publishing',
+      input.requiredScopes,
     );
   }
 
@@ -181,7 +203,8 @@ export class FanvueHttpClient {
 
   private async token(
     fields: Record<string, string>,
-    scopeMode: 'publishing' | 'chat_read' | 'chat_send' | 'refresh',
+    scopeMode: 'publishing' | 'chat_read' | 'chat_send' | 'payment' | 'refresh',
+    requiredScopes?: readonly string[],
   ): Promise<FanvueToken> {
     const basic = Buffer.from(`${this.options.clientId}:${this.options.clientSecret}`).toString(
       'base64',
@@ -207,9 +230,17 @@ export class FanvueHttpClient {
     const token = fanvueTokenSchema.safeParse(body);
     if (!token.success) throw new FanvueRequestError(response.status);
     if (scopeMode === 'publishing') assertFanvuePublishingScopes(token.data.scope);
-    else if (scopeMode === 'chat_read') assertFanvueChatReadScopes(token.data.scope);
+    else if (requiredScopes) {
+      const granted = assertFanvueReadGrantScopes(token.data.scope);
+      if (requiredScopes.some((scope) => !granted.includes(scope)))
+        throw new FanvueScopeError(scopeMode === 'refresh' ? 'payment' : scopeMode);
+    } else if (scopeMode === 'chat_read') assertFanvueChatReadScopes(token.data.scope);
     else if (scopeMode === 'chat_send') assertFanvueChatSendScopes(token.data.scope);
-    else assertFanvueReadGrantScopes(token.data.scope);
+    else {
+      const granted = assertFanvueReadGrantScopes(token.data.scope);
+      if (scopeMode === 'payment' && !granted.includes(FANVUE_PAYMENT_SCOPE))
+        throw new FanvueScopeError('payment');
+    }
     return token.data;
   }
 }

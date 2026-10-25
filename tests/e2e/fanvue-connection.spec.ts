@@ -19,6 +19,8 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   let denyFirstChatRead = true;
   let rejectFirstChatReadScope = true;
   let rejectFirstChatSendScope = true;
+  let denyFirstPayment = true;
+  let rejectFirstPaymentScope = true;
   await page.route('https://auth.fanvue.com/**', (route) => {
     const auth = new URL(route.request().url());
     const scopes = auth.searchParams.get('scope') ?? '';
@@ -27,20 +29,25 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     expect(auth.searchParams.get('code_challenge_method')).toBe('S256');
     const state = auth.searchParams.get('state');
     if (!state) throw new Error('Fanvue authorization state was not present');
-    const denied = scopes.includes('read:chat') && denyFirstChatRead;
-    if (denied) denyFirstChatRead = false;
+    const payment = scopes.includes('read:creator');
+    const denied = payment ? denyFirstPayment : scopes.includes('read:chat') && denyFirstChatRead;
+    if (denied && payment) denyFirstPayment = false;
+    else if (denied) denyFirstChatRead = false;
     const readMissingScope =
+      !payment &&
       scopes.includes('read:chat') &&
       !scopes.includes('write:chat') &&
       !denied &&
       rejectFirstChatReadScope;
     if (readMissingScope) rejectFirstChatReadScope = false;
-    const sendMissingScope = scopes.includes('write:chat') && rejectFirstChatSendScope;
+    const sendMissingScope = !payment && scopes.includes('write:chat') && rejectFirstChatSendScope;
     if (sendMissingScope) rejectFirstChatSendScope = false;
+    const paymentMissingScope = payment && !denied && rejectFirstPaymentScope;
+    if (paymentMissingScope) rejectFirstPaymentScope = false;
     return route.fulfill({
       status: 302,
       headers: {
-        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${sendMissingScope ? 'fixture-chat-send-no-scope' : readMissingScope ? 'fixture-chat-read-no-scope' : scopes.includes('write:chat') ? 'fixture-chat-send' : scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
+        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${paymentMissingScope ? 'fixture-payment-no-scope' : payment ? 'fixture-payment' : sendMissingScope ? 'fixture-chat-send-no-scope' : readMissingScope ? 'fixture-chat-read-no-scope' : scopes.includes('write:chat') ? 'fixture-chat-send' : scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
       },
     });
   });
@@ -86,12 +93,31 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   ).toBeVisible();
   await page.reload();
   await expect(page.getByText('Message sending enabled')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Allow payment signals' })).toBeVisible();
+  await page.getByRole('button', { name: 'Allow payment signals' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-payment-denied');
+  await expect(page.getByText(/payment signals were not enabled/i)).toBeVisible();
+  await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Allow payment signals' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-payment-scope');
+  await expect(page.getByText(/required permission was not granted/i)).toBeVisible();
+  await page.goto(accountsPath);
+  await expect(page.getByText('Message sending enabled')).toBeVisible();
+  await page.getByRole('button', { name: 'Allow payment signals' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-payment-connected');
+  await page.reload();
+  await expect(page.getByText('Payment signals enabled')).toBeVisible();
+  await expect(page.getByText('Message sending enabled')).toBeVisible();
   const accountsResponse = await page.request.get('/api/provider-accounts');
   const accounts = (await accountsResponse.json()) as {
     data: { accounts: Record<string, unknown>[] };
   };
   const fanvueAccount = accounts.data.accounts.find((account) => account.provider === 'fanvue');
-  expect(fanvueAccount?.fanvueModules).toEqual({ chatRead: true, chatSend: true });
+  expect(fanvueAccount?.fanvueModules).toEqual({
+    chatRead: true,
+    chatSend: true,
+    paymentRead: true,
+  });
   expect(fanvueAccount).not.toHaveProperty('scopes');
 
   await page.goto(`/w/${data.slug}/queue`);

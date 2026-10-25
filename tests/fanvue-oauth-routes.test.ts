@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/modules/providers/fanvue-oauth.service.js', () => ({
   FanvueModuleConsentError: class extends Error {
-    constructor(public readonly reason: string, public readonly kind = 'read') {
+    constructor(
+      public readonly reason: string,
+      public readonly kind = 'read',
+    ) {
       super(reason);
     }
   },
@@ -204,6 +207,54 @@ describe('Fanvue OAuth HTTP boundary', () => {
       headers: { cookie: session },
     });
     expect(denied.headers.location).toBe('/app?oauth=fanvue-chat-send-denied');
+  });
+
+  it('keeps payment consent on the selected creator and reports denial separately', async () => {
+    const app = application(true);
+    const accountId = '7104f230-83a9-4ce7-9fbc-cd1b42b0dc6a';
+    vi.mocked(beginFanvueOauthConnection).mockResolvedValue({
+      authorizationUrl: 'https://www.fanvue.com/v2/auth/authorize/',
+      expiresAt: new Date('2026-10-02'),
+    });
+    const start = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/fanvue',
+      headers: csrf,
+      payload: { paymentAccountId: accountId },
+    });
+    expect(start.statusCode).toBe(200);
+    expect(beginFanvueOauthConnection).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ paymentAccountId: accountId }),
+      expect.anything(),
+    );
+    const mixed = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/fanvue',
+      headers: csrf,
+      payload: { paymentAccountId: accountId, sendChatAccountId: accountId },
+    });
+    expect(mixed.statusCode).toBe(400);
+    vi.mocked(completeFanvueOauthConnection).mockResolvedValueOnce({
+      connectionId: 'id',
+      accounts: [],
+      consentKind: 'payment',
+    });
+    const callback = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/fanvue/callback?state=state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(callback.headers.location).toBe('/app?oauth=fanvue-payment-connected');
+    vi.mocked(completeFanvueOauthDenial).mockResolvedValueOnce('payment');
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/fanvue/callback?state=state&error=access_denied',
+      headers: { cookie: session },
+    });
+    expect(denied.headers.location).toBe('/app?oauth=fanvue-payment-denied');
   });
 
   it('returns actionable account results for rejected chat-read scope, changed creator, and stale account', async () => {

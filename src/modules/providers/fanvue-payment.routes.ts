@@ -60,15 +60,15 @@ export function registerFanvuePaymentRoutes(
         workspaceId: principal.workspaceId,
         accountId: params.data.accountId,
         limit: PAGE_SIZE + 1,
-        ...(cursor ? { before: { eventAt: new Date(cursor.eventAt), id: cursor.id } } : {}),
+        ...(cursor ? { before: { eventAt: cursor.eventAt, id: cursor.id } } : {}),
       });
       const page = rows.slice(0, PAGE_SIZE);
       const last = page.at(-1);
       const nextCursor =
         rows.length > PAGE_SIZE && last
-          ? Buffer.from(
-              JSON.stringify({ eventAt: last.eventAt.toISOString(), id: last.id }),
-            ).toString('base64url')
+          ? Buffer.from(JSON.stringify({ eventAt: last.cursorEventAt, id: last.id })).toString(
+              'base64url',
+            )
           : null;
       return await reply.send({
         data: {

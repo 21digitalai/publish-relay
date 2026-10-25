@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { and, desc, eq, lt, or } from 'drizzle-orm';
+import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -93,7 +93,7 @@ export async function listFanvuePaymentSignals(
     workspaceId: string;
     accountId: string;
     limit: number;
-    before?: { eventAt: Date; id: string };
+    before?: { eventAt: string; id: string };
   },
 ) {
   return withTenantTransaction(database, input, (transaction) =>
@@ -108,6 +108,7 @@ export async function listFanvuePaymentSignals(
         currency: fanvuePaymentReceipts.currency,
         paidAt: fanvuePaymentReceipts.paidAt,
         eventAt: fanvuePaymentReceipts.eventAt,
+        cursorEventAt: sql<string>`to_char(${fanvuePaymentReceipts.eventAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
         postUuid: fanvuePaymentReceipts.postUuid,
         messageUuid: fanvuePaymentReceipts.messageUuid,
         tipContext: fanvuePaymentReceipts.tipContext,
@@ -120,9 +121,9 @@ export async function listFanvuePaymentSignals(
           ...(input.before
             ? [
                 or(
-                  lt(fanvuePaymentReceipts.eventAt, input.before.eventAt),
+                  lt(fanvuePaymentReceipts.eventAt, sql`${input.before.eventAt}::timestamptz`),
                   and(
-                    eq(fanvuePaymentReceipts.eventAt, input.before.eventAt),
+                    eq(fanvuePaymentReceipts.eventAt, sql`${input.before.eventAt}::timestamptz`),
                     lt(fanvuePaymentReceipts.id, input.before.id),
                   ),
                 ),

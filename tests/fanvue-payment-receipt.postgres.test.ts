@@ -136,7 +136,7 @@ it('serves bounded account-scoped payment facts only with the read capability', 
     SELECT '${workspaceId}', '${accountId}',
       ('00000000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid,
       'fixture', '${creatorUuid}', '${signal.fanUuid}', 'FV-' || i,
-      'tip', 500, 'USD', '2026-10-25T11:00:00Z'::timestamptz + i * interval '1 second'
+      'tip', 500, 'USD', '2026-10-25T11:00:00Z'::timestamptz + i * interval '1 microsecond'
     FROM generate_series(100, 150) AS i
   `);
   const firstPage = (await app.inject({ method: 'GET', url, headers })).json<{

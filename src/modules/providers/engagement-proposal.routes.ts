@@ -72,10 +72,13 @@ function normalizeContent(input: z.infer<typeof contentSchema>): ProposalContent
   };
 }
 
-function representation(row: Awaited<ReturnType<typeof createEngagementProposal>>) {
+function representation(
+  row: Awaited<ReturnType<typeof createEngagementProposal>> & { accountDisplayName?: string },
+) {
   return {
     id: row.id,
     accountId: row.accountId,
+    ...(row.accountDisplayName ? { accountDisplayName: row.accountDisplayName } : {}),
     provider: row.provider,
     kind: row.kind,
     targetId: row.targetId,
@@ -94,10 +97,13 @@ function previewText(value: unknown): string {
   return typeof value.text === 'string' ? value.text.slice(0, 280) : '';
 }
 
-function summary(row: Awaited<ReturnType<typeof createEngagementProposal>>) {
+function summary(
+  row: Awaited<ReturnType<typeof createEngagementProposal>> & { accountDisplayName: string },
+) {
   return {
     id: row.id,
     accountId: row.accountId,
+    accountDisplayName: row.accountDisplayName,
     provider: row.provider,
     kind: row.kind,
     sourcePreview: previewText(row.sourceContext),

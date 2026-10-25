@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { EngagementProposalsPage } from './engagement-proposals.js';
 import { FacebookPageExposureControl } from './facebook-page-exposure-control.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
@@ -744,7 +745,7 @@ export function Rail({
 }: {
   open: boolean;
   onClose: () => void;
-  active?: 'queue' | 'calendar' | 'accounts' | 'settings';
+  active?: 'queue' | 'calendar' | 'accounts' | 'proposals' | 'settings';
   onCreate?: () => void;
 }) {
   const [profile, setProfile] = useState<{
@@ -978,6 +979,13 @@ export function Rail({
           aria-current={active === 'accounts' ? 'page' : undefined}
         >
           ◉ <span>Accounts</span>
+        </a>
+        <a
+          className={active === 'proposals' ? 'active' : ''}
+          href={workspaceHref('proposals')}
+          aria-current={active === 'proposals' ? 'page' : undefined}
+        >
+          ▤ <span>Proposed replies</span>
         </a>
         <a
           className={active === 'settings' ? 'active' : ''}
@@ -2783,6 +2791,7 @@ export function App() {
   if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;
   if (/\/w\/[^/]+\/calendar\/exposed-pages\/[^/]+$/.test(path)) return <CalendarMirrorDetailPage />;
   if (/\/w\/[^/]+\/jobs\/[^/]+$/.test(path)) return <JobDetailPage />;
+  if (/\/w\/[^/]+\/proposals$/.test(path)) return <EngagementProposalsPage />;
   if (/\/w\/[^/]+\/drafts\/[^/]+$/.test(path)) return <ExternalDraftPage />;
   if (/\/w\/[^/]+\/settings\/(workspace|automation|integrations)$/.test(path))
     return <SettingsPage />;

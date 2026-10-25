@@ -2453,7 +2453,7 @@ export function WorkspaceLayout({
   children,
   initialComposerOpen = false,
 }: {
-  active: 'queue' | 'calendar' | 'settings';
+  active: 'queue' | 'calendar' | 'proposals' | 'settings';
   children: React.ReactNode | ((openComposer: () => void) => React.ReactNode);
   initialComposerOpen?: boolean;
 }) {

@@ -137,4 +137,24 @@ describe('Fanvue payment subscription command', () => {
     );
     expect(state.disable).toHaveBeenCalledTimes(1);
   });
+
+  it('cancels a proven uncommitted mark failure but preserves an ambiguous commit', async () => {
+    const context = runtime();
+    state.mark.mockRejectedValueOnce(new Error('scope revoked'));
+    state.get.mockResolvedValueOnce({ id: reservationId, state: 'probe_pending' });
+    await expect(createFanvuePaymentSubscription(context, selected)).rejects.toThrow(
+      'scope revoked',
+    );
+    expect(state.cancel).toHaveBeenCalledOnce();
+    expect(context.client.create).not.toHaveBeenCalled();
+
+    state.cancel.mockClear();
+    state.mark.mockRejectedValueOnce(new Error('commit acknowledgement lost'));
+    state.get.mockResolvedValueOnce({ id: reservationId, state: 'creation_unknown' });
+    await expect(createFanvuePaymentSubscription(context, selected)).rejects.toThrow(
+      'commit acknowledgement lost',
+    );
+    expect(state.cancel).not.toHaveBeenCalled();
+    expect(context.client.create).not.toHaveBeenCalled();
+  });
 });

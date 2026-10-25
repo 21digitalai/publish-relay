@@ -1,8 +1,12 @@
 import { Readable } from 'node:stream';
 
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { openFanvueJobMediaRange } from '../src/modules/providers/fanvue-job-media-source.js';
+import {
+  fanvueJobMediaWhere,
+  openFanvueJobMediaRange,
+} from '../src/modules/providers/fanvue-job-media-source.js';
 
 const mocks = vi.hoisted(() => ({ transaction: vi.fn() }));
 vi.mock('../src/database/tenant-transaction.js', () => ({
@@ -20,6 +24,19 @@ const input = {
 afterEach(() => vi.clearAllMocks());
 
 describe('Fanvue job-owned verified media range', () => {
+  it('requires an unexpired exact worker lease in the tenant SQL predicate', () => {
+    const now = new Date('2026-10-25T09:00:00.000Z');
+    const condition = fanvueJobMediaWhere(input, now);
+    if (!condition) throw new Error('Missing Fanvue media predicate');
+    const query = new PgDialect().sqlToQuery(condition);
+    expect(query.sql).toContain('"publication_jobs"."lease_expires_at" >');
+    expect(query.sql).toContain('"publication_jobs"."lease_owner" =');
+    expect(query.sql).toContain('"publication_jobs"."workspace_id" =');
+    expect(query.params.map(String)).toContain(now.toISOString());
+    expect(query.params).toContain(input.leaseOwner);
+    expect(query.params).toContain(input.workspaceId);
+  });
+
   it('opens one hash-verified range from the durable offset without loading the whole file', async () => {
     mocks.transaction.mockResolvedValue({
       storageKey: 'owned/media',

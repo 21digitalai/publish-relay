@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -10,18 +10,39 @@ import {
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { MediaStorage } from '../content/media-storage.js';
 
+interface FanvueJobMediaInput {
+  workspaceId: string;
+  jobId: string;
+  mediaId: string;
+  leaseOwner: string;
+  start: number;
+  now?: Date;
+}
+
+export function fanvueJobMediaWhere(input: FanvueJobMediaInput, now: Date) {
+  return and(
+    eq(publicationJobs.workspaceId, input.workspaceId),
+    eq(publicationJobs.id, input.jobId),
+    eq(publicationJobs.state, 'leased'),
+    eq(publicationJobs.leaseOwner, input.leaseOwner),
+    gt(publicationJobs.leaseExpiresAt, now),
+    eq(providerAccounts.destinationProvider, 'fanvue'),
+    eq(providerAccounts.availability, 'active'),
+    isNull(providerAccounts.disconnectedAt),
+    eq(mediaObjects.id, input.mediaId),
+    eq(mediaObjects.state, 'ready'),
+    isNull(mediaObjects.deletedAt),
+    sql`NOT EXISTS (SELECT 1 FROM publication_attempts attempt WHERE attempt.workspace_id = ${input.workspaceId} AND attempt.job_id = ${input.jobId})`,
+  );
+}
+
 export async function openFanvueJobMediaRange(
   database: NodePgDatabase,
   storage: MediaStorage,
-  input: {
-    workspaceId: string;
-    jobId: string;
-    mediaId: string;
-    leaseOwner: string;
-    start: number;
-  },
+  input: FanvueJobMediaInput,
 ) {
   if (!storage.openVerifiedRange) throw new Error('Verified range storage is required');
+  const now = input.now ?? new Date();
   const source = await withTenantTransaction(database, input, async (transaction) => {
     const [row] = await transaction
       .select({
@@ -52,21 +73,7 @@ export async function openFanvueJobMediaRange(
           eq(mediaObjects.id, revisionMedia.mediaId),
         ),
       )
-      .where(
-        and(
-          eq(publicationJobs.workspaceId, input.workspaceId),
-          eq(publicationJobs.id, input.jobId),
-          eq(publicationJobs.state, 'leased'),
-          eq(publicationJobs.leaseOwner, input.leaseOwner),
-          eq(providerAccounts.destinationProvider, 'fanvue'),
-          eq(providerAccounts.availability, 'active'),
-          isNull(providerAccounts.disconnectedAt),
-          eq(mediaObjects.id, input.mediaId),
-          eq(mediaObjects.state, 'ready'),
-          isNull(mediaObjects.deletedAt),
-          sql`NOT EXISTS (SELECT 1 FROM publication_attempts attempt WHERE attempt.workspace_id = ${input.workspaceId} AND attempt.job_id = ${input.jobId})`,
-        ),
-      )
+      .where(fanvueJobMediaWhere(input, now))
       .limit(1);
     return row ?? null;
   });

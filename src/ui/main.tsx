@@ -1139,7 +1139,7 @@ function AccountRow({
               Message reading enabled
             </span>
           ) : (
-            <button className="secondary-button fanvue-chat-read-enable" onClick={onEnableChatRead}>
+            <button className="fanvue-chat-read-enable secondary-button" onClick={onEnableChatRead}>
               Allow message reading
             </button>
           ))}

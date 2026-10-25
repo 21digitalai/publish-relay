@@ -13,6 +13,7 @@ import {
   registerFanvueReadRoutes,
 } from '../src/modules/providers/fanvue-read.routes.js';
 import type { FanvueReadService } from '../src/modules/providers/fanvue-read.service.js';
+import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const accountId = '00000000-0000-4000-8000-000000000202';
@@ -86,6 +87,19 @@ describe('Fanvue agent read boundary', () => {
     });
     expect(response.statusCode).toBe(403);
     expect(context.listMedia).not.toHaveBeenCalled();
+  });
+
+  it('returns a retryable safe 502 envelope for transport and malformed provider reads', async () => {
+    const context = fixture(['fanvue:chats:read']);
+    context.listMessages.mockRejectedValue(new FanvueRequestError(502, 'invalid_response'));
+    const response = await context.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages`,
+      headers,
+    });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({ error: { code: 'provider_read_failed' } });
+    expect(response.body).not.toContain('invalid_response');
   });
 
   it('rejects absent workspace preflight before any read', async () => {

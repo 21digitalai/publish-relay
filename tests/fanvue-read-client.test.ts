@@ -59,6 +59,27 @@ describe('Fanvue read transport', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['network rejection', new TypeError('private network detail')],
+    ['timeout', new DOMException('private timeout detail', 'TimeoutError')],
+  ])('classifies %s as a safe provider failure', async (_label, cause) => {
+    const request = vi.fn<typeof fetch>().mockRejectedValue(cause);
+    await expect(new FanvueReadClient(request).listChats('token')).rejects.toMatchObject({
+      status: 502,
+      code: 'transport_failure',
+      message: 'Fanvue request failed (HTTP 502)',
+    });
+  });
+
+  it('classifies a successful non-JSON response without leaking its body', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response('private malformed body'));
+    await expect(new FanvueReadClient(request).listChats('token')).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+      message: 'Fanvue request failed (HTTP 502)',
+    });
+  });
+
   it('returns stable media status without leaking expiring variant URLs', async () => {
     const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
     const item = {

@@ -169,13 +169,24 @@ export class FanvueReadClient {
     schema: T,
   ): Promise<z.infer<T>> {
     if (!accessToken) throw new Error('Fanvue access token is required');
-    const response = await this.request(`https://api.fanvue.com${path}`, {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Fanvue-API-Version': '2025-06-26' },
-      redirect: 'error',
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await this.request(`https://api.fanvue.com${path}`, {
+        headers: { Authorization: `Bearer ${accessToken}`, 'X-Fanvue-API-Version': '2025-06-26' },
+        redirect: 'error',
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch {
+      throw new FanvueRequestError(502, 'transport_failure');
+    }
     if (!response.ok) throw new FanvueRequestError(response.status);
-    const parsed = schema.safeParse(await response.json());
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new FanvueRequestError(502, 'invalid_response');
+    }
+    const parsed = schema.safeParse(body);
     if (!parsed.success) throw new FanvueRequestError(response.status, 'invalid_response');
     return parsed.data;
   }

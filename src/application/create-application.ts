@@ -49,6 +49,9 @@ import { FanvueReadService } from '../modules/providers/fanvue-read.service.js';
 import { FanvueCommentClient } from '../modules/providers/fanvue-comment-client.js';
 import { FanvueCommentService } from '../modules/providers/fanvue-comment.service.js';
 import { registerFanvueCommentRoutes } from '../modules/providers/fanvue-comment.routes.js';
+import { FanvueMessageClient } from '../modules/providers/fanvue-message-client.js';
+import { FanvueMessageService } from '../modules/providers/fanvue-message.service.js';
+import { registerFanvueMessageRoutes } from '../modules/providers/fanvue-message.routes.js';
 import {
   registerFanvueBrowserReadRoutes,
   registerFanvueReadRoutes,
@@ -209,6 +212,13 @@ function registerMachineApiRoutes(
     registerFanvueCommentRoutes(
       application,
       new FanvueCommentService(database, reads, new FanvueCommentClient(), actionPolicy),
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+    registerFanvueMessageRoutes(
+      application,
+      new FanvueMessageService(database, reads, new FanvueMessageClient(), actionPolicy),
       apiKeys,
       rateLimiter,
       delegatedAuthorization,

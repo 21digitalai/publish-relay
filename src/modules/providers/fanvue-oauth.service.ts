@@ -14,14 +14,20 @@ import {
 } from '../policy/action-policy.js';
 import {
   assertFanvueChatReadScopes,
+  assertFanvueChatSendScopes,
+  FanvueScopeError,
   assertFanvuePublishingScopes,
   type FanvueHttpClient,
 } from './fanvue-http-client.js';
 
 const CHAT_READ_INTENT = 'fanvue:chat-read:';
+const CHAT_SEND_INTENT = 'fanvue:chat-send:';
 
 export class FanvueModuleConsentError extends Error {
-  constructor(public readonly reason: 'unavailable' | 'scope' | 'account-mismatch') {
+  constructor(
+    public readonly reason: 'unavailable' | 'scope' | 'account-mismatch',
+    public readonly kind: 'read' | 'send' = 'read',
+  ) {
     super(`Fanvue message-reading consent ${reason}`);
   }
 }
@@ -30,13 +36,15 @@ export async function completeFanvueOauthDenial(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   input: { workspaceId: string; userId: string; state: string },
-): Promise<'chat-read' | 'publishing' | null> {
+): Promise<'chat-read' | 'chat-send' | 'publishing' | null> {
   const pending = await consumeOauthCallback(database, keys, {
     ...input,
     provider: 'fanvue',
   });
   if (!pending) return null;
-  return pending.intent?.startsWith(CHAT_READ_INTENT) ? 'chat-read' : 'publishing';
+  if (pending.intent?.startsWith(CHAT_READ_INTENT)) return 'chat-read';
+  if (pending.intent?.startsWith(CHAT_SEND_INTENT)) return 'chat-send';
+  return 'publishing';
 }
 
 async function activeCreatorForAccount(
@@ -93,6 +101,7 @@ export async function beginFanvueOauthConnection(
     callbackUrl: string;
     requestId: string;
     readChatAccountId?: string;
+    sendChatAccountId?: string;
   },
   policy: ActionPolicy = allowAllActionPolicy,
 ): Promise<{ authorizationUrl: string; expiresAt: Date }> {
@@ -104,18 +113,25 @@ export async function beginFanvueOauthConnection(
       request: { provider: 'fanvue', requestId: input.requestId },
     }),
   );
-  if (input.readChatAccountId)
+  if (input.readChatAccountId && input.sendChatAccountId)
+    throw new Error('Choose one Fanvue consent module');
+  const selectedAccountId = input.readChatAccountId ?? input.sendChatAccountId;
+  if (selectedAccountId)
     await connectedCreatorForAccount(database, {
       workspaceId: input.workspaceId,
       userId: input.userId,
-      accountId: input.readChatAccountId,
+      accountId: selectedAccountId,
     });
   const pending = await issueOauthTransaction(database, keys, {
     workspaceId: input.workspaceId,
     userId: input.userId,
     provider: 'fanvue',
     redirectUri: input.callbackUrl,
-    ...(input.readChatAccountId ? { intent: `${CHAT_READ_INTENT}${input.readChatAccountId}` } : {}),
+    ...(input.readChatAccountId
+      ? { intent: `${CHAT_READ_INTENT}${input.readChatAccountId}` }
+      : input.sendChatAccountId
+        ? { intent: `${CHAT_SEND_INTENT}${input.sendChatAccountId}` }
+        : {}),
   });
   return {
     authorizationUrl: client.authorizationUrl({
@@ -123,6 +139,7 @@ export async function beginFanvueOauthConnection(
       state: pending.state,
       codeChallenge: pending.codeChallenge,
       ...(input.readChatAccountId ? { readChat: true } : {}),
+      ...(input.sendChatAccountId ? { sendChat: true } : {}),
     }),
     expiresAt: pending.expiresAt,
   };
@@ -145,31 +162,52 @@ export async function completeFanvueOauthConnection(
   const readChatAccountId = pending.intent?.startsWith(CHAT_READ_INTENT)
     ? z.uuid().parse(pending.intent.slice(CHAT_READ_INTENT.length))
     : null;
-  if (pending.intent && !readChatAccountId) throw new Error('Unknown Fanvue OAuth intent');
-  const existingAccount = readChatAccountId
-    ? await connectedCreatorForAccount(database, {
+  const sendChatAccountId = pending.intent?.startsWith(CHAT_SEND_INTENT)
+    ? z.uuid().parse(pending.intent.slice(CHAT_SEND_INTENT.length))
+    : null;
+  const selectedAccountId = readChatAccountId ?? sendChatAccountId;
+  if (pending.intent && !selectedAccountId) throw new Error('Unknown Fanvue OAuth intent');
+  let existingAccount: Awaited<ReturnType<typeof connectedCreatorForAccount>> | null = null;
+  if (selectedAccountId) {
+    try {
+      existingAccount = await connectedCreatorForAccount(database, {
         workspaceId: input.workspaceId,
         userId: input.userId,
-        accountId: readChatAccountId,
-      })
-    : null;
-  const token = await client.exchangeCode({
-    code: input.code,
-    redirectUri: pending.redirectUri,
-    codeVerifier: pending.codeVerifier,
-    ...(readChatAccountId ? { readChat: true } : {}),
-  });
+        accountId: selectedAccountId,
+      });
+    } catch (error) {
+      if (sendChatAccountId && error instanceof FanvueModuleConsentError)
+        throw new FanvueModuleConsentError(error.reason, 'send');
+      throw error;
+    }
+  }
+  let token: Awaited<ReturnType<typeof client.exchangeCode>>;
+  try {
+    token = await client.exchangeCode({
+      code: input.code,
+      redirectUri: pending.redirectUri,
+      codeVerifier: pending.codeVerifier,
+      ...(readChatAccountId ? { readChat: true } : {}),
+      ...(sendChatAccountId ? { sendChat: true } : {}),
+    });
+  } catch (error) {
+    if (error instanceof FanvueScopeError && selectedAccountId)
+      throw new FanvueModuleConsentError('scope', sendChatAccountId ? 'send' : 'read');
+    throw error;
+  }
   let scopes: string[];
-  if (readChatAccountId) {
+  if (selectedAccountId) {
     try {
-      scopes = assertFanvueChatReadScopes(token.scope);
+      scopes = sendChatAccountId
+        ? assertFanvueChatSendScopes(token.scope)
+        : assertFanvueChatReadScopes(token.scope);
     } catch {
-      throw new FanvueModuleConsentError('scope');
+      throw new FanvueModuleConsentError('scope', sendChatAccountId ? 'send' : 'read');
     }
   } else scopes = assertFanvuePublishingScopes(token.scope);
   const profile = await client.discoverCreator(token.access_token);
   if (existingAccount && profile.uuid !== existingAccount.creatorId)
-    throw new FanvueModuleConsentError('account-mismatch');
+    throw new FanvueModuleConsentError('account-mismatch', sendChatAccountId ? 'send' : 'read');
   const connection = await connectProvider(
     database,
     keys,
@@ -191,20 +229,30 @@ export async function completeFanvueOauthConnection(
       scopes,
       accessExpiresAt: new Date(now.getTime() + token.expires_in * 1000),
       requestId: input.requestId,
-      ...(readChatAccountId && existingAccount
+      ...(selectedAccountId && existingAccount
         ? {
             beforeReplace: async (transaction: NodePgDatabase) => {
-              const current = await activeCreatorForAccount(transaction, {
-                workspaceId: input.workspaceId,
-                userId: input.userId,
-                accountId: readChatAccountId,
-              });
+              let current;
+              try {
+                current = await activeCreatorForAccount(transaction, {
+                  workspaceId: input.workspaceId,
+                  userId: input.userId,
+                  accountId: selectedAccountId,
+                });
+              } catch (error) {
+                if (sendChatAccountId && error instanceof FanvueModuleConsentError)
+                  throw new FanvueModuleConsentError(error.reason, 'send');
+                throw error;
+              }
               if (
                 current.creatorId !== existingAccount.creatorId ||
                 current.connectionId !== existingAccount.connectionId ||
                 current.credentialId !== existingAccount.credentialId
               )
-                throw new FanvueModuleConsentError('unavailable');
+                throw new FanvueModuleConsentError(
+                  'unavailable',
+                  sendChatAccountId ? 'send' : 'read',
+                );
             },
           }
         : {}),
@@ -212,6 +260,10 @@ export async function completeFanvueOauthConnection(
   );
   return {
     ...connection,
-    ...(readChatAccountId ? { consentKind: 'read-chat' as const } : {}),
+    ...(readChatAccountId
+      ? { consentKind: 'read-chat' as const }
+      : sendChatAccountId
+        ? { consentKind: 'send-chat' as const }
+        : {}),
   };
 }

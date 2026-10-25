@@ -35,7 +35,7 @@ export interface ProviderAccountSummary {
   capabilityFreshness: 'fresh' | 'stale' | 'unknown';
   adapterDefaults: unknown;
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
-  fanvueModules?: { chatRead: boolean };
+  fanvueModules?: { chatRead: boolean; chatSend: boolean };
   updatedAt: Date;
   expiresAt?: Date | null;
   originWorkspaceName?: string;
@@ -199,6 +199,12 @@ export function listProviderAccountsPage(
                     row.availability === 'active' &&
                     Array.isArray(scopes) &&
                     scopes.includes('read:chat'),
+                  chatSend:
+                    row.status === 'active' &&
+                    row.availability === 'active' &&
+                    Array.isArray(scopes) &&
+                    scopes.includes('read:chat') &&
+                    scopes.includes('write:chat'),
                 },
               }
             : {}),

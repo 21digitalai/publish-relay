@@ -12,6 +12,7 @@ export const API_KEY_CAPABILITIES = [
   'publishes:retry',
   'audit:read',
   'fanvue:chats:read',
+  'fanvue:chats:send',
   'fanvue:posts:read',
   'fanvue:media:read',
   'fanvue:comments:send',

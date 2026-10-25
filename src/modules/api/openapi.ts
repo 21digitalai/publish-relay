@@ -12,6 +12,7 @@ import {
   postValidationRequestSchema,
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
+import { fanvueMessageRequestSchema } from '../providers/fanvue-message.routes.js';
 import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
@@ -121,6 +122,11 @@ const externalDraftSchema = z.object({
   createdAt: z.iso.datetime(),
   links: z.object({ self: z.string(), cockpit: z.string(), post: z.string().optional() }),
 });
+const fanvueMessageResultSchema = z.union([
+  z.object({ state: z.literal('confirmed'), messageUuid: z.uuid() }),
+  z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
+  z.object({ state: z.literal('unknown') }),
+]);
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
   return {
@@ -306,6 +312,50 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing content:write capability' },
             '404': { description: 'Draft not found' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/chats/{fanUuid}/messages': {
+        post: {
+          operationId: 'sendFanvueMessage',
+          description:
+            'Send one-to-one text or account-verified ready Fanvue media; native priced media may include an attached free preview. Unknown outcomes must not be blindly resent.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'fanUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(fanvueMessageRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Provider message confirmed',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(fanvueMessageResultSchema)),
+                },
+              },
+            },
+            '202': { description: 'Provider outcome unknown; no automatic resend' },
+            '400': { description: 'Invalid message or price/preview shape' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:chats:send capability' },
+            '409': { description: 'Account, media or action unavailable' },
+            '429': { description: 'Mutation rate limit exceeded' },
           },
         },
       },

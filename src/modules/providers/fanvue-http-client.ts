@@ -11,6 +11,7 @@ export const FANVUE_PUBLISHING_SCOPES = [
   'write:post',
 ] as const;
 export const FANVUE_CHAT_READ_SCOPES = [...FANVUE_PUBLISHING_SCOPES, 'read:chat'] as const;
+export const FANVUE_CHAT_SEND_SCOPES = [...FANVUE_CHAT_READ_SCOPES, 'write:chat'] as const;
 
 export const fanvueTokenSchema = z.object({
   access_token: z.string().min(1),
@@ -38,13 +39,19 @@ export class FanvueRequestError extends Error {
   }
 }
 
+export class FanvueScopeError extends Error {
+  constructor(public readonly grant: 'publishing' | 'chat_read' | 'chat_send') {
+    super(`Fanvue ${grant.replace('_', '-')} grant does not match the requested scopes`);
+  }
+}
+
 export function assertFanvuePublishingScopes(scope: string): string[] {
   const granted = scope.split(/\s+/).filter(Boolean);
   if (
     new Set(granted).size !== FANVUE_PUBLISHING_SCOPES.length ||
     FANVUE_PUBLISHING_SCOPES.some((required) => !granted.includes(required))
   )
-    throw new Error('Fanvue publishing grant does not match the requested scopes');
+    throw new FanvueScopeError('publishing');
   return granted;
 }
 
@@ -54,7 +61,17 @@ export function assertFanvueChatReadScopes(scope: string): string[] {
     new Set(granted).size !== FANVUE_CHAT_READ_SCOPES.length ||
     FANVUE_CHAT_READ_SCOPES.some((required) => !granted.includes(required))
   )
-    throw new Error('Fanvue chat-read grant does not match the requested scopes');
+    throw new FanvueScopeError('chat_read');
+  return granted;
+}
+
+export function assertFanvueChatSendScopes(scope: string): string[] {
+  const granted = scope.split(/\s+/).filter(Boolean);
+  if (
+    new Set(granted).size !== FANVUE_CHAT_SEND_SCOPES.length ||
+    FANVUE_CHAT_SEND_SCOPES.some((required) => !granted.includes(required))
+  )
+    throw new FanvueScopeError('chat_send');
   return granted;
 }
 
@@ -63,6 +80,7 @@ export function assertFanvueReadGrantScopes(scope: string): string[] {
   const allowed = new Set<string>([
     ...FANVUE_PUBLISHING_SCOPES,
     'read:chat',
+    'write:chat',
     'read:post',
     'read:media',
   ]);
@@ -96,6 +114,7 @@ export class FanvueHttpClient {
     state: string;
     codeChallenge: string;
     readChat?: boolean;
+    sendChat?: boolean;
   }): string {
     if (
       new URL(input.redirectUri).protocol !== 'https:' ||
@@ -109,7 +128,12 @@ export class FanvueHttpClient {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set(
       'scope',
-      (input.readChat ? FANVUE_CHAT_READ_SCOPES : FANVUE_PUBLISHING_SCOPES).join(' '),
+      (input.sendChat
+        ? FANVUE_CHAT_SEND_SCOPES
+        : input.readChat
+          ? FANVUE_CHAT_READ_SCOPES
+          : FANVUE_PUBLISHING_SCOPES
+      ).join(' '),
     );
     url.searchParams.set('state', input.state);
     url.searchParams.set('code_challenge', input.codeChallenge);
@@ -122,6 +146,7 @@ export class FanvueHttpClient {
     redirectUri: string;
     codeVerifier: string;
     readChat?: boolean;
+    sendChat?: boolean;
   }): Promise<FanvueToken> {
     if (!input.code || !input.codeVerifier)
       throw new Error('Fanvue OAuth code and verifier are required');
@@ -132,7 +157,7 @@ export class FanvueHttpClient {
         redirect_uri: input.redirectUri,
         code_verifier: input.codeVerifier,
       },
-      input.readChat ? 'chat_read' : 'publishing',
+      input.sendChat ? 'chat_send' : input.readChat ? 'chat_read' : 'publishing',
     );
   }
 
@@ -156,7 +181,7 @@ export class FanvueHttpClient {
 
   private async token(
     fields: Record<string, string>,
-    scopeMode: 'publishing' | 'chat_read' | 'refresh',
+    scopeMode: 'publishing' | 'chat_read' | 'chat_send' | 'refresh',
   ): Promise<FanvueToken> {
     const basic = Buffer.from(`${this.options.clientId}:${this.options.clientSecret}`).toString(
       'base64',
@@ -183,6 +208,7 @@ export class FanvueHttpClient {
     if (!token.success) throw new FanvueRequestError(response.status);
     if (scopeMode === 'publishing') assertFanvuePublishingScopes(token.data.scope);
     else if (scopeMode === 'chat_read') assertFanvueChatReadScopes(token.data.scope);
+    else if (scopeMode === 'chat_send') assertFanvueChatSendScopes(token.data.scope);
     else assertFanvueReadGrantScopes(token.data.scope);
     return token.data;
   }

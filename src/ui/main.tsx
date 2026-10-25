@@ -46,7 +46,7 @@ interface Account {
     categoryId?: string;
   };
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
-  fanvueModules?: { chatRead: boolean };
+  fanvueModules?: { chatRead: boolean; chatSend: boolean };
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -1012,6 +1012,7 @@ function AccountRow({
   onRevokeGrant,
   onReconnect,
   onEnableChatRead,
+  onEnableChatSend,
   onDefaultsSaved,
   originWorkspaceId,
 }: {
@@ -1020,6 +1021,7 @@ function AccountRow({
   onRevokeGrant: (account: Account) => void;
   onReconnect: () => void;
   onEnableChatRead: () => void;
+  onEnableChatSend: () => void;
   onDefaultsSaved: (account: Account) => void;
   originWorkspaceId: string | null;
 }) {
@@ -1148,12 +1150,27 @@ function AccountRow({
               Allow message reading
             </button>
           ))}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
+          account.fanvueModules?.chatRead &&
+          (account.fanvueModules.chatSend ? (
+            <span className="fanvue-chat-send-status" role="status">
+              Message sending enabled
+            </span>
+          ) : (
+            <button className="fanvue-chat-send-enable secondary-button" onClick={onEnableChatSend}>
+              Allow message sending
+            </button>
+          ))}
       </div>
       {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && !needsReconnect && (
         <p className="account-module-note">
-          {account.fanvueModules?.chatRead
-            ? 'Read-only Fanvue message access is enabled for this account. Sending remains off.'
-            : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
+          {account.fanvueModules?.chatSend
+            ? 'Fanvue message reading and sending are enabled for this account.'
+            : account.fanvueModules?.chatRead
+              ? 'Message reading is enabled. Message sending requires separate permission.'
+              : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
         </p>
       )}
       {!account.isExposed &&
@@ -1408,6 +1425,14 @@ function AccountsPage() {
       'Fanvue message reading was not enabled. The required read-only permission was not granted. Review the permission and try again.',
     'fanvue-chat-read-account-mismatch':
       'Fanvue message reading was not enabled. A different creator signed in. Switch to the selected creator account and try again.',
+    'fanvue-chat-send-denied':
+      'Fanvue message sending was not enabled. Authorization was cancelled; the selected account remains connected.',
+    'fanvue-chat-send-unavailable':
+      'Fanvue message sending was not enabled. The selected account changed or disconnected.',
+    'fanvue-chat-send-scope':
+      'Fanvue message sending was not enabled. The required permission was not granted.',
+    'fanvue-chat-send-account-mismatch':
+      'Fanvue message sending was not enabled. A different creator signed in.',
     'instagram-denied':
       'No Instagram account was connected. Instagram authorization was not completed. Start a new connection to try again.',
     'instagram-expired':
@@ -1457,6 +1482,7 @@ function AccountsPage() {
   };
   const oauthError = oauthResult ? oauthErrorMessages[oauthResult] : undefined;
   const fanvueChatReadConnected = oauthResult === 'fanvue-chat-read-connected';
+  const fanvueChatSendConnected = oauthResult === 'fanvue-chat-send-connected';
   const oauthErrorReported = useRef(false);
   useEffect(() => {
     if (oauthError && !oauthErrorReported.current) {
@@ -1696,6 +1722,11 @@ function AccountsPage() {
               off.
             </div>
           )}
+          {fanvueChatSendConnected && (
+            <div className="account-module-success" role="status">
+              Fanvue message sending is connected for the selected account.
+            </div>
+          )}
           <div className="account-toolbar">
             <label className="search-control">
               <span aria-hidden="true">⌕</span>
@@ -1802,6 +1833,23 @@ function AccountsPage() {
                                 error instanceof Error
                                   ? error.message
                                   : 'Could not start Fanvue message-reading permission',
+                                'connection',
+                                'unknown',
+                              );
+                            },
+                          );
+                        }}
+                        onEnableChatSend={() => {
+                          const adapter = getPostingAdapter('fanvue');
+                          if (!adapter) return;
+                          setActionError(null);
+                          void beginAdapterConnection(adapter, account.id, 'send-chat').catch(
+                            (error: unknown) => {
+                              showAnalyticsError(
+                                setActionError,
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Could not start Fanvue message-sending permission',
                                 'connection',
                                 'unknown',
                               );

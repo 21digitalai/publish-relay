@@ -62,6 +62,21 @@ export class FanvueReadService {
     return this.readClient.listMessages(token, input.fanUuid, input);
   }
 
+  /** A returned counterpart message proves this selected creator already has the fan chat. */
+  async getExistingChatForMessage(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+  }) {
+    const fanUuid = z.uuid().parse(input.fanUuid);
+    const token = await this.accessToken(input, 'chat', ['write:chat']);
+    const messages = await this.readClient.listMessages(token, fanUuid, { size: 1 });
+    const first = messages.data[0];
+    if (!first || (first.sender.uuid !== fanUuid && first.recipient.uuid !== fanUuid))
+      throw new FanvueReadUnavailableError('account_not_found');
+    return { accessToken: token };
+  }
+
   async listMedia(input: { workspaceId: string; accountId: string; page?: number; size?: number }) {
     const token = await this.accessToken(input, 'media');
     return this.readClient.listMedia(token, input);

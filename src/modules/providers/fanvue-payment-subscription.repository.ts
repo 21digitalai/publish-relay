@@ -253,6 +253,7 @@ export async function getFanvuePaymentSubscriptionForAccount(
       .select({
         id: fanvuePaymentSubscriptions.id,
         creatorUuid: fanvuePaymentSubscriptions.creatorUuid,
+        callbackHandleHash: fanvuePaymentSubscriptions.callbackHandleHash,
         providerSubscriptionId: fanvuePaymentSubscriptions.providerSubscriptionId,
         state: fanvuePaymentSubscriptions.state,
       })

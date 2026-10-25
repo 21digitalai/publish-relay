@@ -46,6 +46,9 @@ describe('Facebook Page Messenger read eligibility', () => {
       ),
     ).toBe(false);
     expect(
+      isPageReadEligible({ ...permitted, scopes: ['pages_read_engagement'] }, 'comments'),
+    ).toBe(false);
+    expect(
       isPageReadEligible(
         { ...permitted, capabilitySnapshot: { tasks: ['MESSAGING'] } },
         'comments',

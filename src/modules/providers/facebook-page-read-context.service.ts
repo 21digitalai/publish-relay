@@ -25,7 +25,7 @@ export interface PageReadEvidence {
 }
 
 const MODULE_REQUIREMENTS = {
-  comments: { scopes: ['pages_read_engagement'], task: 'CREATE_CONTENT' },
+  comments: { scopes: ['pages_show_list', 'pages_read_engagement'], task: 'CREATE_CONTENT' },
   dms: {
     scopes: [
       'pages_show_list',

@@ -2,7 +2,9 @@ import type { FastifyInstance, FastifyLoggerOptions } from 'fastify';
 
 function requestPath(url: string): string {
   const path = url.split(/[?#]/, 1)[0] ?? '/';
-  return path.replace(/^\/provider-media\/tiktok(?:\/.*)?$/, '/provider-media/tiktok/[REDACTED]');
+  return path
+    .replace(/^\/provider-media\/tiktok(?:\/.*)?$/, '/provider-media/tiktok/[REDACTED]')
+    .replace(/^\/webhooks\/fanvue\/payments(?:\/.*)?$/, '/webhooks/fanvue/payments/[REDACTED]');
 }
 
 export function registerRedactedNotFoundHandler(application: FastifyInstance): void {

@@ -575,6 +575,34 @@
       "when": 1792927500001,
       "tag": "0081_engagement_proposals",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792935000000,
+      "tag": "0082_fanvue_payment_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792935000001,
+      "tag": "0083_fanvue_payment_callback_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792935000002,
+      "tag": "0084_fanvue_payment_creation_probe",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1792935000003,
+      "tag": "0085_fanvue_payment_deletion_required",
+      "breakpoints": true
     }
   ]
 }

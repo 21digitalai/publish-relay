@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   cleanupRetainedMedia,
@@ -11,10 +11,14 @@ import {
   evaluateMediaRetention,
 } from '../src/modules/content/media-retention.service.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
+import { getActiveCredential } from '../src/modules/credentials/credential.repository.js';
+import { decryptCredential } from '../src/modules/credentials/envelope.js';
 import {
   bindFanvueDmAttachment,
   releaseUnstartedFanvueDmAttachment,
 } from '../src/modules/providers/fanvue-dm-attachment.repository.js';
+import { initializeFanvueDmUpload } from '../src/modules/providers/fanvue-dm-upload-init.service.js';
+import type { FanvueMediaUploadClient } from '../src/modules/providers/fanvue-media-upload-client.js';
 
 const connectionString = process.env.POSTGRES_FANVUE_TEST_URL;
 
@@ -113,6 +117,90 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         }),
       ).resolves.toEqual({ deleted: 1, failed: 0 });
       expect(deleted).toEqual(['dm-object']);
+
+      const uploadMediaId = randomUUID();
+      const providerMediaUuid = randomUUID();
+      await pool.query(
+        `INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+         VALUES ($1, $2, 'dm-upload', 'dm-upload-hash', 'image/png', 12, 'ready')`,
+        [uploadMediaId, workspaceId],
+      );
+      const uploadKey = { ...key, mediaId: uploadMediaId };
+      expect(await bindFanvueDmAttachment(db, uploadKey)).toBe(true);
+      const createSession = vi.fn().mockResolvedValue({
+        mediaUuid: providerMediaUuid,
+        uploadId: 'upload-one',
+        partSize: 12,
+        maxParts: 256,
+        totalParts: 1,
+      });
+      const client = { createSession } as unknown as FanvueMediaUploadClient;
+      const keys = {
+        currentVersion: () => 'v1',
+        getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+      };
+      await expect(
+        initializeFanvueDmUpload(db, client, keys, {
+          ...uploadKey,
+          accessToken: 'fixture-token',
+        }),
+      ).resolves.toEqual({ state: 'uploading', mediaUuid: providerMediaUuid });
+      await expect(
+        initializeFanvueDmUpload(db, client, keys, {
+          ...uploadKey,
+          accessToken: 'fixture-token',
+        }),
+      ).rejects.toThrow('not ready');
+      expect(createSession).toHaveBeenCalledTimes(1);
+      const upload = await pool.query<{ state: string; upload_credential_id: string }>(
+        'SELECT state, upload_credential_id FROM fanvue_dm_attachments WHERE media_id=$1',
+        [uploadMediaId],
+      );
+      expect(upload.rows[0]?.state).toBe('uploading');
+      if (!upload.rows[0]?.upload_credential_id) throw new Error('Upload credential is missing');
+      const credential = await getActiveCredential(
+        db,
+        workspaceId,
+        upload.rows[0].upload_credential_id,
+      );
+      expect(credential).not.toBeNull();
+      if (!credential) throw new Error('Encrypted upload session is missing');
+      const plaintext = await decryptCredential(credential, keys);
+      expect(JSON.parse(plaintext.toString('utf8'))).toMatchObject({
+        mediaUuid: providerMediaUuid,
+      });
+      plaintext.fill(0);
+
+      const unknownMediaId = randomUUID();
+      await pool.query(
+        `INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+         VALUES ($1, $2, 'dm-unknown', 'dm-unknown-hash', 'image/png', 12, 'ready')`,
+        [unknownMediaId, workspaceId],
+      );
+      const unknownKey = { ...key, mediaId: unknownMediaId };
+      expect(await bindFanvueDmAttachment(db, unknownKey)).toBe(true);
+      createSession.mockRejectedValueOnce(new Error('response lost'));
+      await expect(
+        initializeFanvueDmUpload(db, client, keys, {
+          ...unknownKey,
+          accessToken: 'fixture-token',
+        }),
+      ).rejects.toThrow('response lost');
+      await expect(
+        initializeFanvueDmUpload(db, client, keys, {
+          ...unknownKey,
+          accessToken: 'fixture-token',
+        }),
+      ).rejects.toThrow('not ready');
+      expect(createSession).toHaveBeenCalledTimes(2);
+      const unknown = await pool.query<{ state: string }>(
+        'SELECT state FROM fanvue_dm_attachments WHERE media_id=$1',
+        [unknownMediaId],
+      );
+      expect(unknown.rows[0]?.state).toBe('unknown');
+      await expect(deleteUnattachedMedia(db, storage, {
+        workspaceId, mediaId: unknownMediaId,
+      })).resolves.toBe(false);
 
       const racingMediaId = randomUUID();
       await pool.query(

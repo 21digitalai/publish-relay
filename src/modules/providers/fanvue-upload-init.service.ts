@@ -19,7 +19,10 @@ interface InitInput {
   accessToken: string;
 }
 
-function fanvueMediaType(mimeType: string): { mediaType: 'image' | 'video'; extension: string } {
+export function fanvueMediaType(mimeType: string): {
+  mediaType: 'image' | 'video';
+  extension: string;
+} {
   const images: Record<string, string> = {
     'image/jpeg': 'jpg',
     'image/png': 'png',

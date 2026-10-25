@@ -90,7 +90,6 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'displayName',
     'relationship',
     'subscriptionStatus',
-    'firstSubscribedAt',
   ]),
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
   'destinations:list': new Set([

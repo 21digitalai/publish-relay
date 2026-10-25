@@ -83,16 +83,14 @@ const subscriberPage = z.object({
         subscription: z
           .object({ status: z.enum(['active', 'cancelled', 'pending_confirmation', 'paused']) })
           .nullable(),
-        firstSubscribedAt: z.string().nullable(),
       }),
     )
     .max(50)
     .transform((rows) =>
-      rows.map(({ subscription, firstSubscribedAt, ...row }) => ({
+      rows.map(({ subscription, ...row }) => ({
         ...row,
         relationship: 'subscriber' as const,
         subscriptionStatus: subscription?.status ?? null,
-        firstSubscribedAt,
       })),
     ),
   pagination: offsetPagination.extend({ nextCursor: z.string().max(1024).nullable() }),

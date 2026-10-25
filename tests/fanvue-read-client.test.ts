@@ -223,6 +223,7 @@ describe('Fanvue read transport', () => {
     });
     expect(subscribers.data[0]).not.toHaveProperty('price');
     expect(subscribers.data[0]).not.toHaveProperty('amountPaid');
+    expect(subscribers.data[0]).not.toHaveProperty('firstSubscribedAt');
     expect(subscribers.data[0]).not.toHaveProperty('isTopSpender');
     expect(request.mock.calls[0]?.[0]).toContain('page=2&size=50');
     expect(request.mock.calls[1]?.[0]).toContain('cursor=prior');

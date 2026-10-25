@@ -7,7 +7,6 @@ interface Fan {
   displayName: string;
   relationship: 'follower' | 'subscriber';
   subscriptionStatus: 'active' | 'cancelled' | 'pending_confirmation' | 'paused' | null;
-  firstSubscribedAt?: string | null;
 }
 interface AudiencePage {
   data: Fan[];

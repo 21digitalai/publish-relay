@@ -544,6 +544,42 @@ export const providerAccounts = pgTable(
   ],
 );
 
+// Provider-neutral review-first queue. Approval uses the canonical provider command, not this row.
+export const engagementProposals = pgTable(
+  'engagement_proposals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    provider: text('provider').notNull(),
+    kind: text('kind').notNull(),
+    targetId: text('target_id').notNull(),
+    sourceContext: jsonb('source_context').notNull().default({}),
+    content: jsonb('content').notNull(),
+    proposerType: text('proposer_type').notNull(),
+    proposerId: uuid('proposer_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    revision: integer('revision').notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('engagement_proposals_workspace_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
+    uniqueIndex('engagement_proposals_workspace_id_unique').on(table.workspaceId, table.id),
+    index('engagement_proposals_pending_idx').on(table.workspaceId, table.createdAt),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'engagement_proposals_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
 // Exposure grants selectability without moving the canonical account or credential.
 export const providerAccountExposures = pgTable(
   'provider_account_exposures',

@@ -97,6 +97,15 @@ function previewText(value: unknown): string {
   return typeof value.text === 'string' ? value.text.slice(0, 280) : '';
 }
 
+function proposedMediaDetails(value: unknown): { mediaCount: number; priceCents: number | null } {
+  if (typeof value !== 'object' || value === null) return { mediaCount: 0, priceCents: null };
+  const content = value as Record<string, unknown>;
+  return {
+    mediaCount: Array.isArray(content.mediaIds) ? content.mediaIds.length : 0,
+    priceCents: typeof content.priceCents === 'number' ? content.priceCents : null,
+  };
+}
+
 function summary(
   row: Awaited<ReturnType<typeof createEngagementProposal>> & { accountDisplayName: string },
 ) {
@@ -109,6 +118,7 @@ function summary(
     status: row.status,
     sourcePreview: previewText(row.sourceContext),
     contentPreview: previewText(row.content),
+    ...proposedMediaDetails(row.content),
     revision: row.revision,
     createdAt: row.createdAt.toISOString(),
   };

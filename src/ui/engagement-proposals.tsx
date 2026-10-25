@@ -12,6 +12,8 @@ interface ProposalSummary {
   status: string;
   sourcePreview: string;
   contentPreview: string;
+  mediaCount: number;
+  priceCents: number | null;
   createdAt: string;
 }
 
@@ -308,6 +310,16 @@ export function EngagementProposalsPage() {
                   )}
                   <span>{item.accountDisplayName}</span>
                   <span>{item.contentPreview}</span>
+                  {(item.mediaCount > 0 || item.priceCents !== null) && (
+                    <span>
+                      {item.mediaCount > 0 &&
+                        `${String(item.mediaCount)} media attachment(s) proposed`}
+                      {item.mediaCount > 0 && item.priceCents !== null && ' · '}
+                      {item.priceCents !== null &&
+                        `Proposed price: $${(item.priceCents / 100).toFixed(2)}`}
+                      {' · Sending unavailable'}
+                    </span>
+                  )}
                   <small>{new Date(item.createdAt).toLocaleString()}</small>
                 </button>
               ))

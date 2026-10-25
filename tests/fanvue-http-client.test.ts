@@ -33,6 +33,18 @@ function fixture(body: unknown, status = 200) {
 }
 
 describe('Fanvue publishing-only OAuth transport', () => {
+  it('accepts known chat-read scope on refresh but rejects unknown or duplicate scopes', async () => {
+    const expanded = FANVUE_CHAT_READ_SCOPES.join(' ');
+    await expect(fixture({ ...token, scope: expanded }).client.refresh('old')).resolves.toMatchObject({
+      scope: expanded,
+    });
+    await expect(
+      fixture({ ...token, scope: `${expanded} write:chat` }).client.refresh('old'),
+    ).rejects.toThrow('unsupported scopes');
+    await expect(
+      fixture({ ...token, scope: `${expanded} read:chat` }).client.refresh('old'),
+    ).rejects.toThrow('unsupported scopes');
+  });
   it('requests an explicit chat-read module without requesting send authority', async () => {
     const moduleScope = FANVUE_CHAT_READ_SCOPES.join(' ');
     const { client } = fixture({ ...token, scope: moduleScope });

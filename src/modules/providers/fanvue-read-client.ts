@@ -5,12 +5,12 @@ import { FanvueRequestError } from './fanvue-http-client.js';
 const person = z.object({ uuid: z.uuid(), handle: z.string().nullish() });
 const message = z.object({
   uuid: z.uuid(),
-  text: z.string().nullish(),
+  text: z.string().max(5000).nullish(),
   sentAt: z.string(),
   sender: person,
   recipient: person,
   type: z.string(),
-  mediaUuids: z.array(z.uuid()).optional(),
+  mediaUuids: z.array(z.uuid()).max(50).optional(),
   mediaPreviewUuid: z.uuid().nullish(),
   pricing: z.object({ USD: z.object({ price: z.number().int().nonnegative() }) }).nullish(),
   purchasedAt: z.string().nullish(),
@@ -33,10 +33,10 @@ const postSummary = z
     uuid: z.uuid(),
     createdAt: z.string(),
     publishedAt: z.string().nullish(),
-    text: z.string().nullish(),
+    text: z.string().max(10_000).nullish(),
     audience: z.enum(['subscribers', 'followers-and-subscribers']),
     price: z.number().nonnegative().nullish(),
-    mediaUuids: z.array(z.uuid()),
+    mediaUuids: z.array(z.uuid()).max(50),
     commentsCount: z.number().int().nonnegative(),
   })
   .transform(({ text, ...post }) => ({ ...post, textPreview: text?.slice(0, 280) ?? null }));
@@ -44,22 +44,22 @@ const postDetail = z.object({
   uuid: z.uuid(),
   createdAt: z.string(),
   publishedAt: z.string().nullish(),
-  text: z.string().nullish(),
+  text: z.string().max(10_000).nullish(),
   audience: z.enum(['subscribers', 'followers-and-subscribers']),
   price: z.number().nonnegative().nullish(),
-  mediaUuids: z.array(z.uuid()),
+  mediaUuids: z.array(z.uuid()).max(50),
   mediaPreviewUuid: z.uuid().nullish(),
 });
 const comment = z.object({
   uuid: z.uuid(),
-  text: z.string(),
+  text: z.string().max(5000),
   createdAt: z.string(),
   updatedAt: z.string().nullish(),
   user: z.object({ uuid: z.uuid(), handle: z.string(), displayName: z.string() }).nullable(),
 });
 const offsetPagination = z.object({
   page: z.number().int().positive(),
-  size: z.number().int().nonnegative(),
+  size: z.number().int().nonnegative().max(50),
   hasMore: z.boolean(),
 });
 
@@ -88,7 +88,7 @@ export class FanvueReadClient {
     return this.get(
       accessToken,
       `/chats?${query}`,
-      z.object({ data: z.array(chat), pagination: offsetPagination }),
+      z.object({ data: z.array(chat).max(50), pagination: offsetPagination }),
     );
   }
 
@@ -106,7 +106,7 @@ export class FanvueReadClient {
     return this.get(
       accessToken,
       `/chats/${id}/messages?${query}`,
-      z.object({ data: z.array(message), pagination: offsetPagination }),
+      z.object({ data: z.array(message).max(50), pagination: offsetPagination }),
     );
   }
 
@@ -118,7 +118,7 @@ export class FanvueReadClient {
     return this.get(
       accessToken,
       `/media?${query}`,
-      z.object({ data: z.array(media), pagination: offsetPagination }),
+      z.object({ data: z.array(media).max(50), pagination: offsetPagination }),
     );
   }
 
@@ -134,8 +134,8 @@ export class FanvueReadClient {
       accessToken,
       `/v1/posts?${query}`,
       z.object({
-        data: z.array(postSummary),
-        nextCursor: z.string().nullable(),
+        data: z.array(postSummary).max(50),
+        nextCursor: z.string().max(1024).nullable(),
       }),
     );
   }
@@ -157,8 +157,8 @@ export class FanvueReadClient {
       accessToken,
       `/v1/posts/${id}/comments?${query}`,
       z.object({
-        data: z.array(comment),
-        nextCursor: z.string().nullable(),
+        data: z.array(comment).max(50),
+        nextCursor: z.string().max(1024).nullable(),
       }),
     );
   }

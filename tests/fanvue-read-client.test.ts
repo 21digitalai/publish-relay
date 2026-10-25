@@ -80,6 +80,22 @@ describe('Fanvue read transport', () => {
     });
   });
 
+  it('rejects provider pages beyond the bounded read contract', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        data: Array.from({ length: 51 }, () => ({
+          uuid: '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d',
+          status: 'ready',
+        })),
+        pagination: { page: 1, size: 51, hasMore: false },
+      }),
+    );
+    await expect(new FanvueReadClient(request).listMedia('token')).rejects.toMatchObject({
+      status: 200,
+      code: 'invalid_response',
+    });
+  });
+
   it('returns stable media status without leaking expiring variant URLs', async () => {
     const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
     const item = {

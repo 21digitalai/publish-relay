@@ -60,6 +60,19 @@ describe('engagement proposal foundation', () => {
       };
       const row = await createEngagementProposal(database, input);
       expect((await createEngagementProposal(database, input)).id).toBe(row.id);
+      await client.exec(
+        `UPDATE provider_connections SET status = 'revoked', revoked_at = now() WHERE id = '${connection}'`,
+      );
+      expect((await createEngagementProposal(database, input)).id).toBe(row.id);
+      await expect(
+        createEngagementProposal(database, {
+          ...input,
+          clientActionId: '00000000-0000-4000-8000-000000000212',
+        }),
+      ).rejects.toThrow('unavailable');
+      await client.exec(
+        `UPDATE provider_connections SET status = 'active', revoked_at = NULL WHERE id = '${connection}'`,
+      );
       await expect(
         createEngagementProposal(database, { ...input, content: { text: 'Different' } }),
       ).rejects.toThrow('conflicts');
@@ -103,6 +116,7 @@ describe('engagement proposal foundation', () => {
         CREATE ROLE proposal_reader NOLOGIN NOBYPASSRLS;
         GRANT USAGE ON SCHEMA public TO proposal_reader;
         GRANT SELECT ON engagement_proposals TO proposal_reader;
+        ALTER TABLE engagement_proposals OWNER TO proposal_reader;
         SELECT set_config('app.workspace_id', '${otherWorkspace}', false);
         SET ROLE proposal_reader;
       `);

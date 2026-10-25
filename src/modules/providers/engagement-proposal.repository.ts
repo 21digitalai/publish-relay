@@ -3,7 +3,11 @@ import { isDeepStrictEqual } from 'node:util';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { engagementProposals, providerAccounts } from '../../database/schema.js';
+import {
+  engagementProposals,
+  providerAccounts,
+  providerConnections,
+} from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
 export type ProposalKind = 'dm' | 'comment';
@@ -26,6 +30,22 @@ export interface CreateEngagementProposal {
   proposerId: string;
 }
 
+function matchesProposal(
+  existing: typeof engagementProposals.$inferSelect,
+  input: CreateEngagementProposal,
+): boolean {
+  return (
+    existing.accountId === input.accountId &&
+    existing.provider === input.provider &&
+    existing.kind === input.kind &&
+    existing.targetId === input.targetId.trim() &&
+    existing.proposerType === input.proposerType &&
+    existing.proposerId === input.proposerId &&
+    isDeepStrictEqual(existing.content, input.content) &&
+    isDeepStrictEqual(existing.sourceContext, input.sourceContext ?? {})
+  );
+}
+
 export async function createEngagementProposal(
   database: NodePgDatabase,
   input: CreateEngagementProposal,
@@ -33,25 +53,52 @@ export async function createEngagementProposal(
   if (!input.targetId.trim() || !input.content.text.trim())
     throw new Error('Proposal target and text are required');
   return withTenantTransaction(database, { workspaceId: input.workspaceId }, async (tx) => {
+    const [prior] = await tx
+      .select()
+      .from(engagementProposals)
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (prior) {
+      if (!matchesProposal(prior, input))
+        throw new Error('Proposal action ID conflicts with a different request');
+      return prior;
+    }
     const [account] = await tx
       .select({
         provider: providerAccounts.destinationProvider,
         availability: providerAccounts.availability,
         disconnectedAt: providerAccounts.disconnectedAt,
+        connectionStatus: providerConnections.status,
+        connectionRevokedAt: providerConnections.revokedAt,
       })
       .from(providerAccounts)
+      .innerJoin(
+        providerConnections,
+        and(
+          eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+          eq(providerConnections.id, providerAccounts.connectionId),
+        ),
+      )
       .where(
         and(
           eq(providerAccounts.workspaceId, input.workspaceId),
           eq(providerAccounts.id, input.accountId),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for('update');
     if (!account) throw new Error('Proposal destination is unavailable');
     if (
       account.provider !== input.provider ||
       account.availability !== 'active' ||
-      account.disconnectedAt
+      account.disconnectedAt ||
+      account.connectionStatus !== 'active' ||
+      account.connectionRevokedAt
     ) {
       throw new Error('Proposal destination is unavailable');
     }
@@ -85,16 +132,7 @@ export async function createEngagementProposal(
       )
       .limit(1);
     if (!existing) throw new Error('Proposal action ID conflicts with a different request');
-    if (
-      existing.accountId !== input.accountId ||
-      existing.provider !== input.provider ||
-      existing.kind !== input.kind ||
-      existing.targetId !== input.targetId.trim() ||
-      existing.proposerType !== input.proposerType ||
-      existing.proposerId !== input.proposerId ||
-      !isDeepStrictEqual(existing.content, input.content) ||
-      !isDeepStrictEqual(existing.sourceContext, input.sourceContext ?? {})
-    ) {
+    if (!matchesProposal(existing, input)) {
       throw new Error('Proposal action ID conflicts with a different request');
     }
     return existing;

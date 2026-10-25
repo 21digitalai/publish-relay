@@ -26,6 +26,7 @@ CREATE TABLE engagement_proposals (
 CREATE INDEX engagement_proposals_pending_idx ON engagement_proposals(workspace_id, created_at DESC)
   WHERE status = 'pending';
 ALTER TABLE engagement_proposals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE engagement_proposals FORCE ROW LEVEL SECURITY;
 CREATE POLICY engagement_proposals_workspace_policy ON engagement_proposals
   USING (workspace_id = nullif(current_setting('app.workspace_id', true), '')::uuid)
   WITH CHECK (workspace_id = nullif(current_setting('app.workspace_id', true), '')::uuid);

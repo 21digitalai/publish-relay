@@ -15,6 +15,7 @@ import {
 import {
   assertFanvueChatReadScopes,
   assertFanvueChatSendScopes,
+  FanvueScopeError,
   assertFanvuePublishingScopes,
   type FanvueHttpClient,
 } from './fanvue-http-client.js';
@@ -180,13 +181,20 @@ export async function completeFanvueOauthConnection(
       throw error;
     }
   }
-  const token = await client.exchangeCode({
-    code: input.code,
-    redirectUri: pending.redirectUri,
-    codeVerifier: pending.codeVerifier,
-    ...(readChatAccountId ? { readChat: true } : {}),
-    ...(sendChatAccountId ? { sendChat: true } : {}),
-  });
+  let token: Awaited<ReturnType<typeof client.exchangeCode>>;
+  try {
+    token = await client.exchangeCode({
+      code: input.code,
+      redirectUri: pending.redirectUri,
+      codeVerifier: pending.codeVerifier,
+      ...(readChatAccountId ? { readChat: true } : {}),
+      ...(sendChatAccountId ? { sendChat: true } : {}),
+    });
+  } catch (error) {
+    if (error instanceof FanvueScopeError && selectedAccountId)
+      throw new FanvueModuleConsentError('scope', sendChatAccountId ? 'send' : 'read');
+    throw error;
+  }
   let scopes: string[];
   if (selectedAccountId) {
     try {

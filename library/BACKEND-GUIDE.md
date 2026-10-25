@@ -396,6 +396,10 @@ requests exactly publishing plus `read:chat` and `write:chat`; the callback chec
 scope and exact creator before replacing the existing connection. A read-only grant never
 silently becomes send authority. Refresh accepts this known expanded scope while command
 preflight still checks both stored and refreshed grants immediately before provider send.
+The token client reports exact-scope mismatches as `FanvueScopeError`; the OAuth completion
+service translates selected-account read/send mismatches to `FanvueModuleConsentError` so the
+callback redirects to the matching inline recovery state. Transport and provider failures
+remain distinct errors and must not be mislabeled as denied consent.
 
 ## External draft handoff
 

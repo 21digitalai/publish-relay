@@ -39,13 +39,19 @@ export class FanvueRequestError extends Error {
   }
 }
 
+export class FanvueScopeError extends Error {
+  constructor(public readonly grant: 'publishing' | 'chat_read' | 'chat_send') {
+    super(`Fanvue ${grant.replace('_', '-')} grant does not match the requested scopes`);
+  }
+}
+
 export function assertFanvuePublishingScopes(scope: string): string[] {
   const granted = scope.split(/\s+/).filter(Boolean);
   if (
     new Set(granted).size !== FANVUE_PUBLISHING_SCOPES.length ||
     FANVUE_PUBLISHING_SCOPES.some((required) => !granted.includes(required))
   )
-    throw new Error('Fanvue publishing grant does not match the requested scopes');
+    throw new FanvueScopeError('publishing');
   return granted;
 }
 
@@ -55,7 +61,7 @@ export function assertFanvueChatReadScopes(scope: string): string[] {
     new Set(granted).size !== FANVUE_CHAT_READ_SCOPES.length ||
     FANVUE_CHAT_READ_SCOPES.some((required) => !granted.includes(required))
   )
-    throw new Error('Fanvue chat-read grant does not match the requested scopes');
+    throw new FanvueScopeError('chat_read');
   return granted;
 }
 
@@ -65,7 +71,7 @@ export function assertFanvueChatSendScopes(scope: string): string[] {
     new Set(granted).size !== FANVUE_CHAT_SEND_SCOPES.length ||
     FANVUE_CHAT_SEND_SCOPES.some((required) => !granted.includes(required))
   )
-    throw new Error('Fanvue chat-send grant does not match the requested scopes');
+    throw new FanvueScopeError('chat_send');
   return granted;
 }
 

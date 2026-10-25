@@ -14,13 +14,13 @@ import { FanvueReadService } from '../src/modules/providers/fanvue-read.service.
 import { FanvueCommentService } from '../src/modules/providers/fanvue-comment.service.js';
 import type { FanvueCommentClient } from '../src/modules/providers/fanvue-comment-client.js';
 import { FanvueMessageService } from '../src/modules/providers/fanvue-message.service.js';
-import type { FanvueMessageClient } from '../src/modules/providers/fanvue-message-client.js';
+import { FanvueMessageClient } from '../src/modules/providers/fanvue-message-client.js';
 import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 
 const connectionString = process.env.POSTGRES_FANVUE_TEST_URL;
 const keys = { currentVersion: () => 'v1', getKey: () => Promise.resolve(Buffer.alloc(32, 7)) };
 
-describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL', () => {
+describe.skipIf(!connectionString)('Fanvue read and DM account isolation on PostgreSQL', () => {
   it('rejects another workspace and absent chat grant while base publishing reads remain scoped', async () => {
     const pool = new pg.Pool({ connectionString });
     const database = drizzle(pool);
@@ -231,6 +231,125 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
       expect(providerRequest.mock.calls[1]?.[1]?.headers).toMatchObject({
         Authorization: 'Bearer sibling',
       });
+      const sendScopes = [...readScopes, 'write:chat'];
+      await connectProvider(
+        database,
+        keys,
+        {
+          discoverAccounts: () =>
+            Promise.resolve([{ providerAccountId: creatorId, displayName: 'Creator' }]),
+        },
+        {
+          workspaceId,
+          userId,
+          provider: 'fanvue',
+          externalSubjectId: creatorId,
+          accessToken: JSON.stringify({ ...token, scope: sendScopes.join(' ') }),
+          scopes: sendScopes,
+          accessExpiresAt: new Date(Date.now() + 3_600_000),
+          requestId: randomUUID(),
+        },
+      );
+      const fanUuid = randomUUID();
+      const mediaUuid = randomUUID();
+      const messageUuid = randomUUID();
+      providerRequest.mockClear();
+      providerRequest.mockImplementation((url, options) => {
+        const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+        if (path.endsWith(`/chats/${fanUuid}/message`))
+          return Promise.resolve(Response.json({ messageUuid }, { status: 201 }));
+        if (path.includes(`/chats/${fanUuid}/messages`))
+          return Promise.resolve(
+            Response.json({
+              data: [
+                {
+                  uuid: randomUUID(),
+                  text: 'Prior chat',
+                  sentAt: new Date().toISOString(),
+                  sender: { uuid: fanUuid },
+                  recipient: { uuid: creatorId },
+                  type: 'text',
+                },
+              ],
+              pagination: { page: 1, size: 1, hasMore: false },
+            }),
+          );
+        if (path.endsWith(`/media/${mediaUuid}`)) {
+          if ((options?.headers as Record<string, string>).Authorization !== 'Bearer access')
+            return Promise.resolve(Response.json({ error: 'wrong account' }, { status: 404 }));
+          return Promise.resolve(Response.json({ uuid: mediaUuid, status: 'ready' }));
+        }
+        throw new Error(`Unexpected Fanvue fixture request: ${path}`);
+      });
+      const accountBackedSend = new FanvueMessageService(
+        database,
+        service,
+        new FanvueMessageClient(providerRequest),
+        allowAllActionPolicy,
+      );
+      const sendInput = {
+        workspaceId,
+        accountId,
+        fanUuid,
+        clientActionId: randomUUID(),
+        mediaUuids: [mediaUuid],
+        price: 300,
+        mediaPreviewUuid: mediaUuid,
+        actor: { type: 'user' as const, id: userId },
+      };
+      await expect(
+        accountBackedSend.sendMessage({ ...sendInput, workspaceId: otherWorkspaceId }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
+      expect(providerRequest).not.toHaveBeenCalled();
+      await expect(accountBackedSend.sendMessage(sendInput)).resolves.toEqual({
+        state: 'confirmed',
+        messageUuid,
+      });
+      await expect(accountBackedSend.sendMessage(sendInput)).resolves.toEqual({
+        state: 'confirmed',
+        messageUuid,
+      });
+      await connectProvider(
+        database,
+        keys,
+        {
+          discoverAccounts: () =>
+            Promise.resolve([{ providerAccountId: siblingCreatorId, displayName: 'Sibling' }]),
+        },
+        {
+          workspaceId,
+          userId,
+          provider: 'fanvue',
+          externalSubjectId: siblingCreatorId,
+          accessToken: JSON.stringify({
+            ...token,
+            access_token: 'sibling',
+            scope: sendScopes.join(' '),
+          }),
+          scopes: sendScopes,
+          accessExpiresAt: new Date(Date.now() + 3_600_000),
+          requestId: randomUUID(),
+        },
+      );
+      await expect(
+        accountBackedSend.sendMessage({
+          ...sendInput,
+          accountId: siblingAccountId,
+          clientActionId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(
+        providerRequest.mock.calls.filter((call) => {
+          const url = call[0];
+          const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+          return path.endsWith('/message');
+        }),
+      ).toHaveLength(1);
+      providerRequest.mockImplementation(() =>
+        Promise.resolve(
+          Response.json({ data: [], pagination: { page: 1, size: 0, hasMore: false } }),
+        ),
+      );
       await pool.query(
         "UPDATE provider_connections SET status='reauth_required', last_error_code='refresh_pending' WHERE workspace_id=$1 AND external_subject_id=$2",
         [workspaceId, siblingCreatorId],

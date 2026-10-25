@@ -25,7 +25,10 @@ interface UploadPartInput {
   accessToken: string;
 }
 
-async function readExactPart(stream: NodeJS.ReadableStream, byteLength: number): Promise<Buffer> {
+export async function readExactPart(
+  stream: NodeJS.ReadableStream,
+  byteLength: number,
+): Promise<Buffer> {
   const part = Buffer.allocUnsafe(byteLength);
   let total = 0;
   try {

@@ -21,6 +21,7 @@ import {
 import { initializeFanvueDmUpload } from '../src/modules/providers/fanvue-dm-upload-init.service.js';
 import { reserveFanvueDmUploadPart } from '../src/modules/providers/fanvue-dm-upload-part-intent.repository.js';
 import { recordFanvueDmPartReceipt } from '../src/modules/providers/fanvue-dm-upload-part-receipt.repository.js';
+import { uploadFanvueDmPart } from '../src/modules/providers/fanvue-dm-upload-part.service.js';
 import {
   loadFanvueDmUploadSession,
   openFanvueDmUploadRange,
@@ -166,7 +167,14 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         maxParts: 256,
         totalParts: 1,
       });
-      const client = { createSession } as unknown as FanvueMediaUploadClient;
+      const signParts = vi
+        .fn()
+        .mockResolvedValue({
+          partSize: 12,
+          parts: [{ partNumber: 1, url: 'https://upload.example/one' }],
+        });
+      const putPart = vi.fn().mockResolvedValue('confirmed-etag');
+      const client = { createSession, signParts, putPart } as unknown as FanvueMediaUploadClient;
       const keys = {
         currentVersion: () => 'v1',
         getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
@@ -293,6 +301,47 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         session: { parts: [{ PartNumber: 1, ETag: 'etag-confirmed' }] },
       });
 
+      const putMediaId = randomUUID();
+      await pool.query(
+        `INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+         VALUES ($1, $2, 'dm-put', 'dm-put-hash', 'image/png', 12, 'ready')`,
+        [putMediaId, workspaceId],
+      );
+      const putKey = { ...key, mediaId: putMediaId };
+      expect(await bindFanvueDmAttachment(db, putKey)).toBe(true);
+      createSession.mockResolvedValueOnce({
+        mediaUuid: randomUUID(),
+        uploadId: 'upload-two',
+        partSize: 12,
+        maxParts: 256,
+        totalParts: 1,
+      });
+      await initializeFanvueDmUpload(db, client, keys, {
+        ...putKey,
+        accessToken: 'fixture-token',
+      });
+      const putStorage = {
+        openVerifiedRange: vi.fn().mockResolvedValue(Readable.from([Buffer.from('123456789012')])),
+      } as unknown as MediaStorage;
+      putPart.mockImplementationOnce(async () => {
+        const pending = await pool.query<{ state: string }>(
+          'SELECT state FROM fanvue_dm_attachments WHERE media_id=$1',
+          [putMediaId],
+        );
+        expect(pending.rows[0]?.state).toBe('unknown');
+        return 'confirmed-etag';
+      });
+      await uploadFanvueDmPart(db, putStorage, client, keys, {
+        ...putKey,
+        partNumber: 1,
+        accessToken: 'fixture-token',
+      });
+      expect(signParts).toHaveBeenCalledWith('fixture-token', 'upload-two', 1, 1);
+      expect(putPart).toHaveBeenCalledTimes(1);
+      await expect(loadFanvueDmUploadSession(db, keys, putKey)).resolves.toMatchObject({
+        session: { parts: [{ PartNumber: 1, ETag: 'confirmed-etag' }] },
+      });
+
       const unknownMediaId = randomUUID();
       await pool.query(
         `INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
@@ -314,7 +363,7 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
           accessToken: 'fixture-token',
         }),
       ).rejects.toThrow('not ready');
-      expect(createSession).toHaveBeenCalledTimes(2);
+      expect(createSession).toHaveBeenCalledTimes(3);
       const unknown = await pool.query<{ state: string }>(
         'SELECT state FROM fanvue_dm_attachments WHERE media_id=$1',
         [unknownMediaId],

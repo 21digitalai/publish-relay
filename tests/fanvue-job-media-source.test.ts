@@ -59,6 +59,38 @@ describe('Fanvue job-owned verified media range', () => {
     expect(mocks.transaction).toHaveBeenCalledWith(expect.anything(), input, expect.any(Function));
   });
 
+  it('bounds a multipart PUT to the exact requested part and rejects invalid ends', async () => {
+    mocks.transaction.mockResolvedValue({
+      storageKey: 'owned/media',
+      sha256: 'hash',
+      byteSize: 13,
+      mimeType: 'video/mp4',
+    });
+    const stream = Readable.from(['ghi']);
+    const openVerifiedRange = vi.fn().mockResolvedValue(stream);
+    await expect(
+      openFanvueJobMediaRange({} as never, { openVerifiedRange } as never, {
+        ...input,
+        end: 8,
+      }),
+    ).resolves.toMatchObject({ stream });
+    expect(openVerifiedRange).toHaveBeenCalledExactlyOnceWith({
+      storageKey: 'owned/media',
+      sha256: 'hash',
+      byteSize: 13,
+      start: 6,
+      end: 8,
+    });
+    for (const end of [5, 13, 6.5])
+      await expect(
+        openFanvueJobMediaRange({} as never, { openVerifiedRange } as never, {
+          ...input,
+          end,
+        }),
+      ).rejects.toThrow('unavailable');
+    expect(openVerifiedRange).toHaveBeenCalledTimes(1);
+  });
+
   it('fails closed on a missing tenant/job/media row or failed hash verification', async () => {
     const openVerifiedRange = vi.fn().mockResolvedValue(null);
     mocks.transaction.mockResolvedValue(null);

@@ -16,6 +16,7 @@ interface FanvueJobMediaInput {
   mediaId: string;
   leaseOwner: string;
   start: number;
+  end?: number;
   now?: Date;
 }
 
@@ -81,7 +82,9 @@ export async function openFanvueJobMediaRange(
     !source ||
     !Number.isSafeInteger(input.start) ||
     input.start < 0 ||
-    input.start >= source.byteSize
+    input.start >= source.byteSize ||
+    (input.end !== undefined &&
+      (!Number.isSafeInteger(input.end) || input.end < input.start || input.end >= source.byteSize))
   )
     throw new Error('Fanvue job media is unavailable');
   const stream = await storage.openVerifiedRange({
@@ -89,7 +92,7 @@ export async function openFanvueJobMediaRange(
     sha256: source.sha256,
     byteSize: source.byteSize,
     start: input.start,
-    end: source.byteSize - 1,
+    end: input.end ?? source.byteSize - 1,
   });
   if (!stream) throw new Error('Fanvue job media failed verification');
   return { stream, byteSize: source.byteSize, mimeType: source.mimeType };

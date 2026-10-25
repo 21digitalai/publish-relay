@@ -25,6 +25,31 @@ export class FanvueMessageClient {
     private readonly timeoutMs = 15_000,
   ) {}
 
+  /** A confirmed create returns no chat ID in Fanvue's current contract. Never infer a message send. */
+  async createChat(accessToken: string, fanUuid: string): Promise<void> {
+    if (!accessToken) throw new Error('Fanvue access token is required');
+    const userUuid = z.uuid().parse(fanUuid);
+    let response: Response;
+    try {
+      response = await this.request('https://api.fanvue.com/chats', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Fanvue-API-Version': '2025-06-26',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userUuid }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch {
+      throw new FanvueMessageOutcomeUnknownError();
+    }
+    if (response.status >= 500) throw new FanvueMessageOutcomeUnknownError();
+    if (!response.ok) throw new FanvueRequestError(response.status);
+    if (response.status !== 201) throw new FanvueMessageOutcomeUnknownError();
+  }
+
   async sendMessage(accessToken: string, fanUuid: string, input: FanvueMessageInput) {
     if (!accessToken) throw new Error('Fanvue access token is required');
     const id = z.uuid().parse(fanUuid);

@@ -12,7 +12,10 @@ import {
   postValidationRequestSchema,
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
-import { fanvueMessageRequestSchema } from '../providers/fanvue-message.routes.js';
+import {
+  fanvueCreateChatRequestSchema,
+  fanvueMessageRequestSchema,
+} from '../providers/fanvue-message.routes.js';
 import { fanvueDmStageRequestSchema } from '../providers/fanvue-dm-stage.routes.js';
 import { fanvueCommentRequestSchema } from '../providers/fanvue-comment.routes.js';
 import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
@@ -129,6 +132,11 @@ const externalDraftSchema = z.object({
 });
 const fanvueMessageResultSchema = z.union([
   z.object({ state: z.literal('confirmed'), messageUuid: z.uuid() }),
+  z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
+  z.object({ state: z.literal('unknown') }),
+]);
+const fanvueCreateChatResultSchema = z.union([
+  z.object({ state: z.literal('confirmed'), fanUuid: z.uuid() }),
   z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
   z.object({ state: z.literal('unknown') }),
 ]);
@@ -404,6 +412,44 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
             '429': { description: 'Mutation rate limit exceeded' },
             '502': { description: 'Provider preflight failed' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/chats': {
+        post: {
+          operationId: 'createFanvueChat',
+          description:
+            'Create a one-to-one chat with the selected fan; this does not send a message. Reuse the same clientActionId after uncertainty and never blindly retry the provider mutation.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(fanvueCreateChatRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Chat created',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(fanvueCreateChatResultSchema)),
+                },
+              },
+            },
+            '202': { description: 'Provider outcome unknown; no automatic retry' },
+            '400': { description: 'Invalid request or fan not contactable' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing send capability, provider grant or policy denied' },
+            '409': { description: 'Account or action unavailable' },
+            '429': { description: 'Mutation rate limit exceeded' },
           },
         },
       },

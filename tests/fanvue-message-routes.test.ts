@@ -29,21 +29,26 @@ const headers = {
 
 function fixture(allowed = true) {
   const sendMessage = vi.fn().mockResolvedValue({ state: 'confirmed', messageUuid });
+  const createChat = vi.fn().mockResolvedValue({ state: 'confirmed', fanUuid });
   const requireCapability = vi.fn().mockImplementation(() => {
     if (!allowed) throw new ApiKeyAuthorizationError('missing capability');
   });
   const apiKeys = {
-    authenticate: vi.fn().mockResolvedValue({
-      id: actorId,
-      workspaceId,
-      capabilities: allowed ? ['fanvue:chats:send'] : ['fanvue:chats:read'],
-    }),
+    authenticate: vi.fn().mockImplementation((requestedWorkspace: string) =>
+      requestedWorkspace === workspaceId
+        ? Promise.resolve({
+            id: actorId,
+            workspaceId,
+            capabilities: allowed ? ['fanvue:chats:send'] : ['fanvue:chats:read'],
+          })
+        : Promise.resolve(null),
+    ),
     requireCapability,
   } as unknown as ApiKeyService;
   const application = Fastify();
   registerFanvueMessageRoutes(
     application,
-    { sendMessage } as unknown as FanvueMessageService,
+    { sendMessage, createChat } as unknown as FanvueMessageService,
     apiKeys,
     new ApiRateLimiter({
       workspace: 100,
@@ -53,8 +58,68 @@ function fixture(allowed = true) {
       windowMs: 60_000,
     }),
   );
-  return { application, sendMessage, requireCapability };
+  return { application, sendMessage, createChat, requireCapability };
 }
+
+describe('Fanvue selected-fan chat creation route', () => {
+  const chatUrl = `/api/v1/fanvue/accounts/${accountId}/chats`;
+  const payload = { fanUuid, clientActionId };
+
+  it('binds account, fan and actor without sending a message', async () => {
+    const context = fixture();
+    const response = await context.application.inject({
+      method: 'POST',
+      url: chatUrl,
+      headers,
+      payload,
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ data: { state: 'confirmed', fanUuid } });
+    expect(context.createChat).toHaveBeenCalledWith({
+      workspaceId,
+      accountId,
+      ...payload,
+      actor: { type: 'api-key', id: actorId },
+    });
+    expect(context.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('denies read-only keys and maps contactability and uncertain outcomes', async () => {
+    const denied = fixture(false);
+    expect(
+      (await denied.application.inject({ method: 'POST', url: chatUrl, headers, payload }))
+        .statusCode,
+    ).toBe(403);
+    expect(denied.createChat).not.toHaveBeenCalled();
+    const context = fixture();
+    context.createChat.mockResolvedValueOnce({ state: 'failed', failureStatus: 400 });
+    const contactability = await context.application.inject({
+      method: 'POST',
+      url: chatUrl,
+      headers,
+      payload,
+    });
+    expect(contactability.statusCode).toBe(400);
+    expect(contactability.json()).toMatchObject({ error: { code: 'fanvue_chat_rejected' } });
+    context.createChat.mockResolvedValueOnce({ state: 'unknown' });
+    expect(
+      (await context.application.inject({ method: 'POST', url: chatUrl, headers, payload }))
+        .statusCode,
+    ).toBe(202);
+  });
+
+  it('rejects a different workspace header before account command', async () => {
+    const context = fixture();
+    const response = await context.application.inject({
+      method: 'POST',
+      url: chatUrl,
+      headers: { ...headers, 'x-publish-relay-workspace': '00000000-0000-4000-8000-000000000999' },
+      payload,
+    });
+    expect(response.statusCode).toBe(401);
+    expect(context.createChat).not.toHaveBeenCalled();
+  });
+});
 
 describe('Fanvue account-scoped machine text send', () => {
   it('requires a distinct send scope and derives actor/workspace from the credential', async () => {

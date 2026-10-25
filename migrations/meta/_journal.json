@@ -617,6 +617,20 @@
       "when": 1792940000000,
       "tag": "0087_fanvue_dm_processing",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792945000000,
+      "tag": "0088_fanvue_agent_guidance",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792950000000,
+      "tag": "0089_fanvue_chat_create_intent",
+      "breakpoints": true
     }
   ]
 }

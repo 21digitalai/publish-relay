@@ -16,6 +16,11 @@ import {
 import { FanvueReadUnavailableError } from './fanvue-read.service.js';
 
 const params = z.strictObject({ accountId: z.uuid(), fanUuid: z.uuid() });
+const chatParams = z.strictObject({ accountId: z.uuid() });
+export const fanvueCreateChatRequestSchema = z.strictObject({
+  fanUuid: z.uuid(),
+  clientActionId: z.uuid(),
+});
 export const fanvueMessageRequestSchema = z.strictObject({
   clientActionId: z.uuid(),
   text: z.string().min(1).max(5000).optional(),
@@ -33,6 +38,58 @@ export function registerFanvueMessageRoutes(
   rateLimiter: ApiRateLimiter,
   delegatedAuthorization?: DelegatedAuthorizationService,
 ): void {
+  application.post('/api/v1/fanvue/accounts/:accountId/chats', async (request, reply) => {
+    void reply.header('Cache-Control', 'no-store');
+    try {
+      const principal = await authorizeMachineRequest(
+        request,
+        apiKeys,
+        delegatedAuthorization,
+        'fanvue:chats:send',
+      );
+      if (!principal)
+        return await reply
+          .code(401)
+          .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      const path = chatParams.parse(request.params);
+      const payload = fanvueCreateChatRequestSchema.parse(request.body);
+      const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
+      if (!decision.allowed) {
+        void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);
+        return await reply
+          .code(429)
+          .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+      }
+      const result = await service.createChat({
+        workspaceId: principal.workspaceId,
+        accountId: path.accountId,
+        fanUuid: payload.fanUuid,
+        clientActionId: payload.clientActionId,
+        actor: { type: principal.kind, id: principal.actorId },
+      });
+      if (result.state === 'failed' && result.failureStatus === 400)
+        return await reply
+          .code(400)
+          .send(
+            errorEnvelope(
+              'fanvue_chat_rejected',
+              'Fanvue rejected chat creation; this fan may not be contactable',
+              request.id,
+            ),
+          );
+      const status =
+        result.state === 'confirmed'
+          ? 201
+          : result.state === 'unknown'
+            ? 202
+            : result.failureStatus === 403
+              ? 403
+              : 409;
+      return await reply.code(status).send(successEnvelope(result, request.id));
+    } catch (error) {
+      return sendMessageError(error, request, reply);
+    }
+  });
   application.post(
     '/api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages',
     async (request, reply) => {

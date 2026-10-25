@@ -34,6 +34,7 @@ const mediaUuid = '00000000-0000-4000-8000-000000000008';
 const localMediaId = '00000000-0000-4000-8000-000000000009';
 const events: string[] = [];
 const reads = {
+  getChatCreateToken: vi.fn(() => Promise.resolve('token')),
   getExistingChatForMessage: vi.fn(() => {
     events.push('preflight');
     return Promise.resolve({ accessToken: 'token' });
@@ -41,6 +42,10 @@ const reads = {
   getMediaStatus: vi.fn(() => Promise.resolve({ uuid: mediaUuid, status: 'ready' })),
 };
 const client = {
+  createChat: vi.fn(() => {
+    events.push('create');
+    return Promise.resolve();
+  }),
   sendMessage: vi.fn(() => {
     events.push('send');
     return Promise.resolve({ messageUuid });
@@ -60,6 +65,60 @@ beforeEach(() => {
     return Promise.resolve();
   });
   readyMedia.get.mockResolvedValue(new Map([[localMediaId, mediaUuid]]));
+});
+
+describe('Fanvue selected-fan chat creation', () => {
+  const selected = {
+    workspaceId: input.workspaceId,
+    accountId: input.accountId,
+    fanUuid: input.fanUuid,
+    clientActionId: input.clientActionId,
+    actor: input.actor,
+  };
+
+  it('reserves before one provider create and never sends a message', async () => {
+    await expect(service.createChat(selected)).resolves.toEqual({
+      state: 'confirmed',
+      fanUuid: input.fanUuid,
+    });
+    expect(events).toEqual(['reserve', 'create', 'settle']);
+    expect(ledger.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actionKind: 'chat_create', targetUuid: input.fanUuid }),
+    );
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not replay an unknown provider outcome or a conflicting action ID', async () => {
+    ledger.reserve.mockResolvedValueOnce({
+      kind: 'existing',
+      state: 'unknown',
+      providerObjectUuid: null,
+      failureStatus: null,
+    });
+    await expect(service.createChat(selected)).resolves.toEqual({ state: 'unknown' });
+    ledger.reserve.mockResolvedValueOnce({ kind: 'conflict' });
+    await expect(service.createChat(selected)).rejects.toThrow('conflicts');
+    expect(client.createChat).not.toHaveBeenCalled();
+  });
+
+  it('does not reserve or create when selected account permission is denied', async () => {
+    reads.getChatCreateToken.mockRejectedValueOnce(new Error('selected account unavailable'));
+    await expect(service.createChat(selected)).rejects.toThrow('selected account unavailable');
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(client.createChat).not.toHaveBeenCalled();
+  });
+
+  it('preserves contactability denial and transport uncertainty', async () => {
+    client.createChat.mockRejectedValueOnce(new FanvueRequestError(400));
+    await expect(service.createChat(selected)).resolves.toEqual({
+      state: 'failed',
+      failureStatus: 400,
+    });
+    client.createChat.mockRejectedValueOnce(new Error('timeout'));
+    await expect(service.createChat(selected)).resolves.toEqual({ state: 'unknown' });
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('Fanvue existing-chat text send command', () => {

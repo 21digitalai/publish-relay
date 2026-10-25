@@ -59,6 +59,13 @@ const messageCommand = textMessage
     )
       context.addIssue({ code: 'custom', message: 'Preview must be attached to priced media' });
   });
+const createChatCommand = textMessage.pick({
+  workspaceId: true,
+  accountId: true,
+  fanUuid: true,
+  clientActionId: true,
+  actor: true,
+});
 
 export type FanvueTextMessageResult =
   | { state: 'confirmed'; messageUuid: string }
@@ -95,6 +102,65 @@ export class FanvueMessageService {
     private readonly client: FanvueMessageClient,
     private readonly policy: ActionPolicy,
   ) {}
+
+  async createChat(
+    input: z.input<typeof createChatCommand>,
+  ): Promise<
+    | { state: 'confirmed'; fanUuid: string }
+    | { state: 'failed'; failureStatus: number }
+    | { state: 'unknown' }
+  > {
+    const command = createChatCommand.parse(input);
+    const accessToken = await this.reads.getChatCreateToken(command);
+    await withTenantTransaction(this.database, command, (transaction) =>
+      enforceWorkspaceAction(transaction, this.policy, {
+        workspaceId: command.workspaceId,
+        actor: command.actor,
+        action: 'engagement.send',
+        request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
+        requestedProviderAccountIds: [command.accountId],
+      }),
+    );
+    const intent = {
+      workspaceId: command.workspaceId,
+      accountId: command.accountId,
+      clientActionId: command.clientActionId,
+      actionKind: 'chat_create' as const,
+      targetUuid: command.fanUuid,
+      requestFingerprint: createHash('sha256')
+        .update(JSON.stringify({ operation: 'chat_create', fanUuid: command.fanUuid }))
+        .digest('hex'),
+    };
+    const reservation = await reserveFanvueAction(this.database, intent);
+    if (reservation.kind !== 'new') {
+      if (reservation.kind === 'conflict') throw new FanvueMessageActionConflictError();
+      if (reservation.state === 'confirmed' && reservation.providerObjectUuid)
+        return { state: 'confirmed', fanUuid: reservation.providerObjectUuid };
+      if (reservation.state === 'failed' && reservation.failureStatus)
+        return { state: 'failed', failureStatus: reservation.failureStatus };
+      return { state: 'unknown' };
+    }
+    let result:
+      | { state: 'confirmed'; providerObjectUuid: string }
+      | { state: 'failed'; failureStatus: number }
+      | { state: 'unknown' };
+    try {
+      await this.client.createChat(accessToken, command.fanUuid);
+      result = { state: 'confirmed', providerObjectUuid: command.fanUuid };
+    } catch (error) {
+      result =
+        error instanceof FanvueRequestError && error.status >= 400 && error.status < 500
+          ? { state: 'failed', failureStatus: error.status }
+          : { state: 'unknown' };
+    }
+    await settleFanvueAction(this.database, {
+      ...intent,
+      reservationId: reservation.id,
+      result,
+    });
+    if (result.state === 'confirmed') return { state: 'confirmed', fanUuid: command.fanUuid };
+    return result;
+  }
 
   async sendText(input: z.input<typeof textMessage>): Promise<FanvueTextMessageResult> {
     return this.sendMessage(textMessage.parse(input));

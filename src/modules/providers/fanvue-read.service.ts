@@ -77,6 +77,11 @@ export class FanvueReadService {
     return { accessToken: token };
   }
 
+  /** Chat creation is scoped to the selected creator and its optional send grant. */
+  async getChatCreateToken(input: { workspaceId: string; accountId: string }) {
+    return this.accessToken(input, 'chat', ['write:chat']);
+  }
+
   async listMedia(input: { workspaceId: string; accountId: string; page?: number; size?: number }) {
     const token = await this.accessToken(input, 'media');
     return this.readClient.listMedia(token, input);

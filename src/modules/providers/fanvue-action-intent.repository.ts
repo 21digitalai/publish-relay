@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { fanvueActionIntents } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
-export type FanvueActionKind = 'message' | 'comment';
+export type FanvueActionKind = 'message' | 'comment' | 'chat_create';
 export type FanvueActionState = 'reserved' | 'confirmed' | 'failed' | 'unknown';
 
 export interface FanvueActionInput {

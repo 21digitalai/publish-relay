@@ -88,6 +88,9 @@ describe.skipIf(!connectionString)('Fanvue read and DM account isolation on Post
       await expect(
         service.listChats({ workspaceId: otherWorkspaceId, accountId }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });
+      await expect(
+        service.getChatCreateToken({ workspaceId: otherWorkspaceId, accountId }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
       const sendMessage = vi.fn();
       const messageService = new FanvueMessageService(
         database,
@@ -106,6 +109,15 @@ describe.skipIf(!connectionString)('Fanvue read and DM account isolation on Post
         }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });
       expect(sendMessage).not.toHaveBeenCalled();
+      await expect(
+        messageService.createChat({
+          workspaceId: otherWorkspaceId,
+          accountId,
+          fanUuid: randomUUID(),
+          clientActionId: randomUUID(),
+          actor: { type: 'user', id: userId },
+        }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
       await expect(
         service.listChats({ workspaceId, accountId: randomUUID() }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });

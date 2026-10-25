@@ -116,6 +116,33 @@ describe.skipIf(!connectionString)('Fanvue durable action intent on PostgreSQL',
         state: 'confirmed',
         providerObjectUuid,
       });
+      const chatCreate = {
+        ...input,
+        clientActionId: randomUUID(),
+        actionKind: 'chat_create' as const,
+      };
+      const chatReservation = await reserveFanvueAction(database, chatCreate);
+      expect(chatReservation.kind).toBe('new');
+      if (chatReservation.kind !== 'new') throw new Error('Chat creation was not reserved');
+      expect(await reserveFanvueAction(database, chatCreate)).toMatchObject({
+        kind: 'existing',
+        state: 'reserved',
+      });
+      expect(await reserveFanvueAction(database, { ...chatCreate, actionKind: 'message' })).toEqual(
+        { kind: 'conflict' },
+      );
+      await settleFanvueAction(database, {
+        workspaceId,
+        accountId,
+        clientActionId: chatCreate.clientActionId,
+        reservationId: chatReservation.id,
+        result: { state: 'confirmed', providerObjectUuid: chatCreate.targetUuid },
+      });
+      expect(await reserveFanvueAction(database, chatCreate)).toMatchObject({
+        kind: 'existing',
+        state: 'confirmed',
+        providerObjectUuid: chatCreate.targetUuid,
+      });
       const deniedAction = { ...input, clientActionId: randomUUID() };
       const deniedReservation = await reserveFanvueAction(database, deniedAction);
       if (deniedReservation.kind !== 'new') throw new Error('Denial reservation was not new');

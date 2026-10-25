@@ -18,6 +18,25 @@ function fixture(status = 201, body: unknown = { messageUuid }) {
 }
 
 describe('Fanvue one-to-one message transport', () => {
+  it('creates only the selected fan chat, with no message payload', async () => {
+    const { request, client } = fixture(201, { message: 'Chat created successfully' });
+    await expect(client.createChat('token', fanUuid)).resolves.toBeUndefined();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]?.[0]).toBe('https://api.fanvue.com/chats');
+    expect(JSON.parse(request.mock.calls[0]?.[1]?.body as string)).toEqual({ userUuid: fanUuid });
+    expect(request.mock.calls[0]?.[1]?.method).toBe('POST');
+  });
+
+  it('classifies contactability denial and uncertain create without retrying', async () => {
+    await expect(fixture(400).client.createChat('token', fanUuid)).rejects.toMatchObject({
+      status: 400,
+    });
+    const request = vi.fn<typeof fetch>().mockRejectedValue(new Error('timeout'));
+    await expect(
+      new FanvueMessageClient(request).createChat('token', fanUuid),
+    ).rejects.toBeInstanceOf(FanvueMessageOutcomeUnknownError);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it('sends free text and priced media with an attached preview', async () => {
     const { request, client } = fixture();
     await expect(client.sendMessage('token', fanUuid, { text: 'Hello' })).resolves.toEqual({

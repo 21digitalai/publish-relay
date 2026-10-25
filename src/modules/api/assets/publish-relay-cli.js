@@ -18,6 +18,7 @@ const MUTATIONS = new Set([
   'media:upload',
   'publishes:retry',
   'fanvue-guidance:set',
+  'fanvue:create-chat',
 ]);
 const ROUTES = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
@@ -26,6 +27,11 @@ const ROUTES = {
   'fanvue-guidance:set': {
     method: 'PATCH',
     path: '/api/v1/fanvue/accounts/:id/guidance',
+    body: true,
+  },
+  'fanvue:create-chat': {
+    method: 'POST',
+    path: '/api/v1/fanvue/accounts/:id/chats',
     body: true,
   },
   'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
@@ -68,6 +74,7 @@ const ENVELOPE_OUTPUT_KEYS = [
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
+  'fanvue:create-chat': new Set([...ENVELOPE_OUTPUT_KEYS, 'fanUuid', 'failureStatus']),
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
   'destinations:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

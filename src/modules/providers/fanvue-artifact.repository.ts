@@ -41,6 +41,36 @@ export async function reserveFanvueStagingArtifact(
         )
       ON CONFLICT DO NOTHING RETURNING id
     `);
-    return result.rows[0]?.id ?? null;
+    if (result.rows[0]) return result.rows[0].id;
+    const existing = await transaction.execute<{ id: string }>(sql`
+      SELECT artifact.id
+      FROM provider_staging_artifacts artifact
+      JOIN publication_jobs job
+        ON job.workspace_id = artifact.workspace_id AND job.id = artifact.job_id
+      JOIN provider_accounts account
+        ON account.workspace_id = job.workspace_id AND account.id = job.provider_account_id
+      JOIN revision_media attached
+        ON attached.workspace_id = job.workspace_id AND attached.revision_id = job.revision_id
+      JOIN media_objects media
+        ON media.workspace_id = attached.workspace_id AND media.id = attached.media_id
+      WHERE artifact.workspace_id = ${input.workspaceId}
+        AND artifact.job_id = ${input.jobId} AND artifact.media_id = ${input.mediaId}
+        AND artifact.provider_reference = 'fanvue:multipart'
+        AND artifact.upload_phase = 'initialized'
+        AND artifact.provider_reference_credential_id IS NULL
+        AND artifact.deleted_at IS NULL AND artifact.expires_at > clock_timestamp()
+        AND job.state = 'leased' AND job.lease_owner = ${input.leaseOwner}
+        AND job.lease_expires_at > clock_timestamp()
+        AND account.destination_provider = 'fanvue'
+        AND account.availability = 'active' AND account.disconnected_at IS NULL
+        AND media.id = ${input.mediaId} AND media.state = 'ready'
+        AND media.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM publication_attempts attempt
+          WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+        )
+      LIMIT 1
+    `);
+    return existing.rows[0]?.id ?? null;
   });
 }

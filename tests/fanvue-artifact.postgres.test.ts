@@ -41,6 +41,8 @@ beforeEach(async () => {
     CREATE TABLE provider_staging_artifacts (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL, job_id uuid NOT NULL,
       media_id uuid NOT NULL, provider_reference text NOT NULL, expires_at timestamptz NOT NULL,
+      upload_phase text NOT NULL DEFAULT 'initialized', provider_reference_credential_id uuid,
+      deleted_at timestamptz,
       UNIQUE (workspace_id, job_id, media_id)
     );
   `);
@@ -68,10 +70,26 @@ afterEach(async () => postgres.close());
 
 describe('Fanvue guarded artifact insertion', () => {
   it('creates one artifact only for an eligible selected job/media', async () => {
-    expect(await reserveFanvueStagingArtifact(database, input)).toMatch(/^[0-9a-f-]{36}$/);
-    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
+    const first = await reserveFanvueStagingArtifact(database, input);
+    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await reserveFanvueStagingArtifact(database, input)).toBe(first);
     const rows = await postgres.query('SELECT id FROM provider_staging_artifacts');
     expect(rows.rows).toHaveLength(1);
+  });
+
+  it('rejects a foreign-provider or pending artifact on retry', async () => {
+    const first = await reserveFanvueStagingArtifact(database, input);
+    expect(first).not.toBeNull();
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET provider_reference='youtube:resumable' WHERE id=$1",
+      [first],
+    );
+    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET provider_reference='fanvue:multipart', upload_phase='session_pending' WHERE id=$1",
+      [first],
+    );
+    expect(await reserveFanvueStagingArtifact(database, input)).toBeNull();
   });
 
   it('leaves no artifact when the lease expires after a successful preflight', async () => {

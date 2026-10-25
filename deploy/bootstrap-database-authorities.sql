@@ -49,6 +49,9 @@ BEGIN
   IF to_regprocedure('public.list_facebook_page_exposure_targets(uuid,uuid,uuid,integer)') IS NOT NULL THEN
     GRANT EXECUTE ON FUNCTION public.list_facebook_page_exposure_targets(uuid, uuid, uuid, integer) TO publish_relay_web;
   END IF;
+  IF to_regprocedure('public.resolve_fanvue_payment_callback(text)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.resolve_fanvue_payment_callback(text) TO publish_relay_web;
+  END IF;
 END
 $functions$;
 

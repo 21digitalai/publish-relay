@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getActiveCredential } from '../src/modules/credentials/credential.repository.js';
 import { decryptCredential } from '../src/modules/credentials/envelope.js';
+import { resolveFanvuePaymentCallback } from '../src/modules/providers/fanvue-payment-callback.repository.js';
 import {
   activateFanvuePaymentSubscription,
   disableFanvuePaymentSubscription,
@@ -72,6 +73,12 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
       );
       const reserved = await reserveFanvuePaymentSubscription(database, selected);
       expect(reserved.callbackHandle).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(await resolveFanvuePaymentCallback(database, keys, reserved.callbackHandle)).toEqual({
+        state: 'probe_pending',
+      });
+      expect(
+        await resolveFanvuePaymentCallback(database, keys, `${reserved.callbackHandle}x`),
+      ).toBeNull();
       expect(await getFanvuePaymentSubscriptionForAccount(database, selected)).toMatchObject({
         id: reserved.id,
         creatorUuid,
@@ -111,6 +118,24 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
         state: 'active',
         providerSubscriptionId: 'fanvue-subscription-1',
       });
+      expect(await resolveFanvuePaymentCallback(database, keys, reserved.callbackHandle)).toEqual({
+        state: 'active',
+        subscription: {
+          workspaceId,
+          accountId,
+          creatorUuid,
+          signingSecrets: [signingSecret],
+        },
+      });
+      await pool.query("UPDATE provider_accounts SET availability='reauth_required' WHERE id=$1", [
+        accountId,
+      ]);
+      expect(
+        await resolveFanvuePaymentCallback(database, keys, reserved.callbackHandle),
+      ).toBeNull();
+      await pool.query("UPDATE provider_accounts SET availability='active' WHERE id=$1", [
+        accountId,
+      ]);
       expect(
         await getFanvuePaymentSubscriptionForAccount(database, {
           workspaceId: otherWorkspaceId,
@@ -151,6 +176,9 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
         providerSubscriptionId: 'fanvue-subscription-1',
       });
       expect(await getActiveCredential(database, workspaceId, encrypted.id)).toBeNull();
+      expect(
+        await resolveFanvuePaymentCallback(database, keys, reserved.callbackHandle),
+      ).toBeNull();
       expect(await getFanvuePaymentSubscriptionForAccount(database, selected)).toBeNull();
       expect((await reserveFanvuePaymentSubscription(database, selected)).id).not.toBe(reserved.id);
     } finally {

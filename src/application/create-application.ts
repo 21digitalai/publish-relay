@@ -61,6 +61,7 @@ import { registerTikTokDraftRoutes } from '../modules/providers/tiktok-draft.rou
 import { registerTikTokScheduleRoutes } from '../modules/providers/tiktok-schedule.routes.js';
 import { registerSnapchatStoryResolutionRoutes } from '../modules/providers/snapchat-story-resolution.routes.js';
 import { registerFanvuePaymentRoutes } from '../modules/providers/fanvue-payment.routes.js';
+import { registerFanvuePaymentWebhook } from '../modules/providers/fanvue-payment-webhook.routes.js';
 import { registerEngagementProposalRoutes } from '../modules/providers/engagement-proposal.routes.js';
 import { registerEngagementApprovalRoutes } from '../modules/providers/engagement-approval.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
@@ -380,6 +381,8 @@ function registerBrowserRoutes(
     registerSnapchatOauthRoutes(application, { auth, database, actionPolicy, ...snapchatOauth });
   if (auth && database && fanvueOauth)
     registerFanvueOauthRoutes(application, { auth, database, actionPolicy, ...fanvueOauth });
+  if (database && fanvueOauth)
+    registerFanvuePaymentWebhook(application, { database, keys: fanvueOauth.keys });
   if (auth && database && fanvueOauth)
     registerFanvueBrowserReadRoutes(
       application,

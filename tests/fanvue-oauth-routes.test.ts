@@ -285,16 +285,39 @@ describe('Fanvue OAuth HTTP boundary', () => {
     expect(completeFanvueOauthConnection).not.toHaveBeenCalled();
   });
 
-  it('consumes an invalid-scope callback and redirects without exposing provider details', async () => {
+  it('keeps provider errors distinct from cancellation for every consent kind', async () => {
     const app = application(true);
-    vi.mocked(completeFanvueOauthDenial).mockResolvedValueOnce('publishing');
+    for (const kind of ['publishing', 'chat-read', 'chat-send', 'payment'] as const) {
+      for (const error of ['invalid_scope', 'server_error'] as const) {
+        vi.mocked(completeFanvueOauthDenial).mockResolvedValueOnce(kind);
+        const response = await app.inject({
+          method: 'GET',
+          url: `/api/oauth/fanvue/callback?state=state&error=${error}&error_description=secret-detail`,
+          headers: { cookie: session },
+        });
+        const outcome = error === 'invalid_scope' ? 'app-scope' : 'provider-error';
+        expect(response.headers.location).toBe(
+          kind === 'publishing'
+            ? `/app?oauth=fanvue-${error === 'invalid_scope' ? 'scope-unavailable' : 'provider-error'}`
+            : `/app?oauth=fanvue-${kind}-${outcome}`,
+        );
+        expect(response.body).not.toContain('secret-detail');
+      }
+    }
+    expect(completeFanvueOauthConnection).not.toHaveBeenCalled();
+    expect(completeFanvueOauthDenial).toHaveBeenCalledTimes(8);
+  });
+
+  it('does not redirect an invalid or replayed provider-error state as a successful recovery', async () => {
+    const app = application(true);
+    vi.mocked(completeFanvueOauthDenial).mockResolvedValueOnce(null);
     const response = await app.inject({
       method: 'GET',
-      url: '/api/oauth/fanvue/callback?state=state&error=invalid_scope&error_description=secret-detail',
+      url: '/api/oauth/fanvue/callback?state=replayed&error=invalid_scope',
       headers: { cookie: session },
     });
-    expect(response.headers.location).toBe('/app?oauth=fanvue-scope-unavailable');
-    expect(response.body).not.toContain('secret-detail');
+    expect(response.statusCode).toBe(400);
+    expect(response.headers.location).toBeUndefined();
     expect(completeFanvueOauthConnection).not.toHaveBeenCalled();
   });
 });

@@ -1446,6 +1446,12 @@ function AccountsPage() {
       'No Fanvue account was connected. Authorization was cancelled; start a new connection to try again.',
     'fanvue-scope-unavailable':
       'No Fanvue account was connected. This app is not allowed to request a required Fanvue permission. Ask the app owner to enable it before trying again.',
+    'fanvue-provider-error':
+      'No Fanvue account was connected. Fanvue could not complete authorization. Check the app settings before trying again.',
+    'fanvue-chat-read-app-scope':
+      'Fanvue message reading was not enabled. This app is not allowed to request the required permission; the selected account remains connected.',
+    'fanvue-chat-read-provider-error':
+      'Fanvue message reading was not enabled because authorization failed; the selected account remains connected.',
     'fanvue-chat-read-unavailable':
       'Fanvue message reading was not enabled. The selected account changed or was disconnected. Reconnect it, then try again.',
     'fanvue-chat-read-scope':
@@ -1454,6 +1460,10 @@ function AccountsPage() {
       'Fanvue message reading was not enabled. A different creator signed in. Switch to the selected creator account and try again.',
     'fanvue-chat-send-denied':
       'Fanvue message sending was not enabled. Authorization was cancelled; the selected account remains connected.',
+    'fanvue-chat-send-app-scope':
+      'Fanvue message sending was not enabled. This app is not allowed to request the required permission; the selected account remains connected.',
+    'fanvue-chat-send-provider-error':
+      'Fanvue message sending was not enabled because authorization failed; the selected account remains connected.',
     'fanvue-chat-send-unavailable':
       'Fanvue message sending was not enabled. The selected account changed or disconnected.',
     'fanvue-chat-send-scope':
@@ -1462,6 +1472,10 @@ function AccountsPage() {
       'Fanvue message sending was not enabled. A different creator signed in.',
     'fanvue-payment-denied':
       'Fanvue payment signals were not enabled. Authorization was cancelled; the selected account remains connected.',
+    'fanvue-payment-app-scope':
+      'Fanvue payment signals were not enabled. This app is not allowed to request the required permission; the selected account remains connected.',
+    'fanvue-payment-provider-error':
+      'Fanvue payment signals were not enabled because authorization failed; the selected account remains connected.',
     'fanvue-payment-unavailable':
       'Fanvue payment signals were not enabled. The selected account changed or disconnected.',
     'fanvue-payment-scope':

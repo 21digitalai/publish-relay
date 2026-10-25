@@ -2,7 +2,10 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createStandaloneApplication } from '../src/application/create-application.js';
+import {
+  createStandaloneApplication,
+  registerCoreApplication,
+} from '../src/application/create-application.js';
 import { registerMagicLinkRoutes } from '../src/modules/identity/magic-link.routes.js';
 import type { MagicLinkService } from '../src/modules/identity/magic-link.service.js';
 
@@ -162,6 +165,62 @@ describe('magic-link routes', () => {
         expect.stringContaining('publish_relay_csrf=csrf-token'),
       ]),
     );
+  });
+
+  it('redeems a native form when a composing host provides a string body parser', async () => {
+    vi.mocked(service.verify)
+      .mockResolvedValueOnce({
+        userId: 'user-1',
+        workspaceId: 'workspace-1',
+        role: 'owner',
+        token: 'session-token',
+        csrfToken: 'csrf-token',
+        expiresAt: new Date('2030-01-01T00:00:00Z'),
+        redirectPath: '/app',
+      })
+      .mockResolvedValueOnce(null);
+    const app = Fastify();
+    app.register(cookie);
+    app.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string' },
+      (_request, body, done) => {
+        done(null, body);
+      },
+    );
+    registerCoreApplication(app, {
+      config: {
+        NODE_ENV: 'test',
+        HOST: '127.0.0.1',
+        PORT: 3100,
+        WORKER_POLL_INTERVAL_MS: 1000,
+        PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link',
+      },
+      magicLinks: service as unknown as MagicLinkService,
+    });
+    try {
+      const payload = `token=${'t'.repeat(43)}`;
+      const first = await app.inject({
+        method: 'POST',
+        url: '/api/auth/magic-link/verify',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        payload,
+      });
+      expect(first.statusCode).toBe(302);
+      expect(first.headers.location).toBe('/app');
+      expect(first.headers['set-cookie']).toBeDefined();
+      const replay = await app.inject({
+        method: 'POST',
+        url: '/api/auth/magic-link/verify',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        payload,
+      });
+      expect(replay.headers.location).toBe('/login?magicLink=invalid');
+      expect(replay.headers['set-cookie']).toBeUndefined();
+      expect(service.verify).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
   });
 
   it('redirects invalid and replayed POST without setting cookies', async () => {

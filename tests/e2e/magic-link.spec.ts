@@ -60,6 +60,52 @@ test('first-time email opens across devices and creates a single-use session', a
   }
 });
 
+test('native Continue signs in when JavaScript is disabled', async ({ page, browser }) => {
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(`no-js-${crypto.randomUUID()}@example.test`);
+  await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
+  const url = await page
+    .getByRole('link', { name: 'Open development sign-in link' })
+    .getAttribute('href');
+  if (!url) throw new Error('Development link was not rendered');
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const noJsPage = await context.newPage();
+    await noJsPage.goto(url);
+    await expect(noJsPage.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
+    expect(await context.cookies()).toEqual([]);
+    await noJsPage.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(noJsPage).toHaveURL(/\/app|\/w\//);
+    expect(await context.cookies()).not.toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test('Continue retries after a network failure without consuming the link', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(`retry-${crypto.randomUUID()}@example.test`);
+  await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
+  const url = await page.getByRole('link', { name: 'Open development sign-in link' }).getAttribute('href');
+  if (!url) throw new Error('Development link was not rendered');
+  let interrupted = false;
+  await page.route('**/api/auth/magic-link/verify', async (route) => {
+    if (route.request().method() === 'POST' && !interrupted) {
+      interrupted = true;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto(url);
+  const continueButton = page.getByRole('button', { name: 'Continue', exact: true });
+  await continueButton.click();
+  await expect(page.getByRole('alert')).toContainText('Please try again');
+  await expect(continueButton).toBeEnabled();
+  await continueButton.click();
+  await expect(page).toHaveURL(/\/app|\/w\//);
+});
+
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 390, height: 844 },

@@ -17,6 +17,12 @@ const verifySchema = z.object({
     .regex(/^[A-Za-z0-9_-]+$/),
 });
 
+function verificationBody(body: unknown, contentType: string | undefined): unknown {
+  if (!contentType?.toLowerCase().startsWith('application/x-www-form-urlencoded')) return body;
+  if (typeof body !== 'string' || body.length > 2_048) return body;
+  return Object.fromEntries(new URLSearchParams(body));
+}
+
 function confirmationPage(token: string, path: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Continue to Publish Relay</title>
@@ -110,7 +116,9 @@ export function registerMagicLinkRoutes(
     });
     application.post(path, async (request, reply) => {
       confirmationHeaders(reply);
-      const input = verifySchema.safeParse(request.body);
+      const input = verifySchema.safeParse(
+        verificationBody(request.body, request.headers['content-type']),
+      );
       if (!input.success) return reply.redirect(invalidPath);
       const session = await magicLinks.verify({ token: input.data.token });
       if (!session) return reply.redirect('/login?magicLink=invalid');

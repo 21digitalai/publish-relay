@@ -9,6 +9,43 @@ const clientWith = (request: typeof fetch) =>
   new FacebookHttpClient({ graphVersion: 'v26.0', fetch: request });
 
 describe('Facebook Messenger read transport', () => {
+  it('loads conversation participant IDs without returning provider contact fields', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        id: 't_123',
+        participants: {
+          data: [
+            { id: '123', name: 'Page' },
+            { id: 'psid_789', email: 'hidden@example.test' },
+          ],
+        },
+      }),
+    );
+    const result = await clientWith(request).getConversationParticipantIds('t_123', 'page-token');
+    const target = request.mock.calls[0]?.[0];
+    if (!(target instanceof URL)) throw new Error('Expected Graph URL');
+    expect(target.pathname).toBe('/v26.0/t_123');
+    expect(target.searchParams.get('fields')).toBe('id,participants{id}');
+    expect(result).toEqual(['123', 'psid_789']);
+    expect(JSON.stringify(result)).not.toMatch(/hidden@example|Page/);
+  });
+
+  it('fails closed when Graph omits participants or returns a different conversation', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ id: 't_123' }))
+      .mockResolvedValueOnce(
+        Response.json({ id: 't_other', participants: { data: [{ id: '123' }, { id: 'psid_7' }] } }),
+      );
+    const client = clientWith(request);
+    await expect(client.getConversationParticipantIds('t_123', 'token')).rejects.toMatchObject({
+      evidence: { status: 502 },
+    });
+    await expect(client.getConversationParticipantIds('t_123', 'token')).rejects.toMatchObject({
+      evidence: { status: 502 },
+    });
+  });
+
   it('lists Page conversations using bounded cursor pagination, without leaking provider URLs', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({

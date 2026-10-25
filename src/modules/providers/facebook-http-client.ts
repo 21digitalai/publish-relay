@@ -32,6 +32,15 @@ const conversationSchema = z.object({
   id: conversationIdSchema,
   updated_time: graphTimestampSchema.optional(),
 });
+const conversationParticipantsSchema = z.object({
+  id: conversationIdSchema,
+  participants: z.object({
+    data: z
+      .array(z.object({ id: z.string().min(1).max(256) }))
+      .min(2)
+      .max(10),
+  }),
+});
 const conversationMessageSchema = z.object({
   id: z.string().min(1).max(256),
   message: z.string().optional(),
@@ -243,6 +252,19 @@ export class FacebookHttpClient {
       })),
       nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
+  }
+
+  /** Resolve ownership without projecting participant names or contact fields. */
+  public async getConversationParticipantIds(
+    conversationId: string,
+    accessToken: string,
+  ): Promise<string[]> {
+    const id = conversationIdSchema.parse(conversationId);
+    const body = await this.get(`/${id}`, { fields: 'id,participants{id}' }, accessToken);
+    const conversation = conversationParticipantsSchema.safeParse(body);
+    if (!conversation.success || conversation.data.id !== id)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    return conversation.data.participants.data.map((participant) => participant.id);
   }
 
   /** Transport only: caller must bind the conversation to its selected Page. */

@@ -7,7 +7,10 @@ import { authorizeRequest } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { listAccountPagePosts, listAccountPostComments } from './facebook-comments-read.service.js';
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
-import { listAccountPageConversations } from './facebook-messenger-read.service.js';
+import {
+  listAccountConversationMessages,
+  listAccountPageConversations,
+} from './facebook-messenger-read.service.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 
 const paramsSchema = z.object({
@@ -15,6 +18,11 @@ const paramsSchema = z.object({
   postId: z
     .string()
     .regex(/^[0-9]+(?:_[0-9]+)*$/)
+    .optional(),
+  conversationId: z
+    .string()
+    .regex(/^[A-Za-z0-9_]+$/)
+    .max(256)
     .optional(),
 });
 const querySchema = z.object({
@@ -31,6 +39,7 @@ export function registerFacebookPageBrowserReadRoutes(
     { path: 'posts', kind: 'posts' as const },
     { path: 'posts/:postId/comments', kind: 'comments' as const },
     { path: 'conversations', kind: 'conversations' as const },
+    { path: 'conversations/:conversationId/messages', kind: 'messages' as const },
   ]) {
     application.get(
       `/api/provider-accounts/:accountId/facebook-${endpoint.path}`,
@@ -43,7 +52,8 @@ export function registerFacebookPageBrowserReadRoutes(
         if (
           !params.success ||
           !query.success ||
-          (endpoint.kind === 'comments' && !params.data.postId)
+          (endpoint.kind === 'comments' && !params.data.postId) ||
+          (endpoint.kind === 'messages' && !params.data.conversationId)
         )
           return reply.code(400).send({ data: null, error: 'Invalid Page read query' });
         void reply.header('Cache-Control', 'no-store');
@@ -62,7 +72,12 @@ export function registerFacebookPageBrowserReadRoutes(
                     ...input,
                     postId: params.data.postId ?? '',
                   })
-                : await listAccountPageConversations(runtime, input);
+                : endpoint.kind === 'conversations'
+                  ? await listAccountPageConversations(runtime, input)
+                  : await listAccountConversationMessages(runtime, {
+                      ...input,
+                      conversationId: params.data.conversationId ?? '',
+                    });
           return { data, error: null };
         } catch (error) {
           if (error instanceof PageReadUnavailableError)

@@ -26,10 +26,11 @@ Page conversations and conversation messages. It projects only stable
 conversation/message IDs, timestamps, text and sender Page-scoped ID; provider
 `paging.next`, raw profiles and token material are discarded; a cursor is
 exposed only when `paging.next` is present. No read-receipt
-mutation is issued. These are not account-scoped Relay tools yet: the caller
-must prove the selected Page owns each conversation, its optional DMs module
-and provider scopes/tasks are verified, and the machine/browser principal has
-exact Page-local read authority. Meta documentation does not offer time-based
+mutation is issued. The selected-conversation service checks Graph's exact
+conversation ID and participant IDs, requires exactly the selected Page and one
+Page-scoped fan, then retrieves messages; no participant names or contact fields
+leave the transport. The optional DMs module, provider scopes/tasks, and exact
+Page-local machine/browser authority remain separate guards. Meta documentation does not offer time-based
 pagination for Page conversations. A controlled Graph-version fixture and
 App Review/Page-task evidence remain required before live inbox claims.
 `facebook-messenger-read.service.ts` is the account-scoped Page-conversation
@@ -39,8 +40,8 @@ active Facebook Pages connection with pages_show_list plus all three Messenger s
 selected Page's MESSAGING task; then decrypts only that Page's credential and
 checks its embedded Page ID before calling the canonical Graph transport. The
 module's grant remains `unknown` by default, so this service fails closed
-until separate controlled provider evidence is recorded. It does not expose a
-browser/machine route or prove production inbox access.
+until separate controlled provider evidence is recorded. It does not prove
+production inbox access.
 The shared account/credential verification now lives in
 `facebook-page-read-context.service.ts`; `facebook-comments-read.service.ts`
 uses it for Page-owned post listing with the separate Comments module and
@@ -62,8 +63,11 @@ Graph paging URLs, and raw provider bodies never reach callers. Browser GETs
 under `/api/provider-accounts/:accountId/facebook-*` reuse the same selected
 Page query services, require authenticated `content:read`, and send `no-store`
 responses; a missing/foreign/unavailable Page is a generic 404. They do not
-grant machine principals new rights. Conversation-message reads and controlled
-provider proof remain separate work; current unknown grant state denies all
+grant machine principals new rights. Selected conversation-message endpoints
+use the same `dms:read` or browser `content:read` guards and return only fan
+Page-scoped ID, bounded message summaries and cursor after Page-participant
+ownership proof. Controlled provider proof remains separate work; current
+unknown grant state denies all
 read endpoints.
 `/api/v1/destinations/:accountId/facebook-posts/:postId/comments` additionally
 requires `pages_read_user_content` on the selected Page connection and a fresh

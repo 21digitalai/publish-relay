@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   posts: vi.fn(),
   comments: vi.fn(),
   conversations: vi.fn(),
+  messages: vi.fn(),
 }));
 vi.mock('../src/modules/identity/machine-auth.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -21,6 +22,7 @@ vi.mock('../src/modules/providers/facebook-comments-read.service.js', () => ({
 }));
 vi.mock('../src/modules/providers/facebook-messenger-read.service.js', () => ({
   listAccountPageConversations: mocks.conversations,
+  listAccountConversationMessages: mocks.messages,
 }));
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
@@ -151,6 +153,37 @@ describe('Facebook Page read machine API', () => {
         limit: 5,
       });
       expect((await app.inject(`${path}/facebook-posts/foreign/comments`)).statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('routes selected-conversation messages only through dms:read', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: 'key' });
+      mocks.messages.mockResolvedValue({ participantId: 'psid_7', messages: [], nextCursor: null });
+      const response = await app.inject(`${path}/facebook-conversations/t_123/messages?limit=5`);
+      expect(response.statusCode).toBe(200);
+      expect(mocks.authorize).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        undefined,
+        expect.anything(),
+        accountId,
+        'dms:read',
+      );
+      expect(mocks.messages).toHaveBeenCalledWith(expect.anything(), {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        limit: 5,
+      });
+      expect(JSON.stringify(response.json())).not.toMatch(/token|credential|email/);
+      expect(Buffer.byteLength(response.body)).toBeLessThan(512);
+      expect(
+        (await app.inject(`${path}/facebook-conversations/foreign-id/messages`)).statusCode,
+      ).toBe(400);
     } finally {
       await app.close();
     }

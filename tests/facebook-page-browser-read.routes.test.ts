@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   posts: vi.fn(),
   comments: vi.fn(),
   conversations: vi.fn(),
+  messages: vi.fn(),
 }));
 vi.mock('../src/modules/identity/auth.routes.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -20,6 +21,7 @@ vi.mock('../src/modules/providers/facebook-comments-read.service.js', () => ({
 }));
 vi.mock('../src/modules/providers/facebook-messenger-read.service.js', () => ({
   listAccountPageConversations: mocks.conversations,
+  listAccountConversationMessages: mocks.messages,
 }));
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
@@ -84,6 +86,24 @@ describe('Facebook browser Page reads', () => {
       const response = await app.inject(`${path}/facebook-conversations`);
       expect(response.statusCode).toBe(404);
       expect(response.body).not.toMatch(/token|credential|providerGrant/);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('binds browser message reads to the selected account without caching', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId });
+      mocks.messages.mockResolvedValue({ participantId: 'psid_7', messages: [], nextCursor: null });
+      const response = await app.inject(`${path}/facebook-conversations/t_123/messages`);
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(mocks.messages).toHaveBeenCalledWith(expect.anything(), {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+      });
     } finally {
       await app.close();
     }

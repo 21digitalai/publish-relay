@@ -13,7 +13,10 @@ import {
 } from '../identity/machine-auth.js';
 import { listAccountPagePosts, listAccountPostComments } from './facebook-comments-read.service.js';
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
-import { listAccountPageConversations } from './facebook-messenger-read.service.js';
+import {
+  listAccountConversationMessages,
+  listAccountPageConversations,
+} from './facebook-messenger-read.service.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 
 const paramsSchema = z.object({
@@ -21,6 +24,11 @@ const paramsSchema = z.object({
   postId: z
     .string()
     .regex(/^[0-9]+(?:_[0-9]+)*$/)
+    .optional(),
+  conversationId: z
+    .string()
+    .regex(/^[A-Za-z0-9_]+$/)
+    .max(256)
     .optional(),
 });
 const querySchema = z.object({
@@ -43,6 +51,11 @@ export function registerFacebookPageReadRoutes(
       kind: 'comments' as const,
     },
     { path: 'conversations', capability: 'dms:read' as const, kind: 'conversations' as const },
+    {
+      path: 'conversations/:conversationId/messages',
+      capability: 'dms:read' as const,
+      kind: 'messages' as const,
+    },
   ]) {
     application.get(
       `/api/v1/destinations/:accountId/facebook-${endpoint.path}`,
@@ -58,6 +71,10 @@ export function registerFacebookPageReadRoutes(
           return reply
             .code(400)
             .send(errorEnvelope('invalid_request', 'Invalid Page post', request.id));
+        if (endpoint.kind === 'messages' && !params.data.conversationId)
+          return reply
+            .code(400)
+            .send(errorEnvelope('invalid_request', 'Invalid Page conversation', request.id));
         try {
           const principal = await authorizePageEngagementRequest(
             request,
@@ -91,7 +108,12 @@ export function registerFacebookPageReadRoutes(
               ? await listAccountPagePosts(runtime, input)
               : endpoint.kind === 'comments'
                 ? await listAccountPostComments(runtime, { ...input, postId })
-                : await listAccountPageConversations(runtime, input);
+                : endpoint.kind === 'conversations'
+                  ? await listAccountPageConversations(runtime, input)
+                  : await listAccountConversationMessages(runtime, {
+                      ...input,
+                      conversationId: params.data.conversationId ?? '',
+                    });
           return await reply.send(successEnvelope(result, request.id));
         } catch (error) {
           if (

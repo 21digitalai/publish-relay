@@ -10,6 +10,7 @@ export const FANVUE_PUBLISHING_SCOPES = [
   'read:post',
   'write:post',
 ] as const;
+export const FANVUE_CHAT_READ_SCOPES = [...FANVUE_PUBLISHING_SCOPES, 'read:chat'] as const;
 
 export const fanvueTokenSchema = z.object({
   access_token: z.string().min(1),
@@ -47,6 +48,16 @@ export function assertFanvuePublishingScopes(scope: string): string[] {
   return granted;
 }
 
+export function assertFanvueChatReadScopes(scope: string): string[] {
+  const granted = scope.split(/\s+/).filter(Boolean);
+  if (
+    new Set(granted).size !== FANVUE_CHAT_READ_SCOPES.length ||
+    FANVUE_CHAT_READ_SCOPES.some((required) => !granted.includes(required))
+  )
+    throw new Error('Fanvue chat-read grant does not match the requested scopes');
+  return granted;
+}
+
 export function assertFanvueReadGrantScopes(scope: string): string[] {
   const granted = scope.split(/\s+/).filter(Boolean);
   const allowed = new Set<string>([
@@ -80,7 +91,12 @@ export class FanvueHttpClient {
     this.request = options.fetch ?? fetch;
   }
 
-  authorizationUrl(input: { redirectUri: string; state: string; codeChallenge: string }): string {
+  authorizationUrl(input: {
+    redirectUri: string;
+    state: string;
+    codeChallenge: string;
+    readChat?: boolean;
+  }): string {
     if (
       new URL(input.redirectUri).protocol !== 'https:' ||
       input.state.length < 32 ||
@@ -91,7 +107,10 @@ export class FanvueHttpClient {
     url.searchParams.set('client_id', this.options.clientId);
     url.searchParams.set('redirect_uri', input.redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', FANVUE_PUBLISHING_SCOPES.join(' '));
+    url.searchParams.set(
+      'scope',
+      (input.readChat ? FANVUE_CHAT_READ_SCOPES : FANVUE_PUBLISHING_SCOPES).join(' '),
+    );
     url.searchParams.set('state', input.state);
     url.searchParams.set('code_challenge', input.codeChallenge);
     url.searchParams.set('code_challenge_method', 'S256');
@@ -102,20 +121,24 @@ export class FanvueHttpClient {
     code: string;
     redirectUri: string;
     codeVerifier: string;
+    readChat?: boolean;
   }): Promise<FanvueToken> {
     if (!input.code || !input.codeVerifier)
       throw new Error('Fanvue OAuth code and verifier are required');
-    return this.token({
-      grant_type: 'authorization_code',
-      code: input.code,
-      redirect_uri: input.redirectUri,
-      code_verifier: input.codeVerifier,
-    });
+    return this.token(
+      {
+        grant_type: 'authorization_code',
+        code: input.code,
+        redirect_uri: input.redirectUri,
+        code_verifier: input.codeVerifier,
+      },
+      input.readChat ? 'chat_read' : 'publishing',
+    );
   }
 
   refresh(refreshToken: string): Promise<FanvueToken> {
     if (!refreshToken) throw new Error('Fanvue refresh token is required');
-    return this.token({ grant_type: 'refresh_token', refresh_token: refreshToken });
+    return this.token({ grant_type: 'refresh_token', refresh_token: refreshToken }, 'refresh');
   }
 
   async discoverCreator(accessToken: string): Promise<FanvueProfile> {
@@ -131,7 +154,10 @@ export class FanvueHttpClient {
     return parsed.data;
   }
 
-  private async token(fields: Record<string, string>): Promise<FanvueToken> {
+  private async token(
+    fields: Record<string, string>,
+    scopeMode: 'publishing' | 'chat_read' | 'refresh',
+  ): Promise<FanvueToken> {
     const basic = Buffer.from(`${this.options.clientId}:${this.options.clientSecret}`).toString(
       'base64',
     );
@@ -155,7 +181,9 @@ export class FanvueHttpClient {
     }
     const token = fanvueTokenSchema.safeParse(body);
     if (!token.success) throw new FanvueRequestError(response.status);
-    assertFanvuePublishingScopes(token.data.scope);
+    if (scopeMode === 'publishing') assertFanvuePublishingScopes(token.data.scope);
+    else if (scopeMode === 'chat_read') assertFanvueChatReadScopes(token.data.scope);
+    else assertFanvueReadGrantScopes(token.data.scope);
     return token.data;
   }
 }

@@ -15,6 +15,7 @@ import {
 } from './fanvue-oauth.service.js';
 
 const callbackSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
+const connectSchema = z.object({ readChatAccountId: z.uuid().optional() });
 
 export function registerFanvueOauthRoutes(
   application: FastifyInstance,
@@ -37,6 +38,8 @@ export function registerFanvueOauthRoutes(
       )
     )
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const body = connectSchema.safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send({ data: null, error: 'Invalid Fanvue account' });
     try {
       const result = await beginFanvueOauthConnection(
         dependencies.database,
@@ -47,6 +50,9 @@ export function registerFanvueOauthRoutes(
           userId: identity.userId,
           callbackUrl: dependencies.callbackUrl,
           requestId: request.id,
+          ...(body.data.readChatAccountId
+            ? { readChatAccountId: body.data.readChatAccountId }
+            : {}),
         },
         dependencies.actionPolicy,
       );

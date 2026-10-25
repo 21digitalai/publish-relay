@@ -16,7 +16,7 @@ const connectionString = process.env.POSTGRES_FANVUE_TEST_URL;
 const keys = { currentVersion: () => 'v1', getKey: () => Promise.resolve(Buffer.alloc(32, 7)) };
 
 describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL', () => {
-  it('rejects another workspace, unknown account and absent optional read grant without a provider request', async () => {
+  it('rejects another workspace and absent chat grant while base publishing reads remain scoped', async () => {
     const pool = new pg.Pool({ connectionString });
     const database = drizzle(pool);
     const workspaceId = randomUUID();
@@ -89,13 +89,28 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
       await expect(service.listChats({ workspaceId, accountId })).rejects.toMatchObject({
         reason: 'scope_missing',
       });
-      await expect(service.listMedia({ workspaceId, accountId })).rejects.toMatchObject({
-        reason: 'scope_missing',
-      });
-      await expect(service.listPosts({ workspaceId, accountId })).rejects.toMatchObject({
-        reason: 'scope_missing',
-      });
       expect(providerRequest).not.toHaveBeenCalled();
+      providerRequest.mockImplementation((url) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              (typeof url === 'string' ? url : url instanceof URL ? url.href : url.url).includes(
+                '/v1/posts',
+              )
+                ? { data: [], nextCursor: null }
+                : { data: [], pagination: { page: 1, size: 0, hasMore: false } },
+            ),
+          ),
+        ),
+      );
+      await expect(service.listMedia({ workspaceId, accountId })).resolves.toMatchObject({
+        data: [],
+      });
+      await expect(service.listPosts({ workspaceId, accountId })).resolves.toMatchObject({
+        data: [],
+      });
+      expect(providerRequest).toHaveBeenCalledTimes(2);
+      providerRequest.mockClear();
       const readScopes = [...FANVUE_PUBLISHING_SCOPES, 'read:chat'];
       await connectProvider(
         database,
@@ -115,19 +130,8 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
           requestId: randomUUID(),
         },
       );
-      providerRequest.mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            data: [],
-            pagination: { page: 1, size: 0, hasMore: false },
-          }),
-        ),
-      );
       await expect(service.listChats({ workspaceId, accountId })).resolves.toMatchObject({
         data: [],
-      });
-      await expect(service.listMedia({ workspaceId, accountId })).rejects.toMatchObject({
-        reason: 'scope_missing',
       });
       expect(providerRequest).toHaveBeenCalledTimes(1);
     } finally {

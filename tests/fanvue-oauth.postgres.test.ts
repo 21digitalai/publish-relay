@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   FanvueHttpClient,
   FANVUE_PUBLISHING_SCOPES,
+  FANVUE_CHAT_READ_SCOPES,
 } from '../src/modules/providers/fanvue-http-client.js';
 import {
   beginFanvueOauthConnection,
@@ -36,12 +37,14 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
     });
     let refreshCalls = 0;
     let deniedScope = false;
+    let moduleScope = false;
+    let discoveredCreatorId = creatorId;
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (url, options) => {
       const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (path.endsWith('/users/me'))
         return Promise.resolve(
           new Response(
-            JSON.stringify({ uuid: creatorId, displayName: 'Creator', isCreator: true }),
+            JSON.stringify({ uuid: discoveredCreatorId, displayName: 'Creator', isCreator: true }),
           ),
         );
       const fields = options?.body as URLSearchParams;
@@ -61,7 +64,11 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
         new Response(
           JSON.stringify({
             ...token('original'),
-            scope: deniedScope ? 'openid offline_access offline read:self' : scope,
+            scope: deniedScope
+              ? 'openid offline_access offline read:self'
+              : moduleScope
+                ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                : scope,
           }),
         ),
       );
@@ -154,6 +161,74 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
         [owner.credential_id],
       );
       expect(after.rows[0]?.version).toBe(2);
+      const ownAccount = await pool.query<{ id: string }>(
+        'SELECT id FROM provider_accounts WHERE workspace_id=$1 AND remote_account_id=$2',
+        [workspaceId, creatorId],
+      );
+      const accountId = ownAccount.rows[0]?.id;
+      if (!accountId) throw new Error('Fanvue account missing before module consent');
+      await expect(
+        beginFanvueOauthConnection(database, keys, client, {
+          workspaceId: otherWorkspaceId,
+          userId,
+          readChatAccountId: accountId,
+          callbackUrl: 'https://publishrelay.app/api/oauth/fanvue/callback',
+          requestId: randomUUID(),
+        }),
+      ).rejects.toThrow();
+      const module = await beginFanvueOauthConnection(database, keys, client, {
+        workspaceId,
+        userId,
+        readChatAccountId: accountId,
+        callbackUrl: 'https://publishrelay.app/api/oauth/fanvue/callback',
+        requestId: randomUUID(),
+      });
+      expect(new URL(module.authorizationUrl).searchParams.get('scope')).toBe(
+        FANVUE_CHAT_READ_SCOPES.join(' '),
+      );
+      moduleScope = true;
+      await completeFanvueOauthConnection(database, keys, client, {
+        ...callback,
+        state: new URL(module.authorizationUrl).searchParams.get('state') ?? '',
+      });
+      moduleScope = false;
+      const upgraded = await pool.query<{ id: string; scopes: string[] }>(
+        `SELECT account.id, connection.scopes
+         FROM provider_accounts account JOIN provider_connections connection
+           ON connection.id=account.connection_id AND connection.workspace_id=account.workspace_id
+         WHERE account.id=$1`,
+        [accountId],
+      );
+      expect(upgraded.rows[0]).toMatchObject({
+        id: accountId,
+        scopes: [...FANVUE_CHAT_READ_SCOPES],
+      });
+      const credentialBeforeMismatch = await pool.query<{ credential_id: string }>(
+        'SELECT credential_id FROM provider_connections WHERE id=$1',
+        [owner.id],
+      );
+      const mismatch = await beginFanvueOauthConnection(database, keys, client, {
+        workspaceId,
+        userId,
+        readChatAccountId: accountId,
+        callbackUrl: 'https://publishrelay.app/api/oauth/fanvue/callback',
+        requestId: randomUUID(),
+      });
+      moduleScope = true;
+      discoveredCreatorId = randomUUID();
+      await expect(
+        completeFanvueOauthConnection(database, keys, client, {
+          ...callback,
+          state: new URL(mismatch.authorizationUrl).searchParams.get('state') ?? '',
+        }),
+      ).rejects.toThrow('different creator');
+      moduleScope = false;
+      discoveredCreatorId = creatorId;
+      const credentialAfterMismatch = await pool.query<{ credential_id: string }>(
+        'SELECT credential_id FROM provider_connections WHERE id=$1',
+        [owner.id],
+      );
+      expect(credentialAfterMismatch.rows[0]).toEqual(credentialBeforeMismatch.rows[0]);
       const siblingId = randomUUID();
       await connectProvider(
         database,

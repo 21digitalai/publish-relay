@@ -33,14 +33,16 @@ function fixture(body: unknown, status = 200) {
 }
 
 describe('Fanvue publishing-only OAuth transport', () => {
-  it('accepts known chat-read scope on refresh but rejects unknown or duplicate scopes', async () => {
+  it('accepts known chat scopes on refresh but rejects duplicate scopes', async () => {
     const expanded = FANVUE_CHAT_READ_SCOPES.join(' ');
-    await expect(fixture({ ...token, scope: expanded }).client.refresh('old')).resolves.toMatchObject({
+    await expect(
+      fixture({ ...token, scope: expanded }).client.refresh('old'),
+    ).resolves.toMatchObject({
       scope: expanded,
     });
     await expect(
       fixture({ ...token, scope: `${expanded} write:chat` }).client.refresh('old'),
-    ).rejects.toThrow('unsupported scopes');
+    ).resolves.toMatchObject({ scope: `${expanded} write:chat` });
     await expect(
       fixture({ ...token, scope: `${expanded} read:chat` }).client.refresh('old'),
     ).rejects.toThrow('unsupported scopes');
@@ -74,6 +76,35 @@ describe('Fanvue publishing-only OAuth transport', () => {
         readChat: true,
       }),
     ).rejects.toThrow('chat-read grant');
+  });
+  it('requests chat-send authority only for the selected send module', async () => {
+    const sendScope = `${FANVUE_CHAT_READ_SCOPES.join(' ')} write:chat`;
+    const { client } = fixture({ ...token, scope: sendScope });
+    const url = new URL(
+      client.authorizationUrl({
+        redirectUri,
+        state: 's'.repeat(43),
+        codeChallenge: 'challenge',
+        sendChat: true,
+      }),
+    );
+    expect(url.searchParams.get('scope')).toBe(sendScope);
+    await expect(
+      client.exchangeCode({
+        code: 'send-code',
+        redirectUri,
+        codeVerifier: 'verifier',
+        sendChat: true,
+      }),
+    ).resolves.toMatchObject({ scope: sendScope });
+    await expect(
+      fixture({ ...token, scope: FANVUE_CHAT_READ_SCOPES.join(' ') }).client.exchangeCode({
+        code: 'read-only',
+        redirectUri,
+        codeVerifier: 'verifier',
+        sendChat: true,
+      }),
+    ).rejects.toThrow('chat-send grant');
   });
   it('requests only base scopes and mandatory S256 PKCE', () => {
     const { client } = fixture(token);

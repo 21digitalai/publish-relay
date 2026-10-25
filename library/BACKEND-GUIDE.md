@@ -391,8 +391,11 @@ creator/chat and current `read:chat` plus `write:chat` consent, applies neutral 
 policy, reserves durable `clientActionId` intent before one provider POST, and returns bounded
 confirmed/failed/unknown state. Unknown never implies retry authority. The route returns no
 provider token, private chat body, internal fingerprint or account metadata. Free/paid media
-and the optional write-consent UI remain separate acceptance slices; this text route alone
-does not activate sending for an account without the necessary grant.
+remain separate acceptance slices. The selected-account optional send-consent OAuth intent
+requests exactly publishing plus `read:chat` and `write:chat`; the callback checks returned
+scope and exact creator before replacing the existing connection. A read-only grant never
+silently becomes send authority. Refresh accepts this known expanded scope while command
+preflight still checks both stored and refreshed grants immediately before provider send.
 
 ## External draft handoff
 

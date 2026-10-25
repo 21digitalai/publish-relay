@@ -18,7 +18,12 @@ import {
 
 const callbackSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
 const deniedSchema = z.object({ state: z.string().min(1), error: z.literal('access_denied') });
-const connectSchema = z.object({ readChatAccountId: z.uuid().optional() });
+const connectSchema = z
+  .object({
+    readChatAccountId: z.uuid().optional(),
+    sendChatAccountId: z.uuid().optional(),
+  })
+  .refine((value) => !(value.readChatAccountId && value.sendChatAccountId));
 
 export function registerFanvueOauthRoutes(
   application: FastifyInstance,
@@ -56,6 +61,9 @@ export function registerFanvueOauthRoutes(
           ...(body.data.readChatAccountId
             ? { readChatAccountId: body.data.readChatAccountId }
             : {}),
+          ...(body.data.sendChatAccountId
+            ? { sendChatAccountId: body.data.sendChatAccountId }
+            : {}),
         },
         dependencies.actionPolicy,
       );
@@ -64,7 +72,9 @@ export function registerFanvueOauthRoutes(
       if (error instanceof FanvueModuleConsentError)
         return reply.code(409).send({
           data: null,
-          error: 'Reconnect this Fanvue account and retry message-reading permission',
+          error: body.data.sendChatAccountId
+            ? 'Reconnect this Fanvue account and retry message-sending permission'
+            : 'Reconnect this Fanvue account and retry message-reading permission',
         });
       if (error instanceof ActionPolicyDeniedError)
         return reply.code(403).send({ data: null, error: error.message, code: error.code });
@@ -86,7 +96,9 @@ export function registerFanvueOauthRoutes(
         return reply.code(400).send({ data: null, error: 'Fanvue connection attempt expired' });
       return kind === 'chat-read'
         ? reply.redirect('/app?oauth=fanvue-chat-read-denied')
-        : reply.redirect('/app?oauth=fanvue-denied');
+        : kind === 'chat-send'
+          ? reply.redirect('/app?oauth=fanvue-chat-send-denied')
+          : reply.redirect('/app?oauth=fanvue-denied');
     }
     const query = callbackSchema.safeParse(request.query);
     if (!query.success)
@@ -107,9 +119,11 @@ export function registerFanvueOauthRoutes(
       );
       return result
         ? await reply.redirect(
-            result.consentKind === 'read-chat'
+            'consentKind' in result && result.consentKind === 'read-chat'
               ? '/app?oauth=fanvue-chat-read-connected'
-              : '/app?oauth=fanvue-connected',
+              : 'consentKind' in result
+                ? '/app?oauth=fanvue-chat-send-connected'
+                : '/app?oauth=fanvue-connected',
           )
         : await reply.code(400).send({
             data: null,
@@ -117,7 +131,7 @@ export function registerFanvueOauthRoutes(
           });
     } catch (error) {
       if (error instanceof FanvueModuleConsentError)
-        return reply.redirect(`/app?oauth=fanvue-chat-read-${error.reason}`);
+        return reply.redirect(`/app?oauth=fanvue-chat-${error.kind}-${error.reason}`);
       if (error instanceof ProviderDestinationConflictError)
         return reply.code(409).send({ data: null, error: error.message });
       throw error;

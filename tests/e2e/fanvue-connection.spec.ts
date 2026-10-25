@@ -20,7 +20,8 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.route('https://auth.fanvue.com/**', (route) => {
     const auth = new URL(route.request().url());
     const scopes = auth.searchParams.get('scope') ?? '';
-    expect(scopes).not.toMatch(/write:chat|comment/);
+    expect(scopes).not.toMatch(/comment/);
+    if (scopes.includes('write:chat')) expect(scopes).toContain('read:chat');
     expect(auth.searchParams.get('code_challenge_method')).toBe('S256');
     const state = auth.searchParams.get('state');
     if (!state) throw new Error('Fanvue authorization state was not present');
@@ -29,7 +30,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     return route.fulfill({
       status: 302,
       headers: {
-        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
+        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${scopes.includes('write:chat') ? 'fixture-chat-send' : scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
       },
     });
   });
@@ -58,11 +59,19 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
   await expect(page.getByText('Message reading enabled')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Allow message reading' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Allow message sending' })).toBeVisible();
+  await page.getByRole('button', { name: 'Allow message sending' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-chat-send-connected');
+  await expect(
+    page.getByText('Fanvue message sending is connected for the selected account.'),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Message sending enabled')).toBeVisible();
   const accountsResponse = await page.request.get('/api/provider-accounts');
   const accounts = (await accountsResponse.json()) as {
     data: { accounts: Record<string, unknown>[] };
   };
   const fanvueAccount = accounts.data.accounts.find((account) => account.provider === 'fanvue');
-  expect(fanvueAccount?.fanvueModules).toEqual({ chatRead: true });
+  expect(fanvueAccount?.fanvueModules).toEqual({ chatRead: true, chatSend: true });
   expect(fanvueAccount).not.toHaveProperty('scopes');
 });

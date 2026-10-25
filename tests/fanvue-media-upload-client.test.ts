@@ -87,6 +87,23 @@ describe('Fanvue multipart media transport', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [1, [{ partNumber: 2, url: 'https://uploads.example.test/2' }]],
+    [2, [{ partNumber: 1, url: 'https://uploads.example.test/1' }]],
+    [
+      2,
+      [
+        { partNumber: 1, url: 'https://uploads.example.test/1' },
+        { partNumber: 1, url: 'https://uploads.example.test/again' },
+      ],
+    ],
+  ])('rejects mismatched signed part ranges ending at %i', async (end, parts) => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ partSize: 6, parts }));
+    await expect(
+      new FanvueMediaUploadClient(request).signParts('token', 'session', 1, end),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_response' });
+  });
+
   it('classifies transport loss and malformed provider responses without leaking bodies', async () => {
     const lost = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('private signed URL'));
     const lostClient = new FanvueMediaUploadClient(lost);

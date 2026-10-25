@@ -11,7 +11,10 @@ const session = z.object({
 });
 const signedParts = z.object({
   partSize: z.number().int().positive(),
-  parts: z.array(z.object({ partNumber: z.number().int().positive(), url: z.url() })).min(1),
+  parts: z
+    .array(z.object({ partNumber: z.number().int().positive(), url: z.url() }))
+    .min(1)
+    .max(256),
 });
 const mediaStatus = z.object({
   uuid: z.uuid(),
@@ -52,16 +55,24 @@ export class FanvueMediaUploadClient {
     );
   }
 
-  signParts(accessToken: string, uploadId: string, from: number, to: number) {
+  async signParts(accessToken: string, uploadId: string, from: number, to: number) {
     const id = encodeURIComponent(z.string().min(1).max(512).parse(uploadId));
     const start = z.number().int().positive().parse(from);
     const end = z.number().int().min(start).max(256).parse(to);
-    return this.api(
+    const result = await this.api(
       accessToken,
       `/media/uploads/${id}/parts/urls?from=${String(start)}&to=${String(end)}`,
       {},
       signedParts,
     );
+    const numbers = result.parts.map((part) => part.partNumber);
+    if (
+      numbers.length !== end - start + 1 ||
+      new Set(numbers).size !== numbers.length ||
+      numbers.some((number) => number < start || number > end)
+    )
+      throw new FanvueRequestError(502, 'invalid_response');
+    return result;
   }
 
   async putPart(url: string, bytes: Buffer): Promise<string> {

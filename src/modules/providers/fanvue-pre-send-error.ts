@@ -2,7 +2,8 @@
 const preSendErrors = new WeakSet<Error>();
 
 export function markFanvuePreSendError(cause: unknown): Error {
-  const error = cause instanceof Error ? cause : new Error('Fanvue send preflight failed', { cause });
+  const error =
+    cause instanceof Error ? cause : new Error('Fanvue send preflight failed', { cause });
   preSendErrors.add(error);
   return error;
 }

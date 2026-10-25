@@ -395,7 +395,9 @@ describe('engagement proposal foundation', () => {
       });
       expect(staged.statusCode).toBe(200);
       expect(staged.json()).toMatchObject({ data: { state: 'ready' } });
-      expect(staged.body).not.toMatch(/clientActionId|accountId|mediaId|uploadId|accessToken|storageKey/);
+      expect(staged.body).not.toMatch(
+        /clientActionId|accountId|mediaId|uploadId|accessToken|storageKey/,
+      );
       expect(Buffer.byteLength(staged.body)).toBeLessThan(256);
       expect(stageMedia).toHaveBeenCalledWith({
         workspaceId: workspace,

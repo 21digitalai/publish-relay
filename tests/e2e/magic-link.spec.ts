@@ -47,7 +47,10 @@ test('first-time email opens across devices and creates a single-use session', a
   }
 });
 
-for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
   test(`invalid sign-in link shows recovery at ${String(viewport.width)}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto('/register?magicLink=invalid');

@@ -122,4 +122,38 @@ describe('Fanvue OAuth HTTP boundary', () => {
     expect(conflict.statusCode).toBe(409);
     expect(conflict.body).not.toContain('secret-code');
   });
+
+  it('keeps optional message-reading consent on the selected account and confirms its separate result', async () => {
+    const app = application(true);
+    const accountId = '7104f230-83a9-4ce7-9fbc-cd1b42b0dc6a';
+    vi.mocked(beginFanvueOauthConnection).mockResolvedValue({
+      authorizationUrl: 'https://www.fanvue.com/v2/auth/authorize/',
+      expiresAt: new Date('2026-10-02'),
+    });
+    const start = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/fanvue',
+      headers: csrf,
+      payload: { readChatAccountId: accountId },
+    });
+    expect(start.statusCode).toBe(200);
+    expect(beginFanvueOauthConnection).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ readChatAccountId: accountId }),
+      expect.anything(),
+    );
+    vi.mocked(completeFanvueOauthConnection).mockResolvedValueOnce({
+      connectionId: 'id',
+      accounts: [],
+      consentKind: 'read-chat',
+    });
+    const callback = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/fanvue/callback?state=state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(callback.headers.location).toBe('/app?oauth=fanvue-chat-read-connected');
+  });
 });

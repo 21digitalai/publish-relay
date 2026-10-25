@@ -85,7 +85,11 @@ export function registerFanvueOauthRoutes(
         },
       );
       return result
-        ? await reply.redirect('/app?oauth=fanvue-connected')
+        ? await reply.redirect(
+            result.consentKind === 'read-chat'
+              ? '/app?oauth=fanvue-chat-read-connected'
+              : '/app?oauth=fanvue-connected',
+          )
         : await reply.code(400).send({
             data: null,
             error: 'Fanvue OAuth transaction is invalid or expired',

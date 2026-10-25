@@ -18,14 +18,15 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   const accountsPath = `/w/${data.slug}/accounts`;
   await page.route('https://auth.fanvue.com/**', (route) => {
     const auth = new URL(route.request().url());
-    expect(auth.searchParams.get('scope')).not.toMatch(/chat|comment/);
+    const scopes = auth.searchParams.get('scope') ?? '';
+    expect(scopes).not.toMatch(/write:chat|comment/);
     expect(auth.searchParams.get('code_challenge_method')).toBe('S256');
     const state = auth.searchParams.get('state');
     if (!state) throw new Error('Fanvue authorization state was not present');
     return route.fulfill({
       status: 302,
       headers: {
-        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&code=fixture`,
+        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&code=${scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`,
       },
     });
   });
@@ -37,6 +38,12 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.waitForURL('**/app?oauth=fanvue-connected');
   await page.goto(accountsPath);
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Allow message reading' })).toBeVisible();
+  await page.getByRole('button', { name: 'Allow message reading' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-chat-read-connected');
+  await expect(
+    page.getByText('Fanvue message reading is connected for the selected account.'),
+  ).toBeVisible();
   await page.reload();
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
 });

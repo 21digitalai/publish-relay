@@ -135,7 +135,7 @@ export async function completeFanvueOauthConnection(
   const profile = await client.discoverCreator(token.access_token);
   if (existingCreatorId && profile.uuid !== existingCreatorId)
     throw new Error('Fanvue module consent returned a different creator account');
-  return connectProvider(
+  const connection = await connectProvider(
     database,
     keys,
     {
@@ -158,4 +158,8 @@ export async function completeFanvueOauthConnection(
       requestId: input.requestId,
     },
   );
+  return {
+    ...connection,
+    ...(readChatAccountId ? { consentKind: 'read-chat' as const } : {}),
+  };
 }

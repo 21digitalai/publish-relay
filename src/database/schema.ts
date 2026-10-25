@@ -544,6 +544,91 @@ export const providerAccounts = pgTable(
   ],
 );
 
+export const facebookPageEngagementModules = pgTable(
+  'facebook_page_engagement_modules',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    commentsEnabled: boolean('comments_enabled').notNull().default(false),
+    dmsEnabled: boolean('dms_enabled').notNull().default(false),
+    commentsProviderGrant: text('comments_provider_grant').notNull().default('unknown'),
+    dmsProviderGrant: text('dms_provider_grant').notNull().default('unknown'),
+    commentsVerifiedAt: timestamp('comments_verified_at', { withTimezone: true }),
+    dmsVerifiedAt: timestamp('dms_verified_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_engagement_account_fk',
+    }).onDelete('cascade'),
+    check(
+      'facebook_page_engagement_comments_grant_check',
+      sql`${table.commentsProviderGrant} IN ('unknown', 'missing', 'verified')`,
+    ),
+    check(
+      'facebook_page_engagement_dms_grant_check',
+      sql`${table.dmsProviderGrant} IN ('unknown', 'missing', 'verified')`,
+    ),
+    check(
+      'facebook_page_engagement_comments_evidence_check',
+      sql`(${table.commentsProviderGrant} = 'verified') = (${table.commentsVerifiedAt} IS NOT NULL)`,
+    ),
+    check(
+      'facebook_page_engagement_dms_evidence_check',
+      sql`(${table.dmsProviderGrant} = 'verified') = (${table.dmsVerifiedAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const facebookPageEngagementGrants = pgTable(
+  'facebook_page_engagement_grants',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    apiKeyId: uuid('api_key_id'),
+    delegatedGrantId: uuid('delegated_grant_id'),
+    capability: text('capability').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'facebook_page_engagement_principal_check',
+      sql`(${table.apiKeyId} IS NOT NULL) <> (${table.delegatedGrantId} IS NOT NULL)`,
+    ),
+    check(
+      'facebook_page_engagement_capability_check',
+      sql`${table.capability} IN ('comments:read', 'comments:propose', 'comments:send', 'dms:read', 'dms:propose', 'dms:send')`,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [
+        facebookPageEngagementModules.workspaceId,
+        facebookPageEngagementModules.accountId,
+      ],
+      name: 'facebook_page_engagement_grants_account_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.apiKeyId],
+      foreignColumns: [apiKeys.workspaceId, apiKeys.id],
+      name: 'facebook_page_engagement_grants_api_key_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.workspaceId, table.delegatedGrantId],
+      foreignColumns: [delegatedGrants.workspaceId, delegatedGrants.id],
+      name: 'facebook_page_engagement_grants_delegated_fk',
+    }).onDelete('cascade'),
+    uniqueIndex('facebook_page_engagement_api_key_grant_unique')
+      .on(table.workspaceId, table.accountId, table.apiKeyId, table.capability)
+      .where(sql`${table.apiKeyId} IS NOT NULL`),
+    uniqueIndex('facebook_page_engagement_delegated_grant_unique')
+      .on(table.workspaceId, table.accountId, table.delegatedGrantId, table.capability)
+      .where(sql`${table.delegatedGrantId} IS NOT NULL`),
+  ],
+);
+
 // Exposure grants selectability without moving the canonical account or credential.
 export const providerAccountExposures = pgTable(
   'provider_account_exposures',

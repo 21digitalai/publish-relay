@@ -142,6 +142,8 @@ Auth uses a centered 440px panel on the canvas with a restrained violet radial g
 
 ## Connected accounts
 
+Origin-owned Facebook Page rows show separate optional Comments and Page DMs local switches. The control labels provider grant evidence independently as unknown, missing, or verified, and says that local enablement alone gives agents no access before verification. Exposed Page rows never show origin engagement controls. The shared account row remains the only account-management shell; `FacebookEngagementControl` owns its narrow read/save state and inline feedback.
+
 Connected X rows reuse the inline `.defaults-toggle` switch to save an account-scoped long-post self-declaration immediately. The switch defaults off, labels the choice as self-declared, warns that X may reject longer posts, and shows pending/error/saved states without claiming verified Premium access. Reconnect-required rows cannot edit it until reconnected.
 
 Origin-owned Facebook Page rows expose a `Share with workspaces` control in Accounts. Its anchored panel lists only other workspaces the current user owns; each workspace is a keyboard-operable checkbox button with explicit checked, saving, error, and confirmation states. The owner controls only visibility of the same Page connection, never a copied credential or account. Shared target rows show their origin label and omit origin-owned management actions. `src/ui/facebook-page-exposure-control.tsx` owns the panel and the paginated exposure selection load; AccountRow supplies the origin workspace identity.

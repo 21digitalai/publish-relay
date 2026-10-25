@@ -5,6 +5,7 @@ import './styles.css';
 import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
 import { FacebookPageExposureControl } from './facebook-page-exposure-control.js';
+import { FacebookEngagementControl } from './facebook-engagement-control.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
@@ -1136,6 +1137,9 @@ function AccountRow({
             originWorkspaceId={originWorkspaceId}
           />
         )}
+      {!account.isExposed && account.destinationProvider === 'facebook_page' && (
+        <FacebookEngagementControl accountId={account.id} />
+      )}
       {account.destinationProvider === 'facebook_page' && originWorkspaceId && (
         <div className="account-calendar-visibility x-long-post-setting">
           <button

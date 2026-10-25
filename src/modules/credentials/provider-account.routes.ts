@@ -6,6 +6,10 @@ import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { youtubeDestinationDefaultsSchema } from '../providers/youtube-settings.js';
+import {
+  readPageEngagementState,
+  setPageEngagementModule,
+} from '../providers/facebook-page-engagement.service.js';
 import type { MasterKeyProvider } from './envelope.js';
 import type { TikTokHttpClient } from '../providers/tiktok-http-client.js';
 import { TikTokRequestError } from '../providers/tiktok-http-client.js';
@@ -32,6 +36,10 @@ const xLongPostDeclarationSchema = z.strictObject({ allowed: z.boolean() });
 const exposureParamsSchema = z.object({ accountId: z.uuid(), workspaceId: z.uuid() });
 const exposureBodySchema = z.strictObject({ expose: z.boolean() });
 const calendarVisibilitySchema = z.strictObject({ showPosts: z.boolean() });
+const engagementModuleSchema = z.strictObject({
+  module: z.enum(['comments', 'dms']),
+  enabled: z.boolean(),
+});
 
 export function registerProviderAccountRoutes(
   application: FastifyInstance,
@@ -41,6 +49,49 @@ export function registerProviderAccountRoutes(
     tiktok?: { keys: MasterKeyProvider; client: TikTokHttpClient };
   },
 ): void {
+  application.get('/api/provider-accounts/:accountId/engagement', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const params = accountParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid Page account' });
+    const state = await readPageEngagementState(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      accountId: params.data.accountId,
+    });
+    void reply.header('Cache-Control', 'no-store');
+    return state
+      ? { data: state, error: null }
+      : reply.code(404).send({ data: null, error: 'Owned Facebook Page not found' });
+  });
+
+  application.patch('/api/provider-accounts/:accountId/engagement', async (request, reply) => {
+    const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (
+      !verifyCsrfToken(
+        request.cookies[CSRF_COOKIE],
+        request.headers['x-csrf-token'] as string | undefined,
+      )
+    )
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const params = accountParamsSchema.safeParse(request.params);
+    const body = engagementModuleSchema.safeParse(request.body);
+    if (!params.success || !body.success)
+      return reply.code(400).send({ data: null, error: 'Invalid Page module setting' });
+    const state = await setPageEngagementModule(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      accountId: params.data.accountId,
+      userId: identity.userId,
+      requestId: request.id,
+      module: body.data.module,
+      enabled: body.data.enabled,
+    });
+    void reply.header('Cache-Control', 'no-store');
+    return state
+      ? { data: state, error: null }
+      : reply.code(404).send({ data: null, error: 'Owned Facebook Page not found' });
+  });
+
   application.get('/api/provider-accounts', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });

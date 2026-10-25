@@ -1,5 +1,11 @@
 # Publish Relay Backend Guide
 
+## Facebook Page engagement authorization foundation
+
+Migration 0079 keeps optional Comments and Page DMs separate from the existing publishing connection and from cross-workspace Page exposures. `facebook_page_engagement_modules` is keyed to the canonical origin-owned Page; an absent row means both local modules disabled and provider grants unknown. Browser management may toggle only `localEnabled` for a Page owned by the current workspace. It cannot assert Meta scopes or Page task evidence; provider grant remains `unknown` until a separate verified provider evidence path exists. No module is called Connected merely because its local switch is on.
+
+`facebook_page_engagement_grants` ties one exact read, propose, or send permission on one Page to either an API key or delegated grant through composite tenant FKs. Existing workspace-wide keys and delegated scopes have no Page rows and cannot inherit engagement rights; sharing a Page for publishing also creates no engagement rows. The future neutral provider-call boundary uses `authorizePageEngagement` after machine authentication and denies unless the principal, origin workspace, Page, exact grant, local switch, and verified provider evidence all agree. It does not encode moderation or commerce policy. No Facebook comment or DM provider call exists in this foundation.
+
 ## Accepted foundation
 
 - Migration 0059 introduces `provider_account_exposures` as a stable workspace/account grant with nullable revocation and default-on `show_other_workspace_posts`. It backfills every origin self-exposure and creates self-exposure for future accounts; reconnect does not reactivate revoked target rows. `publication_jobs` now references the exposure pair rather than requiring the account's origin workspace, so a later authorized cross-workspace admission service can create target-owned jobs without copying the account or credential. This migration alone does not grant cross-workspace use: application admission and credential resolution must explicitly enforce an active exposure and origin/target ownership before enabling target selection.

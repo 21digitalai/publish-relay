@@ -19,6 +19,7 @@ import {
 interface FanvuePartProgressInput {
   workspaceId: string;
   jobId: string;
+  mediaId: string;
   artifactId: string;
   leaseOwner: string;
   credentialId: string;
@@ -64,6 +65,7 @@ function eligibleArtifact(input: FanvuePartProgressInput, phase: string) {
   return and(
     eq(providerStagingArtifacts.workspaceId, input.workspaceId),
     eq(providerStagingArtifacts.jobId, input.jobId),
+    eq(providerStagingArtifacts.mediaId, input.mediaId),
     eq(providerStagingArtifacts.id, input.artifactId),
     eq(providerStagingArtifacts.providerReferenceCredentialId, input.credentialId),
     eq(providerStagingArtifacts.uploadPhase, phase),

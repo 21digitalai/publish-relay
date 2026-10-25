@@ -15,6 +15,7 @@ const workspaceId = '00000000-0000-4000-8000-000000000001';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000002';
 const accountId = '00000000-0000-4000-8000-000000000003';
 const jobId = '00000000-0000-4000-8000-000000000004';
+const mediaId = '00000000-0000-4000-8000-000000000008';
 const artifactId = '00000000-0000-4000-8000-000000000005';
 const credentialId = '00000000-0000-4000-8000-000000000006';
 const keys = { currentVersion: () => 'v1', getKey: () => Promise.resolve(Buffer.alloc(32, 7)) };
@@ -51,7 +52,7 @@ beforeEach(async () => {
     );
     CREATE TABLE publication_attempts (workspace_id uuid NOT NULL, job_id uuid NOT NULL);
     CREATE TABLE provider_staging_artifacts (
-      id uuid PRIMARY KEY, workspace_id uuid NOT NULL, job_id uuid NOT NULL,
+      id uuid PRIMARY KEY, workspace_id uuid NOT NULL, job_id uuid NOT NULL, media_id uuid,
       provider_reference_credential_id uuid, upload_phase text NOT NULL,
       next_segment integer NOT NULL, next_byte_offset bigint NOT NULL,
       expires_at timestamptz NOT NULL, deleted_at timestamptz,
@@ -86,10 +87,10 @@ beforeEach(async () => {
   );
   await postgres.query(
     `INSERT INTO provider_staging_artifacts (
-       id, workspace_id, job_id, provider_reference_credential_id, upload_phase,
+       id, workspace_id, job_id, media_id, provider_reference_credential_id, upload_phase,
        next_segment, next_byte_offset, expires_at
-     ) VALUES ($1, $2, $3, $4, 'uploading', 0, 0, $5)`,
-    [artifactId, workspaceId, jobId, credentialId, expiresAt],
+     ) VALUES ($1, $2, $3, $4, $5, 'uploading', 0, 0, $6)`,
+    [artifactId, workspaceId, jobId, mediaId, credentialId, expiresAt],
   );
   database = drizzle(postgres) as unknown as NodePgDatabase;
 });
@@ -121,6 +122,7 @@ function input(overrides: Record<string, unknown> = {}) {
   return {
     workspaceId,
     jobId,
+    mediaId,
     artifactId,
     leaseOwner: 'worker-one',
     credentialId,
@@ -215,6 +217,7 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
     for (const denied of [
       input({ workspaceId: otherWorkspaceId }),
       input({ leaseOwner: 'worker-two' }),
+      input({ mediaId: otherWorkspaceId }),
     ])
       expect(await reserveFanvueUploadPart(database, keys, denied)).toBe(false);
     await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [

@@ -4,18 +4,11 @@ const mock = vi.hoisted(() => ({ media: vi.fn(), create: vi.fn(), initialize: vi
 vi.mock('../src/modules/providers/fanvue-job-media-source.js', () => ({
   getFanvueJobMediaMetadata: mock.media,
 }));
-vi.mock('../src/modules/content/provider-staging.repository.js', () => ({
-  createStagingArtifact: mock.create,
+vi.mock('../src/modules/providers/fanvue-artifact.repository.js', () => ({
+  reserveFanvueStagingArtifact: mock.create,
 }));
 vi.mock('../src/modules/providers/fanvue-upload-init.service.js', () => ({
   initializeFanvueUpload: mock.initialize,
-}));
-vi.mock('../src/database/tenant-transaction.js', () => ({
-  withTenantTransaction: async (
-    _database: unknown,
-    _input: unknown,
-    work: (tx: unknown) => Promise<unknown>,
-  ) => work({}),
 }));
 
 import { beginFanvueMediaStaging } from '../src/modules/providers/fanvue-media-staging.service.js';
@@ -32,7 +25,7 @@ const input = {
 beforeEach(() => {
   vi.clearAllMocks();
   mock.media.mockResolvedValue({ byteSize: 8, mimeType: 'image/jpeg' });
-  mock.create.mockResolvedValue({ id: 'artifact', providerReference: 'fanvue:multipart' });
+  mock.create.mockResolvedValue('artifact');
   mock.initialize.mockResolvedValue({ credentialId: 'credential' });
 });
 
@@ -43,7 +36,7 @@ describe('Fanvue job/media staging reservation', () => {
       workspaceId: 'workspace',
       jobId: 'job',
       mediaId: 'media',
-      providerReference: 'fanvue:multipart',
+      leaseOwner: 'worker',
       expiresAt: new Date('2026-10-26T00:00:00Z'),
     });
     expect(mock.initialize).toHaveBeenCalledWith(
@@ -54,11 +47,11 @@ describe('Fanvue job/media staging reservation', () => {
     );
   });
 
-  it('refuses to attach to a different provider artifact', async () => {
-    mock.create.mockResolvedValueOnce({ id: 'artifact', providerReference: 'youtube:resumable' });
+  it('refuses an ineligible or duplicate artifact reservation', async () => {
+    mock.create.mockResolvedValueOnce(null);
     await expect(
       beginFanvueMediaStaging({} as never, {} as never, {} as never, input),
-    ).rejects.toThrow('another provider');
+    ).rejects.toThrow('not eligible');
     expect(mock.initialize).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { createStagingArtifact } from '../content/provider-staging.repository.js';
-import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
+import { reserveFanvueStagingArtifact } from './fanvue-artifact.repository.js';
 import { getFanvueJobMediaMetadata } from './fanvue-job-media-source.js';
 import type { FanvueMediaUploadClient } from './fanvue-media-upload-client.js';
 import { initializeFanvueUpload } from './fanvue-upload-init.service.js';
@@ -27,16 +26,13 @@ export async function beginFanvueMediaStaging(
 ) {
   await getFanvueJobMediaMetadata(database, input);
   const now = input.now ?? new Date();
-  const artifact = await withTenantTransaction(database, input, (transaction) =>
-    createStagingArtifact(transaction, {
-      workspaceId: input.workspaceId,
-      jobId: input.jobId,
-      mediaId: input.mediaId,
-      providerReference: 'fanvue:multipart',
-      expiresAt: new Date(now.getTime() + FANVUE_UPLOAD_SESSION_LIFETIME_MS),
-    }),
-  );
-  if (artifact.providerReference !== 'fanvue:multipart')
-    throw new Error('Existing media staging artifact belongs to another provider');
-  return initializeFanvueUpload(database, client, keys, { ...input, artifactId: artifact.id });
+  const artifactId = await reserveFanvueStagingArtifact(database, {
+    workspaceId: input.workspaceId,
+    jobId: input.jobId,
+    mediaId: input.mediaId,
+    leaseOwner: input.leaseOwner,
+    expiresAt: new Date(now.getTime() + FANVUE_UPLOAD_SESSION_LIFETIME_MS),
+  });
+  if (!artifactId) throw new Error('Fanvue staging artifact is not eligible for reservation');
+  return initializeFanvueUpload(database, client, keys, { ...input, artifactId });
 }

@@ -45,7 +45,10 @@ const events: string[] = [];
 const client = {
   signParts: vi.fn(() => {
     events.push('sign');
-    return Promise.resolve({ parts: [{ partNumber: 2, url: 'https://upload.example/part' }] });
+    return Promise.resolve({
+      partSize: 5,
+      parts: [{ partNumber: 2, url: 'https://upload.example/part' }],
+    });
   }),
   putPart: vi.fn((_url: string, bytes: Buffer) => {
     events.push('put');
@@ -94,6 +97,16 @@ describe('Fanvue one-part staging', () => {
   it('never sends when the durable reservation is unavailable', async () => {
     mock.reserve.mockResolvedValue(false);
     await expect(run()).rejects.toThrow('not eligible');
+    expect(client.putPart).not.toHaveBeenCalled();
+  });
+
+  it('never reserves or sends when Fanvue signs a different part size', async () => {
+    client.signParts.mockResolvedValueOnce({
+      partSize: 4,
+      parts: [{ partNumber: 2, url: 'https://upload.example/part' }],
+    });
+    await expect(run()).rejects.toThrow('signed upload part is unavailable');
+    expect(mock.reserve).not.toHaveBeenCalled();
     expect(client.putPart).not.toHaveBeenCalled();
   });
 

@@ -74,7 +74,11 @@ export async function uploadFanvuePart(
         input.partNumber,
       );
       const url = signed.parts[0]?.url;
-      if (!url || signed.parts[0]?.partNumber !== input.partNumber)
+      if (
+        signed.partSize !== input.session.partSize ||
+        !url ||
+        signed.parts[0]?.partNumber !== input.partNumber
+      )
         throw new Error('Fanvue signed upload part is unavailable');
       const reserved = await reserveFanvueUploadPart(database, keys, input);
       if (!reserved) throw new Error('Fanvue upload part is not eligible for dispatch');

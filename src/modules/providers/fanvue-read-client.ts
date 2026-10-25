@@ -23,6 +23,11 @@ const chat = z.object({
   unreadMessagesCount: z.number().int().nonnegative(),
   lastMessage: message.partial().nullable().optional(),
 });
+const media = z.object({
+  uuid: z.uuid(),
+  status: z.enum(['created', 'processing', 'ready', 'error']),
+  errorReason: z.string().nullish(),
+});
 
 function page(value: number, name: string, maximum: number): number {
   if (!Number.isInteger(value) || value < 1 || value > maximum)
@@ -65,6 +70,19 @@ export class FanvueReadClient {
       `/chats/${id}/messages?${query}`,
       z.object({ data: z.array(message) }),
     );
+  }
+
+  listMedia(accessToken: string, options: { page?: number; size?: number } = {}) {
+    const query = new URLSearchParams({
+      page: String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)),
+      size: String(page(options.size ?? 15, 'size', 50)),
+    });
+    return this.get(accessToken, `/media?${query}`, z.object({ data: z.array(media) }));
+  }
+
+  getMediaStatus(accessToken: string, mediaUuid: string) {
+    const id = z.uuid().parse(mediaUuid);
+    return this.get(accessToken, `/media/${id}`, media);
   }
 
   private async get<T extends z.ZodType>(

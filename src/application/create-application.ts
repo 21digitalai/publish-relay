@@ -44,6 +44,9 @@ import type { SnapchatHttpClient } from '../modules/providers/snapchat-http-clie
 import { registerSnapchatOauthRoutes } from '../modules/providers/snapchat-oauth.routes.js';
 import type { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
 import { registerFanvueOauthRoutes } from '../modules/providers/fanvue-oauth.routes.js';
+import { FanvueReadClient } from '../modules/providers/fanvue-read-client.js';
+import { FanvueReadService } from '../modules/providers/fanvue-read.service.js';
+import { registerFanvueReadRoutes } from '../modules/providers/fanvue-read.routes.js';
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerTikTokDraftRoutes } from '../modules/providers/tiktok-draft.routes.js';
 import { registerTikTokScheduleRoutes } from '../modules/providers/tiktok-schedule.routes.js';
@@ -189,6 +192,19 @@ function registerMachineApiRoutes(
       ? { keys: options.tiktokOauth.keys, client: options.tiktokOauth.client }
       : undefined,
   );
+  if (options.fanvueOauth)
+    registerFanvueReadRoutes(
+      application,
+      new FanvueReadService(
+        database,
+        options.fanvueOauth.keys,
+        options.fanvueOauth.client,
+        new FanvueReadClient(),
+      ),
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
   if (!config.CURSOR_SIGNING_SECRET)
     throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
   registerPostRoutes(

@@ -57,4 +57,29 @@ describe('Fanvue read transport', () => {
     });
     expect(request).toHaveBeenCalledTimes(1);
   });
+
+  it('returns stable media status without leaking expiring variant URLs', async () => {
+    const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
+    const item = {
+      uuid: mediaUuid,
+      status: 'ready',
+      variants: [{ url: 'https://temporary.example/secret', variantType: 'main' }],
+    };
+    const request = vi.fn<typeof fetch>().mockImplementation((url) => {
+      const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      return Promise.resolve(
+        new Response(JSON.stringify(path.includes('/media?') ? { data: [item] } : item)),
+      );
+    });
+    const client = new FanvueReadClient(request);
+    await expect(client.listMedia('token', { page: 2, size: 20 })).resolves.toEqual({
+      data: [{ uuid: mediaUuid, status: 'ready' }],
+    });
+    await expect(client.getMediaStatus('token', mediaUuid)).resolves.toEqual({
+      uuid: mediaUuid,
+      status: 'ready',
+    });
+    expect(request.mock.calls[0]?.[0]).toContain('page=2&size=20');
+    expect(() => client.getMediaStatus('token', '../other')).toThrow();
+  });
 });

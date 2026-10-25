@@ -39,6 +39,7 @@ const migrations = [
   '0052_provider_capability_snapshots',
   '0053_publication_consents',
   '0054_tiktok_media_grants',
+  '0086_fanvue_dm_attachments',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000201';

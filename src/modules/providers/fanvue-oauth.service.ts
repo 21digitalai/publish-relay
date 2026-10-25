@@ -20,37 +20,48 @@ import {
 
 const CHAT_READ_INTENT = 'fanvue:chat-read:';
 
+async function activeCreatorForAccount(
+  transaction: NodePgDatabase,
+  input: { workspaceId: string; userId: string; accountId: string },
+): Promise<{ creatorId: string; connectionId: string; credentialId: string }> {
+  const [account] = await transaction
+    .select({
+      creatorId: providerAccounts.remoteAccountId,
+      connectionId: providerConnections.id,
+      credentialId: providerConnections.credentialId,
+    })
+    .from(providerAccounts)
+    .innerJoin(
+      providerConnections,
+      and(
+        eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+        eq(providerConnections.id, providerAccounts.connectionId),
+      ),
+    )
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, input.workspaceId),
+        eq(providerAccounts.id, z.uuid().parse(input.accountId)),
+        eq(providerAccounts.destinationProvider, 'fanvue'),
+        eq(providerAccounts.availability, 'active'),
+        isNull(providerAccounts.disconnectedAt),
+        eq(providerConnections.provider, 'fanvue'),
+        eq(providerConnections.status, 'active'),
+        isNull(providerConnections.revokedAt),
+      ),
+    )
+    .limit(1);
+  if (!account) throw new Error('Fanvue account is unavailable for module consent');
+  return account;
+}
+
 async function connectedCreatorForAccount(
   database: NodePgDatabase,
   input: { workspaceId: string; userId: string; accountId: string },
-): Promise<string> {
-  const [account] = await withTenantTransaction(database, input, (transaction) =>
-    transaction
-      .select({ creatorId: providerAccounts.remoteAccountId })
-      .from(providerAccounts)
-      .innerJoin(
-        providerConnections,
-        and(
-          eq(providerConnections.workspaceId, providerAccounts.workspaceId),
-          eq(providerConnections.id, providerAccounts.connectionId),
-        ),
-      )
-      .where(
-        and(
-          eq(providerAccounts.workspaceId, input.workspaceId),
-          eq(providerAccounts.id, z.uuid().parse(input.accountId)),
-          eq(providerAccounts.destinationProvider, 'fanvue'),
-          eq(providerAccounts.availability, 'active'),
-          isNull(providerAccounts.disconnectedAt),
-          eq(providerConnections.provider, 'fanvue'),
-          eq(providerConnections.status, 'active'),
-          isNull(providerConnections.revokedAt),
-        ),
-      )
-      .limit(1),
+) {
+  return withTenantTransaction(database, input, (transaction) =>
+    activeCreatorForAccount(transaction, input),
   );
-  if (!account) throw new Error('Fanvue account is unavailable for module consent');
-  return account.creatorId;
 }
 
 export async function beginFanvueOauthConnection(
@@ -116,7 +127,7 @@ export async function completeFanvueOauthConnection(
     ? z.uuid().parse(pending.intent.slice(CHAT_READ_INTENT.length))
     : null;
   if (pending.intent && !readChatAccountId) throw new Error('Unknown Fanvue OAuth intent');
-  const existingCreatorId = readChatAccountId
+  const existingAccount = readChatAccountId
     ? await connectedCreatorForAccount(database, {
         workspaceId: input.workspaceId,
         userId: input.userId,
@@ -133,7 +144,7 @@ export async function completeFanvueOauthConnection(
     ? assertFanvueChatReadScopes(token.scope)
     : assertFanvuePublishingScopes(token.scope);
   const profile = await client.discoverCreator(token.access_token);
-  if (existingCreatorId && profile.uuid !== existingCreatorId)
+  if (existingAccount && profile.uuid !== existingAccount.creatorId)
     throw new Error('Fanvue module consent returned a different creator account');
   const connection = await connectProvider(
     database,
@@ -156,6 +167,23 @@ export async function completeFanvueOauthConnection(
       scopes,
       accessExpiresAt: new Date(now.getTime() + token.expires_in * 1000),
       requestId: input.requestId,
+      ...(readChatAccountId && existingAccount
+        ? {
+            beforeReplace: async (transaction: NodePgDatabase) => {
+              const current = await activeCreatorForAccount(transaction, {
+                workspaceId: input.workspaceId,
+                userId: input.userId,
+                accountId: readChatAccountId,
+              });
+              if (
+                current.creatorId !== existingAccount.creatorId ||
+                current.connectionId !== existingAccount.connectionId ||
+                current.credentialId !== existingAccount.credentialId
+              )
+                throw new Error('Fanvue account changed during module consent');
+            },
+          }
+        : {}),
     },
   );
   return {

@@ -121,6 +121,7 @@ interface FanvueOauthOptions {
   keys: MasterKeyProvider;
   client: FanvueHttpClient;
   callbackUrl: string;
+  readClient?: FanvueReadClient;
 }
 
 export interface CoreApplicationOptions {
@@ -214,7 +215,7 @@ function registerMachineApiRoutes(
       database,
       options.fanvueOauth.keys,
       options.fanvueOauth.client,
-      new FanvueReadClient(),
+      options.fanvueOauth.readClient ?? new FanvueReadClient(),
     );
     registerFanvueReadRoutes(application, reads, apiKeys, rateLimiter, delegatedAuthorization);
     registerFanvueCommentRoutes(
@@ -327,7 +328,7 @@ function registerBrowserRoutes(
         database,
         fanvueOauth.keys,
         fanvueOauth.client,
-        new FanvueReadClient(),
+        fanvueOauth.readClient ?? new FanvueReadClient(),
       );
       registerEngagementApprovalRoutes(application, {
         database,
@@ -417,7 +418,12 @@ function registerBrowserRoutes(
   if (auth && database && fanvueOauth)
     registerFanvueBrowserReadRoutes(
       application,
-      new FanvueReadService(database, fanvueOauth.keys, fanvueOauth.client, new FanvueReadClient()),
+      new FanvueReadService(
+        database,
+        fanvueOauth.keys,
+        fanvueOauth.client,
+        fanvueOauth.readClient ?? new FanvueReadClient(),
+      ),
       auth,
       createApiRateLimiter(),
     );

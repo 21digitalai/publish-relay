@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 test('Fanvue publishing consent appears only as its own adapter and persists a creator connection', async ({
   page,
@@ -21,6 +23,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   let rejectFirstChatSendScope = true;
   let denyFirstPayment = true;
   let rejectFirstPaymentScope = true;
+  let rejectFirstAudienceScope = true;
   await page.route('https://auth.fanvue.com/**', (route) => {
     const auth = new URL(route.request().url());
     const scopes = auth.searchParams.get('scope') ?? '';
@@ -29,7 +32,10 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     expect(auth.searchParams.get('code_challenge_method')).toBe('S256');
     const state = auth.searchParams.get('state');
     if (!state) throw new Error('Fanvue authorization state was not present');
-    const payment = scopes.includes('read:creator');
+    const audience = scopes.includes('read:fan');
+    const audienceMissingScope = audience && rejectFirstAudienceScope;
+    if (audienceMissingScope) rejectFirstAudienceScope = false;
+    const payment = !audience && scopes.includes('read:creator');
     const denied = payment ? denyFirstPayment : scopes.includes('read:chat') && denyFirstChatRead;
     if (denied && payment) denyFirstPayment = false;
     else if (denied) denyFirstChatRead = false;
@@ -47,7 +53,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     return route.fulfill({
       status: 302,
       headers: {
-        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${paymentMissingScope ? 'fixture-payment-no-scope' : payment ? 'fixture-payment' : sendMissingScope ? 'fixture-chat-send-no-scope' : readMissingScope ? 'fixture-chat-read-no-scope' : scopes.includes('write:chat') ? 'fixture-chat-send' : scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
+        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${audienceMissingScope ? 'fixture-audience-no-scope' : audience ? 'fixture-audience' : paymentMissingScope ? 'fixture-payment-no-scope' : payment ? 'fixture-payment' : sendMissingScope ? 'fixture-chat-send-no-scope' : readMissingScope ? 'fixture-chat-read-no-scope' : scopes.includes('write:chat') ? 'fixture-chat-send' : scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
       },
     });
   });
@@ -108,6 +114,17 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.reload();
   await expect(page.getByText('Payment signals enabled')).toBeVisible();
   await expect(page.getByText('Message sending enabled')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Allow Audience access' })).toBeVisible();
+  await page.getByRole('button', { name: 'Allow Audience access' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-audience-scope');
+  await page.goto(accountsPath);
+  await expect(page.getByRole('button', { name: 'Allow Audience access' })).toBeVisible();
+  await page.getByRole('button', { name: 'Allow Audience access' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-audience-connected');
+  await page.goto(accountsPath);
+  await expect(page.getByText('Audience enabled')).toBeVisible();
+  await expect(page.getByText('Followers (not active subscribers)')).toBeVisible();
+  await expect(page.getByText('Subscriber: active')).toBeVisible();
   const accountsResponse = await page.request.get('/api/provider-accounts');
   const accounts = (await accountsResponse.json()) as {
     data: { accounts: Record<string, unknown>[] };
@@ -117,8 +134,61 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     chatRead: true,
     chatSend: true,
     paymentRead: true,
+    audienceRead: true,
   });
   expect(fanvueAccount).not.toHaveProperty('scopes');
+  const accountId = String(fanvueAccount?.id);
+  const workspace = await page.request.get('/api/workspaces/current');
+  const workspaceId = ((await workspace.json()) as { data: { id: string } }).data.id;
+  const csrf = (await page.context().cookies()).find(
+    (cookie) => cookie.name === 'publish_relay_csrf',
+  )?.value;
+  if (!csrf) throw new Error('CSRF cookie missing');
+  const keyResponse = await page.request.post('/api/settings/api-keys', {
+    headers: { 'x-csrf-token': csrf },
+    data: { label: `Audience ${randomUUID()}`, capabilities: ['fanvue:audience:read'] },
+  });
+  expect(keyResponse.status()).toBe(201);
+  const token = ((await keyResponse.json()) as { data: { token: string } }).data.token;
+  const headers = { authorization: `Bearer ${token}`, 'x-publish-relay-workspace': workspaceId };
+  const followers = await page.request.get(
+    `/api/v1/fanvue/accounts/${accountId}/followers?page=1&size=15`,
+    { headers },
+  );
+  expect(followers.status()).toBe(200);
+  const followerBody = (await followers.json()) as {
+    data: { data: { uuid: string; relationship: string }[] };
+  };
+  expect(followerBody.data.data[0]).toMatchObject({
+    uuid: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    relationship: 'follower',
+  });
+  expect(
+    (
+      await page.request.get(`/api/v1/fanvue/accounts/${accountId}/followers`, {
+        headers: { ...headers, 'x-publish-relay-workspace': randomUUID() },
+      })
+    ).status(),
+  ).toBe(401);
+  const cli = (action: string) =>
+    JSON.parse(
+      execFileSync(
+        'node',
+        [
+          'dist/entrypoints/cli.js',
+          'fanvue',
+          action,
+          accountId,
+          '--base-url',
+          'http://127.0.0.1:43199',
+          '--require-workspace',
+          workspaceId,
+        ],
+        { env: { ...process.env, PUBLISH_RELAY_API_KEY: token }, encoding: 'utf8' },
+      ),
+    ) as { data: { data: { relationship: string }[] } };
+  expect(cli('followers').data.data[0]?.relationship).toBe('follower');
+  expect(cli('subscribers').data.data[0]?.relationship).toBe('subscriber');
 
   await page.goto(`/w/${data.slug}/queue`);
   await page.getByRole('button', { name: 'Create post' }).last().click();

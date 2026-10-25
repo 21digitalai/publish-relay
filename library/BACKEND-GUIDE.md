@@ -459,6 +459,8 @@ remain distinct errors and must not be mislabeled as denied consent.
 
 ## Fanvue payment receipt foundation
 
+The optional Fanvue audience module requests `read:fan` only through a selected-account OAuth intent. Callback completion checks both the returned grant and exact creator before enabling `fanvueModules.audienceRead`; existing publishing, chat and payment grants are not broadened implicitly. `GET /api/v1/fanvue/accounts/:accountId/followers` and `/subscribers` require the separate `fanvue:audience:read` machine capability, while browser reads require workspace membership. Both reuse the exact tenant/account token resolver and fail closed if the stored or refreshed provider grant lacks `read:fan`. The provider parser caps each page at 50 and projects only fan identity, follower/subscriber relationship, subscription status and first-subscribed date; financial and unrelated provider fields are discarded. Followers deliberately exclude active subscribers according to the provider endpoint. The CLI mirrors these two bounded reads without requesting consent or sending a message.
+
 `fanvue_payment_receipts` (migration 0080) is an account-scoped, append-only projection of
 verified `creator.payment.succeeded` facts. The receipt repository accepts only a caller-selected
 workspace/account and a separately signature-verified, allowlisted payment signal; it rechecks

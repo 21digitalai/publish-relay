@@ -184,4 +184,48 @@ describe('Fanvue read transport', () => {
     expect(request.mock.calls[2]?.[0]).toContain('cursor=next-comment');
     expect(() => client.listComments('token', '../other')).toThrow();
   });
+  it('bounds and projects follower and subscriber pages without financial fields', async () => {
+    const fan = { ...person, displayName: 'Fan', isTopSpender: true, privateNote: 'hidden' };
+    const request = vi.fn<typeof fetch>().mockImplementation((url) => {
+      const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            path.includes('/followers')
+              ? { data: [fan], pagination: { page: 2, size: 1, hasMore: true } }
+              : {
+                  data: [
+                    {
+                      ...fan,
+                      subscription: { status: 'active', price: 999, amountPaid: 999 },
+                      firstSubscribedAt: '2026-01-01T00:00:00Z',
+                    },
+                  ],
+                  pagination: { page: 2, size: 1, hasMore: true, nextCursor: 'next' },
+                },
+          ),
+        ),
+      );
+    });
+    const client = new FanvueReadClient(request);
+    const followers = await client.listFollowers('token', { page: 2, size: 50 });
+    expect(followers.data[0]).toEqual({
+      uuid: person.uuid,
+      handle: 'fan',
+      displayName: 'Fan',
+      relationship: 'follower',
+      subscriptionStatus: null,
+    });
+    const subscribers = await client.listSubscribers('token', { cursor: 'prior', size: 25 });
+    expect(subscribers.data[0]).toMatchObject({
+      relationship: 'subscriber',
+      subscriptionStatus: 'active',
+    });
+    expect(subscribers.data[0]).not.toHaveProperty('price');
+    expect(subscribers.data[0]).not.toHaveProperty('amountPaid');
+    expect(subscribers.data[0]).not.toHaveProperty('isTopSpender');
+    expect(request.mock.calls[0]?.[0]).toContain('page=2&size=50');
+    expect(request.mock.calls[1]?.[0]).toContain('cursor=prior');
+    expect(() => client.listFollowers('token', { size: 51 })).toThrow();
+  });
 });

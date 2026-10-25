@@ -62,6 +62,41 @@ const offsetPagination = z.object({
   size: z.number().int().nonnegative().max(50),
   hasMore: z.boolean(),
 });
+const audiencePerson = z.object({
+  uuid: z.uuid(),
+  handle: z.string(),
+  displayName: z.string(),
+});
+const followerPage = z.object({
+  data: z
+    .array(audiencePerson)
+    .max(50)
+    .transform((rows) =>
+      rows.map((row) => ({ ...row, relationship: 'follower' as const, subscriptionStatus: null })),
+    ),
+  pagination: offsetPagination,
+});
+const subscriberPage = z.object({
+  data: z
+    .array(
+      audiencePerson.extend({
+        subscription: z
+          .object({ status: z.enum(['active', 'cancelled', 'pending_confirmation', 'paused']) })
+          .nullable(),
+        firstSubscribedAt: z.string().nullable(),
+      }),
+    )
+    .max(50)
+    .transform((rows) =>
+      rows.map(({ subscription, firstSubscribedAt, ...row }) => ({
+        ...row,
+        relationship: 'subscriber' as const,
+        subscriptionStatus: subscription?.status ?? null,
+        firstSubscribedAt,
+      })),
+    ),
+  pagination: offsetPagination.extend({ nextCursor: z.string().max(1024).nullable() }),
+});
 
 function page(value: number, name: string, maximum: number): number {
   if (!Number.isInteger(value) || value < 1 || value > maximum)
@@ -75,6 +110,24 @@ export class FanvueReadClient {
     private readonly request: typeof fetch = fetch,
     private readonly timeoutMs = 15_000,
   ) {}
+
+  listFollowers(accessToken: string, options: { page?: number; size?: number } = {}) {
+    const query = new URLSearchParams({
+      page: String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)),
+      size: String(page(options.size ?? 15, 'size', 50)),
+    });
+    return this.get(accessToken, `/followers?${query}`, followerPage);
+  }
+
+  listSubscribers(
+    accessToken: string,
+    options: { page?: number; size?: number; cursor?: string } = {},
+  ) {
+    const query = new URLSearchParams({ size: String(page(options.size ?? 15, 'size', 50)) });
+    if (options.cursor) query.set('cursor', z.string().min(1).max(1024).parse(options.cursor));
+    else query.set('page', String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)));
+    return this.get(accessToken, `/subscribers?${query}`, subscriberPage);
+  }
 
   listChats(
     accessToken: string,

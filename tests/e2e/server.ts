@@ -20,12 +20,16 @@ import {
   FANVUE_CHAT_READ_SCOPES,
   FANVUE_CHAT_SEND_SCOPES,
   FANVUE_PAYMENT_SCOPE,
+  FANVUE_AUDIENCE_SCOPE,
   FANVUE_PUBLISHING_SCOPES,
 } from '../../src/modules/providers/fanvue-http-client.js';
 import { connectProvider } from '../../src/modules/credentials/provider-connection.service.js';
 import { authenticateRequest } from '../../src/modules/identity/auth.routes.js';
 import { createPostgresAuthStore } from '../../src/modules/identity/auth.repository.js';
 import { AuthService } from '../../src/modules/identity/auth.service.js';
+import { ApiKeyService } from '../../src/modules/identity/api-key.service.js';
+import { createPostgresApiKeyStore } from '../../src/modules/identity/api-key.repository.js';
+import { FanvueReadClient } from '../../src/modules/providers/fanvue-read-client.js';
 import { AuthEmailOutboxDelivery } from '../../src/modules/identity/auth-email-outbox.js';
 import { createPostgresMagicLinkStore } from '../../src/modules/identity/magic-link.repository.js';
 import { MagicLinkService } from '../../src/modules/identity/magic-link.service.js';
@@ -63,10 +67,12 @@ const application = createStandaloneApplication({
     NODE_ENV: 'test',
     HOST: '127.0.0.1',
     PORT: 43199,
+    CURSOR_SIGNING_SECRET: 'e2e-cursor-signing-secret-32-characters-minimum',
     WORKER_POLL_INTERVAL_MS: 1000,
     ...(magicLinkMode ? { PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link' } : {}),
   },
   auth,
+  apiKeys: new ApiKeyService(createPostgresApiKeyStore(typedDatabase)),
   fanvueOauth: {
     keys: { currentVersion: () => 'e2e-v1', getKey: () => Promise.resolve(fixtureKey) },
     client: new FanvueHttpClient({
@@ -91,30 +97,66 @@ const application = createStandaloneApplication({
                     expires_in: 3600,
                     scope:
                       options?.body instanceof URLSearchParams &&
-                      options.body.get('code') === 'fixture-payment'
-                        ? [...FANVUE_CHAT_SEND_SCOPES, FANVUE_PAYMENT_SCOPE].join(' ')
+                      options.body.get('code') === 'fixture-audience'
+                        ? [
+                            ...FANVUE_CHAT_SEND_SCOPES,
+                            FANVUE_PAYMENT_SCOPE,
+                            FANVUE_AUDIENCE_SCOPE,
+                          ].join(' ')
                         : options?.body instanceof URLSearchParams &&
-                            options.body.get('code') === 'fixture-payment-no-scope'
-                          ? FANVUE_CHAT_SEND_SCOPES.join(' ')
+                            options.body.get('code') === 'fixture-audience-no-scope'
+                          ? [...FANVUE_CHAT_SEND_SCOPES, FANVUE_PAYMENT_SCOPE].join(' ')
                           : options?.body instanceof URLSearchParams &&
-                              options.body.get('code') === 'fixture-chat-read'
-                            ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                              options.body.get('code') === 'fixture-payment'
+                            ? [...FANVUE_CHAT_SEND_SCOPES, FANVUE_PAYMENT_SCOPE].join(' ')
                             : options?.body instanceof URLSearchParams &&
-                                options.body.get('code') === 'fixture-chat-read-no-scope'
-                              ? FANVUE_PUBLISHING_SCOPES.join(' ')
+                                options.body.get('code') === 'fixture-payment-no-scope'
+                              ? FANVUE_CHAT_SEND_SCOPES.join(' ')
                               : options?.body instanceof URLSearchParams &&
-                                  options.body.get('code') === 'fixture-chat-send-no-scope'
+                                  options.body.get('code') === 'fixture-chat-read'
                                 ? FANVUE_CHAT_READ_SCOPES.join(' ')
                                 : options?.body instanceof URLSearchParams &&
-                                    options.body.get('code') === 'fixture-chat-send'
-                                  ? FANVUE_CHAT_SEND_SCOPES.join(' ')
-                                  : FANVUE_PUBLISHING_SCOPES.join(' '),
+                                    options.body.get('code') === 'fixture-chat-read-no-scope'
+                                  ? FANVUE_PUBLISHING_SCOPES.join(' ')
+                                  : options?.body instanceof URLSearchParams &&
+                                      options.body.get('code') === 'fixture-chat-send-no-scope'
+                                    ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                                    : options?.body instanceof URLSearchParams &&
+                                        options.body.get('code') === 'fixture-chat-send'
+                                      ? FANVUE_CHAT_SEND_SCOPES.join(' ')
+                                      : FANVUE_PUBLISHING_SCOPES.join(' '),
                   },
             ),
           ),
         ),
     }),
     callbackUrl: 'https://publishrelay.app/api/oauth/fanvue/callback',
+    readClient: new FanvueReadClient((url) => {
+      const parsed = new URL(
+        typeof url === 'string' ? url : url instanceof URL ? url.href : url.url,
+      );
+      const fan = {
+        uuid: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        handle: 'fixture-fan',
+        displayName: 'Fixture Fan',
+      };
+      const body =
+        parsed.pathname === '/followers'
+          ? { data: [fan], pagination: { page: 1, size: 1, hasMore: false } }
+          : parsed.pathname === '/subscribers'
+            ? {
+                data: [
+                  {
+                    ...fan,
+                    subscription: { status: 'active' },
+                    firstSubscribedAt: '2026-01-01T00:00:00Z',
+                  },
+                ],
+                pagination: { page: 1, size: 1, hasMore: false, nextCursor: null },
+              }
+            : { data: [], pagination: { page: 1, size: 0, hasMore: false } };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    }),
   },
   ...(magicLinkMode
     ? {

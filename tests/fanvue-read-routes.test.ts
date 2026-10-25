@@ -35,10 +35,16 @@ function fixture(capabilities: string[]) {
   const listMessages = vi.fn().mockResolvedValue({ data: [{ uuid: fanUuid, text: 'hello' }] });
   const listMedia = vi.fn().mockResolvedValue({ data: [{ uuid: fanUuid, status: 'ready' }] });
   const listComments = vi.fn().mockResolvedValue({ data: [], nextCursor: null });
+  const listFollowers = vi.fn().mockResolvedValue({ data: [], pagination: { hasMore: false } });
+  const listSubscribers = vi
+    .fn()
+    .mockResolvedValue({ data: [], pagination: { nextCursor: 'next-page' } });
   const service = {
     listMessages,
     listMedia,
     listComments,
+    listFollowers,
+    listSubscribers,
     listPosts: vi.fn(),
     getPost: vi.fn(),
     listChats: vi.fn(),
@@ -58,10 +64,52 @@ function fixture(capabilities: string[]) {
     { authenticate, requireCapability } as unknown as ApiKeyService,
     rateLimiter,
   );
-  return { application, authenticate, requireCapability, listMessages, listMedia, listComments };
+  return {
+    application,
+    authenticate,
+    requireCapability,
+    listMessages,
+    listMedia,
+    listComments,
+    listFollowers,
+    listSubscribers,
+  };
 }
 
 describe('Fanvue agent read boundary', () => {
+  it('separates audience capability from chat and preserves bounded pagination', async () => {
+    const denied = fixture(['fanvue:chats:read']);
+    const deniedResponse = await denied.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/subscribers?size=25&cursor=opaque`,
+      headers,
+    });
+    expect(deniedResponse.statusCode).toBe(403);
+    expect(denied.listSubscribers).not.toHaveBeenCalled();
+
+    const granted = fixture(['fanvue:audience:read']);
+    const response = await granted.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/subscribers?size=25&cursor=opaque`,
+      headers,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ data: { pagination: { nextCursor: 'next-page' } } });
+    expect(granted.listSubscribers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId,
+        accountId,
+        size: 25,
+        cursor: 'opaque',
+      }),
+    );
+    expect(granted.requireCapability).toHaveBeenCalledWith(
+      expect.anything(),
+      'fanvue:audience:read',
+      expect.any(String),
+    );
+  });
+
   it('uses workspace-bound authentication, chat capability and account ID', async () => {
     const context = fixture(['fanvue:chats:read']);
     const response = await context.application.inject({

@@ -12,7 +12,7 @@ import {
   type MasterKeyProvider,
 } from '../credentials/envelope.js';
 import {
-  assertFanvuePublishingScopes,
+  assertFanvueReadGrantScopes,
   fanvueTokenSchema,
   FanvueRequestError,
   type FanvueHttpClient,
@@ -164,7 +164,7 @@ async function reserveFanvueRefresh(
     } finally {
       plaintext.fill(0);
     }
-    assertFanvuePublishingScopes(token.scope);
+    assertFanvueReadGrantScopes(token.scope);
     if (
       connection.accessExpiresAt &&
       connection.accessExpiresAt.getTime() > now.getTime() + REFRESH_SKEW_MS
@@ -228,7 +228,7 @@ async function persistFanvueRefresh(
       .update(providerConnections)
       .set({
         status: 'active',
-        scopes: assertFanvuePublishingScopes(refreshed.scope),
+        scopes: assertFanvueReadGrantScopes(refreshed.scope),
         accessExpiresAt: new Date(now.getTime() + refreshed.expires_in * 1000),
         lastRefreshedAt: now,
         lastErrorCode: null,

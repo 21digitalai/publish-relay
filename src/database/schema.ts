@@ -1146,3 +1146,37 @@ export const providerStagingArtifacts = pgTable(
     }).onDelete('restrict'),
   ],
 );
+
+export const fanvueActionIntents = pgTable(
+  'fanvue_action_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    actionKind: text('action_kind').notNull(),
+    targetUuid: uuid('target_uuid').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    state: text('state').notNull().default('reserved'),
+    providerObjectUuid: uuid('provider_object_uuid'),
+    failureStatus: integer('failure_status'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_action_intents_action_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.clientActionId,
+    ),
+    index('fanvue_action_intents_account_created_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.createdAt,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_action_intents_workspace_account_fk',
+    }).onDelete('restrict'),
+  ],
+);

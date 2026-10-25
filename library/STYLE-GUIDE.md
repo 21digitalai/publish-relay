@@ -23,6 +23,8 @@ Principles:
 
 The tab icon reuses the header's `.brand-signal` lime ring and violet offset accent. `src/ui/favicon.svg` is its single source; the Core build also copies it to the stable `/favicon.svg` asset path so Hosted pages can link `/core-assets/favicon.svg` without duplicating the mark.
 
+On a connected Fanvue account, the secondary `.fanvue-chat-read-enable` action requests optional read-only message access for that exact account. The account row replaces the action with an explicit `.fanvue-chat-read-status` enabled label after the scoped grant is stored, including after reload; sending remains a separate permission. The existing account error/status surfaces give account-specific recovery for a changed/disconnected account, a missing read grant, or a different signed-in creator. This module affordance does not enable outbound messages or publishing dispatch.
+
 ## Background publication feedback
 
 The Connected Accounts row marks a Facebook Page shared from another workspace with its friendly origin workspace name. Its local disconnect, grant revoke and reconnect actions are absent on that row; the origin workspace continues to own those actions. The same account list supplies the Composer destination picker without duplicating a Page or credential.

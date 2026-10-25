@@ -1,6 +1,11 @@
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  registerRedactedNotFoundHandler,
+  requestLoggerOptions,
+} from '../src/application/request-logger.js';
+
 const callbacks = vi.hoisted(() => ({ resolve: vi.fn(), record: vi.fn() }));
 vi.mock('../src/modules/providers/fanvue-payment-callback.repository.js', () => ({
   resolveFanvuePaymentCallback: callbacks.resolve,
@@ -87,10 +92,14 @@ describe('Fanvue payment webhook HTTP boundary', () => {
   });
 
   it('does not acknowledge a delivery when durable receipt fails', async () => {
-    const app = Fastify();
+    const lines: string[] = [];
+    const app = Fastify({
+      logger: { ...requestLoggerOptions, stream: { write: (line) => lines.push(line) } },
+    });
     callbacks.resolve.mockResolvedValue({ state: 'active', subscription: {} });
     callbacks.record.mockRejectedValue(new Error('database unavailable'));
     registerFanvuePaymentWebhook(app, { database: {} as never, keys: {} as never });
+    registerRedactedNotFoundHandler(app);
     expect(
       (
         await app.inject({
@@ -101,6 +110,11 @@ describe('Fanvue payment webhook HTTP boundary', () => {
         })
       ).statusCode,
     ).toBe(500);
+    const missing = await app.inject({ method: 'GET', url: `${url}/wrong-route` });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.body).not.toContain(handle);
+    expect(lines.join('')).not.toContain(handle);
+    expect(callbacks.resolve).toHaveBeenCalledWith(expect.anything(), expect.anything(), handle);
     await app.close();
   });
 });

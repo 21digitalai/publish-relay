@@ -424,6 +424,8 @@ Migration 0086 introduces `fanvue_dm_attachments` as a dedicated workspace/accou
 
 `reserveFanvueDmUploadPart` validates the next one-based part against that encrypted session, then atomically changes only the same ready account/action/media binding from `uploading` to `unknown` before any signed PUT. It rechecks the credential version, ready media and current creator connection in the reservation transaction. A duplicate or later reservation cannot replay an uncertain PUT. This slice records only intent; the external PUT, encrypted ETag rotation, completion PATCH and provider readiness remain separate reviewable steps. The presence of an upload credential distinguishes an uncertain part from an uncertain session create without silently resolving either.
 
+`recordFanvueDmPartReceipt` is the confirmation half of that boundary: only a verified signed-PUT ETag may append the exact next part to the encrypted Fanvue session. It locks the same account/action/media `unknown` binding, compares the decrypted current session and version, rotates the tenant credential and returns the binding to `uploading` atomically. A lost or duplicate confirmation does not advance the plan. A provider PUT caller must not invoke this method on transport ambiguity, missing ETag or a guessed outcome.
+
 `POST /api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages` is the account-scoped,
 machine command for text or selected ready provider media. It requires `fanvue:chats:send`, separately from read/propose access,
 and derives workspace and actor from the authenticated API key or delegated grant. The route

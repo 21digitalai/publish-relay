@@ -20,6 +20,7 @@ import {
 } from '../src/modules/providers/fanvue-dm-attachment.repository.js';
 import { initializeFanvueDmUpload } from '../src/modules/providers/fanvue-dm-upload-init.service.js';
 import { reserveFanvueDmUploadPart } from '../src/modules/providers/fanvue-dm-upload-part-intent.repository.js';
+import { recordFanvueDmPartReceipt } from '../src/modules/providers/fanvue-dm-upload-part-receipt.repository.js';
 import {
   loadFanvueDmUploadSession,
   openFanvueDmUploadRange,
@@ -268,6 +269,29 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         [uploadMediaId],
       );
       expect(pendingPart.rows[0]?.state).toBe('unknown');
+      if (!part) throw new Error('Expected the first part reservation');
+      await expect(
+        recordFanvueDmPartReceipt(db, keys, {
+          ...uploadKey,
+          session: part.session,
+          credentialVersion: part.credentialVersion,
+          partNumber: 1,
+          etag: 'etag-confirmed',
+        }),
+      ).resolves.toBe(true);
+      await expect(
+        recordFanvueDmPartReceipt(db, keys, {
+          ...uploadKey,
+          session: part.session,
+          credentialVersion: part.credentialVersion,
+          partNumber: 1,
+          etag: 'etag-confirmed',
+        }),
+      ).resolves.toBe(false);
+      await expect(loadFanvueDmUploadSession(db, keys, uploadKey)).resolves.toMatchObject({
+        credentialVersion: part.credentialVersion + 1,
+        session: { parts: [{ PartNumber: 1, ETag: 'etag-confirmed' }] },
+      });
 
       const unknownMediaId = randomUUID();
       await pool.query(

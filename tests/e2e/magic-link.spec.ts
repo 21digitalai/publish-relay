@@ -26,12 +26,25 @@ test('first-time email opens across devices and creates a single-use session', a
   const otherDevice = await browser.newContext({ userAgent: 'separate-email-client' });
   try {
     const otherPage = await otherDevice.newPage();
+    const verificationContentTypes: string[] = [];
+    await otherPage.route('**/api/auth/magic-link/verify', async (route) => {
+      if (route.request().method() === 'POST') {
+        const contentType = route.request().headers()['content-type'] ?? '';
+        verificationContentTypes.push(contentType);
+        if (contentType.includes('application/x-www-form-urlencoded')) {
+          await route.fulfill({ status: 302, headers: { location: '/login?magicLink=invalid' } });
+          return;
+        }
+      }
+      await route.continue();
+    });
     await otherPage.goto(url);
     await expect(otherPage.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
     await expect(otherPage).not.toHaveURL(/token=/);
     expect(await otherDevice.cookies()).toEqual([]);
     await otherPage.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(otherPage).toHaveURL(/\/app|\/w\//);
+    expect(verificationContentTypes).toEqual(['application/json']);
     await otherPage.reload();
     await expect(otherPage).not.toHaveURL(/\/login/);
     await page.goto(url);

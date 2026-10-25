@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { getActiveCredential } from '../src/modules/credentials/credential.repository.js';
 import { decryptCredential } from '../src/modules/credentials/envelope.js';
-import { advanceFanvueUploadProgress } from '../src/modules/providers/fanvue-upload-progress.repository.js';
+import {
+  advanceFanvueUploadProgress,
+  reserveFanvueUploadPart,
+} from '../src/modules/providers/fanvue-upload-progress.repository.js';
 import type { FanvueUploadSession } from '../src/modules/providers/fanvue-upload-session.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
@@ -83,8 +86,12 @@ beforeEach(async () => {
 afterEach(async () => postgres.close());
 
 async function progress() {
-  const artifact = await postgres.query<{ next_segment: number; next_byte_offset: string }>(
-    'SELECT next_segment, next_byte_offset FROM provider_staging_artifacts WHERE id=$1',
+  const artifact = await postgres.query<{
+    next_segment: number;
+    next_byte_offset: string;
+    upload_phase: string;
+  }>(
+    'SELECT next_segment, next_byte_offset, upload_phase FROM provider_staging_artifacts WHERE id=$1',
     [artifactId],
   );
   const credential = await postgres.query<{ version: number }>(
@@ -94,6 +101,7 @@ async function progress() {
   return {
     segment: artifact.rows[0]?.next_segment,
     offset: Number(artifact.rows[0]?.next_byte_offset),
+    phase: artifact.rows[0]?.upload_phase,
     version: credential.rows[0]?.version,
   };
 }
@@ -115,8 +123,12 @@ function input(overrides: Record<string, unknown> = {}) {
 
 describe('Fanvue encrypted session and staging progress transaction', () => {
   it('commits one receipt and offset, refusing duplicate/stale progress', async () => {
+    expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(false);
+    expect(await reserveFanvueUploadPart(database, input())).toBe(true);
+    expect(await reserveFanvueUploadPart(database, input())).toBe(false);
+    expect(await progress()).toEqual({ segment: 0, offset: 0, phase: 'put_pending', version: 1 });
     expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(true);
-    expect(await progress()).toEqual({ segment: 1, offset: 5, version: 2 });
+    expect(await progress()).toEqual({ segment: 1, offset: 5, phase: 'uploading', version: 2 });
     const stored = await getActiveCredential(database, workspaceId, credentialId);
     if (!stored) throw new Error('Missing upload session receipt');
     expect(JSON.parse((await decryptCredential(stored, keys)).toString())).toEqual({
@@ -124,7 +136,16 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
       parts: [{ PartNumber: 1, ETag: 'etag-one' }],
     });
     expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(false);
-    expect(await progress()).toEqual({ segment: 1, offset: 5, version: 2 });
+    expect(await progress()).toEqual({ segment: 1, offset: 5, phase: 'uploading', version: 2 });
+    expect(
+      await reserveFanvueUploadPart(
+        database,
+        input({
+          session: { ...session, parts: [{ PartNumber: 1, ETag: 'etag-one' }] },
+          partNumber: 2,
+        }),
+      ),
+    ).toBe(true);
     expect(
       await advanceFanvueUploadProgress(
         database,
@@ -137,14 +158,26 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
         }),
       ),
     ).toBe(true);
-    expect(await progress()).toEqual({ segment: 2, offset: 8, version: 3 });
+    expect(await progress()).toEqual({ segment: 2, offset: 8, phase: 'uploading', version: 3 });
   });
 
   it('rolls back offset when credential version is stale', async () => {
+    expect(await reserveFanvueUploadPart(database, input())).toBe(true);
     await expect(
       advanceFanvueUploadProgress(database, keys, input({ credentialVersion: 2 })),
     ).rejects.toThrow('version changed');
-    expect(await progress()).toEqual({ segment: 0, offset: 0, version: 1 });
+    expect(await progress()).toEqual({ segment: 0, offset: 0, phase: 'put_pending', version: 1 });
+  });
+
+  it('leaves ambiguous PUT intent pending after lease expiry and refuses an old receipt', async () => {
+    expect(await reserveFanvueUploadPart(database, input())).toBe(true);
+    await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
+      new Date(Date.now() - 60_000),
+      jobId,
+    ]);
+    expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(false);
+    expect(await reserveFanvueUploadPart(database, input())).toBe(false);
+    expect(await progress()).toEqual({ segment: 0, offset: 0, phase: 'put_pending', version: 1 });
   });
 
   it('denies wrong tenant, lease owner, expired lease and a recorded attempt', async () => {
@@ -152,14 +185,14 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
       input({ workspaceId: otherWorkspaceId }),
       input({ leaseOwner: 'worker-two' }),
     ])
-      expect(await advanceFanvueUploadProgress(database, keys, denied)).toBe(false);
+      expect(await reserveFanvueUploadPart(database, denied)).toBe(false);
     await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
       new Date(Date.now() - 60_000),
       jobId,
     ]);
-    expect(
-      await advanceFanvueUploadProgress(database, keys, input({ now: new Date(2000, 0, 1) })),
-    ).toBe(false);
+    expect(await reserveFanvueUploadPart(database, input({ now: new Date(2000, 0, 1) }))).toBe(
+      false,
+    );
     await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
       new Date(Date.now() + 60_000),
       jobId,
@@ -168,15 +201,15 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
       new Date(Date.now() - 60_000),
       artifactId,
     ]);
-    expect(
-      await advanceFanvueUploadProgress(database, keys, input({ now: new Date(2000, 0, 1) })),
-    ).toBe(false);
+    expect(await reserveFanvueUploadPart(database, input({ now: new Date(2000, 0, 1) }))).toBe(
+      false,
+    );
     await postgres.query('UPDATE provider_staging_artifacts SET expires_at=$1 WHERE id=$2', [
       new Date(Date.now() + 60_000),
       artifactId,
     ]);
     await postgres.query('INSERT INTO publication_attempts VALUES ($1, $2)', [workspaceId, jobId]);
-    expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(false);
-    expect(await progress()).toEqual({ segment: 0, offset: 0, version: 1 });
+    expect(await reserveFanvueUploadPart(database, input())).toBe(false);
+    expect(await progress()).toEqual({ segment: 0, offset: 0, phase: 'uploading', version: 1 });
   });
 });

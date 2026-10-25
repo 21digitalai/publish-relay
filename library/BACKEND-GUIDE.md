@@ -416,6 +416,8 @@ Selected Meta remote-grant revoke reserves the connection with durable `revoking
 
 ## Fanvue message send command
 
+Migration 0086 introduces `fanvue_dm_attachments` as a dedicated workspace/account/client-action/media owner, not a publication-job artifact. Composite account and media foreign keys plus forced tenant RLS prevent cross-workspace binding. `bindFanvueDmAttachment` locks an exact ready local media row before inserting a selected active Fanvue account binding; this serializes with retention/deletion claims. The three media-retention and explicit-delete gates protect every non-released binding, including unknown upload outcomes. Only a never-uploaded `bound` row can be released; `uploading`, `unknown`, `ready` and `failed` require later provider-aware lifecycle handling. The table reserves an encrypted upload-credential reference and provider UUID; this foundation does not itself upload or expose local media in the send API.
+
 `POST /api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages` is the account-scoped,
 machine command for text or selected ready provider media. It requires `fanvue:chats:send`, separately from read/propose access,
 and derives workspace and actor from the authenticated API key or delegated grant. The route

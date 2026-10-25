@@ -1217,6 +1217,55 @@ export const fanvueActionIntents = pgTable(
   ],
 );
 
+export const fanvueDmAttachments = pgTable(
+  'fanvue_dm_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    mediaId: uuid('media_id').notNull(),
+    state: text('state').notNull().default('bound'),
+    providerMediaUuid: uuid('provider_media_uuid'),
+    uploadCredentialId: uuid('upload_credential_id'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_dm_attachments_action_media_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.clientActionId,
+      table.mediaId,
+    ),
+    index('fanvue_dm_attachments_media_active_idx')
+      .on(table.workspaceId, table.mediaId)
+      .where(sql`${table.state} <> 'released'`),
+    check(
+      'fanvue_dm_attachments_state_check',
+      sql`${table.state} in ('bound', 'uploading', 'unknown', 'ready', 'failed', 'released')`,
+    ),
+    check(
+      'fanvue_dm_attachments_ready_check',
+      sql`${table.state} <> 'ready' or ${table.providerMediaUuid} is not null`,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_dm_attachments_account_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.mediaId],
+      foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
+      name: 'fanvue_dm_attachments_media_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.uploadCredentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'fanvue_dm_attachments_upload_credential_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
 export const fanvuePaymentReceipts = pgTable(
   'fanvue_payment_receipts',
   {

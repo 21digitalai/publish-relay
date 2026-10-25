@@ -603,6 +603,13 @@
       "when": 1792935000003,
       "tag": "0085_fanvue_payment_deletion_required",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792937450000,
+      "tag": "0086_fanvue_dm_attachments",
+      "breakpoints": true
     }
   ]
 }

@@ -76,6 +76,10 @@ async function hasRequiredJobReference(
       select 1 from provider_media_grants grant_row
       where grant_row.workspace_id = ${workspaceId} and grant_row.media_id = ${mediaId}
         and grant_row.revoked_at is null and grant_row.expires_at > ${now}
+      union all
+      select 1 from fanvue_dm_attachments dm
+      where dm.workspace_id = ${workspaceId} and dm.media_id = ${mediaId}
+        and dm.state <> 'released'
     ) as required
   `);
   return result.rows[0]?.required === true;
@@ -155,6 +159,11 @@ export async function cleanupRetainedMedia(
             where grant_row.workspace_id = media.workspace_id and grant_row.media_id = media.id
               and grant_row.revoked_at is null and grant_row.expires_at > ${input.now}
           )
+          and not exists (
+            select 1 from fanvue_dm_attachments dm
+            where dm.workspace_id = media.workspace_id and dm.media_id = media.id
+              and dm.state <> 'released'
+          )
         order by media.cleanup_eligible_at, media.id
         limit ${input.limit ?? 100}
         for update of media skip locked
@@ -216,6 +225,11 @@ export async function deleteUnattachedMedia(
           select 1 from provider_media_grants grant_row
           where grant_row.workspace_id = media.workspace_id and grant_row.media_id = media.id
             and grant_row.revoked_at is null and grant_row.expires_at > ${now}
+        )
+        and not exists (
+          select 1 from fanvue_dm_attachments dm
+          where dm.workspace_id = media.workspace_id and dm.media_id = media.id
+            and dm.state <> 'released'
         )
       returning media.storage_key
     `);

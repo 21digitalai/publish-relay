@@ -25,6 +25,13 @@ describe('Fanvue media upload plan', () => {
       planFanvueMediaUpload(257, { partSize: 1, maxParts: 300, totalParts: null }),
     ).toThrow();
     expect(() =>
+      planFanvueMediaUpload(17 * 1024 * 1024, {
+        partSize: 17 * 1024 * 1024,
+        maxParts: 256,
+        totalParts: 1,
+      }),
+    ).toThrow('part size');
+    expect(() =>
       planFanvueMediaUpload(0, { partSize: 6, maxParts: 256, totalParts: null }),
     ).toThrow();
   });

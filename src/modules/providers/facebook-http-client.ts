@@ -38,7 +38,10 @@ const graphPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({
     data: z.array(item).max(100),
     paging: z
-      .object({ cursors: z.object({ after: z.string().min(1).max(2048).optional() }).optional() })
+      .object({
+        cursors: z.object({ after: z.string().min(1).max(2048).optional() }).optional(),
+        next: z.string().min(1).optional(),
+      })
       .optional(),
   });
 const MAX_RETRY_AFTER_SECONDS = 86_400;
@@ -75,8 +78,8 @@ function boundedHeader(response: Response, name: string): string | undefined {
 
 function classify(status: number, code?: number, transient?: boolean): FacebookErrorKind {
   if (status === 401 || code === 190) return 'auth';
-  if (status === 403 || code === 10 || code === 200) return 'permission';
   if (status === 429 || [4, 17, 32, 613].includes(code ?? -1)) return 'rate_limit';
+  if (status === 403 || code === 10 || code === 200) return 'permission';
   if (transient || status >= 500) return 'transient';
   return status === 400 ? 'validation' : 'permanent';
 }
@@ -157,7 +160,7 @@ export class FacebookHttpClient {
         createdAt: post.created_time,
         permalink: post.permalink_url ?? null,
       })),
-      nextCursor: page.paging?.cursors?.after ?? null,
+      nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
   }
 
@@ -194,7 +197,7 @@ export class FacebookHttpClient {
         replyCount: comment.comment_count ?? null,
         likeCount: comment.like_count ?? null,
       })),
-      nextCursor: page.paging?.cursors?.after ?? null,
+      nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
   }
 
@@ -224,7 +227,7 @@ export class FacebookHttpClient {
         id: item.id,
         updatedAt: item.updated_time ?? null,
       })),
-      nextCursor: page.paging?.cursors?.after ?? null,
+      nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
   }
 
@@ -256,7 +259,7 @@ export class FacebookHttpClient {
         createdAt: item.created_time,
         senderId: item.from?.id ?? null,
       })),
-      nextCursor: page.paging?.cursors?.after ?? null,
+      nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
   }
 

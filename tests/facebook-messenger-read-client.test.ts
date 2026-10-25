@@ -69,6 +69,23 @@ describe('Facebook Messenger read transport', () => {
     expect(JSON.stringify(result)).not.toMatch(/Private Person|hidden@example/);
   });
 
+  it('does not advertise a terminal cursor for conversations or messages', async () => {
+    const terminalPage = () =>
+      Response.json({ data: [], paging: { cursors: { after: 'terminal-cursor' } } });
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(terminalPage())
+      .mockResolvedValueOnce(terminalPage());
+    const client = clientWith(request);
+    expect(
+      (await client.listPageConversations({ pageId: '123', accessToken: 'token' })).nextCursor,
+    ).toBeNull();
+    expect(
+      (await client.listConversationMessages({ conversationId: 't_123', accessToken: 'token' }))
+        .nextCursor,
+    ).toBeNull();
+  });
+
   it('rejects path or page manipulation and classifies rate-limit denial', async () => {
     const request = vi
       .fn<typeof fetch>()

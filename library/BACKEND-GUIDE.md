@@ -5,11 +5,13 @@
 `FacebookHttpClient.listPagePosts` and `listPostComments` are bounded Graph GET
 transport projections. They use the configured pinned Graph version, Page token
 in a bearer header, numeric Page/post IDs, a maximum 100-row page, and only
-`paging.cursors.after` as the continuation handle. The provider's `paging.next`
-URL and unrequested profile/credential fields never become API output. Graph
+`paging.cursors.after` as the continuation handle only when `paging.next` is
+present; a terminal page can still carry an `after` cursor. The provider's
+`paging.next` URL and unrequested profile/credential fields never become API output. Graph
 `created_time` may carry a `+0000` offset; validate it as a parseable timestamp
 without requiring ISO's colonized offset. The existing Facebook error classifier
-handles denied/rate/transient responses without surfacing provider bodies.
+handles denied/rate/transient responses without surfacing provider bodies;
+Meta rate codes 4/17/32/613 take precedence over a generic HTTP 403 denial.
 
 These methods are _not_ account-scoped APIs. The service boundary still must
 verify selected Page ownership, optional Comments module and verified Meta
@@ -22,7 +24,8 @@ and target-version fixtures are completed.
 The same pinned `FacebookHttpClient` owns bounded Messenger GET transport for
 Page conversations and conversation messages. It projects only stable
 conversation/message IDs, timestamps, text and sender Page-scoped ID; provider
-`paging.next`, raw profiles and token material are discarded. No read-receipt
+`paging.next`, raw profiles and token material are discarded; a cursor is
+exposed only when `paging.next` is present. No read-receipt
 mutation is issued. These are not account-scoped Relay tools yet: the caller
 must prove the selected Page owns each conversation, its optional DMs module
 and provider scopes/tasks are verified, and the machine/browser principal has

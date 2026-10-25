@@ -90,6 +90,22 @@ describe('Facebook Page comment read transport', () => {
     expect(JSON.stringify(page)).not.toContain('Private Person');
   });
 
+  it('does not advertise a terminal cursor for posts or comments', async () => {
+    const terminalPage = () =>
+      Response.json({ data: [], paging: { cursors: { after: 'terminal-cursor' } } });
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(terminalPage())
+      .mockResolvedValueOnce(terminalPage());
+    const client = makeClient(request);
+    expect(
+      (await client.listPagePosts({ pageId: '123', accessToken: 'token' })).nextCursor,
+    ).toBeNull();
+    expect(
+      (await client.listPostComments({ postId: '123_456', accessToken: 'token' })).nextCursor,
+    ).toBeNull();
+  });
+
   it('rejects unbounded requests and classifies provider permission/rate failures', async () => {
     const request = vi
       .fn<typeof fetch>()
@@ -110,5 +126,22 @@ describe('Facebook Page comment read transport', () => {
     expect(permission).toBeInstanceOf(FacebookRequestError);
     expect(permission).toMatchObject({ evidence: { status: 403, kind: 'permission' } });
     expect(String(permission)).not.toContain('private provider detail');
+  });
+
+  it.each([
+    [403, 4],
+    [429, 613],
+  ])('classifies HTTP %i Meta code %i as rate limited', async (status, code) => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        Response.json({ error: { code, message: 'private provider detail' } }, { status }),
+      );
+    const error = await makeClient(request)
+      .listPagePosts({ pageId: '123', accessToken: 'token' })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FacebookRequestError);
+    expect(error).toMatchObject({ evidence: { status, kind: 'rate_limit' } });
+    expect(String(error)).not.toContain('private provider detail');
   });
 });

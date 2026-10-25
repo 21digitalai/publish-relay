@@ -1,5 +1,106 @@
 import { expect, test } from '@playwright/test';
 
+test('priced and media proposals stay visible but cannot send', async ({ page }, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Media Reviewer',
+      email: `media-review-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Media Review Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const variants = [
+    {
+      mediaCount: 1,
+      priceCents: null,
+      content: { text: 'Media', mediaIds: ['00000000-0000-4000-8000-000000000001'] },
+    },
+    { mediaCount: 0, priceCents: 300, content: { text: 'Price', priceCents: 300 } },
+    {
+      mediaCount: 2,
+      priceCents: 500,
+      content: {
+        text: 'Both',
+        mediaIds: ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'],
+        priceCents: 500,
+      },
+    },
+    {
+      mediaCount: 1,
+      priceCents: 0,
+      content: { text: 'Free', mediaIds: ['00000000-0000-4000-8000-000000000001'], priceCents: 0 },
+    },
+  ];
+  let approvals = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const request = route.request();
+    if (request.url().endsWith('/approve')) approvals += 1;
+    const path = new URL(request.url()).pathname;
+    const index = variants.findIndex((_, item) => path.endsWith(`/${String(item + 1)}`));
+    const data =
+      index < 0
+        ? {
+            items: variants.map((variant, item) => ({
+              id: String(item + 1),
+              accountDisplayName: 'Creator',
+              provider: 'fanvue',
+              kind: 'dm',
+              status: 'pending',
+              sourcePreview: '',
+              contentPreview: variant.content.text,
+              mediaCount: variant.mediaCount,
+              priceCents: variant.priceCents,
+              createdAt: '2026-10-25T12:00:00Z',
+            })),
+            nextCursor: null,
+          }
+        : {
+            id: String(index + 1),
+            accountDisplayName: 'Creator',
+            provider: 'fanvue',
+            kind: 'dm',
+            targetId: '00000000-0000-4000-8000-000000000003',
+            sourceContext: {},
+          content: variants[index]?.content,
+            revision: 1,
+            status: 'pending',
+            canApprove: true,
+          };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  const summaries = page.locator('.engagement-proposal-media-summary');
+  await expect(summaries).toHaveCount(4);
+  await expect(summaries.nth(0)).toContainText('1 media attachment(s) proposed');
+  await expect(summaries.nth(1)).toContainText('$3.00');
+  await expect(summaries.nth(2)).toContainText('2 media attachment(s) proposed');
+  await expect(summaries.nth(2)).toContainText('$5.00');
+  await expect(summaries.nth(3)).toContainText('$0.00');
+  for (let index = 0; index < variants.length; index += 1) {
+    await page
+      .getByRole('button', { name: /Fanvue message/ })
+      .nth(index)
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'Approve and send', exact: true }),
+    ).toBeDisabled();
+  }
+  await page.screenshot({
+    path: testInfo.outputPath('proposal-media-price-queue.png'),
+    fullPage: true,
+  });
+  await page.reload();
+  await expect(page.locator('.engagement-proposal-media-summary')).toHaveCount(4);
+  expect(approvals).toBe(0);
+});
+
 test('review inbox edits and dismisses without a provider send', async ({ page }, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {

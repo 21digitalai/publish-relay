@@ -165,6 +165,11 @@ describe('engagement proposal foundation', () => {
       });
       expect(listResponse.statusCode).toBe(200);
       expect(
+        listResponse.json<{
+          data: { items: { mediaCount: number; priceCents: number | null }[] };
+        }>().data.items[0],
+      ).toMatchObject({ mediaCount: 0, priceCents: null });
+      expect(
         listResponse.json<{ data: { items: { id: string }[]; nextCursor: string | null } }>().data
           .items[0]?.id,
       ).toBe(createdBody.data.id);
@@ -217,6 +222,37 @@ describe('engagement proposal foundation', () => {
       expect(seenIds).toEqual(expect.arrayContaining([createdBody.data.id, ...pageFixtureIds]));
       await client.exec(
         `DELETE FROM engagement_proposals WHERE id IN (${pageFixtureIds.map((id) => `'${id}'`).join(',')})`,
+      );
+      const mediaProposal = await app.inject({
+        method: 'POST',
+        url: '/api/v1/engagement-proposals',
+        headers,
+        payload: {
+          ...proposalBody,
+          accountId: fanvueAccount,
+          provider: 'fanvue',
+          kind: 'dm',
+          targetId: '00000000-0000-4000-8000-000000000219',
+          clientActionId: '00000000-0000-4000-8000-000000000299',
+          content: {
+            text: 'Media offer',
+            mediaIds: ['00000000-0000-4000-8000-000000000298'],
+            priceCents: 0,
+          },
+        },
+      });
+      expect(mediaProposal.statusCode).toBe(201);
+      const mediaList = await app.inject({
+        method: 'GET',
+        url: '/api/engagement-proposals',
+        headers: browserHeaders,
+      });
+      expect(
+        mediaList.json<{ data: { items: { mediaCount: number; priceCents: number | null }[] } }>()
+          .data.items[0],
+      ).toMatchObject({ mediaCount: 1, priceCents: 0 });
+      await client.exec(
+        `DELETE FROM engagement_proposals WHERE id = '${mediaProposal.json<{ data: { id: string } }>().data.id}'`,
       );
       const detail = await app.inject({
         method: 'GET',

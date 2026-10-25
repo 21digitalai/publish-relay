@@ -311,7 +311,7 @@ export function EngagementProposalsPage() {
                   <span>{item.accountDisplayName}</span>
                   <span>{item.contentPreview}</span>
                   {(item.mediaCount > 0 || item.priceCents !== null) && (
-                    <span>
+                    <span className="engagement-proposal-media-summary">
                       {item.mediaCount > 0 &&
                         `${String(item.mediaCount)} media attachment(s) proposed`}
                       {item.mediaCount > 0 && item.priceCents !== null && ' · '}

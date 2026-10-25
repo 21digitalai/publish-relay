@@ -3,8 +3,12 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { providerStagingArtifacts } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import { rotateCredential } from '../credentials/credential.repository.js';
-import { encryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
+import { getActiveCredential, rotateCredential } from '../credentials/credential.repository.js';
+import {
+  decryptCredential,
+  encryptCredential,
+  type MasterKeyProvider,
+} from '../credentials/envelope.js';
 import { fanvuePartRange } from './fanvue-media-upload-plan.js';
 import {
   appendFanvuePartReceipt,
@@ -18,13 +22,30 @@ interface FanvuePartProgressInput {
   artifactId: string;
   leaseOwner: string;
   credentialId: string;
+  credentialVersion: number;
   session: FanvueUploadSession;
   partNumber: number;
 }
 
 interface AdvanceFanvueUploadInput extends FanvuePartProgressInput {
-  credentialVersion: number;
   etag: string;
+}
+
+async function hasCurrentSession(
+  transaction: NodePgDatabase,
+  keys: MasterKeyProvider,
+  input: FanvuePartProgressInput,
+  requireVersion: boolean,
+): Promise<boolean> {
+  const stored = await getActiveCredential(transaction, input.workspaceId, input.credentialId);
+  if (!stored || (requireVersion && stored.version !== input.credentialVersion)) return false;
+  const plaintext = await decryptCredential(stored, keys);
+  try {
+    const current = parseFanvueUploadSession(JSON.parse(plaintext.toString('utf8')) as unknown);
+    return JSON.stringify(current) === JSON.stringify(parseFanvueUploadSession(input.session));
+  } finally {
+    plaintext.fill(0);
+  }
 }
 
 function expectedProgress(input: FanvuePartProgressInput) {
@@ -73,9 +94,11 @@ function eligibleArtifact(input: FanvuePartProgressInput, phase: string) {
 /** Persist possible signed PUT intent before sending bytes; pending is never auto-retried. */
 export async function reserveFanvueUploadPart(
   database: NodePgDatabase,
+  keys: MasterKeyProvider,
   input: FanvuePartProgressInput,
 ): Promise<boolean> {
   return withTenantTransaction(database, input, async (transaction) => {
+    if (!(await hasCurrentSession(transaction, keys, input, true))) return false;
     const [artifact] = await transaction
       .update(providerStagingArtifacts)
       .set({ uploadPhase: 'put_pending', updatedAt: sql`clock_timestamp()` })
@@ -101,6 +124,7 @@ export async function advanceFanvueUploadProgress(
   }
 
   return withTenantTransaction(database, input, async (transaction) => {
+    if (!(await hasCurrentSession(transaction, keys, input, false))) return false;
     const [artifact] = await transaction
       .update(providerStagingArtifacts)
       .set({

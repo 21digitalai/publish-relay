@@ -4,7 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { getActiveCredential } from '../src/modules/credentials/credential.repository.js';
-import { decryptCredential } from '../src/modules/credentials/envelope.js';
+import { decryptCredential, encryptCredential } from '../src/modules/credentials/envelope.js';
 import {
   advanceFanvueUploadProgress,
   reserveFanvueUploadPart,
@@ -58,12 +58,23 @@ beforeEach(async () => {
       updated_at timestamptz NOT NULL DEFAULT now()
     );
   `);
+  const encrypted = await encryptCredential(Buffer.from(JSON.stringify(session)), keys);
   await postgres.query(
     `INSERT INTO credentials (
        id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag,
        ciphertext, nonce, tag, version
-     ) VALUES ($1, $2, 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06', 1)`,
-    [credentialId, workspaceId],
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1)`,
+    [
+      credentialId,
+      workspaceId,
+      encrypted.keyVersion,
+      encrypted.wrappedKey,
+      encrypted.wrappedKeyNonce,
+      encrypted.wrappedKeyTag,
+      encrypted.ciphertext,
+      encrypted.nonce,
+      encrypted.tag,
+    ],
   );
   await postgres.query(`INSERT INTO provider_accounts VALUES ($1, $2, 'fanvue', 'active', NULL)`, [
     accountId,
@@ -123,10 +134,28 @@ function input(overrides: Record<string, unknown> = {}) {
 
 describe('Fanvue encrypted session and staging progress transaction', () => {
   it('commits one receipt and offset, refusing duplicate/stale progress', async () => {
+    expect(
+      await reserveFanvueUploadPart(
+        database,
+        keys,
+        input({
+          session: { ...session, uploadId: 'wrong-upload' },
+        }),
+      ),
+    ).toBe(false);
     expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(false);
-    expect(await reserveFanvueUploadPart(database, input())).toBe(true);
-    expect(await reserveFanvueUploadPart(database, input())).toBe(false);
+    expect(await reserveFanvueUploadPart(database, keys, input())).toBe(true);
+    expect(await reserveFanvueUploadPart(database, keys, input())).toBe(false);
     expect(await progress()).toEqual({ segment: 0, offset: 0, phase: 'put_pending', version: 1 });
+    expect(
+      await advanceFanvueUploadProgress(
+        database,
+        keys,
+        input({
+          session: { ...session, uploadId: 'wrong-upload' },
+        }),
+      ),
+    ).toBe(false);
     expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(true);
     expect(await progress()).toEqual({ segment: 1, offset: 5, phase: 'uploading', version: 2 });
     const stored = await getActiveCredential(database, workspaceId, credentialId);
@@ -140,7 +169,9 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
     expect(
       await reserveFanvueUploadPart(
         database,
+        keys,
         input({
+          credentialVersion: 2,
           session: { ...session, parts: [{ PartNumber: 1, ETag: 'etag-one' }] },
           partNumber: 2,
         }),
@@ -162,7 +193,7 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
   });
 
   it('rolls back offset when credential version is stale', async () => {
-    expect(await reserveFanvueUploadPart(database, input())).toBe(true);
+    expect(await reserveFanvueUploadPart(database, keys, input())).toBe(true);
     await expect(
       advanceFanvueUploadProgress(database, keys, input({ credentialVersion: 2 })),
     ).rejects.toThrow('version changed');
@@ -170,13 +201,13 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
   });
 
   it('leaves ambiguous PUT intent pending after lease expiry and refuses an old receipt', async () => {
-    expect(await reserveFanvueUploadPart(database, input())).toBe(true);
+    expect(await reserveFanvueUploadPart(database, keys, input())).toBe(true);
     await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
       new Date(Date.now() - 60_000),
       jobId,
     ]);
     expect(await advanceFanvueUploadProgress(database, keys, input())).toBe(false);
-    expect(await reserveFanvueUploadPart(database, input())).toBe(false);
+    expect(await reserveFanvueUploadPart(database, keys, input())).toBe(false);
     expect(await progress()).toEqual({ segment: 0, offset: 0, phase: 'put_pending', version: 1 });
   });
 
@@ -185,14 +216,14 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
       input({ workspaceId: otherWorkspaceId }),
       input({ leaseOwner: 'worker-two' }),
     ])
-      expect(await reserveFanvueUploadPart(database, denied)).toBe(false);
+      expect(await reserveFanvueUploadPart(database, keys, denied)).toBe(false);
     await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
       new Date(Date.now() - 60_000),
       jobId,
     ]);
-    expect(await reserveFanvueUploadPart(database, input({ now: new Date(2000, 0, 1) }))).toBe(
-      false,
-    );
+    expect(
+      await reserveFanvueUploadPart(database, keys, input({ now: new Date(2000, 0, 1) })),
+    ).toBe(false);
     await postgres.query('UPDATE publication_jobs SET lease_expires_at=$1 WHERE id=$2', [
       new Date(Date.now() + 60_000),
       jobId,
@@ -201,15 +232,15 @@ describe('Fanvue encrypted session and staging progress transaction', () => {
       new Date(Date.now() - 60_000),
       artifactId,
     ]);
-    expect(await reserveFanvueUploadPart(database, input({ now: new Date(2000, 0, 1) }))).toBe(
-      false,
-    );
+    expect(
+      await reserveFanvueUploadPart(database, keys, input({ now: new Date(2000, 0, 1) })),
+    ).toBe(false);
     await postgres.query('UPDATE provider_staging_artifacts SET expires_at=$1 WHERE id=$2', [
       new Date(Date.now() + 60_000),
       artifactId,
     ]);
     await postgres.query('INSERT INTO publication_attempts VALUES ($1, $2)', [workspaceId, jobId]);
-    expect(await reserveFanvueUploadPart(database, input())).toBe(false);
+    expect(await reserveFanvueUploadPart(database, keys, input())).toBe(false);
     expect(await progress()).toEqual({ segment: 0, offset: 0, phase: 'uploading', version: 1 });
   });
 });

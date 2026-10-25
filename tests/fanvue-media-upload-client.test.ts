@@ -87,6 +87,26 @@ describe('Fanvue multipart media transport', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it('rejects a provider session whose parts cannot cover the requested media', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        mediaUuid,
+        uploadId: 'session',
+        partSize: 6,
+        maxParts: 2,
+        totalParts: 2,
+      }),
+    );
+    await expect(
+      new FanvueMediaUploadClient(request).createSession('token', {
+        name: 'Clip',
+        filename: 'clip.mp4',
+        mediaType: 'video',
+        sizeBytes: 13,
+      }),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_response' });
+  });
+
   it.each([
     [1, [{ partNumber: 2, url: 'https://uploads.example.test/2' }]],
     [2, [{ partNumber: 1, url: 'https://uploads.example.test/1' }]],

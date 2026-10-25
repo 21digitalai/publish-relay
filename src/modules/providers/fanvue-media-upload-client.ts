@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { FanvueRequestError } from './fanvue-http-client.js';
+import { planFanvueMediaUpload } from './fanvue-media-upload-plan.js';
 
 const session = z.object({
   mediaUuid: z.uuid(),
@@ -52,7 +53,14 @@ export class FanvueMediaUploadClient {
       '/media/uploads',
       { method: 'POST', body: JSON.stringify(body) },
       session,
-    );
+    ).then((result) => {
+      try {
+        planFanvueMediaUpload(body.sizeBytes, result);
+      } catch {
+        throw new FanvueRequestError(502, 'invalid_response');
+      }
+      return result;
+    });
   }
 
   async signParts(accessToken: string, uploadId: string, from: number, to: number) {

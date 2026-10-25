@@ -1,5 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { providerAccounts, providerConnections } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -18,6 +19,34 @@ import {
 } from './fanvue-http-client.js';
 
 const REFRESH_SKEW_MS = 5 * 60_000;
+const REFRESH_POLL_MS = 500;
+const REFRESH_POLL_ATTEMPTS = 30;
+
+async function awaitConcurrentRefresh(
+  database: NodePgDatabase,
+  input: { workspaceId: string; creatorId: string },
+): Promise<boolean> {
+  for (let attempt = 0; attempt < REFRESH_POLL_ATTEMPTS; attempt++) {
+    const [connection] = await withTenantTransaction(database, input, (transaction) =>
+      transaction
+        .select({ status: providerConnections.status, error: providerConnections.lastErrorCode })
+        .from(providerConnections)
+        .where(
+          and(
+            eq(providerConnections.workspaceId, input.workspaceId),
+            eq(providerConnections.provider, 'fanvue'),
+            eq(providerConnections.externalSubjectId, input.creatorId),
+            isNull(providerConnections.revokedAt),
+          ),
+        )
+        .limit(1),
+    );
+    if (connection?.status === 'active') return true;
+    if (connection?.error !== 'refresh_pending') return false;
+    await delay(REFRESH_POLL_MS);
+  }
+  return false;
+}
 
 async function markReconnection(
   transaction: NodePgDatabase,
@@ -35,7 +64,12 @@ async function markReconnection(
       lastErrorCode: input.code,
       updatedAt: input.now,
     })
-    .where(eq(providerConnections.id, input.connectionId));
+    .where(
+      and(
+        eq(providerConnections.workspaceId, input.workspaceId),
+        eq(providerConnections.id, input.connectionId),
+      ),
+    );
   await transaction
     .update(providerAccounts)
     .set({
@@ -46,8 +80,35 @@ async function markReconnection(
       and(
         eq(providerAccounts.workspaceId, input.workspaceId),
         eq(providerAccounts.connectionId, input.connectionId),
+        isNull(providerAccounts.disconnectedAt),
       ),
     );
+}
+
+async function recordRefreshFailure(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    connectionId: string;
+    credentialId: string;
+    code: string;
+    now: Date;
+  },
+): Promise<void> {
+  await withTenantTransaction(database, input, async (transaction) => {
+    await transaction
+      .update(providerConnections)
+      .set({ lastErrorCode: input.code, updatedAt: input.now })
+      .where(
+        and(
+          eq(providerConnections.workspaceId, input.workspaceId),
+          eq(providerConnections.id, input.connectionId),
+          eq(providerConnections.credentialId, input.credentialId),
+          eq(providerConnections.status, 'reauth_required'),
+          eq(providerConnections.lastErrorCode, 'refresh_pending'),
+        ),
+      );
+  });
 }
 
 export async function getFreshFanvueToken(
@@ -57,8 +118,8 @@ export async function getFreshFanvueToken(
   input: { workspaceId: string; creatorId: string; now?: Date },
 ): Promise<FanvueToken> {
   const now = input.now ?? new Date();
-  const result = await withTenantTransaction(database, input, async (transaction) => {
-    // This row lock spans the provider call: a rotating single-use token must never be sent twice.
+  const reservation = await withTenantTransaction(database, input, async (transaction) => {
+    // Commit quarantine before presenting Fanvue's single-use token to the network.
     const rows = await transaction
       .select()
       .from(providerConnections)
@@ -93,68 +154,109 @@ export async function getFreshFanvueToken(
       connection.accessExpiresAt &&
       connection.accessExpiresAt.getTime() > now.getTime() + REFRESH_SKEW_MS
     )
-      return token;
-    let refreshed: FanvueToken;
-    try {
-      refreshed = await client.refresh(token.refresh_token);
-    } catch (error) {
-      // A transport failure may mean Fanvue rotated the token but the response was lost.
-      // Never replay that single-use refresh token or affect another creator connection.
-      if (error instanceof FanvueRequestError && error.status === 429) throw error;
-      await markReconnection(transaction, {
-        workspaceId: input.workspaceId,
-        connectionId: connection.id,
-        code:
-          error instanceof FanvueRequestError && error.code === 'invalid_grant'
-            ? 'invalid_grant'
-            : 'refresh_uncertain',
-        now,
-      });
-      return null;
-    }
-    const encoded = Buffer.from(JSON.stringify(refreshed));
-    let encrypted;
-    try {
-      encrypted = await encryptCredential(encoded, keys);
-    } catch {
-      await markReconnection(transaction, {
-        workspaceId: input.workspaceId,
-        connectionId: connection.id,
-        code: 'refresh_persistence_failed',
-        now,
-      });
-      return null;
-    } finally {
-      encoded.fill(0);
-    }
+      return { kind: 'fresh' as const, token };
+    await markReconnection(transaction, {
+      workspaceId: input.workspaceId,
+      connectionId: connection.id,
+      code: 'refresh_pending',
+      now,
+    });
+    return {
+      kind: 'reserved' as const,
+      token,
+      connectionId: connection.id,
+      credentialId: connection.credentialId,
+      credentialVersion: stored.version,
+    };
+  });
+  if (!reservation) {
+    if (await awaitConcurrentRefresh(database, input))
+      return getFreshFanvueToken(database, keys, client, input);
+    throw new Error('Fanvue account requires reconnection');
+  }
+  if (reservation.kind === 'fresh') return reservation.token;
+  const failureContext = {
+    workspaceId: input.workspaceId,
+    connectionId: reservation.connectionId,
+    credentialId: reservation.credentialId,
+    now,
+  };
+  let refreshed: FanvueToken;
+  try {
+    refreshed = await client.refresh(reservation.token.refresh_token);
+  } catch (error) {
+    await recordRefreshFailure(database, {
+      ...failureContext,
+      code:
+        error instanceof FanvueRequestError && error.code === 'invalid_grant'
+          ? 'invalid_grant'
+          : 'refresh_uncertain',
+    });
+    throw new Error('Fanvue account requires reconnection');
+  }
+  const encoded = Buffer.from(JSON.stringify(refreshed));
+  let encrypted;
+  try {
+    encrypted = await encryptCredential(encoded, keys);
+  } catch {
+    await recordRefreshFailure(database, { ...failureContext, code: 'refresh_persistence_failed' });
+    throw new Error('Fanvue account requires reconnection');
+  } finally {
+    encoded.fill(0);
+  }
+  const saved = await withTenantTransaction(database, input, async (transaction) => {
+    const [pending] = await transaction
+      .select({ id: providerConnections.id })
+      .from(providerConnections)
+      .where(
+        and(
+          eq(providerConnections.workspaceId, input.workspaceId),
+          eq(providerConnections.id, reservation.connectionId),
+          eq(providerConnections.credentialId, reservation.credentialId),
+          eq(providerConnections.status, 'reauth_required'),
+          eq(providerConnections.lastErrorCode, 'refresh_pending'),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (!pending) return false;
     const rotated = await rotateCredential(
       transaction,
       input.workspaceId,
-      connection.credentialId,
-      stored.version,
+      reservation.credentialId,
+      reservation.credentialVersion,
       encrypted,
     );
     if (!rotated) {
-      await markReconnection(transaction, {
-        workspaceId: input.workspaceId,
-        connectionId: connection.id,
-        code: 'refresh_persistence_failed',
-        now,
-      });
-      return null;
+      await transaction
+        .update(providerConnections)
+        .set({ lastErrorCode: 'refresh_persistence_failed', updatedAt: now })
+        .where(eq(providerConnections.id, reservation.connectionId));
+      return false;
     }
     await transaction
       .update(providerConnections)
       .set({
+        status: 'active',
         scopes: assertFanvuePublishingScopes(refreshed.scope),
         accessExpiresAt: new Date(now.getTime() + refreshed.expires_in * 1000),
         lastRefreshedAt: now,
         lastErrorCode: null,
         updatedAt: now,
       })
-      .where(eq(providerConnections.id, connection.id));
-    return refreshed;
+      .where(eq(providerConnections.id, reservation.connectionId));
+    await transaction
+      .update(providerAccounts)
+      .set({ availability: 'active', updatedAt: now })
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerAccounts.connectionId, reservation.connectionId),
+          isNull(providerAccounts.disconnectedAt),
+        ),
+      );
+    return true;
   });
-  if (!result) throw new Error('Fanvue account requires reconnection');
-  return result;
+  if (!saved) throw new Error('Fanvue account requires reconnection');
+  return refreshed;
 }

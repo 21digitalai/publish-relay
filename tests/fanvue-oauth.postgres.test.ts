@@ -36,7 +36,7 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
     });
     let refreshCalls = 0;
     let deniedScope = false;
-    const fetchMock = vi.fn<typeof fetch>().mockImplementation((url, options) => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (url, options) => {
       const path = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (path.endsWith('/users/me'))
         return Promise.resolve(
@@ -47,7 +47,15 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
       const fields = options?.body as URLSearchParams;
       if (fields.get('grant_type') === 'refresh_token') {
         refreshCalls++;
-        return Promise.resolve(new Response(JSON.stringify(token('rotated'))));
+        const pending = await pool.query<{ status: string; last_error_code: string }>(
+          'SELECT status, last_error_code FROM provider_connections WHERE workspace_id=$1 AND external_subject_id=$2',
+          [workspaceId, creatorId],
+        );
+        expect(pending.rows[0]).toMatchObject({
+          status: 'reauth_required',
+          last_error_code: 'refresh_pending',
+        });
+        return new Response(JSON.stringify(token('rotated')));
       }
       return Promise.resolve(
         new Response(
@@ -219,8 +227,68 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
         status: 'reauth_required',
         last_error_code: 'refresh_uncertain',
       });
+      const faultCreatorId = randomUUID();
+      await connectProvider(
+        database,
+        keys,
+        {
+          discoverAccounts: () =>
+            Promise.resolve([{ providerAccountId: faultCreatorId, displayName: 'Fault creator' }]),
+        },
+        {
+          workspaceId,
+          userId,
+          provider: 'fanvue',
+          externalSubjectId: faultCreatorId,
+          accessToken: JSON.stringify(token('fault-original')),
+          scopes: [...FANVUE_PUBLISHING_SCOPES],
+          accessExpiresAt: new Date('2026-01-01'),
+          requestId: randomUUID(),
+        },
+      );
+      const faultConnection = await pool.query<{ credential_id: string }>(
+        'SELECT credential_id FROM provider_connections WHERE workspace_id=$1 AND external_subject_id=$2',
+        [workspaceId, faultCreatorId],
+      );
+      const faultCredentialId = faultConnection.rows[0]?.credential_id;
+      if (!faultCredentialId) throw new Error('Fault fixture connection was not created');
+      const triggerName = `fanvue_fail_${randomUUID().replace(/-/g, '')}`;
+      await pool.query(
+        `CREATE FUNCTION ${triggerName}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'fixture rotation blocked'; END $$`,
+      );
+      await pool.query(
+        `CREATE TRIGGER ${triggerName} BEFORE UPDATE ON credentials
+         FOR EACH ROW WHEN (NEW.id = '${faultCredentialId}'::uuid)
+         EXECUTE FUNCTION ${triggerName}()`,
+      );
+      let faultRefreshCalls = 0;
+      fetchMock.mockImplementation(() => {
+        faultRefreshCalls++;
+        return Promise.resolve(new Response(JSON.stringify(token('fault-rotated'))));
+      });
+      try {
+        await expect(
+          getFreshFanvueToken(database, keys, client, { workspaceId, creatorId: faultCreatorId }),
+        ).rejects.toThrow();
+      } finally {
+        await pool.query(`DROP TRIGGER ${triggerName} ON credentials`);
+        await pool.query(`DROP FUNCTION ${triggerName}()`);
+      }
+      const quarantined = await pool.query<{ status: string; last_error_code: string }>(
+        'SELECT status, last_error_code FROM provider_connections WHERE workspace_id=$1 AND external_subject_id=$2',
+        [workspaceId, faultCreatorId],
+      );
+      expect(quarantined.rows[0]).toMatchObject({
+        status: 'reauth_required',
+        last_error_code: 'refresh_pending',
+      });
+      await expect(
+        getFreshFanvueToken(database, keys, client, { workspaceId, creatorId: faultCreatorId }),
+      ).rejects.toThrow('requires reconnection');
+      expect(faultRefreshCalls).toBe(1);
     } finally {
       await pool.end();
     }
-  });
+  }, 25_000);
 });

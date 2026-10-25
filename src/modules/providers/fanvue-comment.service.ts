@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
+import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { enforceWorkspaceAction, type ActionPolicy } from '../policy/action-policy.js';
 import {
   reserveFanvueAction,
   settleFanvueAction,
@@ -18,6 +20,10 @@ const sendInput = z.strictObject({
   postUuid: z.uuid(),
   clientActionId: z.uuid(),
   text: z.string().min(1).max(600),
+  actor: z.strictObject({
+    type: z.enum(['user', 'api-key', 'delegated']),
+    id: z.uuid(),
+  }),
 });
 
 export type FanvueCommentResult =
@@ -25,9 +31,14 @@ export type FanvueCommentResult =
   | { state: 'failed'; failureStatus: number }
   | { state: 'unknown' };
 
+export class FanvueActionConflictError extends Error {
+  constructor() {
+    super('Fanvue action ID conflicts with prior input');
+  }
+}
+
 function replayResult(reservation: FanvueActionReservation): FanvueCommentResult {
-  if (reservation.kind === 'conflict')
-    throw new Error('Fanvue action ID conflicts with prior input');
+  if (reservation.kind === 'conflict') throw new FanvueActionConflictError();
   if (reservation.kind === 'new') throw new Error('Expected an existing Fanvue action');
   if (reservation.state === 'confirmed' && reservation.providerObjectUuid)
     return { state: 'confirmed', commentUuid: reservation.providerObjectUuid };
@@ -42,11 +53,21 @@ export class FanvueCommentService {
     private readonly database: NodePgDatabase,
     private readonly reads: FanvueReadService,
     private readonly client: FanvueCommentClient,
+    private readonly policy: ActionPolicy,
   ) {}
 
   async send(input: z.input<typeof sendInput>): Promise<FanvueCommentResult> {
     const command = sendInput.parse(input);
     const { accessToken } = await this.reads.getOwnedPostForComment(command);
+    await withTenantTransaction(this.database, command, (transaction) =>
+      enforceWorkspaceAction(transaction, this.policy, {
+        workspaceId: command.workspaceId,
+        actor: command.actor,
+        action: 'engagement.send',
+        request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
+        requestedProviderAccountIds: [command.accountId],
+      }),
+    );
     const requestFingerprint = createHash('sha256')
       .update(JSON.stringify({ postUuid: command.postUuid, text: command.text }))
       .digest('hex');

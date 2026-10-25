@@ -14,6 +14,7 @@ export const API_KEY_CAPABILITIES = [
   'fanvue:chats:read',
   'fanvue:posts:read',
   'fanvue:media:read',
+  'fanvue:comments:send',
 ] as const;
 
 export type ApiKeyCapability = (typeof API_KEY_CAPABILITIES)[number];

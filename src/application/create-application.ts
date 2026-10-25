@@ -46,6 +46,9 @@ import type { FanvueHttpClient } from '../modules/providers/fanvue-http-client.j
 import { registerFanvueOauthRoutes } from '../modules/providers/fanvue-oauth.routes.js';
 import { FanvueReadClient } from '../modules/providers/fanvue-read-client.js';
 import { FanvueReadService } from '../modules/providers/fanvue-read.service.js';
+import { FanvueCommentClient } from '../modules/providers/fanvue-comment-client.js';
+import { FanvueCommentService } from '../modules/providers/fanvue-comment.service.js';
+import { registerFanvueCommentRoutes } from '../modules/providers/fanvue-comment.routes.js';
 import {
   registerFanvueBrowserReadRoutes,
   registerFanvueReadRoutes,
@@ -195,19 +198,22 @@ function registerMachineApiRoutes(
       ? { keys: options.tiktokOauth.keys, client: options.tiktokOauth.client }
       : undefined,
   );
-  if (options.fanvueOauth)
-    registerFanvueReadRoutes(
+  if (options.fanvueOauth) {
+    const reads = new FanvueReadService(
+      database,
+      options.fanvueOauth.keys,
+      options.fanvueOauth.client,
+      new FanvueReadClient(),
+    );
+    registerFanvueReadRoutes(application, reads, apiKeys, rateLimiter, delegatedAuthorization);
+    registerFanvueCommentRoutes(
       application,
-      new FanvueReadService(
-        database,
-        options.fanvueOauth.keys,
-        options.fanvueOauth.client,
-        new FanvueReadClient(),
-      ),
+      new FanvueCommentService(database, reads, new FanvueCommentClient(), actionPolicy),
       apiKeys,
       rateLimiter,
       delegatedAuthorization,
     );
+  }
   if (!config.CURSOR_SIGNING_SECRET)
     throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
   registerPostRoutes(

@@ -3,7 +3,15 @@ import { readFile, readdir } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
 import { describe, expect, it } from 'vitest';
+import {
+  ApiKeyAuthorizationError,
+  type ApiKeyService,
+} from '../src/modules/identity/api-key.service.js';
+import type { AuthService } from '../src/modules/identity/auth.service.js';
+import { registerEngagementProposalRoutes } from '../src/modules/providers/engagement-proposal.routes.js';
 
 import {
   createEngagementProposal,
@@ -46,6 +54,150 @@ describe('engagement proposal foundation', () => {
           ('${otherAccount}', '${otherWorkspace}', '${otherConnection}', 'page-b', 'facebook_page', 'page-b', 'Page B');
       `);
       const database = drizzle(client) as unknown as NodePgDatabase;
+      const app = Fastify();
+      await app.register(cookie);
+      registerEngagementProposalRoutes(app, {
+        database,
+        auth: {
+          authenticate: (selectedWorkspace: string) =>
+            Promise.resolve({ userId: proposer, workspaceId: selectedWorkspace, role: 'owner' }),
+        } as unknown as AuthService,
+        apiKeys: {
+          authenticate: (_workspaceId: string, token: string) =>
+            Promise.resolve({
+              id: proposer,
+              workspaceId: workspace,
+              capabilities: token === 'blocked-key' ? [] : ['engagement:propose'],
+            }),
+          requireCapability: (principal: { capabilities: string[] }, capability: string) =>
+            principal.capabilities.includes(capability)
+              ? Promise.resolve()
+              : Promise.reject(new ApiKeyAuthorizationError('missing capability')),
+        } as unknown as ApiKeyService,
+      });
+      const headers = {
+        authorization: 'Bearer test-key',
+        'x-publish-relay-workspace': workspace,
+      };
+      const proposalBody = {
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000213',
+        provider: 'facebook_page',
+        kind: 'comment',
+        targetId: 'comment-2',
+        sourceContext: { text: 'Source' },
+        content: { text: 'Draft' },
+      };
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/v1/engagement-proposals',
+            payload: proposalBody,
+          })
+        ).statusCode,
+      ).toBe(401);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/v1/engagement-proposals',
+            headers: { ...headers, authorization: 'Bearer blocked-key' },
+            payload: proposalBody,
+          })
+        ).statusCode,
+      ).toBe(403);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/v1/engagement-proposals',
+            headers,
+            payload: { ...proposalBody, content: { text: '' } },
+          })
+        ).statusCode,
+      ).toBe(400);
+      const createdResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/engagement-proposals',
+        headers,
+        payload: proposalBody,
+      });
+      expect(createdResponse.statusCode).toBe(201);
+      const createdBody = createdResponse.json<{
+        data: { id: string; accountId: string; status: string; content: { text: string } };
+      }>();
+      expect(createdBody.data).toMatchObject({
+        accountId: account,
+        status: 'pending',
+        content: { text: 'Draft' },
+      });
+      expect(createdBody.data).not.toHaveProperty('proposerId');
+      expect(createdBody.data).not.toHaveProperty('workspaceId');
+      const browserHeaders = { cookie: `publish_relay_session=${workspace}.test-token` };
+      const listResponse = await app.inject({
+        method: 'GET',
+        url: '/api/engagement-proposals',
+        headers: browserHeaders,
+      });
+      expect(listResponse.statusCode).toBe(200);
+      expect(
+        listResponse.json<{ data: { items: { id: string }[]; nextCursor: string | null } }>().data
+          .items[0]?.id,
+      ).toBe(createdBody.data.id);
+      expect(listResponse.body).not.toContain('proposerId');
+      expect(listResponse.body).not.toContain('credentialId');
+      expect(listResponse.body).not.toContain('targetId');
+      expect(Buffer.byteLength(listResponse.body)).toBeLessThan(1000);
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/engagement-proposals/${createdBody.data.id}`,
+        headers: browserHeaders,
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json<{ data: { targetId: string } }>().data.targetId).toBe('comment-2');
+      const foreignDetail = await app.inject({
+        method: 'GET',
+        url: `/api/engagement-proposals/${createdBody.data.id}`,
+        headers: { cookie: `publish_relay_session=${otherWorkspace}.test-token` },
+      });
+      expect(foreignDetail.statusCode).toBe(404);
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/api/engagement-proposals?cursor=invalid',
+            headers: browserHeaders,
+          })
+        ).statusCode,
+      ).toBe(400);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/engagement-proposals',
+            headers: browserHeaders,
+            payload: proposalBody,
+          })
+        ).statusCode,
+      ).toBe(403);
+      const foreignResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/engagement-proposals',
+        headers,
+        payload: {
+          ...proposalBody,
+          clientActionId: '00000000-0000-4000-8000-000000000214',
+          accountId: otherAccount,
+        },
+      });
+      expect(foreignResponse.statusCode).toBe(409);
+      await dismissEngagementProposal(database, {
+        workspaceId: workspace,
+        id: createdBody.data.id,
+        expectedRevision: 1,
+      });
+      await app.close();
       const input = {
         workspaceId: workspace,
         accountId: account,
@@ -134,7 +286,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('1');
+      ).toBe('2');
     } finally {
       await client.close();
     }

@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -30,6 +30,15 @@ export interface CreateEngagementProposal {
   proposerId: string;
 }
 
+export class EngagementProposalError extends Error {
+  constructor(
+    message: string,
+    public readonly statusCode: 400 | 409,
+  ) {
+    super(message);
+  }
+}
+
 function matchesProposal(
   existing: typeof engagementProposals.$inferSelect,
   input: CreateEngagementProposal,
@@ -51,7 +60,7 @@ export async function createEngagementProposal(
   input: CreateEngagementProposal,
 ) {
   if (!input.targetId.trim() || !input.content.text.trim())
-    throw new Error('Proposal target and text are required');
+    throw new EngagementProposalError('Proposal target and text are required', 400);
   return withTenantTransaction(database, { workspaceId: input.workspaceId }, async (tx) => {
     const [prior] = await tx
       .select()
@@ -65,7 +74,10 @@ export async function createEngagementProposal(
       .limit(1);
     if (prior) {
       if (!matchesProposal(prior, input))
-        throw new Error('Proposal action ID conflicts with a different request');
+        throw new EngagementProposalError(
+          'Proposal action ID conflicts with a different request',
+          409,
+        );
       return prior;
     }
     const [account] = await tx
@@ -92,7 +104,7 @@ export async function createEngagementProposal(
       )
       .limit(1)
       .for('update');
-    if (!account) throw new Error('Proposal destination is unavailable');
+    if (!account) throw new EngagementProposalError('Proposal destination is unavailable', 409);
     if (
       account.provider !== input.provider ||
       account.availability !== 'active' ||
@@ -100,7 +112,7 @@ export async function createEngagementProposal(
       account.connectionStatus !== 'active' ||
       account.connectionRevokedAt
     ) {
-      throw new Error('Proposal destination is unavailable');
+      throw new EngagementProposalError('Proposal destination is unavailable', 409);
     }
     const [created] = await tx
       .insert(engagementProposals)
@@ -131,9 +143,16 @@ export async function createEngagementProposal(
         ),
       )
       .limit(1);
-    if (!existing) throw new Error('Proposal action ID conflicts with a different request');
+    if (!existing)
+      throw new EngagementProposalError(
+        'Proposal action ID conflicts with a different request',
+        409,
+      );
     if (!matchesProposal(existing, input)) {
-      throw new Error('Proposal action ID conflicts with a different request');
+      throw new EngagementProposalError(
+        'Proposal action ID conflicts with a different request',
+        409,
+      );
     }
     return existing;
   });
@@ -142,6 +161,7 @@ export async function createEngagementProposal(
 export async function listPendingEngagementProposals(
   database: NodePgDatabase,
   workspaceId: string,
+  page?: { beforeCreatedAt?: Date; beforeId?: string; limit: number },
 ) {
   return withTenantTransaction(database, { workspaceId }, (tx) =>
     tx
@@ -151,11 +171,37 @@ export async function listPendingEngagementProposals(
         and(
           eq(engagementProposals.workspaceId, workspaceId),
           eq(engagementProposals.status, 'pending'),
+          ...(page?.beforeCreatedAt && page.beforeId
+            ? [
+                or(
+                  lt(engagementProposals.createdAt, page.beforeCreatedAt),
+                  and(
+                    eq(engagementProposals.createdAt, page.beforeCreatedAt),
+                    lt(engagementProposals.id, page.beforeId),
+                  ),
+                ),
+              ]
+            : []),
         ),
       )
       .orderBy(desc(engagementProposals.createdAt), desc(engagementProposals.id))
-      .limit(100),
+      .limit(page?.limit ?? 100),
   );
+}
+
+export async function getEngagementProposal(
+  database: NodePgDatabase,
+  workspaceId: string,
+  id: string,
+) {
+  return withTenantTransaction(database, { workspaceId }, async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(engagementProposals)
+      .where(and(eq(engagementProposals.workspaceId, workspaceId), eq(engagementProposals.id, id)))
+      .limit(1);
+    return row ?? null;
+  });
 }
 
 export async function reviseEngagementProposal(
@@ -167,7 +213,8 @@ export async function reviseEngagementProposal(
     content: ProposalContent;
   },
 ) {
-  if (!input.content.text.trim()) throw new Error('Proposal text is required');
+  if (!input.content.text.trim())
+    throw new EngagementProposalError('Proposal text is required', 400);
   return withTenantTransaction(database, { workspaceId: input.workspaceId }, async (tx) => {
     const [row] = await tx
       .update(engagementProposals)
@@ -185,7 +232,7 @@ export async function reviseEngagementProposal(
         ),
       )
       .returning();
-    if (!row) throw new Error('Proposal is stale or unavailable');
+    if (!row) throw new EngagementProposalError('Proposal is stale or unavailable', 409);
     return row;
   });
 }
@@ -214,7 +261,7 @@ export async function dismissEngagementProposal(
         ),
       )
       .returning();
-    if (!row) throw new Error('Proposal is stale or unavailable');
+    if (!row) throw new EngagementProposalError('Proposal is stale or unavailable', 409);
     return row;
   });
 }

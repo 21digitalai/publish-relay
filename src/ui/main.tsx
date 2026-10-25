@@ -175,7 +175,12 @@ function Mark({ provider }: { provider: string }) {
 
 function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    document.body.dataset.humanAuthMode === 'magic_link' &&
+    new URLSearchParams(window.location.search).get('magicLink') === 'invalid'
+      ? 'This sign-in link is invalid, expired, or already used. Enter your email to request a fresh link.'
+      : null,
+  );
   const [magicLink, setMagicLink] = useState<{ message: string; developmentUrl?: string } | null>(
     null,
   );

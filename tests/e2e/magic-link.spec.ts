@@ -38,7 +38,23 @@ test('first-time email opens across devices and creates a single-use session', a
     await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page).toHaveURL(/\/login\?magicLink=invalid/);
+    await expect(page.getByRole('alert')).toContainText(
+      'This sign-in link is invalid, expired, or already used.',
+    );
+    await expect(page.getByRole('alert')).toContainText('request a fresh link');
   } finally {
     await otherDevice.close();
   }
 });
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`invalid sign-in link shows recovery at ${String(viewport.width)}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/register?magicLink=invalid');
+    await expect(page.getByRole('alert')).toContainText(
+      'This sign-in link is invalid, expired, or already used.',
+    );
+    await expect(page.getByRole('button', { name: 'Email me a sign-in link' })).toBeVisible();
+    await expect(page.getByLabel('Email')).toBeVisible();
+  });
+}

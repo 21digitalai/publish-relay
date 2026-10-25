@@ -1,5 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { z } from 'zod';
 
 import { providerAccounts, providerConnections } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -86,6 +87,17 @@ export class FanvueReadService {
     return this.readClient.getPost(token, input.postUuid);
   }
 
+  /** Internal command preflight: Fanvue GET only returns a post owned by this token's creator. */
+  async getOwnedPostForComment(input: {
+    workspaceId: string;
+    accountId: string;
+    postUuid: string;
+  }) {
+    const token = await this.accessToken(input, 'post', ['write:post']);
+    const post = await this.readClient.getPost(token, input.postUuid);
+    return { post, accessToken: token };
+  }
+
   async listComments(input: {
     workspaceId: string;
     accountId: string;
@@ -100,7 +112,9 @@ export class FanvueReadService {
   private async accessToken(
     input: { workspaceId: string; accountId: string },
     module: FanvueReadModule,
+    additionalScopes: readonly string[] = [],
   ): Promise<string> {
+    const requiredScopes = [REQUIRED_SCOPES[module], ...additionalScopes];
     const [account] = await withTenantTransaction(this.database, input, (transaction) =>
       transaction
         .select({
@@ -139,7 +153,11 @@ export class FanvueReadService {
       )
     )
       throw new FanvueReadUnavailableError('reconnect_required');
-    if (!Array.isArray(account.scopes) || !account.scopes.includes(REQUIRED_SCOPES[module]))
+    const storedScopes = z.array(z.string()).safeParse(account.scopes);
+    if (
+      !storedScopes.success ||
+      !requiredScopes.every((scope) => storedScopes.data.includes(scope))
+    )
       throw new FanvueReadUnavailableError('scope_missing');
     let token;
     try {
@@ -152,7 +170,8 @@ export class FanvueReadService {
         throw new FanvueReadUnavailableError('reconnect_required');
       throw error;
     }
-    if (!token.scope.split(/\s+/).includes(REQUIRED_SCOPES[module]))
+    const grantedScopes = token.scope.split(/\s+/);
+    if (!requiredScopes.every((scope) => grantedScopes.includes(scope)))
       throw new FanvueReadUnavailableError('scope_missing');
     const [stillConnected] = await withTenantTransaction(this.database, input, (transaction) =>
       transaction

@@ -110,6 +110,26 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
         data: [],
       });
       expect(providerRequest).toHaveBeenCalledTimes(2);
+      const postUuid = randomUUID();
+      await expect(
+        service.getOwnedPostForComment({ workspaceId: otherWorkspaceId, accountId, postUuid }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
+      providerRequest.mockResolvedValueOnce(
+        Response.json({
+          uuid: postUuid,
+          createdAt: new Date().toISOString(),
+          publishedAt: new Date().toISOString(),
+          text: 'fixture',
+          audience: 'subscribers',
+          price: null,
+          mediaUuids: [],
+          mediaPreviewUuid: null,
+        }),
+      );
+      await expect(
+        service.getOwnedPostForComment({ workspaceId, accountId, postUuid }),
+      ).resolves.toMatchObject({ accessToken: 'access', post: { uuid: postUuid } });
+      expect(providerRequest).toHaveBeenCalledTimes(3);
       providerRequest.mockClear();
       const readScopes = [...FANVUE_PUBLISHING_SCOPES, 'read:chat'];
       await connectProvider(

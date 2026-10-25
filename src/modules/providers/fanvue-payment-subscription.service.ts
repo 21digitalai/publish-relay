@@ -58,10 +58,22 @@ export async function createFanvuePaymentSubscription(
     `/webhooks/fanvue/payments/${reservation.callbackHandle}`,
     origin,
   ).toString();
-  await markFanvueSubscriptionCreationUnknown(runtime.database, {
-    workspaceId: selected.workspaceId,
-    id: reservation.id,
-  });
+  try {
+    await markFanvueSubscriptionCreationUnknown(runtime.database, {
+      workspaceId: selected.workspaceId,
+      id: reservation.id,
+    });
+  } catch (error) {
+    // No provider call has started. Cancel only if the durable row proves the
+    // transition never committed; a lost commit acknowledgement stays open.
+    const current = await getFanvuePaymentSubscriptionForAccount(runtime.database, selected);
+    if (current?.id === reservation.id && current.state === 'probe_pending')
+      await cancelFanvuePaymentReservation(runtime.database, {
+        workspaceId: selected.workspaceId,
+        id: reservation.id,
+      });
+    throw error;
+  }
   const created = await runtime.subscriptionClient.create(accessToken, callbackUrl);
   await activateFanvuePaymentSubscription(runtime.database, runtime.keys, {
     workspaceId: selected.workspaceId,

@@ -2,6 +2,9 @@ import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { getActiveCredential } from '../credentials/credential.repository.js';
+import { decryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
+import { parseFanvueUploadSession, type FanvueUploadSession } from './fanvue-upload-session.js';
 
 interface ReservationInput {
   workspaceId: string;
@@ -109,5 +112,69 @@ export async function getFinalizedFanvueMediaUuids(
         )
     `);
     return new Map(result.rows.map((row) => [row.mediaId, row.mediaUuid]));
+  });
+}
+
+export interface FanvueStagingProgress {
+  artifactId: string;
+  phase: string;
+  mediaUuid: string | null;
+  session: FanvueUploadSession | null;
+  credentialId: string | null;
+  credentialVersion: number | null;
+}
+
+/** Resume only the exact attached media artifact; pending external requests stay pending. */
+export async function getFanvueStagingProgress(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  input: { workspaceId: string; jobId: string; mediaId: string; leaseOwner: string },
+): Promise<FanvueStagingProgress | null> {
+  return withTenantTransaction(database, input, async (transaction) => {
+    const result = await transaction.execute<{
+      artifactId: string;
+      phase: string;
+      mediaUuid: string | null;
+      credentialId: string | null;
+    }>(sql`
+      SELECT artifact.id AS "artifactId", artifact.upload_phase AS phase,
+        artifact.external_object_id AS "mediaUuid",
+        artifact.provider_reference_credential_id AS "credentialId"
+      FROM publication_jobs job
+      JOIN provider_accounts account
+        ON account.workspace_id = job.workspace_id AND account.id = job.provider_account_id
+      JOIN revision_media attached
+        ON attached.workspace_id = job.workspace_id AND attached.revision_id = job.revision_id
+      JOIN media_objects media
+        ON media.workspace_id = attached.workspace_id AND media.id = attached.media_id
+      JOIN provider_staging_artifacts artifact
+        ON artifact.workspace_id = job.workspace_id AND artifact.job_id = job.id
+        AND artifact.media_id = media.id
+      WHERE job.workspace_id = ${input.workspaceId} AND job.id = ${input.jobId}
+        AND job.state = 'leased' AND job.lease_owner = ${input.leaseOwner}
+        AND job.lease_expires_at > clock_timestamp()
+        AND account.destination_provider = 'fanvue'
+        AND account.availability = 'active' AND account.disconnected_at IS NULL
+        AND media.id = ${input.mediaId} AND media.state = 'ready' AND media.deleted_at IS NULL
+        AND artifact.provider_reference = 'fanvue:multipart'
+        AND artifact.deleted_at IS NULL AND artifact.expires_at > clock_timestamp()
+        AND NOT EXISTS (
+          SELECT 1 FROM publication_attempts attempt
+          WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+        )
+      LIMIT 1
+    `);
+    const artifact = result.rows[0];
+    if (!artifact) return null;
+    if (!artifact.credentialId) return { ...artifact, session: null, credentialVersion: null };
+    const stored = await getActiveCredential(transaction, input.workspaceId, artifact.credentialId);
+    if (!stored) throw new Error('Fanvue upload session credential is unavailable');
+    const plaintext = await decryptCredential(stored, keys);
+    try {
+      const session = parseFanvueUploadSession(JSON.parse(plaintext.toString('utf8')) as unknown);
+      return { ...artifact, session, credentialVersion: stored.version };
+    } finally {
+      plaintext.fill(0);
+    }
   });
 }

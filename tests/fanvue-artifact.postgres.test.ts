@@ -3,11 +3,19 @@ import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { MasterKeyProvider } from '../src/modules/credentials/envelope.js';
+import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import {
   getFinalizedFanvueMediaUuids,
+  getFanvueStagingProgress,
   reserveFanvueStagingArtifact,
 } from '../src/modules/providers/fanvue-artifact.repository.js';
 import { getFanvueJobMediaMetadata } from '../src/modules/providers/fanvue-job-media-source.js';
+import type { FanvueMediaUploadClient } from '../src/modules/providers/fanvue-media-upload-client.js';
+import {
+  FanvueStagingPendingError,
+  stageFanvueJobMedia,
+} from '../src/modules/providers/fanvue-stage-job-media.service.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const accountId = '00000000-0000-4000-8000-000000000002';
@@ -112,6 +120,75 @@ describe('Fanvue finalized media map', () => {
     ]);
     await postgres.query('INSERT INTO publication_attempts VALUES ($1,$2)', [workspaceId, jobId]);
     expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
+  });
+});
+
+describe('Fanvue staging progress', () => {
+  const keys = {} as MasterKeyProvider;
+  const selected = { workspaceId, jobId, mediaId, leaseOwner: 'worker-one' };
+
+  it('reads the exact pending artifact without inventing an upload session', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    expect(await getFanvueStagingProgress(database, keys, selected)).toEqual({
+      artifactId,
+      phase: 'initialized',
+      mediaUuid: null,
+      credentialId: null,
+      session: null,
+      credentialVersion: null,
+    });
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='session_pending' WHERE id=$1",
+      [artifactId],
+    );
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe(
+      'session_pending',
+    );
+    expect(
+      await getFanvueStagingProgress(database, keys, { ...selected, leaseOwner: 'other' }),
+    ).toBeNull();
+  });
+
+  it('denies a detached media artifact or an already-started post attempt', async () => {
+    await reserveFanvueStagingArtifact(database, input);
+    await postgres.query('DELETE FROM revision_media');
+    expect(await getFanvueStagingProgress(database, keys, selected)).toBeNull();
+    await postgres.query('INSERT INTO revision_media VALUES ($1,$2,$3)', [
+      workspaceId,
+      revisionId,
+      mediaId,
+    ]);
+    await postgres.query('INSERT INTO publication_attempts VALUES ($1,$2)', [workspaceId, jobId]);
+    expect(await getFanvueStagingProgress(database, keys, selected)).toBeNull();
+  });
+});
+
+describe('Fanvue staging resumption boundary', () => {
+  const keys = {} as MasterKeyProvider;
+  const storage = {} as MediaStorage;
+  const client = {} as FanvueMediaUploadClient;
+  const selected = { workspaceId, jobId, mediaId, leaseOwner: 'worker-one', accessToken: 'test' };
+
+  it('does not replay an uncertain provider session creation', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='session_pending' WHERE id=$1",
+      [artifactId],
+    );
+    await expect(stageFanvueJobMedia(database, storage, client, keys, selected)).rejects.toEqual(
+      new FanvueStagingPendingError('session_pending'),
+    );
+  });
+
+  it('recognizes finalized media without repeating any upload call', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='finalized', external_object_id=$1 WHERE id=$2",
+      ['00000000-0000-4000-8000-000000000006', artifactId],
+    );
+    await expect(stageFanvueJobMedia(database, storage, client, keys, selected)).resolves.toBe(
+      'ready',
+    );
   });
 });
 

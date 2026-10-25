@@ -206,3 +206,76 @@ export async function confirmFanvueUploadCompletion(
     return Boolean(artifact);
   });
 }
+
+/** Only the selected live Fanvue job may promote a provider-confirmed ready UUID. */
+export async function markFanvueUploadReady(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    jobId: string;
+    mediaId: string;
+    artifactId: string;
+    leaseOwner: string;
+    mediaUuid: string;
+  },
+): Promise<boolean> {
+  return withTenantTransaction(database, input, async (transaction) => {
+    const [artifact] = await transaction
+      .update(providerStagingArtifacts)
+      .set({ uploadPhase: 'finalized', updatedAt: sql`clock_timestamp()` })
+      .where(
+        and(
+          eq(providerStagingArtifacts.workspaceId, input.workspaceId),
+          eq(providerStagingArtifacts.jobId, input.jobId),
+          eq(providerStagingArtifacts.mediaId, input.mediaId),
+          eq(providerStagingArtifacts.id, input.artifactId),
+          eq(providerStagingArtifacts.providerReference, 'fanvue:multipart'),
+          eq(providerStagingArtifacts.uploadPhase, 'processing'),
+          eq(providerStagingArtifacts.externalObjectId, input.mediaUuid),
+          gt(providerStagingArtifacts.expiresAt, sql`clock_timestamp()`),
+          isNull(providerStagingArtifacts.deletedAt),
+          sql`EXISTS (
+          SELECT 1 FROM publication_jobs job
+          JOIN provider_accounts account
+            ON account.workspace_id = job.workspace_id AND account.id = job.provider_account_id
+          WHERE job.workspace_id = ${input.workspaceId} AND job.id = ${input.jobId}
+            AND job.state = 'leased' AND job.lease_owner = ${input.leaseOwner}
+            AND job.lease_expires_at > clock_timestamp()
+            AND account.destination_provider = 'fanvue'
+            AND account.availability = 'active' AND account.disconnected_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM publication_attempts attempt
+              WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+            )
+        )`,
+        ),
+      )
+      .returning({ id: providerStagingArtifacts.id });
+    return Boolean(artifact);
+  });
+}
+
+export async function getFanvueProcessingMediaUuid(
+  database: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; mediaId: string; artifactId: string },
+): Promise<string | null> {
+  return withTenantTransaction(database, input, async (transaction) => {
+    const [artifact] = await transaction
+      .select({ mediaUuid: providerStagingArtifacts.externalObjectId })
+      .from(providerStagingArtifacts)
+      .where(
+        and(
+          eq(providerStagingArtifacts.workspaceId, input.workspaceId),
+          eq(providerStagingArtifacts.jobId, input.jobId),
+          eq(providerStagingArtifacts.mediaId, input.mediaId),
+          eq(providerStagingArtifacts.id, input.artifactId),
+          eq(providerStagingArtifacts.providerReference, 'fanvue:multipart'),
+          eq(providerStagingArtifacts.uploadPhase, 'processing'),
+          gt(providerStagingArtifacts.expiresAt, sql`clock_timestamp()`),
+          isNull(providerStagingArtifacts.deletedAt),
+        ),
+      )
+      .limit(1);
+    return artifact?.mediaUuid ?? null;
+  });
+}

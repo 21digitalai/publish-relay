@@ -8,6 +8,8 @@ import { decryptCredential, encryptCredential } from '../src/modules/credentials
 import {
   advanceFanvueUploadProgress,
   confirmFanvueUploadCompletion,
+  getFanvueProcessingMediaUuid,
+  markFanvueUploadReady,
   reserveFanvueUploadPart,
   reserveFanvueUploadCompletion,
 } from '../src/modules/providers/fanvue-upload-progress.repository.js';
@@ -55,6 +57,7 @@ beforeEach(async () => {
     CREATE TABLE publication_attempts (workspace_id uuid NOT NULL, job_id uuid NOT NULL);
     CREATE TABLE provider_staging_artifacts (
       id uuid PRIMARY KEY, workspace_id uuid NOT NULL, job_id uuid NOT NULL, media_id uuid,
+      provider_reference text NOT NULL,
       provider_reference_credential_id uuid, upload_phase text NOT NULL,
       next_segment integer NOT NULL, next_byte_offset bigint NOT NULL,
       external_object_id text,
@@ -90,9 +93,9 @@ beforeEach(async () => {
   );
   await postgres.query(
     `INSERT INTO provider_staging_artifacts (
-       id, workspace_id, job_id, media_id, provider_reference_credential_id, upload_phase,
+       id, workspace_id, job_id, media_id, provider_reference, provider_reference_credential_id, upload_phase,
        next_segment, next_byte_offset, expires_at
-     ) VALUES ($1, $2, $3, $4, $5, 'uploading', 0, 0, $6)`,
+     ) VALUES ($1, $2, $3, $4, 'fanvue:multipart', $5, 'uploading', 0, 0, $6)`,
     [artifactId, workspaceId, jobId, mediaId, credentialId, expiresAt],
   );
   database = drizzle(postgres) as unknown as NodePgDatabase;
@@ -138,6 +141,36 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Fanvue encrypted session and staging progress transaction', () => {
+  it('promotes only the selected live processing media after provider readiness', async () => {
+    await postgres.query(
+      `UPDATE provider_staging_artifacts SET upload_phase='processing', external_object_id=$1 WHERE id=$2`,
+      [session.mediaUuid, artifactId],
+    );
+    const ready = {
+      workspaceId,
+      jobId,
+      mediaId,
+      artifactId,
+      leaseOwner: 'worker-one',
+      mediaUuid: session.mediaUuid,
+    };
+    expect(await getFanvueProcessingMediaUuid(database, ready)).toBe(session.mediaUuid);
+    expect(await markFanvueUploadReady(database, { ...ready, mediaId: otherWorkspaceId })).toBe(
+      false,
+    );
+    expect(await markFanvueUploadReady(database, { ...ready, mediaUuid: otherWorkspaceId })).toBe(
+      false,
+    );
+    expect(await markFanvueUploadReady(database, ready)).toBe(true);
+    expect(await markFanvueUploadReady(database, ready)).toBe(false);
+    expect(await getFanvueProcessingMediaUuid(database, ready)).toBeNull();
+    const result = await postgres.query<{ upload_phase: string }>(
+      'SELECT upload_phase FROM provider_staging_artifacts WHERE id=$1',
+      [artifactId],
+    );
+    expect(result.rows[0]?.upload_phase).toBe('finalized');
+  });
+
   it('reserves completion once and confirms only the selected full session', async () => {
     const completeSession = {
       ...session,

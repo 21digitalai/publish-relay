@@ -33,7 +33,7 @@ export function fanvueJobMediaWhere(input: FanvueJobMediaInput, now: Date) {
     eq(mediaObjects.id, input.mediaId),
     eq(mediaObjects.state, 'ready'),
     isNull(mediaObjects.deletedAt),
-    sql`NOT EXISTS (SELECT 1 FROM publication_attempts attempt WHERE attempt.workspace_id = ${input.workspaceId} AND attempt.job_id = ${input.jobId})`,
+    sql`NOT EXISTS (SELECT 1 FROM publication_attempts attempt WHERE attempt.workspace_id = ${input.workspaceId} AND attempt.job_id = ${input.jobId} AND (attempt.finished_at IS NULL OR attempt.outcome NOT IN ('rate_limit', 'auth', 'validation', 'transient', 'permanent')))`,
   );
 }
 

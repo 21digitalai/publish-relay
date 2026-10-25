@@ -52,7 +52,8 @@ beforeEach(async () => {
     );
     CREATE TABLE revision_media (workspace_id uuid NOT NULL, revision_id uuid NOT NULL, media_id uuid NOT NULL);
     CREATE TABLE media_objects (id uuid PRIMARY KEY, workspace_id uuid NOT NULL, state text NOT NULL, deleted_at timestamptz);
-    CREATE TABLE publication_attempts (workspace_id uuid NOT NULL, job_id uuid NOT NULL);
+    CREATE TABLE publication_attempts (workspace_id uuid NOT NULL, job_id uuid NOT NULL,
+      finished_at timestamptz, outcome text);
     CREATE TABLE provider_staging_artifacts (
       id uuid PRIMARY KEY, workspace_id uuid NOT NULL, job_id uuid NOT NULL,
       media_id uuid, provider_reference text NOT NULL, provider_reference_credential_id uuid,

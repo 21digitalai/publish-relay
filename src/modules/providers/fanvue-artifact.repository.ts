@@ -41,6 +41,8 @@ export async function reserveFanvueStagingArtifact(
         AND NOT EXISTS (
           SELECT 1 FROM publication_attempts attempt
           WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+            AND (attempt.finished_at IS NULL OR attempt.outcome NOT IN
+              ('rate_limit', 'auth', 'validation', 'transient', 'permanent'))
         )
       ON CONFLICT DO NOTHING RETURNING id
     `);
@@ -71,6 +73,8 @@ export async function reserveFanvueStagingArtifact(
         AND NOT EXISTS (
           SELECT 1 FROM publication_attempts attempt
           WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+            AND (attempt.finished_at IS NULL OR attempt.outcome NOT IN
+              ('rate_limit', 'auth', 'validation', 'transient', 'permanent'))
         )
       LIMIT 1
     `);
@@ -109,6 +113,8 @@ export async function getFinalizedFanvueMediaUuids(
         AND NOT EXISTS (
           SELECT 1 FROM publication_attempts attempt
           WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+            AND (attempt.finished_at IS NULL OR attempt.outcome NOT IN
+              ('rate_limit', 'auth', 'validation', 'transient', 'permanent'))
         )
     `);
     return new Map(result.rows.map((row) => [row.mediaId, row.mediaUuid]));
@@ -161,6 +167,8 @@ export async function getFanvueStagingProgress(
         AND NOT EXISTS (
           SELECT 1 FROM publication_attempts attempt
           WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+            AND (attempt.finished_at IS NULL OR attempt.outcome NOT IN
+              ('rate_limit', 'auth', 'validation', 'transient', 'permanent'))
         )
       LIMIT 1
     `);

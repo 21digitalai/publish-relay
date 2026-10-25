@@ -48,7 +48,8 @@ beforeEach(async () => {
       id uuid PRIMARY KEY, workspace_id uuid NOT NULL, storage_key text NOT NULL, sha256 text NOT NULL,
       byte_size bigint NOT NULL, mime_type text NOT NULL, state text NOT NULL, deleted_at timestamptz
     );
-    CREATE TABLE publication_attempts (workspace_id uuid NOT NULL, job_id uuid NOT NULL);
+    CREATE TABLE publication_attempts (workspace_id uuid NOT NULL, job_id uuid NOT NULL,
+      finished_at timestamptz, outcome text);
     CREATE TABLE provider_staging_artifacts (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL, job_id uuid NOT NULL,
       media_id uuid NOT NULL, provider_reference text NOT NULL, expires_at timestamptz NOT NULL,
@@ -160,6 +161,25 @@ describe('Fanvue staging progress', () => {
     ]);
     await postgres.query('INSERT INTO publication_attempts VALUES ($1,$2)', [workspaceId, jobId]);
     expect(await getFanvueStagingProgress(database, keys, selected)).toBeNull();
+  });
+
+  it('reuses finalized media after a definite 429 but holds unknown posts', async () => {
+    const artifactId = await reserveFanvueStagingArtifact(database, input);
+    await postgres.query(
+      "UPDATE provider_staging_artifacts SET upload_phase='finalized', external_object_id=$1 WHERE id=$2",
+      ['00000000-0000-4000-8000-000000000006', artifactId],
+    );
+    await postgres.query("INSERT INTO publication_attempts VALUES ($1,$2,now(),'rate_limit')", [
+      workspaceId,
+      jobId,
+    ]);
+    expect((await getFanvueStagingProgress(database, keys, selected))?.phase).toBe('finalized');
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(
+      new Map([[mediaId, '00000000-0000-4000-8000-000000000006']]),
+    );
+    await postgres.query("UPDATE publication_attempts SET outcome='unknown'");
+    expect(await getFanvueStagingProgress(database, keys, selected)).toBeNull();
+    expect(await getFinalizedFanvueMediaUuids(database, selected)).toEqual(new Map());
   });
 });
 

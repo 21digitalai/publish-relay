@@ -60,6 +60,8 @@ export async function reserveFanvueUploadSession(
             AND NOT EXISTS (
               SELECT 1 FROM publication_attempts attempt
               WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+                AND (attempt.finished_at IS NULL OR attempt.outcome NOT IN
+                  ('rate_limit', 'auth', 'validation', 'transient', 'permanent'))
             )
         )`,
         ),

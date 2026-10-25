@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 
 import { setSessionCookies } from './auth.routes.js';
@@ -9,13 +9,44 @@ const requestSchema = z.object({
   email: z.email(),
   redirectPath: z.string().max(2_048).optional(),
 });
-const verifySchema = z.object({ token: z.string().min(32).max(256) });
+const verifySchema = z.object({
+  token: z
+    .string()
+    .min(32)
+    .max(256)
+    .regex(/^[A-Za-z0-9_-]+$/),
+});
+
+function confirmationPage(token: string, path: string): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Continue to Publish Relay</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 25%,#31235b 0%,#11111c 58%);color:#f7f5ff;font:16px/1.5 system-ui,sans-serif}.auth-confirmation{box-sizing:border-box;width:min(440px,calc(100vw - 32px));padding:36px;border:1px solid #51466b;border-radius:18px;background:#1e1b2c;box-shadow:0 24px 64px #0006}.auth-confirmation h1{font-size:28px;line-height:1.2;margin:0 0 12px}.auth-confirmation p{color:#cfc9df;margin:0 0 28px}.auth-confirmation-submit{width:100%;min-height:48px;border:0;border-radius:10px;background:#8b5cf6;color:white;font:600 16px system-ui,sans-serif;cursor:pointer}.auth-confirmation-submit:focus-visible{outline:3px solid #dbc9ff;outline-offset:3px}</style>
+</head><body><main class="auth-confirmation"><h1>Continue to Publish Relay</h1><p>Press Continue to sign in with your email link.</p><form method="post" action="${path}"><input type="hidden" name="token" value="${token}"><button class="auth-confirmation-submit" type="submit">Continue</button></form></main><script>history.replaceState(null,"",${JSON.stringify(path)});</script></body></html>`;
+}
+
+function confirmationHeaders(reply: FastifyReply): void {
+  void reply.header('Cache-Control', 'no-store, private');
+  void reply.header('Referrer-Policy', 'no-referrer');
+  void reply.header('X-Content-Type-Options', 'nosniff');
+  void reply.header(
+    'Content-Security-Policy',
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+  );
+}
 
 export function registerMagicLinkRoutes(
   application: FastifyInstance,
   magicLinks: MagicLinkService,
   options: { secureCookies: boolean },
 ): void {
+  if (!application.hasContentTypeParser('application/x-www-form-urlencoded'))
+    application.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string', bodyLimit: 2_048 },
+      (_request, body, done) => {
+        done(null, Object.fromEntries(new URLSearchParams(String(body))));
+      },
+    );
   application.post('/api/auth/magic-link/request', async (request, reply) => {
     const input = requestSchema.safeParse(request.body);
     if (!input.success)
@@ -43,25 +74,24 @@ export function registerMagicLinkRoutes(
     });
   });
 
-  application.get('/api/auth/magic-link/verify', async (request, reply) => {
-    const input = verifySchema.safeParse(request.query);
-    if (!input.success) return reply.redirect('/login?magicLink=invalid');
-    const session = await magicLinks.verify({
-      token: input.data.token,
+  for (const [path, invalidPath] of [
+    ['/api/auth/magic-link/verify', '/login?magicLink=invalid'],
+    ['/api/auth/magic-link/verify-signup', '/register?magicLink=invalid'],
+  ] as const) {
+    application.get(path, (request, reply) => {
+      confirmationHeaders(reply);
+      const input = verifySchema.safeParse(request.query);
+      if (!input.success) return reply.redirect(invalidPath);
+      return reply.type('text/html; charset=utf-8').send(confirmationPage(input.data.token, path));
     });
-    if (!session) return reply.redirect('/login?magicLink=invalid');
-    setSessionCookies(reply, session, options.secureCookies);
-    return reply.redirect(session.redirectPath);
-  });
-
-  application.get('/api/auth/magic-link/verify-signup', async (request, reply) => {
-    const input = verifySchema.safeParse(request.query);
-    if (!input.success) return reply.redirect('/register?magicLink=invalid');
-    const session = await magicLinks.verify({
-      token: input.data.token,
+    application.post(path, async (request, reply) => {
+      confirmationHeaders(reply);
+      const input = verifySchema.safeParse(request.body);
+      if (!input.success) return reply.redirect(invalidPath);
+      const session = await magicLinks.verify({ token: input.data.token });
+      if (!session) return reply.redirect('/login?magicLink=invalid');
+      setSessionCookies(reply, session, options.secureCookies);
+      return reply.redirect(session.redirectPath);
     });
-    if (!session) return reply.redirect('/login?magicLink=invalid');
-    setSessionCookies(reply, session, options.secureCookies);
-    return reply.redirect(session.redirectPath);
-  });
+  }
 }

@@ -105,7 +105,30 @@ describe('magic-link routes', () => {
     }
   });
 
-  it('sets the secure session cookies and redirects only after successful verification', async () => {
+  it('never consumes or creates a session on Telegram-like GET/HEAD previews', async () => {
+    const app = createApp();
+    for (const path of ['verify', 'verify-signup']) {
+      for (const method of ['GET', 'HEAD'] as const) {
+        const response = await app.inject({
+          method,
+          url: `/api/auth/magic-link/${path}?token=${'t'.repeat(43)}`,
+          headers: { 'user-agent': 'TelegramBot' },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['set-cookie']).toBeUndefined();
+        expect(response.headers['cache-control']).toContain('no-store');
+        expect(response.headers['referrer-policy']).toBe('no-referrer');
+        if (method === 'GET') {
+          expect(response.body).toContain('<button class="auth-confirmation-submit"');
+          expect(response.body).toContain(`action="/api/auth/magic-link/${path}"`);
+          expect(response.body).toContain('history.replaceState');
+        }
+      }
+    }
+    expect(service.verify).not.toHaveBeenCalled();
+  });
+
+  it('sets one session cookie and redirects only after deliberate Continue POST', async () => {
     vi.mocked(service.verify).mockResolvedValue({
       userId: 'user-1',
       workspaceId: 'workspace-1',
@@ -115,13 +138,24 @@ describe('magic-link routes', () => {
       expiresAt: new Date('2030-01-01T00:00:00Z'),
       redirectPath: '/app',
     });
-    const response = await createApp().inject({
+    const app = createApp();
+    const page = await app.inject({
       method: 'GET',
       url: `/api/auth/magic-link/verify?token=${'t'.repeat(43)}`,
       headers: { 'user-agent': 'test-browser' },
     });
+    expect(page.statusCode).toBe(200);
+    expect(service.verify).not.toHaveBeenCalled();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/magic-link/verify',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      payload: `token=${'t'.repeat(43)}`,
+    });
     expect(response.statusCode).toBe(302);
     expect(response.headers.location).toBe('/app');
+    expect(response.headers.location).not.toContain('token');
+    expect(service.verify).toHaveBeenCalledTimes(1);
     expect(response.headers['set-cookie']).toEqual(
       expect.arrayContaining([
         expect.stringContaining('publish_relay_session=workspace-1.session-token'),
@@ -130,15 +164,18 @@ describe('magic-link routes', () => {
     );
   });
 
-  it('redirects invalid and replayed links without setting cookies', async () => {
+  it('redirects invalid and replayed POST without setting cookies', async () => {
     vi.mocked(service.verify).mockResolvedValue(null);
     const response = await createApp().inject({
-      method: 'GET',
-      url: `/api/auth/magic-link/verify?token=${'t'.repeat(43)}`,
+      method: 'POST',
+      url: '/api/auth/magic-link/verify',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      payload: `token=${'t'.repeat(43)}`,
     });
     expect(response.statusCode).toBe(302);
     expect(response.headers.location).toBe('/login?magicLink=invalid');
     expect(response.headers['set-cookie']).toBeUndefined();
+    expect(service.verify).toHaveBeenCalledTimes(1);
   });
 
   it('uses the same email-only request and verification routes for a new account', async () => {
@@ -171,9 +208,10 @@ describe('magic-link routes', () => {
       redirectPath: '/app',
     });
     const verified = await createApp().inject({
-      method: 'GET',
-      url: `/api/auth/magic-link/verify?token=${'t'.repeat(43)}`,
-      headers: { 'user-agent': 'test-browser' },
+      method: 'POST',
+      url: '/api/auth/magic-link/verify-signup',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      payload: `token=${'t'.repeat(43)}`,
     });
     expect(verified.statusCode).toBe(302);
     expect(verified.headers.location).toBe('/app');

@@ -27,10 +27,16 @@ test('first-time email opens across devices and creates a single-use session', a
   try {
     const otherPage = await otherDevice.newPage();
     await otherPage.goto(url);
+    await expect(otherPage.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
+    await expect(otherPage).not.toHaveURL(/token=/);
+    expect(await otherDevice.cookies()).toEqual([]);
+    await otherPage.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(otherPage).toHaveURL(/\/app|\/w\//);
     await otherPage.reload();
     await expect(otherPage).not.toHaveURL(/\/login/);
     await page.goto(url);
+    await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page).toHaveURL(/\/login\?magicLink=invalid/);
   } finally {
     await otherDevice.close();

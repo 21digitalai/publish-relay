@@ -33,6 +33,7 @@ import { calendarDateKey, calendarTime, calendarZonedMidnight } from './calendar
 import { layoutCalendarBlocks } from './calendar-layout.js';
 import { getPostingAdapter } from './posting-adapter-registry.js';
 import { CalendarCheckboxFilter, type CalendarFilterOption } from './calendar-filters.js';
+import { fanvuePostContent, fanvuePriceCents, type FanvueAudience } from './fanvue-composer.js';
 
 type JobState =
   | 'scheduled'
@@ -612,6 +613,7 @@ const COMPOSER_PLATFORM_ORDER = [
   'x',
   'youtube',
   'tiktok',
+  'fanvue',
 ];
 
 function destinationPlatform(platform: string): string {
@@ -645,6 +647,7 @@ function groupComposerDestinations<T extends { destinationProvider: string }>(ac
 function destinationContentLabel(destination: ComposerDestination): string {
   if (destination.destinationProvider === 'tiktok')
     return 'Video · options checked after selection';
+  if (destination.destinationProvider === 'fanvue') return 'Posts · text, images or video';
   if (destination.destinationProvider === 'x') return 'Text, images, GIF or MP4 video';
   const kinds = destination.capabilitySnapshot.contentKinds.map((kind) =>
     kind.replaceAll('_', ' '),
@@ -708,6 +711,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [collisionWindowEnd, setCollisionWindowEnd] = useState<Date | null>(null);
   const [body, setBody] = useState('');
+  const [fanvueAudience, setFanvueAudience] = useState<FanvueAudience | ''>('');
+  const [fanvuePrice, setFanvuePrice] = useState('');
   const [contentKind, setContentKind] = useState<ComposerContentKind>('text');
   const [linkUrl, setLinkUrl] = useState('');
   const [articleTitle, setArticleTitle] = useState('');
@@ -828,6 +833,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const allowedKindKey = allowedKinds.join(',');
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const isTikTok = selected.length === 1 && selected[0]?.destinationProvider === 'tiktok';
+  const isFanvue = selected.length === 1 && selected[0]?.destinationProvider === 'fanvue';
   useEffect(() => {
     if (!isTikTok) return;
     let cancelled = false;
@@ -916,6 +922,13 @@ function Composer({ onClose }: { onClose: () => void }) {
       (includesMeta &&
         (contentKind === 'link' ||
           importedMedia.some((item) => !META_IMAGE_MIME_TYPES.includes(item.mimeType ?? '')))) ||
+      (isFanvue &&
+        importedMedia.some(
+          (item) =>
+            !['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'].includes(
+              item.mimeType ?? '',
+            ),
+        )) ||
       (isX &&
         (importedMedia.some(
           (item) =>
@@ -935,7 +948,8 @@ function Composer({ onClose }: { onClose: () => void }) {
               mediaFiles.some(
                 (file) => file.type === 'image/gif' || file.type === 'video/mp4',
               ))))));
-  const textLimit = isTikTok ? 2200 : isLinkedInOnly ? 3000 : 280;
+  const textLimit = isFanvue ? 5000 : isTikTok ? 2200 : isLinkedInOnly ? 3000 : 280;
+  const fanvuePriceAmount = fanvuePriceCents(fanvuePrice);
   const bodyTooLong = includesX
     ? xWeightedLength > xLimit || (!isX && body.length > textLimit)
     : body.length > textLimit;
@@ -970,12 +984,25 @@ function Composer({ onClose }: { onClose: () => void }) {
         ? mediaFiles.length !== 1 ||
           !videoTitle.trim() ||
           (!youtubeHasMadeForKids && madeForKids === 'default')
-        : !body.trim() || bodyTooLong) ||
+        : (!isFanvue && !body.trim()) || bodyTooLong) ||
+    (isFanvue &&
+      (!fanvueAudience ||
+        Number.isNaN(fanvuePriceAmount) ||
+        (!body.trim() && mediaFiles.length + draftMediaIds.length === 0) ||
+        (fanvuePriceAmount !== null && mediaFiles.length + draftMediaIds.length === 0) ||
+        mediaFiles.length + draftMediaIds.length > 20 ||
+        mediaFiles.some(
+          (file) =>
+            !['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'].includes(
+              file.type,
+            ),
+        ))) ||
     (includesYouTube && !isYouTube) ||
     (mediaFiles.length > 0 &&
       !isYouTube &&
       !isTikTok &&
       !isX &&
+      !isFanvue &&
       !includesMeta &&
       !isLinkedInVideo &&
       !isLinkedInImage &&
@@ -1018,7 +1045,8 @@ function Composer({ onClose }: { onClose: () => void }) {
     draftState !== 'ready' ||
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
   const validationAlerts = {
-    unsupportedShape: selected.length > 0 && !isYouTube && !isTikTok && allowedKinds.length === 0,
+    unsupportedShape:
+      selected.length > 0 && !isYouTube && !isTikTok && !isFanvue && allowedKinds.length === 0,
     bodyTooLong: includesX && bodyTooLong,
     mixedYouTube: includesYouTube && !isYouTube,
     linkedInExpiry: linkedinExpiresBeforeDispatch,
@@ -1038,6 +1066,8 @@ function Composer({ onClose }: { onClose: () => void }) {
   });
   const formSnapshot = JSON.stringify({
     body,
+    fanvueAudience,
+    fanvuePrice,
     contentKind,
     linkUrl,
     articleTitle,
@@ -1191,6 +1221,8 @@ function Composer({ onClose }: { onClose: () => void }) {
     intentKey.current = crypto.randomUUID();
   }, [
     body,
+    fanvueAudience,
+    fanvuePrice,
     contentKind,
     linkUrl,
     articleTitle,
@@ -1279,6 +1311,7 @@ function Composer({ onClose }: { onClose: () => void }) {
       const mediaIds = pending
         ? [...draftMediaIds, ...uploadedMediaIds.current]
         : await resolveMediaIds(mediaFiles, draftMediaIds);
+      if (isFanvue && !fanvueAudience) throw new Error('Choose who can see this Fanvue post.');
       const youtubeOverrides = {
         schemaVersion: 1,
         title: videoTitle.trim(),
@@ -1291,37 +1324,51 @@ function Composer({ onClose }: { onClose: () => void }) {
       };
       requestSnapshot ??= {
         key: intentKey.current,
-        body: JSON.stringify({
-          content: isYouTube
-            ? { kind: 'video', text: '', providerOptions: { youtube: youtubeOverrides } }
-            : includesMeta
-              ? {
-                  kind: contentKind,
-                  text: body.trim(),
-                  ...(contentKind === 'link' ? { linkUrl: linkUrl.trim() } : {}),
-                }
-              : isLinkedInArticle
-                ? {
-                    kind: 'link',
-                    text: body.trim(),
-                    linkUrl: linkUrl.trim(),
-                    title: articleTitle.trim(),
-                    ...(articleDescription.trim()
-                      ? { description: articleDescription.trim() }
-                      : {}),
-                  }
-                : isLinkedInVideo
-                  ? { kind: 'video', text: body.trim(), title: videoTitle.trim() }
-                  : isLinkedInImage
-                    ? { kind: 'single_image', text: body.trim() }
-                    : isLinkedInMultiImage
-                      ? { kind: 'multi_image', text: body.trim() }
-                      : { type: 'text', text: body.trim() },
-          mediaIds,
-          providerAccountIds: selectedAccounts,
-          scheduledAt: targetTime.toISOString(),
-          ...(draftId ? { externalDraftId: draftId } : {}),
-        }),
+        body: JSON.stringify(
+          isFanvue && selectedDestination
+            ? {
+                destination: { provider: 'fanvue', providerAccountId: selectedDestination.id },
+                content: fanvuePostContent({
+                  audience: fanvueAudience as FanvueAudience,
+                  text: body,
+                  mediaIds,
+                  price: fanvuePrice,
+                }),
+                scheduledAt: targetTime.toISOString(),
+                ...(draftId ? { externalDraftId: draftId } : {}),
+              }
+            : {
+                content: isYouTube
+                  ? { kind: 'video', text: '', providerOptions: { youtube: youtubeOverrides } }
+                  : includesMeta
+                    ? {
+                        kind: contentKind,
+                        text: body.trim(),
+                        ...(contentKind === 'link' ? { linkUrl: linkUrl.trim() } : {}),
+                      }
+                    : isLinkedInArticle
+                      ? {
+                          kind: 'link',
+                          text: body.trim(),
+                          linkUrl: linkUrl.trim(),
+                          title: articleTitle.trim(),
+                          ...(articleDescription.trim()
+                            ? { description: articleDescription.trim() }
+                            : {}),
+                        }
+                      : isLinkedInVideo
+                        ? { kind: 'video', text: body.trim(), title: videoTitle.trim() }
+                        : isLinkedInImage
+                          ? { kind: 'single_image', text: body.trim() }
+                          : isLinkedInMultiImage
+                            ? { kind: 'multi_image', text: body.trim() }
+                            : { type: 'text', text: body.trim() },
+                mediaIds,
+                providerAccountIds: selectedAccounts,
+                scheduledAt: targetTime.toISOString(),
+                ...(draftId ? { externalDraftId: draftId } : {}),
+              },
+        ),
         form: formSnapshot,
         files: [...mediaFiles],
         scheduledAt: targetTime.toISOString(),
@@ -1853,6 +1900,50 @@ function Composer({ onClose }: { onClose: () => void }) {
                     )}
                   </label>
                 )}
+                {isFanvue && (
+                  <fieldset className="fanvue-post-options" inert={hasUncertainPost}>
+                    <legend>Fanvue audience and price</legend>
+                    <DefaultsSelect
+                      label="Who can see this post"
+                      name="fanvueAudience"
+                      value={fanvueAudience}
+                      options={[
+                        ['', 'Choose audience'],
+                        ['subscribers', 'Subscribers'],
+                        ['followers-and-subscribers', 'Followers and subscribers'],
+                      ]}
+                      onChange={(value) => {
+                        setFanvueAudience(value as FanvueAudience | '');
+                      }}
+                    />
+                    <label className="field-label fanvue-price-field">
+                      Price in USD (optional; leave empty for free)
+                      <input
+                        className="text-input fanvue-price-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={fanvuePrice}
+                        onChange={(event) => {
+                          setFanvuePrice(event.target.value);
+                        }}
+                        placeholder="Free"
+                        aria-invalid={Number.isNaN(fanvuePriceAmount)}
+                      />
+                    </label>
+                    {Number.isNaN(fanvuePriceAmount) && (
+                      <p className="inline-validation" role="alert">
+                        Paid posts start at $3.00; enter dollars and up to two decimal places.
+                      </p>
+                    )}
+                    {fanvuePriceAmount !== null &&
+                      !Number.isNaN(fanvuePriceAmount) &&
+                      mediaFiles.length + draftMediaIds.length === 0 && (
+                        <p className="inline-validation" role="alert">
+                          Add media to a paid post.
+                        </p>
+                      )}
+                  </fieldset>
+                )}
                 {(includesMeta || isLinkedInArticle) && contentKind === 'link' && (
                   <label className="field-label">
                     HTTPS link
@@ -1984,15 +2075,18 @@ function Composer({ onClose }: { onClose: () => void }) {
                               ? `${String(mediaFiles.length + draftMediaIds.length)} of 2–20 images selected`
                               : includesMeta && contentKind !== 'link'
                                 ? `${String(mediaFiles.length + draftMediaIds.length)} image${mediaFiles.length + draftMediaIds.length === 1 ? '' : 's'} selected`
-                                : isX
-                                  ? 'Up to four images, or one GIF or MP4 video'
-                                  : selectedDestination
-                                    ? 'Media is not supported for this account'
-                                    : 'Select an account to add media'}
+                                : isFanvue
+                                  ? `${String(mediaFiles.length + draftMediaIds.length)} of 20 media items selected`
+                                  : isX
+                                    ? 'Up to four images, or one GIF or MP4 video'
+                                    : selectedDestination
+                                      ? 'Media is not supported for this account'
+                                      : 'Select an account to add media'}
                   </span>
                   {(isTikTok ||
                     isYouTube ||
                     isX ||
+                    isFanvue ||
                     isLinkedInVideo ||
                     isLinkedInImage ||
                     isLinkedInArticle ||
@@ -2017,6 +2111,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                         }
                         multiple={
                           isX ||
+                          isFanvue ||
                           isLinkedInMultiImage ||
                           (includesMeta && contentKind === 'carousel')
                         }

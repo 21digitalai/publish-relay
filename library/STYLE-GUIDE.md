@@ -168,6 +168,16 @@ Facebook Pages and Instagram are separate picker entries and reconnect paths. Fa
 
 ## Composer
 
+Fanvue uses the same destination-first Composer sheet, account picker, body, media upload,
+schedule, uncertain-request recovery, and receipt as other destinations. After selecting a
+Fanvue creator, the `.fanvue-post-options` fieldset requires an explicit audience choice:
+subscribers or followers and subscribers. The `.fanvue-price-field` accepts optional USD
+with at most two decimals; empty is free, and a paid post requires attached media and at
+least the provider's $3.00 minimum. The existing hidden media picker supports up to 20
+JPEG, PNG, GIF, WebP, or MP4 items. These controls serialize one destination-owned `post`
+content request through the shared browser post endpoint; they do not grant engagement
+permissions or impose agent approval policy.
+
 After active-workspace account loading, the composer shows a focused account gate when no active destination exists. The gate links to that workspace's Accounts route and hides all post controls; loading and fetch-error states remain distinct, with an inline Retry for errors.
 
 An external-draft cockpit link opens the canonical Composer sheet directly. A compact imported-draft status banner names the friendly source label and attached-media count without exposing actor IDs, client IDs, internal storage fields, or raw provenance. All destination, content, timing, validation, success, and failure states remain owned by the existing Composer; there is no separate imported-draft editor.

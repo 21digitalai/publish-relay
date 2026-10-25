@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('Fanvue publishing consent appears only as its own adapter and persists a creator connection', async ({
   page,
-}) => {
+}, testInfo) => {
   const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
   const registration = await page.request.post('/api/auth/register', {
     data: {
@@ -39,4 +39,69 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
   await page.reload();
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
+
+  await page.goto(`/w/${data.slug}/queue`);
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByRole('radio', { name: /Fanvue.*Fixture Creator/ }).click();
+  await expect(page.getByRole('button', { name: 'Who can see this post' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Who can see this post' }).click();
+  await page.getByRole('option', { name: 'Subscribers', exact: true }).click();
+  await page.getByLabel('Post body').fill('Fixture Fanvue post');
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-free-composer.png') });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+
+  const requests: unknown[] = [];
+  const mediaId = '00000000-0000-4000-8000-000000000027';
+  await page.route('**/api/workflow/media', (route) =>
+    route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { id: mediaId }, error: null }),
+    }),
+  );
+  await page.route('**/api/workflow/posts', (route) => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: '{"data":{"jobs":[{}]},"error":null}',
+    });
+  });
+  await page.goto(`/w/${data.slug}/queue`);
+  await page.getByRole('button', { name: 'Create post' }).last().click();
+  await page.getByRole('radio', { name: /Fanvue.*Fixture Creator/ }).click();
+  await page.getByRole('button', { name: 'Who can see this post' }).click();
+  await page.getByRole('option', { name: 'Followers and subscribers' }).click();
+  await page.getByLabel('Post body').fill('Paid fixture');
+  await page.locator('.fanvue-price-input').fill('2.99');
+  await expect(page.getByText('Paid posts start at $3.00;')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-price-validation.png') });
+  await page.locator('.fanvue-price-input').fill('3.05');
+  await expect(page.getByText('Add media to a paid post.')).toBeVisible();
+  await page.locator('#composer-media-upload').setInputFiles({
+    name: 'preview.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('fixture'),
+  });
+  await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-paid-composer.png') });
+  await page.getByRole('button', { name: 'Schedule 1 post' }).click();
+  await expect(page.getByRole('heading', { name: '1 post scheduled' })).toBeVisible();
+  expect(requests).toEqual([
+    expect.objectContaining({
+      destination: expect.objectContaining({ provider: 'fanvue' }),
+      content: {
+        schemaVersion: 1,
+        kind: 'post',
+        audience: 'followers-and-subscribers',
+        text: 'Paid fixture',
+        mediaIds: [mediaId],
+        price: 305,
+      },
+    }),
+  ]);
 });

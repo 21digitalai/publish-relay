@@ -37,12 +37,7 @@ export function fanvueJobMediaWhere(input: FanvueJobMediaInput, now: Date) {
   );
 }
 
-export async function openFanvueJobMediaRange(
-  database: NodePgDatabase,
-  storage: MediaStorage,
-  input: FanvueJobMediaInput,
-) {
-  if (!storage.openVerifiedRange) throw new Error('Verified range storage is required');
+async function loadFanvueJobMedia(database: NodePgDatabase, input: FanvueJobMediaInput) {
   const now = input.now ?? new Date();
   const source = await withTenantTransaction(database, input, async (transaction) => {
     const [row] = await transaction
@@ -78,8 +73,26 @@ export async function openFanvueJobMediaRange(
       .limit(1);
     return row ?? null;
   });
+  if (!source) throw new Error('Fanvue job media is unavailable');
+  return source;
+}
+
+export async function getFanvueJobMediaMetadata(
+  database: NodePgDatabase,
+  input: Omit<FanvueJobMediaInput, 'start' | 'end'>,
+): Promise<{ byteSize: number; mimeType: string }> {
+  const source = await loadFanvueJobMedia(database, { ...input, start: 0 });
+  return { byteSize: source.byteSize, mimeType: source.mimeType };
+}
+
+export async function openFanvueJobMediaRange(
+  database: NodePgDatabase,
+  storage: MediaStorage,
+  input: FanvueJobMediaInput,
+) {
+  if (!storage.openVerifiedRange) throw new Error('Verified range storage is required');
+  const source = await loadFanvueJobMedia(database, input);
   if (
-    !source ||
     !Number.isSafeInteger(input.start) ||
     input.start < 0 ||
     input.start >= source.byteSize ||

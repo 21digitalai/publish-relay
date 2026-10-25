@@ -20,6 +20,25 @@ import {
 
 const CHAT_READ_INTENT = 'fanvue:chat-read:';
 
+export class FanvueModuleConsentError extends Error {
+  constructor(public readonly reason: 'unavailable' | 'scope' | 'account-mismatch') {
+    super(`Fanvue message-reading consent ${reason}`);
+  }
+}
+
+export async function completeFanvueOauthDenial(
+  database: NodePgDatabase,
+  keys: MasterKeyProvider,
+  input: { workspaceId: string; userId: string; state: string },
+): Promise<'chat-read' | 'publishing' | null> {
+  const pending = await consumeOauthCallback(database, keys, {
+    ...input,
+    provider: 'fanvue',
+  });
+  if (!pending) return null;
+  return pending.intent?.startsWith(CHAT_READ_INTENT) ? 'chat-read' : 'publishing';
+}
+
 async function activeCreatorForAccount(
   transaction: NodePgDatabase,
   input: { workspaceId: string; userId: string; accountId: string },
@@ -51,7 +70,7 @@ async function activeCreatorForAccount(
       ),
     )
     .limit(1);
-  if (!account) throw new Error('Fanvue account is unavailable for module consent');
+  if (!account) throw new FanvueModuleConsentError('unavailable');
   return account;
 }
 
@@ -140,12 +159,17 @@ export async function completeFanvueOauthConnection(
     codeVerifier: pending.codeVerifier,
     ...(readChatAccountId ? { readChat: true } : {}),
   });
-  const scopes = readChatAccountId
-    ? assertFanvueChatReadScopes(token.scope)
-    : assertFanvuePublishingScopes(token.scope);
+  let scopes: string[];
+  if (readChatAccountId) {
+    try {
+      scopes = assertFanvueChatReadScopes(token.scope);
+    } catch {
+      throw new FanvueModuleConsentError('scope');
+    }
+  } else scopes = assertFanvuePublishingScopes(token.scope);
   const profile = await client.discoverCreator(token.access_token);
   if (existingAccount && profile.uuid !== existingAccount.creatorId)
-    throw new Error('Fanvue module consent returned a different creator account');
+    throw new FanvueModuleConsentError('account-mismatch');
   const connection = await connectProvider(
     database,
     keys,
@@ -180,7 +204,7 @@ export async function completeFanvueOauthConnection(
                 current.connectionId !== existingAccount.connectionId ||
                 current.credentialId !== existingAccount.credentialId
               )
-                throw new Error('Fanvue account changed during module consent');
+                throw new FanvueModuleConsentError('unavailable');
             },
           }
         : {}),

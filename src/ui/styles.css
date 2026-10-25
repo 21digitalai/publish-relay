@@ -1133,6 +1133,10 @@ textarea:focus-visible {
   border-radius: 8px;
   color: var(--success);
 }
+.fanvue-chat-read-status {
+  color: var(--success);
+  font-size: 0.875rem;
+}
 .page-exposure-control {
   grid-column: 1 / -1;
 }

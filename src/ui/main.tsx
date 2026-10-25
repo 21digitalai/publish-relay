@@ -46,6 +46,7 @@ interface Account {
     categoryId?: string;
   };
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
+  fanvueModules?: { chatRead: boolean };
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -64,6 +65,7 @@ interface AccountDto {
   capabilitySnapshot?: { contentKinds: string[] };
   adapterDefaults: Account['adapterDefaults'];
   xLongPosts?: Account['xLongPosts'];
+  fanvueModules?: Account['fanvueModules'];
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -91,6 +93,7 @@ function mapAccountDto(account: AccountDto): Account {
                 : account.provider,
     destinationProvider: account.destinationProvider ?? account.provider,
     ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
+    ...(account.fanvueModules ? { fanvueModules: account.fanvueModules } : {}),
     name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
     handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
     health:
@@ -1128,16 +1131,24 @@ function AccountRow({
             {account.grantFamily ? 'Disconnect Meta grant' : 'Revoke Meta connection'}
           </button>
         )}
-        {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && !needsReconnect && (
-          <button className="secondary-button" onClick={onEnableChatRead}>
-            Allow message reading
-          </button>
-        )}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
+          (account.fanvueModules?.chatRead ? (
+            <span className="fanvue-chat-read-status" role="status">
+              Message reading enabled
+            </span>
+          ) : (
+            <button className="secondary-button fanvue-chat-read-enable" onClick={onEnableChatRead}>
+              Allow message reading
+            </button>
+          ))}
       </div>
       {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && !needsReconnect && (
         <p className="account-module-note">
-          Optional, read-only Fanvue permission for this account. It does not allow sending
-          messages.
+          {account.fanvueModules?.chatRead
+            ? 'Read-only Fanvue message access is enabled for this account. Sending remains off.'
+            : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
         </p>
       )}
       {!account.isExposed &&
@@ -1382,6 +1393,16 @@ function AccountRow({
 function AccountsPage() {
   const oauthResult = new URLSearchParams(window.location.search).get('oauth');
   const oauthErrorMessages: Record<string, string> = {
+    'fanvue-chat-read-denied':
+      'Fanvue message reading was not enabled. Authorization was cancelled. The selected account remains connected; try again when ready.',
+    'fanvue-denied':
+      'No Fanvue account was connected. Authorization was cancelled; start a new connection to try again.',
+    'fanvue-chat-read-unavailable':
+      'Fanvue message reading was not enabled. The selected account changed or was disconnected. Reconnect it, then try again.',
+    'fanvue-chat-read-scope':
+      'Fanvue message reading was not enabled. The required read-only permission was not granted. Review the permission and try again.',
+    'fanvue-chat-read-account-mismatch':
+      'Fanvue message reading was not enabled. A different creator signed in. Switch to the selected creator account and try again.',
     'instagram-denied':
       'No Instagram account was connected. Instagram authorization was not completed. Start a new connection to try again.',
     'instagram-expired':

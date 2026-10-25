@@ -236,7 +236,7 @@ describe.skipIf(!connectionString)('Fanvue tenant OAuth and rotating refresh on 
           ...callback,
           state: new URL(mismatch.authorizationUrl).searchParams.get('state') ?? '',
         }),
-      ).rejects.toThrow('different creator');
+      ).rejects.toThrow('account-mismatch');
       moduleScope = false;
       discoveredCreatorId = creatorId;
       const credentialAfterMismatch = await pool.query<{ credential_id: string }>(

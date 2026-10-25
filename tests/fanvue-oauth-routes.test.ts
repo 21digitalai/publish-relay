@@ -2,8 +2,14 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/modules/providers/fanvue-oauth.service.js', () => ({
+  FanvueModuleConsentError: class extends Error {
+    constructor(public readonly reason: string) {
+      super(reason);
+    }
+  },
   beginFanvueOauthConnection: vi.fn(),
   completeFanvueOauthConnection: vi.fn(),
+  completeFanvueOauthDenial: vi.fn(),
 }));
 
 import { createStandaloneApplication } from '../src/application/create-application.js';
@@ -14,6 +20,8 @@ import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 import {
   beginFanvueOauthConnection,
   completeFanvueOauthConnection,
+  completeFanvueOauthDenial,
+  FanvueModuleConsentError,
 } from '../src/modules/providers/fanvue-oauth.service.js';
 
 const applications = [] as ReturnType<typeof createStandaloneApplication>[];
@@ -155,5 +163,33 @@ describe('Fanvue OAuth HTTP boundary', () => {
       headers: { cookie: session },
     });
     expect(callback.headers.location).toBe('/app?oauth=fanvue-chat-read-connected');
+  });
+
+  it('returns actionable account results for rejected chat-read scope, changed creator, and stale account', async () => {
+    const app = application(true);
+    for (const reason of ['scope', 'account-mismatch', 'unavailable'] as const) {
+      vi.mocked(completeFanvueOauthConnection).mockRejectedValueOnce(
+        new FanvueModuleConsentError(reason),
+      );
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/oauth/fanvue/callback?state=state&code=secret-code',
+        headers: { cookie: session },
+      });
+      expect(response.headers.location).toBe(`/app?oauth=fanvue-chat-read-${reason}`);
+      expect(response.body).not.toContain('secret-code');
+    }
+  });
+
+  it('consumes a cancelled module grant and returns to the account with a specific recovery state', async () => {
+    const app = application(true);
+    vi.mocked(completeFanvueOauthDenial).mockResolvedValueOnce('chat-read');
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/fanvue/callback?state=state&error=access_denied',
+      headers: { cookie: session },
+    });
+    expect(response.headers.location).toBe('/app?oauth=fanvue-chat-read-denied');
+    expect(completeFanvueOauthConnection).not.toHaveBeenCalled();
   });
 });

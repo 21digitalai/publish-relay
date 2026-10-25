@@ -11,6 +11,9 @@ import {
 } from '../src/modules/providers/fanvue-http-client.js';
 import { FanvueReadClient } from '../src/modules/providers/fanvue-read-client.js';
 import { FanvueReadService } from '../src/modules/providers/fanvue-read.service.js';
+import { FanvueMessageService } from '../src/modules/providers/fanvue-message.service.js';
+import type { FanvueMessageClient } from '../src/modules/providers/fanvue-message-client.js';
+import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 
 const connectionString = process.env.POSTGRES_FANVUE_TEST_URL;
 const keys = { currentVersion: () => 'v1', getKey: () => Promise.resolve(Buffer.alloc(32, 7)) };
@@ -83,6 +86,24 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
       await expect(
         service.listChats({ workspaceId: otherWorkspaceId, accountId }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });
+      const sendMessage = vi.fn();
+      const messageService = new FanvueMessageService(
+        database,
+        service,
+        { sendMessage } as unknown as FanvueMessageClient,
+        allowAllActionPolicy,
+      );
+      await expect(
+        messageService.sendText({
+          workspaceId: otherWorkspaceId,
+          accountId,
+          fanUuid: randomUUID(),
+          clientActionId: randomUUID(),
+          text: 'Not authorized',
+          actor: { type: 'user', id: userId },
+        }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
+      expect(sendMessage).not.toHaveBeenCalled();
       await expect(
         service.listChats({ workspaceId, accountId: randomUUID() }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });

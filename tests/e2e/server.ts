@@ -15,6 +15,10 @@ import {
 } from '../../src/database/schema.js';
 import { withTenantTransaction } from '../../src/database/tenant-transaction.js';
 import { FakeProviderConnectionAdapter } from '../../src/modules/credentials/provider-adapter.js';
+import {
+  FanvueHttpClient,
+  FANVUE_PUBLISHING_SCOPES,
+} from '../../src/modules/providers/fanvue-http-client.js';
 import { connectProvider } from '../../src/modules/credentials/provider-connection.service.js';
 import { authenticateRequest } from '../../src/modules/identity/auth.routes.js';
 import { createPostgresAuthStore } from '../../src/modules/identity/auth.repository.js';
@@ -60,6 +64,36 @@ const application = createStandaloneApplication({
     ...(magicLinkMode ? { PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link' } : {}),
   },
   auth,
+  fanvueOauth: {
+    keys: { currentVersion: () => 'e2e-v1', getKey: () => Promise.resolve(fixtureKey) },
+    client: new FanvueHttpClient({
+      clientId: 'fixture-client',
+      clientSecret: 'fixture-secret',
+      fetch: (url) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              (typeof url === 'string' ? url : url instanceof URL ? url.href : url.url).endsWith(
+                '/users/me',
+              )
+                ? {
+                    uuid: 'd6ed1cac-e0cd-4109-bf04-539cb8591838',
+                    displayName: 'Fixture Creator',
+                    isCreator: true,
+                  }
+                : {
+                    access_token: 'fixture-access',
+                    refresh_token: 'fixture-refresh',
+                    token_type: 'Bearer',
+                    expires_in: 3600,
+                    scope: FANVUE_PUBLISHING_SCOPES.join(' '),
+                  },
+            ),
+          ),
+        ),
+    }),
+    callbackUrl: 'https://publishrelay.app/api/oauth/fanvue/callback',
+  },
   ...(magicLinkMode
     ? {
         magicLinks: new MagicLinkService(

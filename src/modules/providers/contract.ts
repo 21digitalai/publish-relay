@@ -2,7 +2,7 @@ export const PROVIDER_ADAPTER_VERSION = '1.1' as const;
 
 export type ConnectionFamily = 'x' | 'youtube' | 'meta' | 'linkedin';
 export type DestinationProvider =
-  'x' | 'youtube' | 'instagram' | 'facebook_page' | 'linkedin' | 'tiktok' | 'snapchat';
+  'x' | 'youtube' | 'instagram' | 'facebook_page' | 'linkedin' | 'tiktok' | 'snapchat' | 'fanvue';
 
 export interface ProviderTechnicalCapabilities {
   readonly providerFamily: string;

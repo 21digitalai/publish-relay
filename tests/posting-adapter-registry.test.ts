@@ -19,6 +19,7 @@ describe('posting adapter registry', () => {
       'facebook_page',
       'instagram',
       'tiktok',
+      'fanvue',
     ]);
     expect(new Set(POSTING_ADAPTERS.map((adapter) => adapter.id)).size).toBe(
       POSTING_ADAPTERS.length,
@@ -36,6 +37,21 @@ describe('posting adapter registry', () => {
     vi.stubGlobal('document', { body: { dataset: { tiktokEnabled: 'true' } } });
     expect(getEnabledPostingAdapters().some((adapter) => adapter.id === 'tiktok')).toBe(true);
     expect(getPostingAdapter('tiktok')?.auth.startPath).toBe('/api/oauth/tiktok');
+  });
+
+  it('shows publishing-only Fanvue only when its OAuth runtime is enabled', () => {
+    expect(getEnabledPostingAdapters().some((adapter) => adapter.id === 'fanvue')).toBe(false);
+    vi.stubGlobal('document', { body: { dataset: { fanvueEnabled: 'true' } } });
+    const enabled = getEnabledPostingAdapters();
+    expect(enabled.some((adapter) => adapter.id === 'fanvue')).toBe(true);
+    expect(getPostingAdapter('fanvue')?.auth.startPath).toBe('/api/oauth/fanvue');
+    const markup = renderToStaticMarkup(
+      createElement(PostingAdapterList, {
+        adapters: enabled,
+        onSelect: () => undefined,
+      }),
+    );
+    expect(markup).toContain('Messages and comments need separate permission');
   });
 
   it('removes disabled adapters without picker-specific filtering', () => {

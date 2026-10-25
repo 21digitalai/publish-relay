@@ -35,6 +35,7 @@ function normalizeDestination(
     instagram_login: ['instagram'],
     tiktok: ['tiktok'],
     snapchat: ['snapchat'],
+    fanvue: ['fanvue'],
   };
   const allowed = allowedDestinations[connectionFamily];
   if (allowed && !allowed.includes(destinationProvider))
@@ -127,6 +128,13 @@ export async function replaceProviderConnection(
       input.accounts[0]?.providerAccountId !== input.externalSubjectId)
   )
     throw new Error('Snapchat connection must identify exactly one owner profile');
+  if (
+    input.provider === 'fanvue' &&
+    (!input.externalSubjectId ||
+      input.accounts.length !== 1 ||
+      input.accounts[0]?.providerAccountId !== input.externalSubjectId)
+  )
+    throw new Error('Fanvue connection must identify exactly one creator account');
   const subjectId = input.externalSubjectId ?? memberUrn;
   if (!subjectId || subjectId.startsWith('legacy:'))
     throw new Error('Provider connection requires a verified principal subject');

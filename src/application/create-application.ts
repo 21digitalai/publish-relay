@@ -42,6 +42,8 @@ import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.j
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
 import type { SnapchatHttpClient } from '../modules/providers/snapchat-http-client.js';
 import { registerSnapchatOauthRoutes } from '../modules/providers/snapchat-oauth.routes.js';
+import type { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
+import { registerFanvueOauthRoutes } from '../modules/providers/fanvue-oauth.routes.js';
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerTikTokDraftRoutes } from '../modules/providers/tiktok-draft.routes.js';
 import { registerTikTokScheduleRoutes } from '../modules/providers/tiktok-schedule.routes.js';
@@ -95,6 +97,11 @@ interface SnapchatOauthOptions {
   client: SnapchatHttpClient;
   callbackUrl: string;
 }
+interface FanvueOauthOptions {
+  keys: MasterKeyProvider;
+  client: FanvueHttpClient;
+  callbackUrl: string;
+}
 
 export interface CoreApplicationOptions {
   config: RuntimeConfig;
@@ -112,6 +119,7 @@ export interface CoreApplicationOptions {
   instagramOauth?: InstagramOauthOptions;
   tiktokOauth?: TikTokOauthOptions;
   snapchatOauth?: SnapchatOauthOptions;
+  fanvueOauth?: FanvueOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
   magicLinks?: MagicLinkService;
   publicAuthShells?: boolean;
@@ -232,6 +240,7 @@ function registerBrowserRoutes(
     instagramOauth,
     tiktokOauth,
     snapchatOauth,
+    fanvueOauth,
     delegatedAuthorization,
   } = options;
   if (database && mediaStorage && config.CURSOR_SIGNING_SECRET) {
@@ -294,6 +303,8 @@ function registerBrowserRoutes(
     registerTikTokOauthRoutes(application, { auth, database, actionPolicy, ...tiktokOauth });
   if (auth && database && snapchatOauth)
     registerSnapchatOauthRoutes(application, { auth, database, actionPolicy, ...snapchatOauth });
+  if (auth && database && fanvueOauth)
+    registerFanvueOauthRoutes(application, { auth, database, actionPolicy, ...fanvueOauth });
   if (auth && delegatedAuthorization)
     registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
 }
@@ -314,7 +325,7 @@ export function registerCoreApplication(
   const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
     .replace(
       '<body>',
-      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}">`,
+      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}" data-fanvue-enabled="${String(Boolean(options.fanvueOauth))}">`,
     )
     .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
     .replace('href="/favicon.svg"', `href="${uiPrefix === '/' ? '/' : uiPrefix}favicon.svg"`);

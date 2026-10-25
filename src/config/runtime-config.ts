@@ -44,6 +44,8 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_INSTAGRAM_APP_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_TIKTOK_CLIENT_KEY: z.string().min(1).optional(),
     PUBLISH_RELAY_TIKTOK_CLIENT_SECRET: z.string().min(1).optional(),
+    PUBLISH_RELAY_FANVUE_CLIENT_ID: z.string().min(1).optional(),
+    PUBLISH_RELAY_FANVUE_CLIENT_SECRET: z.string().min(1).optional(),
     PUBLISH_RELAY_TIKTOK_VERIFIED_MEDIA_ORIGIN: z.url().optional(),
     PUBLISH_RELAY_TIKTOK_PUBLISHING_ENABLED: z.enum(['true', 'false']).optional(),
     PUBLISH_RELAY_META_GRAPH_VERSION: z
@@ -87,6 +89,15 @@ const runtimeConfigSchema = z
         code: 'custom',
         path: ['PUBLISH_RELAY_META_GRAPH_VERSION'],
         message: 'Instagram Login requires a pinned Graph API version',
+      });
+    if (
+      Boolean(config.PUBLISH_RELAY_FANVUE_CLIENT_ID) !==
+      Boolean(config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET)
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['PUBLISH_RELAY_FANVUE_CLIENT_ID'],
+        message: 'Fanvue OAuth requires both client ID and secret',
       });
     if (config.NODE_ENV !== 'production') return;
     for (const name of [

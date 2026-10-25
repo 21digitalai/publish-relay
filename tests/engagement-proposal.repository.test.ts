@@ -13,6 +13,7 @@ import {
 import type { AuthService } from '../src/modules/identity/auth.service.js';
 import { registerEngagementProposalRoutes } from '../src/modules/providers/engagement-proposal.routes.js';
 import { registerEngagementApprovalRoutes } from '../src/modules/providers/engagement-approval.routes.js';
+import { registerEngagementDmMediaRoutes } from '../src/modules/providers/engagement-dm-media.routes.js';
 import { markFanvuePreSendError } from '../src/modules/providers/fanvue-pre-send-error.js';
 
 import {
@@ -76,6 +77,9 @@ describe('engagement proposal foundation', () => {
         .fn()
         .mockResolvedValue({ state: 'confirmed', commentUuid: fanvuePost });
       const sendText = vi.fn().mockResolvedValue({ state: 'unknown' });
+      const sendMessage = vi
+        .fn()
+        .mockResolvedValue({ state: 'confirmed', messageUuid: fanvuePost });
       registerEngagementProposalRoutes(app, {
         database,
         auth,
@@ -96,8 +100,10 @@ describe('engagement proposal foundation', () => {
         database,
         auth,
         comments: { send: sendComment },
-        messages: { sendText },
+        messages: { sendText, sendMessage },
       });
+      const stageMedia = vi.fn().mockResolvedValue('ready');
+      registerEngagementDmMediaRoutes(app, { database, auth, stage: stageMedia });
       const headers = {
         authorization: 'Bearer test-key',
         'x-publish-relay-workspace': workspace,
@@ -347,19 +353,123 @@ describe('engagement proposal foundation', () => {
         proposerType: 'api_key',
         proposerId: proposer,
       });
+      const stageUrl = `/api/engagement-proposals/${unsupported.id}/media/${fanvuePost}/stage`;
       expect(
         (
           await app.inject({
             method: 'POST',
-            url: `/api/engagement-proposals/${unsupported.id}/approve`,
+            url: stageUrl,
+            headers: browserHeaders,
+            payload: { expectedRevision: 1 },
+          })
+        ).statusCode,
+      ).toBe(403);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: stageUrl,
+            headers: {
+              ...approvedHeaders,
+              cookie: `publish_relay_session=${otherWorkspace}.test-token; publish_relay_csrf=fixture-csrf`,
+            },
+            payload: { expectedRevision: 1 },
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: stageUrl,
+            headers: approvedHeaders,
+            payload: { expectedRevision: 2 },
+          })
+        ).statusCode,
+      ).toBe(409);
+      const staged = await app.inject({
+        method: 'POST',
+        url: stageUrl,
+        headers: approvedHeaders,
+        payload: { expectedRevision: 1 },
+      });
+      expect(staged.statusCode).toBe(200);
+      expect(staged.json()).toMatchObject({ data: { state: 'ready' } });
+      expect(staged.body).not.toMatch(/clientActionId|accountId|mediaId|uploadId|accessToken|storageKey/);
+      expect(Buffer.byteLength(staged.body)).toBeLessThan(256);
+      expect(stageMedia).toHaveBeenCalledWith({
+        workspaceId: workspace,
+        accountId: fanvueAccount,
+        clientActionId: unsupported.clientActionId,
+        mediaId: fanvuePost,
+      });
+      const mediaApproval = await app.inject({
+        method: 'POST',
+        url: `/api/engagement-proposals/${unsupported.id}/approve`,
+        headers: approvedHeaders,
+        payload: approvalPayload,
+      });
+      expect(mediaApproval.statusCode).toBe(200);
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: workspace,
+          accountId: fanvueAccount,
+          clientActionId: unsupported.clientActionId,
+          mediaIds: [fanvuePost],
+        }),
+      );
+      expect((await getEngagementProposal(database, workspace, unsupported.id))?.status).toBe(
+        'sent',
+      );
+      const priced = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: fanvueAccount,
+        clientActionId: '00000000-0000-4000-8000-000000000224',
+        provider: 'fanvue',
+        kind: 'dm',
+        targetId: fanvuePost,
+        content: { text: 'Unlock', mediaIds: [fanvuePost], priceCents: 300 },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/engagement-proposals/${priced.id}/approve`,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(200);
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          mediaIds: [fanvuePost],
+          price: 300,
+        }),
+      );
+      const underMinimum = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: fanvueAccount,
+        clientActionId: '00000000-0000-4000-8000-000000000225',
+        provider: 'fanvue',
+        kind: 'dm',
+        targetId: fanvuePost,
+        content: { text: 'Too little', mediaIds: [fanvuePost], priceCents: 200 },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/engagement-proposals/${underMinimum.id}/approve`,
             headers: approvedHeaders,
             payload: approvalPayload,
           })
         ).statusCode,
       ).toBe(409);
-      expect((await getEngagementProposal(database, workspace, unsupported.id))?.status).toBe(
-        'pending',
-      );
+      expect(sendMessage).toHaveBeenCalledTimes(2);
       expect(sendText).not.toHaveBeenCalled();
       const preflightProposal = await createEngagementProposal(database, {
         workspaceId: workspace,
@@ -478,7 +588,7 @@ describe('engagement proposal foundation', () => {
         expectedRevision: 2,
       });
       expect((await listEngagementReviewQueue(database, workspace)).map((item) => item.id)).toEqual(
-        expect.arrayContaining([unsupported.id, messageProposal.id]),
+        expect.arrayContaining([underMinimum.id, messageProposal.id]),
       );
       const approval = await createEngagementProposal(database, {
         ...input,
@@ -543,7 +653,7 @@ describe('engagement proposal foundation', () => {
       });
       expect(settled.status).toBe('unknown');
       expect((await listEngagementReviewQueue(database, workspace)).map((item) => item.id)).toEqual(
-        expect.arrayContaining([unsupported.id, approval.id]),
+        expect.arrayContaining([underMinimum.id, approval.id]),
       );
       await expect(
         settleEngagementProposal(database, {
@@ -576,7 +686,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('7');
+      ).toBe('9');
     } finally {
       await client.close();
     }

@@ -60,6 +60,8 @@ export function EngagementProposalsPage() {
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [sendUncertain, setSendUncertain] = useState(false);
+  const [mediaStates, setMediaStates] = useState<Record<string, string>>({});
+  const [mediaPending, setMediaPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const dismissTrigger = useRef<HTMLButtonElement>(null);
@@ -104,6 +106,7 @@ export function EngagementProposalsPage() {
     }
     let active = true;
     setDetail(null);
+    setMediaStates({});
     setDetailFailed(false);
     setError(null);
     void readApi<ProposalDetail>(`/api/engagement-proposals/${selectedId}`)
@@ -220,13 +223,51 @@ export function EngagementProposalsPage() {
     }
   };
 
+  const stageMedia = async (mediaId: string) => {
+    if (!detail || mediaPending) return;
+    setMediaPending(mediaId);
+    setError(null);
+    try {
+      const result = await readApi<{ state: string }>(
+        `/api/engagement-proposals/${detail.id}/media/${mediaId}/stage`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+          body: JSON.stringify({ expectedRevision: detail.revision }),
+        },
+      );
+      setMediaStates((current) => ({ ...current, [mediaId]: result.state }));
+    } catch (failure) {
+      setMediaStates((current) => ({ ...current, [mediaId]: 'unknown' }));
+      setError(
+        failure instanceof Error
+          ? `${failure.message}. Attachment outcome may be unknown; refresh the proposal before another attempt.`
+          : 'Attachment outcome may be unknown; refresh the proposal before another attempt.',
+      );
+    } finally {
+      setMediaPending(null);
+    }
+  };
+
+  const mediaReady =
+    !detail?.content.mediaIds?.length ||
+    detail.content.mediaIds.every((mediaId) => mediaStates[mediaId] === 'ready');
+  const priceValid =
+    detail?.content.priceCents === undefined ||
+    detail.content.priceCents === 0 ||
+    detail.content.priceCents >= 300;
+  const priceHasMedia = !detail?.content.priceCents || Boolean(detail.content.mediaIds?.length);
+
   const canApprove =
     detail?.status === 'pending' &&
     detail.canApprove &&
     document.body.dataset.fanvueEnabled === 'true' &&
     detail.provider === 'fanvue' &&
-    !detail.content.mediaIds?.length &&
-    detail.content.priceCents === undefined &&
+    (detail.kind === 'dm' ||
+      (!detail.content.mediaIds?.length && detail.content.priceCents === undefined)) &&
+    mediaReady &&
+    priceValid &&
+    priceHasMedia &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(detail.targetId) &&
     detail.content.text.length <= (detail.kind === 'comment' ? 600 : 5000) &&
     draft.trim() === detail.content.text &&
@@ -240,8 +281,8 @@ export function EngagementProposalsPage() {
             <p className="eyebrow">Engagement</p>
             <h1 id="engagement-proposals-title">Proposed replies</h1>
             <p className="muted">
-              Review agent suggestions and unresolved sends. Fanvue text replies can be approved and
-              sent; other proposals remain drafts.
+              Review agent suggestions and unresolved sends. Fanvue text replies and ready-media
+              messages can be approved; other proposals remain drafts.
             </p>
           </div>
         </header>
@@ -378,15 +419,57 @@ export function EngagementProposalsPage() {
                   }}
                 />
                 {detail.content.mediaIds?.length ? (
-                  <p className="muted">
-                    {detail.content.mediaIds.length} media attachment(s) proposed; preview and
-                    sending remain unavailable.
-                  </p>
+                  <section className="engagement-proposal-media" aria-label="Proposed attachments">
+                    <h3>Attachments</h3>
+                    {detail.content.mediaIds.map((mediaId, index) => (
+                      <div className="engagement-proposal-attachment" key={mediaId}>
+                        <a
+                          href={`/api/workflow/media/${mediaId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Preview attachment {index + 1}
+                        </a>
+                        <span role="status">
+                          {mediaStates[mediaId] === 'ready'
+                            ? 'Ready to send'
+                            : mediaStates[mediaId] === 'unknown'
+                              ? 'Outcome unknown; do not retry'
+                              : mediaStates[mediaId] === 'failed'
+                                ? 'Provider preparation failed'
+                                : mediaStates[mediaId] === 'processing'
+                                  ? 'Processing at Fanvue'
+                                  : mediaStates[mediaId] === 'uploading'
+                                    ? 'More preparation needed'
+                                    : 'Not prepared for sending'}
+                        </span>
+                        {detail.status === 'pending' &&
+                          detail.provider === 'fanvue' &&
+                          detail.kind === 'dm' &&
+                          mediaStates[mediaId] !== 'ready' &&
+                          mediaStates[mediaId] !== 'unknown' &&
+                          mediaStates[mediaId] !== 'failed' && (
+                            <button
+                              className="secondary-button engagement-proposal-stage-media"
+                              type="button"
+                              disabled={Boolean(mediaPending) || saving || !detail.canApprove}
+                              onClick={() => {
+                                void stageMedia(mediaId);
+                              }}
+                            >
+                              {mediaPending === mediaId ? 'Preparing…' : 'Prepare attachment'}
+                            </button>
+                          )}
+                      </div>
+                    ))}
+                  </section>
                 ) : null}
                 {detail.content.priceCents !== undefined && (
                   <p className="muted">
                     Proposed provider price: ${(detail.content.priceCents / 100).toFixed(2)}.
-                    Sending remains unavailable.
+                    {detail.content.priceCents > 0 && detail.content.priceCents < 300
+                      ? ' Fanvue requires a minimum price of $3.00.'
+                      : ''}
                   </p>
                 )}
                 {detail.status !== 'pending' && (
@@ -447,7 +530,9 @@ export function EngagementProposalsPage() {
                         ? 'Only a workspace owner or admin can approve and send.'
                         : draft.trim() !== detail.content.text
                           ? 'Save the edited draft before approving.'
-                          : 'Sending is not available for this provider or media/price proposal yet.'}
+                          : !mediaReady
+                            ? 'Prepare every attachment and confirm it is ready before approving.'
+                            : 'Sending is not available for this provider or proposal shape.'}
                   </p>
                 )}
                 {sendUncertain && (
@@ -488,7 +573,7 @@ export function EngagementProposalsPage() {
         <ConfirmationDialog
           titleId="engagement-approve-title"
           title="Approve and send this reply?"
-          description={`Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now. This cannot be undone in Publish Relay.`}
+          description={`Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`}
           cancelLabel="Keep reviewing"
           confirmLabel={saving ? 'Sending…' : 'Approve and send'}
           confirmTone="primary"

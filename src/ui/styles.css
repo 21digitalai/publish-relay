@@ -3102,6 +3102,17 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 .engagement-proposal-draft { width: 100%; min-height: 150px; resize: vertical; }
+.engagement-proposal-media { margin-top: 16px; }
+.engagement-proposal-attachment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border, #2c3140);
+}
+.engagement-proposal-attachment a { color: var(--focus, #a98bff); }
+.engagement-proposal-attachment span { color: var(--text-muted, #a7adbd); }
 .engagement-proposal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .engagement-proposal-actions button { min-height: 40px; }
 @media (max-width: 767px) {

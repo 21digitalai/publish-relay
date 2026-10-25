@@ -67,6 +67,7 @@ import { registerFanvuePaymentRoutes } from '../modules/providers/fanvue-payment
 import { registerFanvuePaymentWebhook } from '../modules/providers/fanvue-payment-webhook.routes.js';
 import { registerEngagementProposalRoutes } from '../modules/providers/engagement-proposal.routes.js';
 import { registerEngagementApprovalRoutes } from '../modules/providers/engagement-approval.routes.js';
+import { registerEngagementDmMediaRoutes } from '../modules/providers/engagement-dm-media.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
@@ -344,6 +345,22 @@ function registerBrowserRoutes(
           actionPolicy,
         ),
       });
+      if (mediaStorage) {
+        const uploadClient = new FanvueMediaUploadClient();
+        registerEngagementDmMediaRoutes(application, {
+          database,
+          auth,
+          stage: (input) =>
+            stageFanvueDmMediaStep(
+              database,
+              mediaStorage,
+              uploadClient,
+              fanvueOauth.keys,
+              reads,
+              input,
+            ),
+        });
+      }
     }
     registerProviderAccountRoutes(application, {
       auth,

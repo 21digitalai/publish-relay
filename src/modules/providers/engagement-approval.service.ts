@@ -14,7 +14,7 @@ import { isFanvuePreSendError } from './fanvue-pre-send-error.js';
 
 export interface EngagementSendCommands {
   comments: Pick<FanvueCommentService, 'send'>;
-  messages: Pick<FanvueMessageService, 'sendText'>;
+  messages: Pick<FanvueMessageService, 'sendText' | 'sendMessage'>;
 }
 
 type SendResult =
@@ -24,8 +24,8 @@ type SendResult =
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1),
-  mediaIds: z.array(z.uuid()).optional(),
-  priceCents: z.number().optional(),
+  mediaIds: z.array(z.uuid()).min(1).max(10).optional(),
+  priceCents: z.number().int().nonnegative().optional(),
 });
 
 function sendableProposal(row: NonNullable<Awaited<ReturnType<typeof getEngagementProposal>>>) {
@@ -37,13 +37,24 @@ function sendableProposal(row: NonNullable<Awaited<ReturnType<typeof getEngageme
     !kind.success ||
     !content.success ||
     !target.success ||
-    (row.kind === 'comment' && content.data.text.length > 600) ||
+    (row.kind === 'comment' &&
+      (content.data.text.length > 600 ||
+        content.data.mediaIds?.length ||
+        content.data.priceCents !== undefined)) ||
     content.data.text.length > 5000 ||
-    content.data.mediaIds?.length ||
-    content.data.priceCents !== undefined
+    (content.data.priceCents !== undefined && !content.data.mediaIds?.length) ||
+    (content.data.priceCents !== undefined &&
+      content.data.priceCents > 0 &&
+      content.data.priceCents < 300)
   )
     throw new EngagementProposalError('This proposal has no available send command', 409);
-  return { kind: kind.data, targetId: target.data, text: content.data.text };
+  return {
+    kind: kind.data,
+    targetId: target.data,
+    text: content.data.text,
+    ...(content.data.mediaIds ? { mediaIds: content.data.mediaIds } : {}),
+    ...(content.data.priceCents ? { price: content.data.priceCents } : {}),
+  };
 }
 
 async function sendProposal(
@@ -56,6 +67,8 @@ async function sendProposal(
     kind: 'comment' | 'dm';
     targetId: string;
     text: string;
+    mediaIds?: string[];
+    price?: number;
   },
 ): Promise<SendResult> {
   try {
@@ -72,14 +85,21 @@ async function sendProposal(
         ? { state: 'confirmed', providerObjectUuid: sent.commentUuid }
         : sent;
     }
-    const sent = await commands.messages.sendText({
+    const message = {
       workspaceId: input.workspaceId,
       accountId: input.accountId,
       fanUuid: input.targetId,
       clientActionId: input.clientActionId,
       text: input.text,
       actor: { type: 'user', id: input.userId },
-    });
+    } as const;
+    const sent = input.mediaIds
+      ? await commands.messages.sendMessage({
+          ...message,
+          mediaIds: input.mediaIds,
+          ...(input.price ? { price: input.price } : {}),
+        })
+      : await commands.messages.sendText(message);
     return sent.state === 'confirmed'
       ? { state: 'confirmed', providerObjectUuid: sent.messageUuid }
       : sent;

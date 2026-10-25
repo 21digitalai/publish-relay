@@ -23,7 +23,7 @@ Once Fanvue media is processing or finalized, its durable provider UUID is autho
 
 A definite prior Fanvue post rejection (rate limit, auth, validation, transient or permanent) may reuse its exact finalized media artifact for a safe retry while the artifact remains active. An unfinished, unknown, accepted or published attempt bars further staging and map reads; provider media is never re-sent automatically after a possibly successful post.
 
-`buildFanvueEffectivePayload` is the canonical target-admission projection: it validates the explicit Fanvue post shape, local attachment order, provider-supported image/video MIME types, free versus native price, and preview membership before storing the job effective payload. Worker claims filter on that persisted `kind: post` rather than reconstructing a draft. The destination-first browser Composer now submits that same contract through the canonical workflow route; provider activation remains subject to independent integration and controlled live proof.
+`buildFanvueEffectivePayload` is the canonical target-admission projection: it validates the explicit Fanvue post shape, local attachment order, provider-supported image/video MIME types, free versus native price, and preview membership before storing the job effective payload. Worker claims filter on that persisted `kind: post` rather than reconstructing a draft. The canonical destination capability snapshot advertises `post` with bounded media count; the destination-first browser Composer requires that same kind before submitting through the canonical workflow route. Provider activation remains subject to independent integration and controlled live proof.
 
 `fanvue-post-dispatch.service.ts` claims due Fanvue post jobs on the canonical worker, loads only the selected active creator and exact ready revision attachments, refreshes publishing consent, stages each media to finalized provider UUID, and defers processing/pending staging before any post attempt. It reserves durable publication intent with a last in-transaction creator/media preflight before exactly one provider POST. Confirmed 201 stores the provider post UUID; 400/401/403 are definite failures, 429 is bounded retry, and transport/5xx/invalid success remains unknown with a reconciliation key and no automatic resend. No permalink is invented from the UUID.
 
@@ -48,7 +48,6 @@ Fanvue is a distinct Core destination with a publishing-only base consent. `fanv
 `fanvue-webhook-signature.ts` verifies the documented `X-Fanvue-Signature` HMAC-SHA256 over timestamp, period and exact raw request bytes. It accepts rotation MACs against configured old/new secrets with constant-time comparison, rejects malformed or repeated timestamps and enforces a 300-second skew bound. The `X-Fanvue-Topic` header is not signed and cannot select a payment event or account. The eventual receiver must handle Fanvue's narrow unsigned subscription verification probe separately, verify all deliveries before parsing their signed bodies, durably dedupe/store mapped events before 2xx, and process asynchronously; this helper alone does not activate a webhook.
 
 `fanvue-payment-event.ts` projects only signed `creator.payment.succeeded` facts: event and invoice IDs, creator/fan IDs, source, gross minor units/currency, paid/event timestamps, post/message UUIDs and tip context. It drops purchaser email, handle, tracking and unrelated metadata. A tip with `tip_context=message` is merely not-on-post, not proof of a chat origin or an offer match. The receiver must verify the raw signature before parsing and map the creator UUID to an authorized connected account before persisting or exposing any payment signal.
-
 
 ## Accepted foundation
 
@@ -432,6 +431,7 @@ The token client reports exact-scope mismatches as `FanvueScopeError`; the OAuth
 service translates selected-account read/send mismatches to `FanvueModuleConsentError` so the
 callback redirects to the matching inline recovery state. Transport and provider failures
 remain distinct errors and must not be mislabeled as denied consent.
+
 ## Fanvue payment receipt foundation
 
 `fanvue_payment_receipts` (migration 0080) is an account-scoped, append-only projection of
@@ -487,6 +487,7 @@ Production releases install production dependencies without building on the host
 - Browser post creation returns bounded job summaries containing only job ID and persisted `effectiveProviderSettings`, so clients can retain the resolved destination-default snapshot without reconstructing it.
 - Browser Composer uploads remain unattached until post creation succeeds. Its authenticated CSRF-protected media delete endpoint atomically tombstones only tenant-owned ready media with no revision reference, then removes the local object; attached media is never deleted through this abandonment path.
 - Browser image uploads honor provider technical limits: JPEG/PNG/WebP at 5 MiB and GIF at 15 MiB for X. Composer reuses uploaded media IDs only for the exact selected `File` objects; a same-count replacement requires cleanup and a fresh media-upload batch key. After an uncertain post response, it freezes the exact serialized request, post key, form and file selection, and replays only that immutable request until the server confirms the outcome. Confirmed cleanup rotates the media-upload key; changed input must never replay old media IDs under a new post key.
+
 ## Review-first engagement proposals (foundation)
 
 - `engagement_proposals` is the provider-neutral, workspace/account-bound queue for optional DM/comment review. Its client action ID is unique per workspace, and source context plus proposed content are durable snapshots. `src/modules/providers/engagement-proposal.repository.ts` owns idempotent create, pending list, optimistic edit, and dismiss; a stale edit cannot overwrite another reviewer's revision.

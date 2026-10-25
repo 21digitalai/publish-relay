@@ -75,6 +75,26 @@ describe('API v1 contract', () => {
     expect(document).toContain('publishing_unavailable');
   });
 
+  it('documents the Fanvue comment send command and its outcome states', () => {
+    const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
+    const command = paths['/api/v1/fanvue/accounts/{accountId}/posts/{postUuid}/comments'] as {
+      post: {
+        operationId: string;
+        requestBody: { content: Record<string, { schema: { required: string[] } }> };
+        responses: Record<string, unknown>;
+      };
+    };
+    expect(command.post.operationId).toBe('sendFanvueComment');
+    expect(command.post.requestBody.content['application/json']?.schema.required).toEqual([
+      'text',
+      'clientActionId',
+    ]);
+    expect(Object.keys(command.post.responses)).toEqual(
+      expect.arrayContaining(['201', '202', '403', '409', '429']),
+    );
+    expect(JSON.stringify(command.post.responses['201'])).toContain('commentUuid');
+  });
+
   it('documents versioned provider-specific post request branches', () => {
     const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
     const post = paths['/api/v1/posts'] as {
@@ -103,7 +123,7 @@ describe('API v1 contract', () => {
     const branches = schema.anyOf[0].anyOf;
     expect(
       branches.map((branch) => branch.properties.destination.properties.provider.const),
-    ).toEqual(['x', 'youtube', 'tiktok', 'instagram', 'facebook_page', 'linkedin']);
+    ).toEqual(['x', 'youtube', 'tiktok', 'instagram', 'facebook_page', 'linkedin', 'fanvue']);
     for (const branch of branches) {
       const contentBranches = branch.properties.content.oneOf ?? [branch.properties.content];
       for (const content of contentBranches) {

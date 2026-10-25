@@ -13,6 +13,7 @@ import {
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
 import { fanvueMessageRequestSchema } from '../providers/fanvue-message.routes.js';
+import { fanvueCommentRequestSchema } from '../providers/fanvue-comment.routes.js';
 import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
 import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
@@ -55,7 +56,9 @@ const destinationCollectionSchema = z.object({
       remoteParentAccountId: z.string().nullable(),
       capabilitySnapshot: z.object({
         schemaVersion: z.literal(1),
-        contentKinds: z.array(z.enum(['text', 'video', 'single_image', 'carousel', 'link'])),
+        contentKinds: z.array(
+          z.enum(['text', 'video', 'single_image', 'carousel', 'link', 'post']),
+        ),
         media: z.object({ minImages: z.number().optional(), maxImages: z.number().optional() }),
       }),
       capabilitiesCheckedAt: z.iso.datetime().nullable(),
@@ -125,6 +128,11 @@ const externalDraftSchema = z.object({
 });
 const fanvueMessageResultSchema = z.union([
   z.object({ state: z.literal('confirmed'), messageUuid: z.uuid() }),
+  z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
+  z.object({ state: z.literal('unknown') }),
+]);
+const fanvueCommentResultSchema = z.union([
+  z.object({ state: z.literal('confirmed'), commentUuid: z.uuid() }),
   z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
   z.object({ state: z.literal('unknown') }),
 ]);
@@ -347,6 +355,54 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing content:write capability' },
             '404': { description: 'Draft not found' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/posts/{postUuid}/comments': {
+        post: {
+          operationId: 'sendFanvueComment',
+          description:
+            'Create a top-level comment with an idempotent action ID. Unknown outcomes must not be blindly resent.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'postUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(fanvueCommentRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Provider comment confirmed',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(fanvueCommentResultSchema)),
+                },
+              },
+            },
+            '202': { description: 'Provider outcome unknown; no automatic resend' },
+            '400': { description: 'Invalid comment request' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:comments:send capability or policy denied' },
+            '404': { description: 'Account not found' },
+            '409': {
+              description: 'Account or action unavailable, including failed provider command',
+            },
+            '429': { description: 'Mutation rate limit exceeded' },
+            '502': { description: 'Provider preflight failed' },
           },
         },
       },

@@ -590,7 +590,8 @@ function CalendarOriginBadge({ name }: { name: string }) {
   return <span className="calendar-origin-badge">From {name}</span>;
 }
 
-type ComposerContentKind = 'text' | 'video' | 'single_image' | 'multi_image' | 'carousel' | 'link';
+type ComposerContentKind =
+  'text' | 'video' | 'single_image' | 'multi_image' | 'carousel' | 'link' | 'post';
 
 interface ComposerDestination {
   id: string;
@@ -647,7 +648,10 @@ function groupComposerDestinations<T extends { destinationProvider: string }>(ac
 function destinationContentLabel(destination: ComposerDestination): string {
   if (destination.destinationProvider === 'tiktok')
     return 'Video · options checked after selection';
-  if (destination.destinationProvider === 'fanvue') return 'Posts · text, images or video';
+  if (destination.destinationProvider === 'fanvue')
+    return destination.capabilitySnapshot.contentKinds.includes('post')
+      ? 'Posts · text, images or video'
+      : 'Content options unavailable';
   if (destination.destinationProvider === 'x') return 'Text, images, GIF or MP4 video';
   const kinds = destination.capabilitySnapshot.contentKinds.map((kind) =>
     kind.replaceAll('_', ' '),
@@ -669,11 +673,13 @@ function normalizeComposerDestination(
         ? ['video']
         : destinationProvider === 'tiktok'
           ? []
-          : destinationProvider === 'instagram'
-            ? ['single_image', 'carousel']
-            : destinationProvider === 'facebook_page'
-              ? ['link', 'single_image']
-              : ['text'];
+          : destinationProvider === 'fanvue'
+            ? []
+            : destinationProvider === 'instagram'
+              ? ['single_image', 'carousel']
+              : destinationProvider === 'facebook_page'
+                ? ['link', 'single_image']
+                : ['text'];
   return {
     id: input.id,
     provider: input.provider,
@@ -834,6 +840,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   const isYouTube = selected.length === 1 && selected[0]?.provider === 'youtube';
   const isTikTok = selected.length === 1 && selected[0]?.destinationProvider === 'tiktok';
   const isFanvue = selected.length === 1 && selected[0]?.destinationProvider === 'fanvue';
+  const fanvueSupportsPost = isFanvue && allowedKinds.includes('post');
   useEffect(() => {
     if (!isTikTok) return;
     let cancelled = false;
@@ -986,7 +993,8 @@ function Composer({ onClose }: { onClose: () => void }) {
           (!youtubeHasMadeForKids && madeForKids === 'default')
         : (!isFanvue && !body.trim()) || bodyTooLong) ||
     (isFanvue &&
-      (!fanvueAudience ||
+      (!fanvueSupportsPost ||
+        !fanvueAudience ||
         Number.isNaN(fanvuePriceAmount) ||
         (!body.trim() && mediaFiles.length + draftMediaIds.length === 0) ||
         (fanvuePriceAmount !== null && mediaFiles.length + draftMediaIds.length === 0) ||
@@ -1046,7 +1054,10 @@ function Composer({ onClose }: { onClose: () => void }) {
     (scheduled && (!scheduledAt || Boolean(scheduleError)));
   const validationAlerts = {
     unsupportedShape:
-      selected.length > 0 && !isYouTube && !isTikTok && !isFanvue && allowedKinds.length === 0,
+      selected.length > 0 &&
+      !isYouTube &&
+      !isTikTok &&
+      (isFanvue ? !fanvueSupportsPost : allowedKinds.length === 0),
     bodyTooLong: includesX && bodyTooLong,
     mixedYouTube: includesYouTube && !isYouTube,
     linkedInExpiry: linkedinExpiresBeforeDispatch,
@@ -1919,7 +1930,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                     <label className="field-label fanvue-price-field">
                       Price in USD (optional; leave empty for free)
                       <input
-                        className="text-input fanvue-price-input"
+                        className="fanvue-price-input text-input"
                         type="text"
                         inputMode="decimal"
                         value={fanvuePrice}

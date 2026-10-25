@@ -12,7 +12,10 @@ import { FanvueRequestError } from './fanvue-http-client.js';
 import { FanvueReadUnavailableError } from './fanvue-read.service.js';
 
 const params = z.strictObject({ accountId: z.uuid(), postUuid: z.uuid() });
-const body = z.strictObject({ text: z.string().min(1).max(600), clientActionId: z.uuid() });
+export const fanvueCommentRequestSchema = z.strictObject({
+  text: z.string().min(1).max(600),
+  clientActionId: z.uuid(),
+});
 
 export function registerFanvueCommentRoutes(
   application: FastifyInstance,
@@ -37,7 +40,7 @@ export function registerFanvueCommentRoutes(
             .code(401)
             .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
         const path = params.parse(request.params);
-        const payload = body.parse(request.body);
+        const payload = fanvueCommentRequestSchema.parse(request.body);
         const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
         if (!decision.allowed) {
           void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);

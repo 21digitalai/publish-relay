@@ -62,7 +62,7 @@ function AudienceList({ accountId, kind }: { accountId: string; kind: AudienceKi
         <p role="alert">
           {error}{' '}
           <button
-            className="secondary-button"
+            className="fanvue-audience-retry secondary-button"
             onClick={() => {
               void load(fans.length > 0, fans.length > 0 ? page + 1 : 1, cursor);
             }}
@@ -84,7 +84,7 @@ function AudienceList({ accountId, kind }: { accountId: string; kind: AudienceKi
       </ul>
       {hasMore ? (
         <button
-          className="secondary-button"
+          className="fanvue-audience-load-more secondary-button"
           disabled={loading}
           onClick={() => {
             void load(true, page + 1, cursor);

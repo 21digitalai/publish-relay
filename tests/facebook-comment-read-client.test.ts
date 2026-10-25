@@ -90,6 +90,25 @@ describe('Facebook Page comment read transport', () => {
     expect(JSON.stringify(page)).not.toContain('Private Person');
   });
 
+  it('projects the authoritative post author for Page ownership without exposing profile fields', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        id: '123_456',
+        from: { id: '123', name: 'Private Page Label', access_token: 'private' },
+      }),
+    );
+    const owner = await makeClient(request).getPostOwner('123_456', 'page-token');
+    expect(owner).toBe('123');
+    const url = request.mock.calls[0]?.[0];
+    if (!(url instanceof URL)) throw new Error('Expected Graph URL');
+    expect(url.searchParams.get('fields')).toBe('id,from{id}');
+  });
+
+  it('fails closed when Graph cannot attest the selected post author', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: '123_456' }));
+    await expect(makeClient(request).getPostOwner('123_456', 'page-token')).rejects.toThrow();
+  });
+
   it('does not advertise a terminal cursor for posts or comments', async () => {
     const terminalPage = () =>
       Response.json({ data: [], paging: { cursors: { after: 'terminal-cursor' } } });

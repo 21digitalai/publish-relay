@@ -8,6 +8,7 @@ import { registerFacebookPageReadRoutes } from '../src/modules/providers/faceboo
 const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   posts: vi.fn(),
+  comments: vi.fn(),
   conversations: vi.fn(),
 }));
 vi.mock('../src/modules/identity/machine-auth.js', async (loadOriginal) => ({
@@ -16,6 +17,7 @@ vi.mock('../src/modules/identity/machine-auth.js', async (loadOriginal) => ({
 }));
 vi.mock('../src/modules/providers/facebook-comments-read.service.js', () => ({
   listAccountPagePosts: mocks.posts,
+  listAccountPostComments: mocks.comments,
 }));
 vi.mock('../src/modules/providers/facebook-messenger-read.service.js', () => ({
   listAccountPageConversations: mocks.conversations,
@@ -122,6 +124,33 @@ describe('Facebook Page read machine API', () => {
         'dms:read',
       );
       expect(response.body).not.toContain('token');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('routes selected-post comments through the same exact Page authority', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: 'key' });
+      mocks.comments.mockResolvedValue({ comments: [], nextCursor: null });
+      const response = await app.inject(`${path}/facebook-posts/123_456/comments?limit=5`);
+      expect(response.statusCode).toBe(200);
+      expect(mocks.authorize).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        undefined,
+        expect.anything(),
+        accountId,
+        'comments:read',
+      );
+      expect(mocks.comments).toHaveBeenCalledWith(expect.anything(), {
+        workspaceId,
+        accountId,
+        postId: '123_456',
+        limit: 5,
+      });
+      expect((await app.inject(`${path}/facebook-posts/foreign/comments`)).statusCode).toBe(400);
     } finally {
       await app.close();
     }

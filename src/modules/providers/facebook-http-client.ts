@@ -17,6 +17,10 @@ const pagePostSchema = z.object({
   created_time: graphTimestampSchema,
   permalink_url: z.url().optional(),
 });
+const postOwnerSchema = z.object({
+  id: graphIdSchema,
+  from: z.object({ id: graphIdSchema }),
+});
 const postCommentSchema = z.object({
   id: graphIdSchema,
   message: z.string().optional(),
@@ -162,6 +166,16 @@ export class FacebookHttpClient {
       })),
       nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
+  }
+
+  /** Raw Graph post author is used only for the selected Page ownership check. */
+  public async getPostOwner(postId: string, accessToken: string): Promise<string> {
+    const id = graphIdSchema.parse(postId);
+    const body = await this.get(`/${id}`, { fields: 'id,from{id}' }, accessToken);
+    const post = postOwnerSchema.safeParse(body);
+    if (!post.success || post.data.id !== id)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    return post.data.from.id;
   }
 
   /** Caller must first prove that postId belongs to its selected Page. */

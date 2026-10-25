@@ -43,7 +43,11 @@ const MODULE_REQUIREMENTS = {
   },
 } as const;
 
-export function isPageReadEligible(evidence: PageReadEvidence, module: PageReadModule): boolean {
+export function isPageReadEligible(
+  evidence: PageReadEvidence,
+  module: PageReadModule,
+  additionalScopes: readonly string[] = [],
+): boolean {
   const scopes = Array.isArray(evidence.scopes) ? evidence.scopes : [];
   const tasks =
     evidence.capabilitySnapshot && typeof evidence.capabilitySnapshot === 'object'
@@ -57,7 +61,7 @@ export function isPageReadEligible(evidence: PageReadEvidence, module: PageReadM
     evidence.connectionStatus === 'active' &&
     evidence.connectionRevokedAt === null &&
     evidence.credentialId !== null &&
-    requirement.scopes.every((scope) => scopes.includes(scope)) &&
+    [...requirement.scopes, ...additionalScopes].every((scope) => scopes.includes(scope)) &&
     Array.isArray(tasks) &&
     tasks.includes(requirement.task)
   );
@@ -121,11 +125,20 @@ async function loadPageReadEvidence(
 
 export async function withPageReadToken<T>(
   runtime: { database: NodePgDatabase; keys: MasterKeyProvider },
-  input: { workspaceId: string; accountId: string; module: PageReadModule },
+  input: {
+    workspaceId: string;
+    accountId: string;
+    module: PageReadModule;
+    additionalScopes?: readonly string[];
+  },
   read: (pageId: string, accessToken: string) => Promise<T>,
 ): Promise<T> {
   const page = await loadPageReadEvidence(runtime.database, input);
-  if (!page || !isPageReadEligible(page, input.module) || !page.credentialId)
+  if (
+    !page ||
+    !isPageReadEligible(page, input.module, input.additionalScopes) ||
+    !page.credentialId
+  )
     throw new PageReadUnavailableError();
   const credentialId = page.credentialId;
   const stored = await withTenantTransaction(

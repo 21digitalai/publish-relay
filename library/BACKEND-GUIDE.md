@@ -44,9 +44,13 @@ browser/machine route or prove production inbox access.
 The shared account/credential verification now lives in
 `facebook-page-read-context.service.ts`; `facebook-comments-read.service.ts`
 uses it for Page-owned post listing with the separate Comments module and
-read-engagement scope. It does not expose visitor content or call post-comment
-reads without a proven selected Page-to-post ownership link. Both query
-services require authenticated callers and controlled Meta grant evidence.
+read-engagement scope. Its internal post-comment read path additionally
+requires `pages_read_user_content` and fetches only the post ID plus `from.id`
+from Graph before reading comments; a missing or foreign author fails closed.
+The selected post/comment endpoint uses that ownership proof and additional
+scope under the same account-scoped machine principal; controlled target-version
+proof is still required before any live Graph use. Both query services require
+authenticated callers and controlled Meta grant evidence.
 The machine-only read endpoints `/api/v1/destinations/:accountId/facebook-posts`
 and `/facebook-conversations` require the corresponding exact Page-local
 `comments:read` or `dms:read` principal grant through
@@ -55,8 +59,12 @@ guard before Graph GET. Each accepts a maximum 100-row `limit` and provider
 `after` cursor, and returns only allowlisted post or conversation summaries and
 `nextCursor`. Provider failures return sanitized error envelopes; Page tokens,
 Graph paging URLs, and raw provider bodies never reach callers. Browser routes,
-arbitrary post-comment/conversation-message reads, and controlled provider proof
-remain separate work; current unknown grant state denies both endpoints.
+conversation-message reads, and controlled provider proof
+remain separate work; current unknown grant state denies all read endpoints.
+`/api/v1/destinations/:accountId/facebook-posts/:postId/comments` additionally
+requires `pages_read_user_content` on the selected Page connection and a fresh
+Graph `from.id` match before requesting the bounded comments page. A foreign or
+unverifiable post is unavailable, never inferred from a workspace-visible ID.
 
 ## Facebook Page engagement authorization foundation
 

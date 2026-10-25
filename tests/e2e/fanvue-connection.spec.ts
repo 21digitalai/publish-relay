@@ -102,20 +102,8 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   ).toBeVisible();
   await page.reload();
   await expect(page.getByText('Message sending enabled')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Allow payment signals' })).toBeVisible();
-  await page.getByRole('button', { name: 'Allow payment signals' }).click();
-  await page.waitForURL('**/app?oauth=fanvue-payment-denied');
-  await expect(page.getByText(/payment signals were not enabled/i)).toBeVisible();
-  await page.goto(accountsPath);
-  await page.getByRole('button', { name: 'Allow payment signals' }).click();
-  await page.waitForURL('**/app?oauth=fanvue-payment-scope');
-  await expect(page.getByText(/required permission was not granted/i)).toBeVisible();
-  await page.goto(accountsPath);
-  await expect(page.getByText('Message sending enabled')).toBeVisible();
-  await page.getByRole('button', { name: 'Allow payment signals' }).click();
-  await page.waitForURL('**/app?oauth=fanvue-payment-connected');
-  await page.reload();
-  await expect(page.getByText('Payment signals enabled')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Allow payment signals' })).toHaveCount(0);
+  await expect(page.getByText('Payment signals enabled')).toHaveCount(0);
   await expect(page.getByText('Message sending enabled')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Allow Audience access' })).toBeVisible();
   await page.getByRole('button', { name: 'Allow Audience access' }).click();
@@ -289,22 +277,53 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   expect(requests).toHaveLength(1);
   await page.goto(accountsPath);
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-account-permissions.png') });
   const initialGuidance = await page.request.get(`/api/fanvue/accounts/${accountId}/guidance`);
   expect(initialGuidance.status(), await initialGuidance.text()).toBe(200);
-  const editor = page.getByRole('textbox', { name: 'Agent guidance' });
+  let failGuidanceLoad = true;
+  let failGuidanceSave = true;
+  await page.route('**/api/fanvue/accounts/*/guidance', async (route) => {
+    if (route.request().method() === 'GET' && failGuidanceLoad) {
+      failGuidanceLoad = false;
+      return route.fulfill({ status: 503 });
+    }
+    if (route.request().method() === 'PATCH' && failGuidanceSave) {
+      failGuidanceSave = false;
+      return route.fulfill({ status: 503 });
+    }
+    return route.continue();
+  });
+  await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'DM guidance' }).click();
+  await expect(page.getByText('DM guidance could not be loaded. Retry.')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-dm-guidance-load-error.png') });
+  await page.getByRole('button', { name: 'Retry' }).click();
+  const editor = page.getByRole('textbox', { name: 'DM guidance' });
   await expect(editor).toBeVisible();
+  await editor.fill('Unsaved draft');
+  await page.getByRole('button', { name: 'Close DM guidance' }).click();
+  await expect(page.getByText('Discard unsaved DM guidance changes?')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-dm-guidance-discard.png') });
+  await page.getByRole('button', { name: 'Keep editing' }).click();
   await editor.fill(
     'Offer a friendly greeting. Do not promise content without checking availability.',
   );
-  await page.getByRole('button', { name: 'Save guidance' }).click();
-  await expect(page.getByText('Agent guidance saved.')).toBeVisible();
+  await page.getByRole('button', { name: 'Save DM guidance' }).click();
+  await expect(page.getByText('DM guidance was not saved. Retry.')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-dm-guidance-save-error.png') });
+  await page.getByRole('button', { name: 'Save DM guidance' }).click();
+  await expect(page.getByText('DM guidance saved.')).toBeVisible();
+  await page.getByRole('button', { name: 'Close DM guidance' }).click();
+  await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Agent guidance' })).toHaveValue(
+  await page.getByRole('button', { name: 'DM guidance' }).click();
+  await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue(
     'Offer a friendly greeting. Do not promise content without checking availability.',
   );
   const guidanceResponse = await page.request.get(`/api/fanvue/accounts/${accountId}/guidance`);
   const guidanceBody = (await guidanceResponse.json()) as { data: { guidance: string } };
   expect(guidanceBody.data.guidance).toContain('Offer a friendly greeting');
+  await page.getByRole('button', { name: 'Close DM guidance' }).click();
   expect(accounts.data.accounts.find((account) => account.id === accountId)).not.toHaveProperty(
     'fanvueAgentGuidance',
   );
@@ -390,7 +409,23 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     rmSync(directory, { recursive: true, force: true });
   }
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Agent guidance' })).toHaveValue(
+  await page.getByRole('button', { name: 'DM guidance' }).click();
+  await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue(
     'CLI-edited account guidance',
   );
+  await page.screenshot({ path: testInfo.outputPath('fanvue-dm-guidance-desktop.png') });
+  await page.getByRole('button', { name: 'Close DM guidance' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'DM guidance' }).click();
+  const dialog = page.getByRole('dialog', { name: /DM guidance/ });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue(
+    'CLI-edited account guidance',
+  );
+  const box = await dialog.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) throw new Error('DM guidance dialog has no visible bounds');
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath('fanvue-dm-guidance-mobile.png') });
 });

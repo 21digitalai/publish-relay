@@ -568,7 +568,7 @@ async function run() {
   if (route.body && !body)
     throw new CliError(
       EXIT.usage,
-      'This command requires --body-file (or --file for Fanvue guidance)',
+      'This command requires --body-file (or --file for Fanvue DM guidance)',
     );
   const idempotencyKey = parsed.flags['idempotency-key'];
   if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')

@@ -1145,23 +1145,41 @@ textarea:focus-visible {
 .fanvue-audience-list li {
   overflow-wrap: anywhere;
 }
-.fanvue-guidance-control {
-  grid-column: 1 / -1;
+.fanvue-guidance-dialog {
+  width: min(680px, 100%);
+  max-height: min(90vh, 800px);
+  overflow-y: auto;
   display: grid;
-  gap: 8px;
-  padding: 12px 0;
+  gap: 12px;
 }
-.fanvue-guidance-control textarea {
+.fanvue-guidance-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.fanvue-guidance-heading h2 {
+  margin: 0;
+}
+.fanvue-guidance-dialog textarea {
   width: 100%;
   min-height: 140px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
   resize: vertical;
 }
-.fanvue-guidance-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+.fanvue-guidance-save:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.fanvue-guidance-discard {
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 12px;
 }
 .account-module-success {
   padding: 12px 16px;
@@ -1169,9 +1187,12 @@ textarea:focus-visible {
   border-radius: 8px;
   color: var(--success);
 }
-.fanvue-chat-read-status {
+.fanvue-module-enabled {
   color: var(--success);
   font-size: 0.875rem;
+  border: 1px solid var(--success);
+  border-radius: 6px;
+  padding: 6px 9px;
 }
 .page-exposure-control {
   grid-column: 1 / -1;

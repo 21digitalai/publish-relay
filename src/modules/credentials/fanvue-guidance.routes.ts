@@ -116,7 +116,7 @@ export function registerFanvueGuidanceRoutes(
           .send(
             errorEnvelope(
               'invalid_request',
-              `Guidance must be at most ${String(FANVUE_GUIDANCE_LIMIT)} characters`,
+              `DM guidance must be at most ${String(FANVUE_GUIDANCE_LIMIT)} characters`,
               request.id,
             ),
           );
@@ -167,7 +167,7 @@ export function registerFanvueGuidanceRoutes(
     if (!accountId || !body.success)
       return reply.code(400).send({
         data: null,
-        error: `Guidance must be at most ${String(FANVUE_GUIDANCE_LIMIT)} characters`,
+        error: `DM guidance must be at most ${String(FANVUE_GUIDANCE_LIMIT)} characters`,
       });
     const guidance = await updateFanvueGuidance(database, {
       workspaceId: identity.workspaceId,

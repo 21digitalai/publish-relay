@@ -13,7 +13,7 @@ const permitted: PageReadEvidence = {
   providerGrant: 'verified',
   connectionStatus: 'active',
   connectionRevokedAt: null,
-  scopes: ['pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'],
+  scopes: ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'],
   capabilitySnapshot: { tasks: ['MESSAGING', 'CREATE_CONTENT'] },
 };
 
@@ -29,6 +29,7 @@ describe('Facebook Page Messenger read eligibility', () => {
       { connectionStatus: 'revoked' },
       { connectionRevokedAt: new Date() },
       { scopes: ['pages_messaging', 'pages_read_engagement'] },
+      { scopes: ['pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'] },
       { capabilitySnapshot: { tasks: ['CREATE_CONTENT'] } },
       { capabilitySnapshot: {} },
     ]) {

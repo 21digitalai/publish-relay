@@ -167,12 +167,10 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         maxParts: 256,
         totalParts: 1,
       });
-      const signParts = vi
-        .fn()
-        .mockResolvedValue({
-          partSize: 12,
-          parts: [{ partNumber: 1, url: 'https://upload.example/one' }],
-        });
+      const signParts = vi.fn().mockResolvedValue({
+        partSize: 12,
+        parts: [{ partNumber: 1, url: 'https://upload.example/one' }],
+      });
       const putPart = vi.fn().mockResolvedValue('confirmed-etag');
       const client = { createSession, signParts, putPart } as unknown as FanvueMediaUploadClient;
       const keys = {
@@ -376,25 +374,33 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         }),
       ).resolves.toBe(false);
 
-      const racingMediaId = randomUUID();
-      await pool.query(
-        `INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
-         VALUES ($1, $2, 'dm-race', 'dm-race-hash', 'image/png', 12, 'ready')`,
-        [racingMediaId, workspaceId],
-      );
-      const [bound, removed] = await Promise.all([
-        bindFanvueDmAttachment(db, { ...key, mediaId: racingMediaId }),
-        deleteUnattachedMedia(db, storage, { workspaceId, mediaId: racingMediaId }),
-      ]);
-      expect(bound && removed).toBe(false);
-      const race = await pool.query<{ state: string; active: number }>(
-        `SELECT media.state,
-          (SELECT count(*)::int FROM fanvue_dm_attachments dm
-           WHERE dm.media_id=media.id AND dm.state<>'released') AS active
-         FROM media_objects media WHERE media.id=$1`,
-        [racingMediaId],
-      );
-      expect(race.rows[0]?.state === 'deleted' && race.rows[0].active > 0).toBe(false);
+      for (const first of ['bind', 'delete'] as const) {
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const racingMediaId = randomUUID();
+          await pool.query(
+            `INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+             VALUES ($1, $2, $3, $4, 'image/png', 12, 'ready')`,
+            [racingMediaId, workspaceId, `dm-race-${racingMediaId}`, racingMediaId],
+          );
+          const bind = () => bindFanvueDmAttachment(db, { ...key, mediaId: racingMediaId });
+          const remove = () =>
+            deleteUnattachedMedia(db, storage, { workspaceId, mediaId: racingMediaId });
+          const results = await Promise.all(
+            first === 'bind' ? [bind(), remove()] : [remove(), bind()],
+          );
+          const bound = first === 'bind' ? results[0] : results[1];
+          const removed = first === 'bind' ? results[1] : results[0];
+          expect(bound && removed).toBe(false);
+          const race = await pool.query<{ state: string; active: number }>(
+            `SELECT media.state,
+              (SELECT count(*)::int FROM fanvue_dm_attachments dm
+               WHERE dm.media_id=media.id AND dm.state<>'released') AS active
+             FROM media_objects media WHERE media.id=$1`,
+            [racingMediaId],
+          );
+          expect(race.rows[0]?.state === 'deleted' && race.rows[0].active > 0).toBe(false);
+        }
+      }
     } finally {
       await pool.query('DELETE FROM fanvue_dm_attachments WHERE workspace_id=$1', [workspaceId]);
       await pool.query('DELETE FROM media_objects WHERE workspace_id=$1', [workspaceId]);

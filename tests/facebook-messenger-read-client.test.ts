@@ -106,6 +106,49 @@ describe('Facebook Messenger read transport', () => {
     expect(JSON.stringify(result)).not.toMatch(/Private Person|hidden@example/);
   });
 
+  it('fails safely for oversized single messages or aggregate pages', async () => {
+    const message = (text: string, index: number) => ({
+      id: `mid_${String(index)}`,
+      message: text,
+      created_time: '2026-10-25T02:01:00+0000',
+    });
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ data: [message('x'.repeat(16 * 1024 + 1), 1)] }))
+      .mockResolvedValueOnce(
+        Response.json({
+          data: Array.from({ length: 100 }, (_, index) => message('x'.repeat(700), index)),
+        }),
+      );
+    const client = clientWith(request);
+    await expect(
+      client.listConversationMessages({ conversationId: 't_123', accessToken: 'token' }),
+    ).rejects.toMatchObject({ evidence: { status: 502 } });
+    await expect(
+      client.listConversationMessages({ conversationId: 't_123', accessToken: 'token' }),
+    ).rejects.toMatchObject({ evidence: { status: 502 } });
+  });
+
+  it('keeps a representative nonempty message page below the response budget', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        data: Array.from({ length: 25 }, (_, index) => ({
+          id: `mid_${String(index)}`,
+          message: 'A'.repeat(500),
+          created_time: '2026-10-25T02:01:00+0000',
+          from: { id: 'psid_789', email: 'private@example.test' },
+        })),
+      }),
+    );
+    const result = await clientWith(request).listConversationMessages({
+      conversationId: 't_123',
+      accessToken: 'token',
+    });
+    expect(result.messages).toHaveLength(25);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(64 * 1024);
+    expect(JSON.stringify(result)).not.toContain('private@example.test');
+  });
+
   it('does not advertise a terminal cursor for conversations or messages', async () => {
     const terminalPage = () =>
       Response.json({ data: [], paging: { cursors: { after: 'terminal-cursor' } } });

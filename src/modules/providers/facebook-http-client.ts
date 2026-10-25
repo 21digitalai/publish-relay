@@ -10,6 +10,7 @@ const conversationIdSchema = z
 // Graph timestamps commonly use +0000 instead of ISO's +00:00 offset.
 const graphTimestampSchema = z
   .string()
+  .max(64)
   .refine((value) => Number.isFinite(Date.parse(value)), 'Invalid Graph timestamp');
 const pagePostSchema = z.object({
   id: graphIdSchema,
@@ -58,6 +59,8 @@ const graphPageSchema = <T extends z.ZodType>(item: T) =>
       .optional(),
   });
 const MAX_RETRY_AFTER_SECONDS = 86_400;
+const MAX_MESSAGE_TEXT_BYTES = 16 * 1024;
+const MAX_MESSAGE_PAGE_BYTES = 64 * 1024;
 
 export type FacebookErrorKind =
   'auth' | 'permission' | 'rate_limit' | 'validation' | 'transient' | 'permanent';
@@ -288,7 +291,13 @@ export class FacebookHttpClient {
       input.accessToken,
     );
     const page = graphPageSchema(conversationMessageSchema).parse(body);
-    return {
+    if (
+      page.data.some(
+        (item) => Buffer.byteLength(item.message ?? '', 'utf8') > MAX_MESSAGE_TEXT_BYTES,
+      )
+    )
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    const result = {
       messages: page.data.map((item) => ({
         id: item.id,
         text: item.message ?? '',
@@ -297,6 +306,9 @@ export class FacebookHttpClient {
       })),
       nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
+    if (Buffer.byteLength(JSON.stringify(result), 'utf8') > MAX_MESSAGE_PAGE_BYTES)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    return result;
   }
 
   private url(path: string, fields: Record<string, string>): URL {

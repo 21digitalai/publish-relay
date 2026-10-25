@@ -23,7 +23,9 @@ and target-version fixtures are completed.
 
 The same pinned `FacebookHttpClient` owns bounded Messenger GET transport for
 Page conversations and conversation messages. It projects only stable
-conversation/message IDs, timestamps, text and sender Page-scoped ID; provider
+conversation/message IDs, timestamps, text and sender Page-scoped ID. Message
+transport fails with a sanitized provider error if one text exceeds 16 KiB UTF-8
+or a projected page exceeds 64 KiB; it never silently truncates a DM. Provider
 `paging.next`, raw profiles and token material are discarded; a cursor is
 exposed only when `paging.next` is present. No read-receipt
 mutation is issued. The selected-conversation service checks Graph's exact

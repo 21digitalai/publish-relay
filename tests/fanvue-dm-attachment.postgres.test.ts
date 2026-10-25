@@ -51,8 +51,8 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         [credentialId, workspaceId],
       );
       await pool.query(
-        `INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
-        VALUES ($1, $2, 'fanvue', $3)`,
+        `INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id)
+        VALUES ($1, $2, 'fanvue', $3, 'creator')`,
         [connectionId, workspaceId, credentialId],
       );
       await pool.query(
@@ -70,6 +70,31 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
       await expect(
         bindFanvueDmAttachment(db, { ...key, workspaceId: foreignWorkspaceId }),
       ).resolves.toBe(false);
+      await pool.query('UPDATE provider_accounts SET disconnected_at=now() WHERE id=$1', [
+        accountId,
+      ]);
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query('UPDATE provider_accounts SET disconnected_at=NULL WHERE id=$1', [
+        accountId,
+      ]);
+      await pool.query("UPDATE provider_connections SET status='refresh_pending' WHERE id=$1", [
+        connectionId,
+      ]);
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query(
+        "UPDATE provider_connections SET status='active', revoked_at=now() WHERE id=$1",
+        [connectionId],
+      );
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query(
+        "UPDATE provider_connections SET revoked_at=NULL, external_subject_id='other' WHERE id=$1",
+        [connectionId],
+      );
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query(
+        "UPDATE provider_connections SET external_subject_id='creator' WHERE id=$1",
+        [connectionId],
+      );
       await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(true);
       await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(true);
       const count = await pool.query<{ count: number }>(

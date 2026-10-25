@@ -20,9 +20,15 @@ export async function bindFanvueDmAttachment(database: NodePgDatabase, key: Atta
     `);
     if (media.rows[0]?.state !== 'ready') return false;
     const account = await transaction.execute<{ id: string }>(sql`
-      select id from provider_accounts
-      where workspace_id = ${key.workspaceId} and id = ${key.accountId}
-        and destination_provider = 'fanvue' and availability = 'active'
+      select account.id from provider_accounts account
+      join provider_connections connection
+        on connection.workspace_id = account.workspace_id and connection.id = account.connection_id
+      where account.workspace_id = ${key.workspaceId} and account.id = ${key.accountId}
+        and account.destination_provider = 'fanvue' and account.availability = 'active'
+        and account.disconnected_at is null
+        and connection.provider = 'fanvue' and connection.status = 'active'
+        and connection.external_subject_id = account.remote_account_id
+        and connection.revoked_at is null
     `);
     if (!account.rows[0]) return false;
     const result = await transaction.execute<{ id: string }>(sql`

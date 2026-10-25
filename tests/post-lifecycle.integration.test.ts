@@ -247,10 +247,14 @@ describe('media retention lifecycle', () => {
     const accountId = '00000000-0000-4000-8000-000000000253';
     const mediaId = '00000000-0000-4000-8000-000000000254';
     const clientActionId = '00000000-0000-4000-8000-000000000255';
+    const connectionId = '00000000-0000-4000-8000-000000000256';
     await database.exec(`
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id)
+      VALUES ('${connectionId}', '${workspaceId}', 'fanvue',
+        '00000000-0000-4000-8000-000000000205', 'fanvue-creator');
       INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id,
         destination_provider, remote_account_id, display_name)
-      VALUES ('${accountId}', '${workspaceId}', '00000000-0000-4000-8000-000000000206',
+      VALUES ('${accountId}', '${workspaceId}', '${connectionId}',
         'fanvue-creator', 'fanvue', 'fanvue-creator', 'Creator');
       INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
       VALUES ('${mediaId}', '${workspaceId}', 'dm-bind', 'dm-bind-hash', 'image/png', 12, 'ready');

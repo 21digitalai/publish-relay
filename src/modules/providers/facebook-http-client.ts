@@ -2,6 +2,31 @@ import { z } from 'zod';
 
 const idSchema = z.object({ id: z.string().min(1) });
 const permalinkSchema = z.object({ permalink_url: z.url() });
+const graphIdSchema = z.string().regex(/^[0-9]+(?:_[0-9]+)*$/);
+// Graph timestamps commonly use +0000 instead of ISO's +00:00 offset.
+const graphTimestampSchema = z
+  .string()
+  .refine((value) => Number.isFinite(Date.parse(value)), 'Invalid Graph timestamp');
+const pagePostSchema = z.object({
+  id: graphIdSchema,
+  message: z.string().optional(),
+  created_time: graphTimestampSchema,
+  permalink_url: z.url().optional(),
+});
+const postCommentSchema = z.object({
+  id: graphIdSchema,
+  message: z.string().optional(),
+  created_time: graphTimestampSchema,
+  comment_count: z.number().int().nonnegative().optional(),
+  like_count: z.number().int().nonnegative().optional(),
+});
+const graphPageSchema = <T extends z.ZodType>(item: T) =>
+  z.object({
+    data: z.array(item).max(100),
+    paging: z
+      .object({ cursors: z.object({ after: z.string().min(1).max(2048).optional() }).optional() })
+      .optional(),
+  });
 const MAX_RETRY_AFTER_SECONDS = 86_400;
 
 export type FacebookErrorKind =
@@ -84,6 +109,79 @@ export class FacebookHttpClient {
   public async getPermalink(postId: string, accessToken: string): Promise<string> {
     const body = await this.get(`/${postId}`, { fields: 'permalink_url' }, accessToken);
     return permalinkSchema.parse(body).permalink_url;
+  }
+
+  /** Page-owned posts only; visitor content has a separate Meta permission boundary. */
+  public async listPagePosts(input: {
+    pageId: string;
+    accessToken: string;
+    limit?: number;
+    after?: string;
+  }) {
+    const pageId = graphIdSchema.parse(input.pageId);
+    const limit = z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .parse(input.limit ?? 25);
+    const after = input.after ? z.string().min(1).max(2048).parse(input.after) : undefined;
+    const body = await this.get(
+      `/${pageId}/posts`,
+      {
+        fields: 'id,message,created_time,permalink_url',
+        limit: String(limit),
+        ...(after ? { after } : {}),
+      },
+      input.accessToken,
+    );
+    const page = graphPageSchema(pagePostSchema).parse(body);
+    return {
+      posts: page.data.map((post) => ({
+        id: post.id,
+        text: post.message ?? '',
+        createdAt: post.created_time,
+        permalink: post.permalink_url ?? null,
+      })),
+      nextCursor: page.paging?.cursors?.after ?? null,
+    };
+  }
+
+  /** Caller must first prove that postId belongs to its selected Page. */
+  public async listPostComments(input: {
+    postId: string;
+    accessToken: string;
+    limit?: number;
+    after?: string;
+  }) {
+    const postId = graphIdSchema.parse(input.postId);
+    const limit = z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .parse(input.limit ?? 25);
+    const after = input.after ? z.string().min(1).max(2048).parse(input.after) : undefined;
+    const body = await this.get(
+      `/${postId}/comments`,
+      {
+        fields: 'id,message,created_time,comment_count,like_count',
+        limit: String(limit),
+        ...(after ? { after } : {}),
+      },
+      input.accessToken,
+    );
+    const page = graphPageSchema(postCommentSchema).parse(body);
+    return {
+      comments: page.data.map((comment) => ({
+        id: comment.id,
+        text: comment.message ?? '',
+        createdAt: comment.created_time,
+        replyCount: comment.comment_count ?? null,
+        likeCount: comment.like_count ?? null,
+      })),
+      nextCursor: page.paging?.cursors?.after ?? null,
+    };
   }
 
   private url(path: string, fields: Record<string, string>): URL {

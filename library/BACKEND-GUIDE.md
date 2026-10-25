@@ -1,5 +1,24 @@
 # Publish Relay Backend Guide
 
+## Facebook Page engagement reads (in progress)
+
+`FacebookHttpClient.listPagePosts` and `listPostComments` are bounded Graph GET
+transport projections. They use the configured pinned Graph version, Page token
+in a bearer header, numeric Page/post IDs, a maximum 100-row page, and only
+`paging.cursors.after` as the continuation handle. The provider's `paging.next`
+URL and unrequested profile/credential fields never become API output. Graph
+`created_time` may carry a `+0000` offset; validate it as a parseable timestamp
+without requiring ISO's colonized offset. The existing Facebook error classifier
+handles denied/rate/transient responses without surfacing provider bodies.
+
+These methods are _not_ account-scoped APIs. The service boundary still must
+verify selected Page ownership, optional Comments module and verified Meta
+permission/task evidence, provider-token ownership, and a post-to-Page link
+before calling comment reads. Page-owned posts and visitor-generated content
+have distinct Meta permission requirements. Do not expose these transport
+methods as agent/browser tools or claim live Graph proof until those checks
+and target-version fixtures are completed.
+
 ## Facebook Page engagement authorization foundation
 
 Migration 0079 keeps optional Comments and Page DMs separate from the existing publishing connection and from cross-workspace Page exposures. `facebook_page_engagement_modules` is keyed to the canonical origin-owned Page; an absent row means both local modules disabled and provider grants unknown. Browser management may toggle only `localEnabled` for a Page owned by the current workspace. It cannot assert Meta scopes or Page task evidence; provider grant remains `unknown` until a separate verified provider evidence path exists. No module is called Connected merely because its local switch is on.

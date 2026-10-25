@@ -25,11 +25,16 @@ export async function getBoundFanvueDmMedia(database: NodePgDatabase, key: DmUpl
       from fanvue_dm_attachments dm
       join media_objects media on media.workspace_id = dm.workspace_id and media.id = dm.media_id
       join provider_accounts account on account.workspace_id = dm.workspace_id and account.id = dm.account_id
+      join provider_connections connection
+        on connection.workspace_id = account.workspace_id and connection.id = account.connection_id
       where dm.workspace_id = ${key.workspaceId} and dm.account_id = ${key.accountId}
         and dm.client_action_id = ${key.clientActionId} and dm.media_id = ${key.mediaId}
         and dm.state = 'bound' and media.state = 'ready' and media.deleted_at is null
         and account.destination_provider = 'fanvue' and account.availability = 'active'
         and account.disconnected_at is null
+        and connection.provider = 'fanvue' and connection.status = 'active'
+        and connection.external_subject_id = account.remote_account_id
+        and connection.revoked_at is null
     `);
     return result.rows[0] ?? null;
   });
@@ -50,9 +55,14 @@ export async function reserveFanvueDmSession(database: NodePgDatabase, key: DmUp
         )
         and exists (
           select 1 from provider_accounts account
+          join provider_connections connection
+            on connection.workspace_id = account.workspace_id and connection.id = account.connection_id
           where account.workspace_id = dm.workspace_id and account.id = dm.account_id
             and account.destination_provider = 'fanvue' and account.availability = 'active'
             and account.disconnected_at is null
+            and connection.provider = 'fanvue' and connection.status = 'active'
+            and connection.external_subject_id = account.remote_account_id
+            and connection.revoked_at is null
         )
     `);
     return (result.rowCount ?? 0) === 1;

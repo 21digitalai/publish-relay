@@ -55,8 +55,8 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         [credentialId, workspaceId],
       );
       await pool.query(
-        `INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
-        VALUES ($1, $2, 'fanvue', $3)`,
+        `INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id)
+        VALUES ($1, $2, 'fanvue', $3, 'creator')`,
         [connectionId, workspaceId, credentialId],
       );
       await pool.query(
@@ -74,6 +74,31 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
       await expect(
         bindFanvueDmAttachment(db, { ...key, workspaceId: foreignWorkspaceId }),
       ).resolves.toBe(false);
+      await pool.query('UPDATE provider_accounts SET disconnected_at=now() WHERE id=$1', [
+        accountId,
+      ]);
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query('UPDATE provider_accounts SET disconnected_at=NULL WHERE id=$1', [
+        accountId,
+      ]);
+      await pool.query("UPDATE provider_connections SET status='refresh_pending' WHERE id=$1", [
+        connectionId,
+      ]);
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query(
+        "UPDATE provider_connections SET status='active', revoked_at=now() WHERE id=$1",
+        [connectionId],
+      );
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query(
+        "UPDATE provider_connections SET revoked_at=NULL, external_subject_id='other' WHERE id=$1",
+        [connectionId],
+      );
+      await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+      await pool.query(
+        "UPDATE provider_connections SET external_subject_id='creator' WHERE id=$1",
+        [connectionId],
+      );
       await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(true);
       await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(true);
       const count = await pool.query<{ count: number }>(
@@ -139,6 +164,19 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         currentVersion: () => 'v1',
         getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
       };
+      await pool.query("UPDATE provider_connections SET status='refresh_pending' WHERE id=$1", [
+        connectionId,
+      ]);
+      await expect(
+        initializeFanvueDmUpload(db, client, keys, {
+          ...uploadKey,
+          accessToken: 'fixture-token',
+        }),
+      ).rejects.toThrow('not ready');
+      expect(createSession).not.toHaveBeenCalled();
+      await pool.query("UPDATE provider_connections SET status='active' WHERE id=$1", [
+        connectionId,
+      ]);
       await expect(
         initializeFanvueDmUpload(db, client, keys, {
           ...uploadKey,
@@ -198,9 +236,12 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         [unknownMediaId],
       );
       expect(unknown.rows[0]?.state).toBe('unknown');
-      await expect(deleteUnattachedMedia(db, storage, {
-        workspaceId, mediaId: unknownMediaId,
-      })).resolves.toBe(false);
+      await expect(
+        deleteUnattachedMedia(db, storage, {
+          workspaceId,
+          mediaId: unknownMediaId,
+        }),
+      ).resolves.toBe(false);
 
       const racingMediaId = randomUUID();
       await pool.query(

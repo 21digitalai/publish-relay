@@ -137,7 +137,11 @@ export async function activateFanvuePaymentSubscription(
   }
   await withTenantTransaction(database, input, async (transaction) => {
     const [pending] = await transaction
-      .select({ id: fanvuePaymentSubscriptions.id })
+      .select({
+        id: fanvuePaymentSubscriptions.id,
+        accountId: fanvuePaymentSubscriptions.accountId,
+        creatorUuid: fanvuePaymentSubscriptions.creatorUuid,
+      })
       .from(fanvuePaymentSubscriptions)
       .where(
         and(
@@ -149,6 +153,13 @@ export async function activateFanvuePaymentSubscription(
       .for('update')
       .limit(1);
     if (!pending) throw new Error('Fanvue payment subscription needs reconciliation');
+    // A provider create may succeed after local consent is revoked. Retain the
+    // ambiguous row for provider deletion, but never activate its signing key.
+    await requirePaymentAccount(transaction, {
+      workspaceId: input.workspaceId,
+      accountId: pending.accountId,
+      creatorUuid: pending.creatorUuid,
+    });
     const credential = await createCredential(transaction, input.workspaceId, encrypted);
     await transaction
       .update(fanvuePaymentSubscriptions)
@@ -165,6 +176,51 @@ export async function activateFanvuePaymentSubscription(
           eq(fanvuePaymentSubscriptions.state, 'creation_unknown'),
         ),
       );
+  });
+}
+
+/** Release an unused reservation, before any outbound create has been marked. */
+export async function cancelFanvuePaymentReservation(
+  database: NodePgDatabase,
+  input: { workspaceId: string; id: string },
+): Promise<void> {
+  await withTenantTransaction(database, input, async (transaction) => {
+    const [cancelled] = await transaction
+      .update(fanvuePaymentSubscriptions)
+      .set({ state: 'disabled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(fanvuePaymentSubscriptions.workspaceId, input.workspaceId),
+          eq(fanvuePaymentSubscriptions.id, input.id),
+          eq(fanvuePaymentSubscriptions.state, 'probe_pending'),
+        ),
+      )
+      .returning({ id: fanvuePaymentSubscriptions.id });
+    if (!cancelled) throw new Error('Fanvue payment reservation needs reconciliation');
+  });
+}
+
+/** Release an ambiguous create only after the provider confirms this callback is absent. */
+export async function reconcileAbsentFanvuePaymentSubscription(
+  database: NodePgDatabase,
+  input: { workspaceId: string; id: string; providerAbsenceConfirmed: boolean },
+): Promise<void> {
+  if (!input.providerAbsenceConfirmed)
+    throw new Error('Fanvue payment subscription requires provider absence proof');
+  await withTenantTransaction(database, input, async (transaction) => {
+    const [cancelled] = await transaction
+      .update(fanvuePaymentSubscriptions)
+      .set({ state: 'disabled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(fanvuePaymentSubscriptions.workspaceId, input.workspaceId),
+          eq(fanvuePaymentSubscriptions.id, input.id),
+          eq(fanvuePaymentSubscriptions.state, 'creation_unknown'),
+          isNull(fanvuePaymentSubscriptions.providerSubscriptionId),
+        ),
+      )
+      .returning({ id: fanvuePaymentSubscriptions.id });
+    if (!cancelled) throw new Error('Fanvue payment subscription needs reconciliation');
   });
 }
 

@@ -9,9 +9,11 @@ import { decryptCredential } from '../src/modules/credentials/envelope.js';
 import { resolveFanvuePaymentCallback } from '../src/modules/providers/fanvue-payment-callback.repository.js';
 import {
   activateFanvuePaymentSubscription,
+  cancelFanvuePaymentReservation,
   disableFanvuePaymentSubscription,
   getFanvuePaymentSubscriptionForAccount,
   markFanvueSubscriptionCreationUnknown,
+  reconcileAbsentFanvuePaymentSubscription,
   reserveFanvuePaymentSubscription,
 } from '../src/modules/providers/fanvue-payment-subscription.repository.js';
 
@@ -102,9 +104,28 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
         [connectionId],
       );
       await markFanvueSubscriptionCreationUnknown(database, { workspaceId, id: reserved.id });
+      expect(await resolveFanvuePaymentCallback(database, keys, reserved.callbackHandle)).toEqual({
+        state: 'probe_pending',
+      });
       await expect(
         markFanvueSubscriptionCreationUnknown(database, { workspaceId, id: reserved.id }),
       ).rejects.toThrow('not ready');
+      await pool.query(
+        'UPDATE provider_connections SET scopes=\'["read:self"]\'::jsonb WHERE id=$1',
+        [connectionId],
+      );
+      await expect(
+        activateFanvuePaymentSubscription(database, keys, {
+          workspaceId,
+          id: reserved.id,
+          providerSubscriptionId: 'must-not-activate',
+          signingSecret: 'fixture',
+        }),
+      ).rejects.toThrow('unavailable');
+      await pool.query(
+        'UPDATE provider_connections SET scopes=\'["read:self","read:creator"]\'::jsonb WHERE id=$1',
+        [connectionId],
+      );
       const signingSecret = 'returned-once-fixture-secret';
       await activateFanvuePaymentSubscription(database, keys, {
         workspaceId,
@@ -127,6 +148,22 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
           signingSecrets: [signingSecret],
         },
       });
+      const raceDatabase = Object.create(database) as typeof database;
+      raceDatabase.execute = (async (...args: Parameters<typeof database.execute>) => {
+        const result = await database.execute(...args);
+        await pool.query(
+          'UPDATE provider_connections SET scopes=\'["read:self"]\'::jsonb WHERE id=$1',
+          [connectionId],
+        );
+        return result;
+      }) as typeof database.execute;
+      expect(
+        await resolveFanvuePaymentCallback(raceDatabase, keys, reserved.callbackHandle),
+      ).toBeNull();
+      await pool.query(
+        'UPDATE provider_connections SET scopes=\'["read:self","read:creator"]\'::jsonb WHERE id=$1',
+        [connectionId],
+      );
       await pool.query("UPDATE provider_accounts SET availability='reauth_required' WHERE id=$1", [
         accountId,
       ]);
@@ -181,6 +218,22 @@ describe.skipIf(!connectionString)('Fanvue payment subscription on PostgreSQL', 
       ).toBeNull();
       expect(await getFanvuePaymentSubscriptionForAccount(database, selected)).toBeNull();
       expect((await reserveFanvuePaymentSubscription(database, selected)).id).not.toBe(reserved.id);
+      const unused = await getFanvuePaymentSubscriptionForAccount(database, selected);
+      if (!unused) throw new Error('Expected unused reservation');
+      await cancelFanvuePaymentReservation(database, { workspaceId, id: unused.id });
+      const ambiguous = await reserveFanvuePaymentSubscription(database, selected);
+      await markFanvueSubscriptionCreationUnknown(database, { workspaceId, id: ambiguous.id });
+      await expect(
+        cancelFanvuePaymentReservation(database, { workspaceId, id: ambiguous.id }),
+      ).rejects.toThrow('reconciliation');
+      await reconcileAbsentFanvuePaymentSubscription(database, {
+        workspaceId,
+        id: ambiguous.id,
+        providerAbsenceConfirmed: true,
+      });
+      expect((await reserveFanvuePaymentSubscription(database, selected)).id).not.toBe(
+        ambiguous.id,
+      );
     } finally {
       await pool.query('DELETE FROM fanvue_payment_subscriptions WHERE workspace_id=$1', [
         workspaceId,

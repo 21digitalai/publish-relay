@@ -1,13 +1,18 @@
 import { createHash } from 'node:crypto';
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { fanvuePaymentSubscriptions } from '../../database/schema.js';
+import {
+  fanvuePaymentSubscriptions,
+  providerAccounts,
+  providerConnections,
+} from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { getActiveCredential } from '../credentials/credential.repository.js';
 import { decryptCredential, type MasterKeyProvider } from '../credentials/envelope.js';
 import type { FanvuePaymentSubscription } from './fanvue-payment-delivery.service.js';
+import { FANVUE_PAYMENT_SCOPE } from './fanvue-http-client.js';
 
 const CALLBACK_HANDLE = /^[A-Za-z0-9_-]{43}$/;
 
@@ -31,7 +36,8 @@ export async function resolveFanvuePaymentCallback(
   }>(sql`SELECT * FROM public.resolve_fanvue_payment_callback(${handleHash})`);
   const resolved = result.rows[0];
   if (!resolved) return null;
-  if (resolved.state === 'probe_pending') return { state: 'probe_pending' };
+  if (resolved.state === 'probe_pending' || resolved.state === 'creation_unknown')
+    return { state: 'probe_pending' };
   if (resolved.state !== 'active' || !resolved.signing_credential_id) return null;
   const signingCredentialId = resolved.signing_credential_id;
 
@@ -42,6 +48,20 @@ export async function resolveFanvuePaymentCallback(
       const [current] = await transaction
         .select({ id: fanvuePaymentSubscriptions.id })
         .from(fanvuePaymentSubscriptions)
+        .innerJoin(
+          providerAccounts,
+          and(
+            eq(providerAccounts.workspaceId, fanvuePaymentSubscriptions.workspaceId),
+            eq(providerAccounts.id, fanvuePaymentSubscriptions.accountId),
+          ),
+        )
+        .innerJoin(
+          providerConnections,
+          and(
+            eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+            eq(providerConnections.id, providerAccounts.connectionId),
+          ),
+        )
         .where(
           and(
             eq(fanvuePaymentSubscriptions.workspaceId, resolved.workspace_id),
@@ -50,6 +70,15 @@ export async function resolveFanvuePaymentCallback(
             eq(fanvuePaymentSubscriptions.callbackHandleHash, handleHash),
             eq(fanvuePaymentSubscriptions.signingCredentialId, signingCredentialId),
             eq(fanvuePaymentSubscriptions.state, 'active'),
+            eq(providerAccounts.destinationProvider, 'fanvue'),
+            eq(providerAccounts.remoteAccountId, resolved.creator_uuid),
+            eq(providerAccounts.availability, 'active'),
+            isNull(providerAccounts.disconnectedAt),
+            eq(providerConnections.provider, 'fanvue'),
+            eq(providerConnections.externalSubjectId, resolved.creator_uuid),
+            eq(providerConnections.status, 'active'),
+            isNull(providerConnections.revokedAt),
+            sql`${providerConnections.scopes} @> ${JSON.stringify(['read:self', FANVUE_PAYMENT_SCOPE])}::jsonb`,
           ),
         )
         .limit(1);

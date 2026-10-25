@@ -19,6 +19,8 @@ export const API_KEY_CAPABILITIES = [
   'fanvue:comments:send',
   'fanvue:payments:read',
   'engagement:propose',
+  'fanvue:guidance:read',
+  'fanvue:guidance:write',
 ] as const;
 
 export type ApiKeyCapability = (typeof API_KEY_CAPABILITIES)[number];

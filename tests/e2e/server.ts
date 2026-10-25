@@ -26,6 +26,8 @@ import { connectProvider } from '../../src/modules/credentials/provider-connecti
 import { authenticateRequest } from '../../src/modules/identity/auth.routes.js';
 import { createPostgresAuthStore } from '../../src/modules/identity/auth.repository.js';
 import { AuthService } from '../../src/modules/identity/auth.service.js';
+import { ApiKeyService } from '../../src/modules/identity/api-key.service.js';
+import { createPostgresApiKeyStore } from '../../src/modules/identity/api-key.repository.js';
 import { AuthEmailOutboxDelivery } from '../../src/modules/identity/auth-email-outbox.js';
 import { createPostgresMagicLinkStore } from '../../src/modules/identity/magic-link.repository.js';
 import { MagicLinkService } from '../../src/modules/identity/magic-link.service.js';
@@ -63,10 +65,12 @@ const application = createStandaloneApplication({
     NODE_ENV: 'test',
     HOST: '127.0.0.1',
     PORT: 43199,
+    CURSOR_SIGNING_SECRET: 'e2e-cursor-signing-secret-32-characters-minimum',
     WORKER_POLL_INTERVAL_MS: 1000,
     ...(magicLinkMode ? { PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link' } : {}),
   },
   auth,
+  apiKeys: new ApiKeyService(createPostgresApiKeyStore(typedDatabase)),
   fanvueOauth: {
     keys: { currentVersion: () => 'e2e-v1', getKey: () => Promise.resolve(fixtureKey) },
     client: new FanvueHttpClient({

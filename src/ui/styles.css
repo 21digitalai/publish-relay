@@ -1127,6 +1127,24 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 0.875rem;
 }
+.fanvue-guidance-control {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+}
+.fanvue-guidance-control textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+}
+.fanvue-guidance-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .account-module-success {
   padding: 12px 16px;
   border: 1px solid var(--success);
@@ -3061,8 +3079,12 @@ textarea:focus-visible {
   padding: 24px;
 }
 
-.engagement-proposals-page .page-header { margin-bottom: 24px; }
-.engagement-proposals-page .muted { color: var(--text-muted, #a7adbd); }
+.engagement-proposals-page .page-header {
+  margin-bottom: 24px;
+}
+.engagement-proposals-page .muted {
+  color: var(--text-muted, #a7adbd);
+}
 .engagement-proposals-layout {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
@@ -3076,7 +3098,11 @@ textarea:focus-visible {
   border-radius: 12px;
   background: var(--surface-1, #11131a);
 }
-.engagement-proposals-list { display: flex; flex-direction: column; gap: 8px; }
+.engagement-proposals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .engagement-proposal-row {
   display: flex;
   flex-direction: column;
@@ -3090,9 +3116,15 @@ textarea:focus-visible {
   text-align: left;
   cursor: pointer;
 }
-.engagement-proposal-row.selected { border-color: var(--focus, #a98bff); }
-.engagement-proposal-row span { overflow-wrap: anywhere; }
-.engagement-proposal-row small { color: var(--text-muted, #a7adbd); }
+.engagement-proposal-row.selected {
+  border-color: var(--focus, #a98bff);
+}
+.engagement-proposal-row span {
+  overflow-wrap: anywhere;
+}
+.engagement-proposal-row small {
+  color: var(--text-muted, #a7adbd);
+}
 .engagement-proposal-source {
   margin: 16px 0;
   padding: 12px;
@@ -3101,8 +3133,14 @@ textarea:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.engagement-proposal-draft { width: 100%; min-height: 150px; resize: vertical; }
-.engagement-proposal-media { margin-top: 16px; }
+.engagement-proposal-draft {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+}
+.engagement-proposal-media {
+  margin-top: 16px;
+}
 .engagement-proposal-attachment {
   display: flex;
   flex-wrap: wrap;
@@ -3111,12 +3149,29 @@ textarea:focus-visible {
   padding: 10px 0;
   border-bottom: 1px solid var(--border, #2c3140);
 }
-.engagement-proposal-attachment a { color: var(--focus, #a98bff); }
-.engagement-proposal-attachment span { color: var(--text-muted, #a7adbd); }
-.engagement-proposal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.engagement-proposal-actions button { min-height: 40px; }
+.engagement-proposal-attachment a {
+  color: var(--focus, #a98bff);
+}
+.engagement-proposal-attachment span {
+  color: var(--text-muted, #a7adbd);
+}
+.engagement-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.engagement-proposal-actions button {
+  min-height: 40px;
+}
 @media (max-width: 767px) {
-  .engagement-proposals-page { padding: 12px; }
-  .engagement-proposals-layout { grid-template-columns: minmax(0, 1fr); }
-  .engagement-proposal-actions button { min-height: 44px; }
+  .engagement-proposals-page {
+    padding: 12px;
+  }
+  .engagement-proposals-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .engagement-proposal-actions button {
+    min-height: 44px;
+  }
 }

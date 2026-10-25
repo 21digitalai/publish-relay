@@ -93,12 +93,15 @@ const application = createStandaloneApplication({
                       options.body.get('code') === 'fixture-chat-read'
                         ? FANVUE_CHAT_READ_SCOPES.join(' ')
                         : options?.body instanceof URLSearchParams &&
-                            options.body.get('code') === 'fixture-chat-send-no-scope'
-                          ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                            options.body.get('code') === 'fixture-chat-read-no-scope'
+                          ? FANVUE_PUBLISHING_SCOPES.join(' ')
                           : options?.body instanceof URLSearchParams &&
-                              options.body.get('code') === 'fixture-chat-send'
-                            ? FANVUE_CHAT_SEND_SCOPES.join(' ')
-                            : FANVUE_PUBLISHING_SCOPES.join(' '),
+                              options.body.get('code') === 'fixture-chat-send-no-scope'
+                            ? FANVUE_CHAT_READ_SCOPES.join(' ')
+                            : options?.body instanceof URLSearchParams &&
+                                options.body.get('code') === 'fixture-chat-send'
+                              ? FANVUE_CHAT_SEND_SCOPES.join(' ')
+                              : FANVUE_PUBLISHING_SCOPES.join(' '),
                   },
             ),
           ),

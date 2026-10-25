@@ -17,6 +17,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   const { data } = (await current.json()) as { data: { slug: string } };
   const accountsPath = `/w/${data.slug}/accounts`;
   let denyFirstChatRead = true;
+  let rejectFirstChatReadScope = true;
   let rejectFirstChatSendScope = true;
   await page.route('https://auth.fanvue.com/**', (route) => {
     const auth = new URL(route.request().url());
@@ -28,12 +29,18 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     if (!state) throw new Error('Fanvue authorization state was not present');
     const denied = scopes.includes('read:chat') && denyFirstChatRead;
     if (denied) denyFirstChatRead = false;
+    const readMissingScope =
+      scopes.includes('read:chat') &&
+      !scopes.includes('write:chat') &&
+      !denied &&
+      rejectFirstChatReadScope;
+    if (readMissingScope) rejectFirstChatReadScope = false;
     const sendMissingScope = scopes.includes('write:chat') && rejectFirstChatSendScope;
     if (sendMissingScope) rejectFirstChatSendScope = false;
     return route.fulfill({
       status: 302,
       headers: {
-        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${sendMissingScope ? 'fixture-chat-send-no-scope' : scopes.includes('write:chat') ? 'fixture-chat-send' : scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
+        Location: `http://127.0.0.1:43199/api/oauth/fanvue/callback?state=${state}&${denied ? 'error=access_denied' : `code=${sendMissingScope ? 'fixture-chat-send-no-scope' : readMissingScope ? 'fixture-chat-read-no-scope' : scopes.includes('write:chat') ? 'fixture-chat-send' : scopes.includes('read:chat') ? 'fixture-chat-read' : 'fixture'}`}`,
       },
     });
   });
@@ -53,6 +60,10 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   ).toBeVisible();
   await page.goto(accountsPath);
   await expect(page.getByRole('button', { name: 'Allow message reading' })).toBeVisible();
+  await page.getByRole('button', { name: 'Allow message reading' }).click();
+  await page.waitForURL('**/app?oauth=fanvue-chat-read-scope');
+  await expect(page.getByText(/message reading.*not enabled/i)).toBeVisible();
+  await page.goto(accountsPath);
   await page.getByRole('button', { name: 'Allow message reading' }).click();
   await page.waitForURL('**/app?oauth=fanvue-chat-read-connected');
   await expect(

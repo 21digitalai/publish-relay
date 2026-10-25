@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
@@ -18,6 +19,10 @@ import {
   releaseUnstartedFanvueDmAttachment,
 } from '../src/modules/providers/fanvue-dm-attachment.repository.js';
 import { initializeFanvueDmUpload } from '../src/modules/providers/fanvue-dm-upload-init.service.js';
+import {
+  loadFanvueDmUploadSession,
+  openFanvueDmUploadRange,
+} from '../src/modules/providers/fanvue-dm-upload-source.js';
 import type { FanvueMediaUploadClient } from '../src/modules/providers/fanvue-media-upload-client.js';
 
 const connectionString = process.env.POSTGRES_FANVUE_TEST_URL;
@@ -208,6 +213,47 @@ describe.skipIf(!connectionString)('Fanvue DM local media ownership on PostgreSQ
         mediaUuid: providerMediaUuid,
       });
       plaintext.fill(0);
+      await expect(loadFanvueDmUploadSession(db, keys, uploadKey)).resolves.toMatchObject({
+        session: { mediaUuid: providerMediaUuid, byteSize: 12 },
+        credentialVersion: credential.version,
+      });
+      const openVerifiedRange = vi.fn().mockResolvedValue(Readable.from([Buffer.from('part')]));
+      const rangeStorage = { openVerifiedRange } as unknown as MediaStorage;
+      const opened = await openFanvueDmUploadRange(db, rangeStorage, {
+        ...uploadKey,
+        start: 0,
+        end: 3,
+      });
+      expect(opened.byteSize).toBe(12);
+      expect(openVerifiedRange).toHaveBeenCalledWith({
+        storageKey: 'dm-upload',
+        sha256: 'dm-upload-hash',
+        byteSize: 12,
+        start: 0,
+        end: 3,
+      });
+      await expect(
+        openFanvueDmUploadRange(db, rangeStorage, {
+          ...uploadKey,
+          workspaceId: foreignWorkspaceId,
+          start: 0,
+          end: 3,
+        }),
+      ).rejects.toThrow('unavailable');
+      await expect(
+        openFanvueDmUploadRange(db, rangeStorage, {
+          ...uploadKey,
+          start: 0,
+          end: 12,
+        }),
+      ).rejects.toThrow('range is unavailable');
+      await pool.query('UPDATE provider_connections SET revoked_at=now() WHERE id=$1', [
+        connectionId,
+      ]);
+      await expect(loadFanvueDmUploadSession(db, keys, uploadKey)).rejects.toThrow('unavailable');
+      await pool.query('UPDATE provider_connections SET revoked_at=NULL WHERE id=$1', [
+        connectionId,
+      ]);
 
       const unknownMediaId = randomUUID();
       await pool.query(

@@ -101,7 +101,7 @@ const linkedinContent = z.discriminatedUnion('kind', [
   }),
 ]);
 
-const fanvueContent = z
+export const fanvueContentSchema = z
   .object({
     schemaVersion: version,
     kind: z.literal('post'),
@@ -146,7 +146,7 @@ export const publicationTargetSchema = z.discriminatedUnion('provider', [
   z.object({
     provider: z.literal('fanvue'),
     providerAccountId: accountId,
-    content: fanvueContent,
+    content: fanvueContentSchema,
   }),
   // Fixture-only until Snap allowlisting and a dedicated admission route exist.
   z.object({

@@ -11,6 +11,9 @@ import {
 } from '../src/modules/providers/fanvue-http-client.js';
 import { FanvueReadClient } from '../src/modules/providers/fanvue-read-client.js';
 import { FanvueReadService } from '../src/modules/providers/fanvue-read.service.js';
+import { FanvueCommentService } from '../src/modules/providers/fanvue-comment.service.js';
+import type { FanvueCommentClient } from '../src/modules/providers/fanvue-comment-client.js';
+import { allowAllActionPolicy } from '../src/modules/policy/action-policy.js';
 
 const connectionString = process.env.POSTGRES_FANVUE_TEST_URL;
 const keys = { currentVersion: () => 'v1', getKey: () => Promise.resolve(Buffer.alloc(32, 7)) };
@@ -114,6 +117,24 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
       await expect(
         service.getOwnedPostForComment({ workspaceId: otherWorkspaceId, accountId, postUuid }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });
+      const createComment = vi.fn();
+      const commentService = new FanvueCommentService(
+        database,
+        service,
+        { createComment } as unknown as FanvueCommentClient,
+        allowAllActionPolicy,
+      );
+      await expect(
+        commentService.send({
+          workspaceId: otherWorkspaceId,
+          accountId,
+          postUuid,
+          clientActionId: randomUUID(),
+          text: 'Not authorized',
+          actor: { type: 'user', id: userId },
+        }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
+      expect(createComment).not.toHaveBeenCalled();
       providerRequest.mockResolvedValueOnce(
         Response.json({
           uuid: postUuid,

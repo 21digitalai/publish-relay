@@ -14,7 +14,7 @@ import {
   dismissEngagementProposal,
   EngagementProposalError,
   getEngagementProposal,
-  listPendingEngagementProposals,
+  listEngagementReviewQueue,
   reviseEngagementProposal,
   type ProposalContent,
 } from './engagement-proposal.repository.js';
@@ -106,6 +106,7 @@ function summary(
     accountDisplayName: row.accountDisplayName,
     provider: row.provider,
     kind: row.kind,
+    status: row.status,
     sourcePreview: previewText(row.sourceContext),
     contentPreview: previewText(row.content),
     revision: row.revision,
@@ -183,7 +184,7 @@ export function registerEngagementProposalRoutes(
     } catch {
       return reply.code(400).send({ data: null, error: 'Invalid proposal cursor' });
     }
-    const rows = await listPendingEngagementProposals(database, identity.workspaceId, {
+    const rows = await listEngagementReviewQueue(database, identity.workspaceId, {
       ...(cursor ? { beforeCreatedAt: new Date(cursor.createdAt), beforeId: cursor.id } : {}),
       limit: PAGE_SIZE + 1,
     });
@@ -206,7 +207,13 @@ export function registerEngagementProposalRoutes(
     if (!params.success) return reply.code(404).send({ data: null, error: 'Proposal not found' });
     const row = await getEngagementProposal(database, identity.workspaceId, params.data.proposalId);
     if (!row) return reply.code(404).send({ data: null, error: 'Proposal not found' });
-    return { data: representation(row), error: null };
+    return {
+      data: {
+        ...representation(row),
+        canApprove: identity.role === 'owner' || identity.role === 'admin',
+      },
+      error: null,
+    };
   });
 
   application.post('/api/engagement-proposals', async (request, reply) => {

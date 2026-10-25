@@ -5,19 +5,23 @@ import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ApiKeyAuthorizationError,
   type ApiKeyService,
 } from '../src/modules/identity/api-key.service.js';
 import type { AuthService } from '../src/modules/identity/auth.service.js';
 import { registerEngagementProposalRoutes } from '../src/modules/providers/engagement-proposal.routes.js';
+import { registerEngagementApprovalRoutes } from '../src/modules/providers/engagement-approval.routes.js';
 
 import {
+  claimEngagementProposal,
   createEngagementProposal,
   dismissEngagementProposal,
-  listPendingEngagementProposals,
+  getEngagementProposal,
+  listEngagementReviewQueue,
   reviseEngagementProposal,
+  settleEngagementProposal,
 } from '../src/modules/providers/engagement-proposal.repository.js';
 
 const workspace = '00000000-0000-4000-8000-000000000201';
@@ -30,6 +34,10 @@ const credential = '00000000-0000-4000-8000-000000000207';
 const otherCredential = '00000000-0000-4000-8000-000000000208';
 const proposer = '00000000-0000-4000-8000-000000000209';
 const action = '00000000-0000-4000-8000-000000000210';
+const fanvueAccount = '00000000-0000-4000-8000-000000000216';
+const fanvueConnection = '00000000-0000-4000-8000-000000000217';
+const fanvueCredential = '00000000-0000-4000-8000-000000000218';
+const fanvuePost = '00000000-0000-4000-8000-000000000219';
 
 describe('engagement proposal foundation', () => {
   it('binds the account and idempotency key, isolates the queue, and revises only pending rows', async () => {
@@ -44,24 +52,32 @@ describe('engagement proposal foundation', () => {
         INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce,
           wrapped_key_tag, ciphertext, nonce, tag) VALUES
           ('${credential}', '${workspace}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06'),
+          ('${fanvueCredential}', '${workspace}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06'),
           ('${otherCredential}', '${otherWorkspace}', 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06');
         INSERT INTO provider_connections (id, workspace_id, provider, credential_id, status, scopes) VALUES
           ('${connection}', '${workspace}', 'meta', '${credential}', 'active', '[]'),
+          ('${fanvueConnection}', '${workspace}', 'fanvue', '${fanvueCredential}', 'active', '[]'),
           ('${otherConnection}', '${otherWorkspace}', 'meta', '${otherCredential}', 'active', '[]');
         INSERT INTO provider_accounts
           (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name) VALUES
           ('${account}', '${workspace}', '${connection}', 'page-a', 'facebook_page', 'page-a', 'Page A'),
+          ('${fanvueAccount}', '${workspace}', '${fanvueConnection}', 'creator-a', 'fanvue', 'creator-a', 'Creator A'),
           ('${otherAccount}', '${otherWorkspace}', '${otherConnection}', 'page-b', 'facebook_page', 'page-b', 'Page B');
       `);
       const database = drizzle(client) as unknown as NodePgDatabase;
       const app = Fastify();
       await app.register(cookie);
+      const auth = {
+        authenticate: (selectedWorkspace: string) =>
+          Promise.resolve({ userId: proposer, workspaceId: selectedWorkspace, role: 'owner' }),
+      } as unknown as AuthService;
+      const sendComment = vi
+        .fn()
+        .mockResolvedValue({ state: 'confirmed', commentUuid: fanvuePost });
+      const sendText = vi.fn().mockResolvedValue({ state: 'unknown' });
       registerEngagementProposalRoutes(app, {
         database,
-        auth: {
-          authenticate: (selectedWorkspace: string) =>
-            Promise.resolve({ userId: proposer, workspaceId: selectedWorkspace, role: 'owner' }),
-        } as unknown as AuthService,
+        auth,
         apiKeys: {
           authenticate: (_workspaceId: string, token: string) =>
             Promise.resolve({
@@ -74,6 +90,12 @@ describe('engagement proposal foundation', () => {
               ? Promise.resolve()
               : Promise.reject(new ApiKeyAuthorizationError('missing capability')),
         } as unknown as ApiKeyService,
+      });
+      registerEngagementApprovalRoutes(app, {
+        database,
+        auth,
+        comments: { send: sendComment },
+        messages: { sendText },
       });
       const headers = {
         authorization: 'Bearer test-key',
@@ -205,6 +227,7 @@ describe('engagement proposal foundation', () => {
       expect(detail.json<{ data: { accountDisplayName: string } }>().data.accountDisplayName).toBe(
         'Page A',
       );
+      expect(detail.json<{ data: { canApprove: boolean } }>().data.canApprove).toBe(true);
       const foreignDetail = await app.inject({
         method: 'GET',
         url: `/api/engagement-proposals/${createdBody.data.id}`,
@@ -241,6 +264,125 @@ describe('engagement proposal foundation', () => {
         },
       });
       expect(foreignResponse.statusCode).toBe(409);
+      const reviewed = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: fanvueAccount,
+        clientActionId: '00000000-0000-4000-8000-000000000220',
+        provider: 'fanvue',
+        kind: 'comment',
+        targetId: fanvuePost,
+        content: { text: 'Approved reply' },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const approveUrl = `/api/engagement-proposals/${reviewed.id}/approve`;
+      const approvalPayload = { expectedRevision: 1 };
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: approveUrl,
+            headers: browserHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(403);
+      const approvedHeaders = {
+        cookie: `${browserHeaders.cookie}; publish_relay_csrf=fixture-csrf`,
+        'x-csrf-token': 'fixture-csrf',
+      };
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: approveUrl,
+            headers: {
+              ...approvedHeaders,
+              cookie: `publish_relay_session=${otherWorkspace}.test-token; publish_relay_csrf=fixture-csrf`,
+            },
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(409);
+      const approved = await app.inject({
+        method: 'POST',
+        url: approveUrl,
+        headers: approvedHeaders,
+        payload: approvalPayload,
+      });
+      expect(approved.statusCode).toBe(200);
+      expect(approved.json()).toMatchObject({
+        data: { id: reviewed.id, status: 'sent', providerObjectId: fanvuePost },
+      });
+      expect(sendComment).toHaveBeenCalledTimes(1);
+      expect(sendComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: workspace,
+          accountId: fanvueAccount,
+          postUuid: fanvuePost,
+          clientActionId: reviewed.clientActionId,
+          text: 'Approved reply',
+        }),
+      );
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: approveUrl,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect(sendComment).toHaveBeenCalledTimes(1);
+      const unsupported = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: fanvueAccount,
+        clientActionId: '00000000-0000-4000-8000-000000000221',
+        provider: 'fanvue',
+        kind: 'dm',
+        targetId: fanvuePost,
+        content: { text: 'With media', mediaIds: [fanvuePost] },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/engagement-proposals/${unsupported.id}/approve`,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect((await getEngagementProposal(database, workspace, unsupported.id))?.status).toBe(
+        'pending',
+      );
+      expect(sendText).not.toHaveBeenCalled();
+      const messageProposal = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: fanvueAccount,
+        clientActionId: '00000000-0000-4000-8000-000000000222',
+        provider: 'fanvue',
+        kind: 'dm',
+        targetId: fanvuePost,
+        content: { text: 'Hello' },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const unknown = await app.inject({
+        method: 'POST',
+        url: `/api/engagement-proposals/${messageProposal.id}/approve`,
+        headers: approvedHeaders,
+        payload: approvalPayload,
+      });
+      expect(unknown.statusCode).toBe(202);
+      expect(unknown.json()).toMatchObject({ data: { status: 'unknown' } });
+      expect(sendText).toHaveBeenCalledTimes(1);
+      expect((await getEngagementProposal(database, workspace, messageProposal.id))?.status).toBe(
+        'unknown',
+      );
       await dismissEngagementProposal(database, {
         workspaceId: workspace,
         id: createdBody.data.id,
@@ -284,7 +426,7 @@ describe('engagement proposal foundation', () => {
           accountId: otherAccount,
         }),
       ).rejects.toThrow('unavailable');
-      expect(await listPendingEngagementProposals(database, otherWorkspace)).toEqual([]);
+      expect(await listEngagementReviewQueue(database, otherWorkspace)).toEqual([]);
       const revised = await reviseEngagementProposal(database, {
         workspaceId: workspace,
         id: row.id,
@@ -312,7 +454,83 @@ describe('engagement proposal foundation', () => {
         id: row.id,
         expectedRevision: 2,
       });
-      expect(await listPendingEngagementProposals(database, workspace)).toEqual([]);
+      expect((await listEngagementReviewQueue(database, workspace)).map((item) => item.id)).toEqual(
+        expect.arrayContaining([unsupported.id, messageProposal.id]),
+      );
+      const approval = await createEngagementProposal(database, {
+        ...input,
+        clientActionId: '00000000-0000-4000-8000-000000000215',
+      });
+      await expect(
+        claimEngagementProposal(database, {
+          workspaceId: otherWorkspace,
+          id: approval.id,
+          expectedRevision: 1,
+        }),
+      ).rejects.toThrow('unavailable');
+      await client.exec(
+        `UPDATE provider_connections SET status = 'revoked', revoked_at = now() WHERE id = '${connection}'`,
+      );
+      await expect(
+        claimEngagementProposal(database, {
+          workspaceId: workspace,
+          id: approval.id,
+          expectedRevision: 1,
+        }),
+      ).rejects.toThrow('destination is unavailable');
+      await client.exec(
+        `UPDATE provider_connections SET status = 'active', revoked_at = NULL WHERE id = '${connection}'`,
+      );
+      const claimed = await claimEngagementProposal(database, {
+        workspaceId: workspace,
+        id: approval.id,
+        expectedRevision: 1,
+      });
+      expect(claimed.status).toBe('sending');
+      await expect(
+        claimEngagementProposal(database, {
+          workspaceId: workspace,
+          id: approval.id,
+          expectedRevision: 1,
+        }),
+      ).rejects.toThrow('stale');
+      await expect(
+        reviseEngagementProposal(database, {
+          workspaceId: workspace,
+          id: approval.id,
+          expectedRevision: 1,
+          content: { text: 'Too late' },
+        }),
+      ).rejects.toThrow('stale');
+      await expect(
+        settleEngagementProposal(database, {
+          workspaceId: workspace,
+          id: approval.id,
+          clientActionId: action,
+          expectedRevision: 1,
+          status: 'sent',
+        }),
+      ).rejects.toThrow('stale');
+      const settled = await settleEngagementProposal(database, {
+        workspaceId: workspace,
+        id: approval.id,
+        clientActionId: approval.clientActionId,
+        expectedRevision: 1,
+        status: 'unknown',
+      });
+      expect(settled.status).toBe('unknown');
+      expect((await listEngagementReviewQueue(database, workspace)).map((item) => item.id)).toEqual(
+        expect.arrayContaining([unsupported.id, approval.id]),
+      );
+      await expect(
+        settleEngagementProposal(database, {
+          workspaceId: workspace,
+          id: approval.id,
+          clientActionId: approval.clientActionId,
+          expectedRevision: 1,
+          status: 'sent',
+        }),
+      ).rejects.toThrow('stale');
       await client.exec(`
         CREATE ROLE proposal_reader NOLOGIN NOBYPASSRLS;
         GRANT USAGE ON SCHEMA public TO proposal_reader;
@@ -335,7 +553,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('2');
+      ).toBe('6');
     } finally {
       await client.close();
     }

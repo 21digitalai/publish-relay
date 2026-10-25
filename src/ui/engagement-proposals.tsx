@@ -9,6 +9,7 @@ interface ProposalSummary {
   accountDisplayName: string;
   provider: string;
   kind: 'dm' | 'comment';
+  status: string;
   sourcePreview: string;
   contentPreview: string;
   createdAt: string;
@@ -19,10 +20,12 @@ interface ProposalDetail {
   accountDisplayName: string;
   provider: string;
   kind: 'dm' | 'comment';
+  targetId: string;
   sourceContext: { text?: string; authorLabel?: string };
   content: { text: string; mediaIds?: string[]; priceCents?: number };
   revision: number;
   status: string;
+  canApprove: boolean;
 }
 
 async function readApi<T>(url: string, init?: RequestInit): Promise<T> {
@@ -55,9 +58,12 @@ export function EngagementProposalsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
+  const [confirmApprove, setConfirmApprove] = useState(false);
+  const [sendUncertain, setSendUncertain] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const dismissTrigger = useRef<HTMLButtonElement>(null);
+  const approveTrigger = useRef<HTMLButtonElement>(null);
 
   const loadPage = useCallback(async (cursor?: string) => {
     const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
@@ -105,6 +111,7 @@ export function EngagementProposalsPage() {
         if (!active) return;
         setDetail(proposal);
         setDraft(proposal.content.text);
+        setSendUncertain(false);
       })
       .catch((failure: unknown) => {
         if (active) {
@@ -148,7 +155,11 @@ export function EngagementProposalsPage() {
         setDetail(null);
         setNotice('Proposal dismissed. No message was sent.');
       } else {
-        setDetail({ ...updated, accountDisplayName: detail.accountDisplayName });
+        setDetail({
+          ...updated,
+          accountDisplayName: detail.accountDisplayName,
+          canApprove: detail.canApprove,
+        });
         setDraft(updated.content.text);
         setItems((current) =>
           current.map((item) =>
@@ -167,6 +178,60 @@ export function EngagementProposalsPage() {
     }
   };
 
+  const approve = async () => {
+    if (!detail || saving || sendUncertain) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const outcome = await readApi<{ id: string; status: string }>(
+        `/api/engagement-proposals/${detail.id}/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+          body: JSON.stringify({ expectedRevision: detail.revision }),
+        },
+      );
+      setDetail({ ...detail, status: outcome.status });
+      setItems((current) =>
+        outcome.status === 'sent'
+          ? current.filter((item) => item.id !== detail.id)
+          : current.map((item) =>
+              item.id === detail.id ? { ...item, status: outcome.status } : item,
+            ),
+      );
+      setNotice(
+        outcome.status === 'sent'
+          ? 'Reply sent through Fanvue.'
+          : outcome.status === 'failed'
+            ? 'Fanvue rejected the send. No reply was sent.'
+            : 'Send outcome is unknown. Do not submit this reply again until it is reconciled.',
+      );
+    } catch (failure) {
+      setSendUncertain(true);
+      setError(
+        failure instanceof Error
+          ? `${failure.message}. Refresh this proposal before taking another action; the send outcome may be unknown.`
+          : 'Send outcome may be unknown. Refresh this proposal before taking another action.',
+      );
+    } finally {
+      setSaving(false);
+      setConfirmApprove(false);
+    }
+  };
+
+  const canApprove =
+    detail?.status === 'pending' &&
+    detail.canApprove &&
+    document.body.dataset.fanvueEnabled === 'true' &&
+    detail.provider === 'fanvue' &&
+    !detail.content.mediaIds?.length &&
+    detail.content.priceCents === undefined &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(detail.targetId) &&
+    detail.content.text.length <= (detail.kind === 'comment' ? 600 : 5000) &&
+    draft.trim() === detail.content.text &&
+    !sendUncertain;
+
   return (
     <WorkspaceLayout active="proposals">
       <section className="engagement-proposals-page" aria-labelledby="engagement-proposals-title">
@@ -175,7 +240,8 @@ export function EngagementProposalsPage() {
             <p className="eyebrow">Engagement</p>
             <h1 id="engagement-proposals-title">Proposed replies</h1>
             <p className="muted">
-              Review and edit agent suggestions. Sending is not available yet.
+              Review agent suggestions and unresolved sends. Fanvue text replies can be approved and
+              sent; other proposals remain drafts.
             </p>
           </div>
         </header>
@@ -190,7 +256,10 @@ export function EngagementProposalsPage() {
           </p>
         )}
         <div className="engagement-proposals-layout">
-          <section className="engagement-proposals-list" aria-label="Pending proposals">
+          <section
+            className="engagement-proposals-list"
+            aria-label="Review proposals and unresolved sends"
+          >
             {loading ? (
               <p role="status">Loading proposed replies…</p>
             ) : listFailed ? (
@@ -217,7 +286,7 @@ export function EngagementProposalsPage() {
                 Retry loading proposals
               </button>
             ) : items.length === 0 ? (
-              <p>No replies await review.</p>
+              <p>No replies await review or reconciliation.</p>
             ) : (
               items.map((item) => (
                 <button
@@ -230,6 +299,13 @@ export function EngagementProposalsPage() {
                   }}
                 >
                   <strong>{proposalLabel(item)}</strong>
+                  {item.status !== 'pending' && (
+                    <span>
+                      {item.status === 'unknown' || item.status === 'sending'
+                        ? 'Send outcome unknown'
+                        : 'Provider rejected send'}
+                    </span>
+                  )}
                   <span>{item.accountDisplayName}</span>
                   <span>{item.contentPreview}</span>
                   <small>{new Date(item.createdAt).toLocaleString()}</small>
@@ -313,11 +389,38 @@ export function EngagementProposalsPage() {
                     Sending remains unavailable.
                   </p>
                 )}
+                {detail.status !== 'pending' && (
+                  <p className="form-success" role="status">
+                    {detail.status === 'sent'
+                      ? 'Sent'
+                      : detail.status === 'failed'
+                        ? 'Provider rejected this send'
+                        : 'Send outcome is unknown; do not send again'}
+                  </p>
+                )}
                 <div className="engagement-proposal-actions">
+                  {detail.status === 'pending' && (
+                    <button
+                      ref={approveTrigger}
+                      className="primary-button engagement-proposal-approve"
+                      type="button"
+                      disabled={saving || !canApprove}
+                      onClick={() => {
+                        setConfirmApprove(true);
+                      }}
+                    >
+                      Approve and send
+                    </button>
+                  )}
                   <button
                     className="secondary-button engagement-proposal-save"
                     type="button"
-                    disabled={saving || !draft.trim() || draft.trim() === detail.content.text}
+                    disabled={
+                      saving ||
+                      detail.status !== 'pending' ||
+                      !draft.trim() ||
+                      draft.trim() === detail.content.text
+                    }
                     onClick={() => {
                       void mutate('edit');
                     }}
@@ -328,7 +431,7 @@ export function EngagementProposalsPage() {
                     ref={dismissTrigger}
                     className="danger-button engagement-proposal-dismiss"
                     type="button"
-                    disabled={saving}
+                    disabled={saving || detail.status !== 'pending' || sendUncertain}
                     onClick={() => {
                       setConfirmDismiss(true);
                     }}
@@ -336,6 +439,28 @@ export function EngagementProposalsPage() {
                     Dismiss proposal
                   </button>
                 </div>
+                {detail.status === 'pending' && !canApprove && (
+                  <p className="muted">
+                    {sendUncertain
+                      ? 'Refresh to verify the latest send state before continuing.'
+                      : !detail.canApprove
+                        ? 'Only a workspace owner or admin can approve and send.'
+                        : draft.trim() !== detail.content.text
+                          ? 'Save the edited draft before approving.'
+                          : 'Sending is not available for this provider or media/price proposal yet.'}
+                  </p>
+                )}
+                {sendUncertain && (
+                  <button
+                    className="secondary-button engagement-proposal-refresh"
+                    type="button"
+                    onClick={() => {
+                      setDetailReload((current) => current + 1);
+                    }}
+                  >
+                    Refresh proposal state
+                  </button>
+                )}
               </>
             )}
           </section>
@@ -356,6 +481,24 @@ export function EngagementProposalsPage() {
           }}
           onConfirm={() => {
             void mutate('dismiss');
+          }}
+        />
+      )}
+      {confirmApprove && detail && (
+        <ConfirmationDialog
+          titleId="engagement-approve-title"
+          title="Approve and send this reply?"
+          description={`Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now. This cannot be undone in Publish Relay.`}
+          cancelLabel="Keep reviewing"
+          confirmLabel={saving ? 'Sending…' : 'Approve and send'}
+          confirmTone="primary"
+          disabled={saving}
+          returnFocusTo={approveTrigger.current}
+          onCancel={() => {
+            setConfirmApprove(false);
+          }}
+          onConfirm={() => {
+            void approve();
           }}
         />
       )}

@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -158,7 +158,7 @@ export async function createEngagementProposal(
   });
 }
 
-export async function listPendingEngagementProposals(
+export async function listEngagementReviewQueue(
   database: NodePgDatabase,
   workspaceId: string,
   page?: { beforeCreatedAt?: Date; beforeId?: string; limit: number },
@@ -177,7 +177,7 @@ export async function listPendingEngagementProposals(
       .where(
         and(
           eq(engagementProposals.workspaceId, workspaceId),
-          eq(engagementProposals.status, 'pending'),
+          inArray(engagementProposals.status, ['pending', 'sending', 'unknown', 'failed']),
           ...(page?.beforeCreatedAt && page.beforeId
             ? [
                 or(
@@ -278,5 +278,101 @@ export async function dismissEngagementProposal(
       .returning();
     if (!row) throw new EngagementProposalError('Proposal is stale or unavailable', 409);
     return row;
+  });
+}
+
+/** One transaction claims an exact reviewed revision before any provider side effect. */
+export async function claimEngagementProposal(
+  database: NodePgDatabase,
+  input: { workspaceId: string; id: string; expectedRevision: number },
+) {
+  return withTenantTransaction(database, { workspaceId: input.workspaceId }, async (tx) => {
+    const [selected] = await tx
+      .select({
+        proposal: engagementProposals,
+        availability: providerAccounts.availability,
+        disconnectedAt: providerAccounts.disconnectedAt,
+        connectionStatus: providerConnections.status,
+        revokedAt: providerConnections.revokedAt,
+      })
+      .from(engagementProposals)
+      .innerJoin(
+        providerAccounts,
+        and(
+          eq(providerAccounts.workspaceId, engagementProposals.workspaceId),
+          eq(providerAccounts.id, engagementProposals.accountId),
+        ),
+      )
+      .innerJoin(
+        providerConnections,
+        and(
+          eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+          eq(providerConnections.id, providerAccounts.connectionId),
+        ),
+      )
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.id),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (
+      selected?.proposal.status !== 'pending' ||
+      selected.proposal.revision !== input.expectedRevision
+    )
+      throw new EngagementProposalError('Proposal is stale or unavailable', 409);
+    if (
+      selected.availability !== 'active' ||
+      selected.disconnectedAt ||
+      selected.connectionStatus !== 'active' ||
+      selected.revokedAt
+    )
+      throw new EngagementProposalError('Proposal destination is unavailable', 409);
+    const [claimed] = await tx
+      .update(engagementProposals)
+      .set({ status: 'sending', updatedAt: new Date() })
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.id),
+          eq(engagementProposals.status, 'pending'),
+          eq(engagementProposals.revision, input.expectedRevision),
+        ),
+      )
+      .returning();
+    if (!claimed) throw new EngagementProposalError('Proposal is stale or unavailable', 409);
+    return claimed;
+  });
+}
+
+/** A lost settlement leaves sending visible and must never authorize an automatic resend. */
+export async function settleEngagementProposal(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    id: string;
+    clientActionId: string;
+    expectedRevision: number;
+    status: 'sent' | 'failed' | 'unknown';
+  },
+) {
+  return withTenantTransaction(database, { workspaceId: input.workspaceId }, async (tx) => {
+    const [settled] = await tx
+      .update(engagementProposals)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.id),
+          eq(engagementProposals.clientActionId, input.clientActionId),
+          eq(engagementProposals.revision, input.expectedRevision),
+          eq(engagementProposals.status, 'sending'),
+        ),
+      )
+      .returning();
+    if (!settled) throw new EngagementProposalError('Proposal send is stale or unavailable', 409);
+    return settled;
   });
 }

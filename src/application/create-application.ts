@@ -62,6 +62,7 @@ import { registerTikTokScheduleRoutes } from '../modules/providers/tiktok-schedu
 import { registerSnapchatStoryResolutionRoutes } from '../modules/providers/snapchat-story-resolution.routes.js';
 import { registerFanvuePaymentRoutes } from '../modules/providers/fanvue-payment.routes.js';
 import { registerEngagementProposalRoutes } from '../modules/providers/engagement-proposal.routes.js';
+import { registerEngagementApprovalRoutes } from '../modules/providers/engagement-approval.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
@@ -305,6 +306,30 @@ function registerBrowserRoutes(
   }
   if (auth && database) {
     registerEngagementProposalRoutes(application, { database, auth });
+    if (fanvueOauth) {
+      const reads = new FanvueReadService(
+        database,
+        fanvueOauth.keys,
+        fanvueOauth.client,
+        new FanvueReadClient(),
+      );
+      registerEngagementApprovalRoutes(application, {
+        database,
+        auth,
+        comments: new FanvueCommentService(
+          database,
+          reads,
+          new FanvueCommentClient(),
+          actionPolicy,
+        ),
+        messages: new FanvueMessageService(
+          database,
+          reads,
+          new FanvueMessageClient(),
+          actionPolicy,
+        ),
+      });
+    }
     registerProviderAccountRoutes(application, {
       auth,
       database,

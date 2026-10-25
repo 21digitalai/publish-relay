@@ -149,6 +149,48 @@ describe('engagement proposal foundation', () => {
       expect(listResponse.body).not.toContain('credentialId');
       expect(listResponse.body).not.toContain('targetId');
       expect(Buffer.byteLength(listResponse.body)).toBeLessThan(1000);
+      const pageFixtureIds = Array.from(
+        { length: 52 },
+        (_, index) => `00000000-0000-4000-8000-${String(300 + index).padStart(12, '0')}`,
+      );
+      for (const [index, id] of pageFixtureIds.entries()) {
+        const micros = index % 2 === 0 ? '123900' : '123800';
+        await client.exec(`
+          INSERT INTO engagement_proposals
+            (id, workspace_id, account_id, client_action_id, provider, kind, target_id,
+             content, proposer_type, proposer_id, created_at)
+          VALUES ('${id}', '${workspace}', '${account}', '${id}', 'facebook_page',
+            'comment', 'comment-${String(index)}', '{"text":"Draft"}', 'api_key', '${proposer}',
+            '2026-10-25 12:00:00.${micros}+00');
+        `);
+      }
+      const seenIds: string[] = [];
+      let nextCursor: string | null = null;
+      for (let pageIndex = 0; pageIndex < 3; pageIndex += 1) {
+        const url: string = nextCursor
+          ? `/api/engagement-proposals?cursor=${encodeURIComponent(nextCursor)}`
+          : '/api/engagement-proposals';
+        const pageResponse = await app.inject({
+          method: 'GET',
+          url,
+          headers: browserHeaders,
+        });
+        expect(pageResponse.statusCode).toBe(200);
+        const page = pageResponse.json<{
+          data: { items: { id: string }[]; nextCursor: string | null };
+        }>().data;
+        seenIds.push(...page.items.map((item) => item.id));
+        nextCursor = page.nextCursor;
+        expect(seenIds.length).toBeLessThanOrEqual(53);
+        if (!nextCursor) break;
+      }
+      expect(nextCursor).toBeNull();
+      expect(seenIds).toHaveLength(53);
+      expect(new Set(seenIds).size).toBe(53);
+      expect(seenIds).toEqual(expect.arrayContaining([createdBody.data.id, ...pageFixtureIds]));
+      await client.exec(
+        `DELETE FROM engagement_proposals WHERE id IN (${pageFixtureIds.map((id) => `'${id}'`).join(',')})`,
+      );
       const detail = await app.inject({
         method: 'GET',
         url: `/api/engagement-proposals/${createdBody.data.id}`,

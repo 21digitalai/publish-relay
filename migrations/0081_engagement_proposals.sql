@@ -12,7 +12,9 @@ CREATE TABLE engagement_proposals (
   proposer_id uuid NOT NULL,
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'dismissed', 'approved', 'sending', 'sent', 'unknown', 'failed')),
   revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
-  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Cursors serialize JavaScript Date values at millisecond precision. Keep the
+  -- stored ordering key at that precision so pagination cannot skip rows.
+  created_at timestamptz(3) NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT engagement_proposals_account_fk FOREIGN KEY (workspace_id, account_id)
     REFERENCES provider_accounts(workspace_id, id) ON DELETE RESTRICT,

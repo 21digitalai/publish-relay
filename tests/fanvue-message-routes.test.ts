@@ -19,6 +19,7 @@ const fanUuid = '00000000-0000-4000-8000-000000000003';
 const clientActionId = '00000000-0000-4000-8000-000000000004';
 const messageUuid = '00000000-0000-4000-8000-000000000005';
 const actorId = '00000000-0000-4000-8000-000000000006';
+const mediaUuid = '00000000-0000-4000-8000-000000000008';
 const url = `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages`;
 const headers = {
   authorization: 'Bearer pr_test.secret',
@@ -26,7 +27,7 @@ const headers = {
 };
 
 function fixture(allowed = true) {
-  const sendText = vi.fn().mockResolvedValue({ state: 'confirmed', messageUuid });
+  const sendMessage = vi.fn().mockResolvedValue({ state: 'confirmed', messageUuid });
   const requireCapability = vi.fn().mockImplementation(() => {
     if (!allowed) throw new ApiKeyAuthorizationError('missing capability');
   });
@@ -41,7 +42,7 @@ function fixture(allowed = true) {
   const application = Fastify();
   registerFanvueMessageRoutes(
     application,
-    { sendText } as unknown as FanvueMessageService,
+    { sendMessage } as unknown as FanvueMessageService,
     apiKeys,
     new ApiRateLimiter({
       workspace: 100,
@@ -51,7 +52,7 @@ function fixture(allowed = true) {
       windowMs: 60_000,
     }),
   );
-  return { application, sendText, requireCapability };
+  return { application, sendMessage, requireCapability };
 }
 
 describe('Fanvue account-scoped machine text send', () => {
@@ -73,7 +74,7 @@ describe('Fanvue account-scoped machine text send', () => {
       'fanvue:chats:send',
       expect.any(String),
     );
-    expect(context.sendText).toHaveBeenCalledWith({
+    expect(context.sendMessage).toHaveBeenCalledWith({
       workspaceId,
       accountId,
       fanUuid,
@@ -92,7 +93,7 @@ describe('Fanvue account-scoped machine text send', () => {
       payload: { text: 'Hello', clientActionId },
     });
     expect(scope.statusCode).toBe(403);
-    expect(denied.sendText).not.toHaveBeenCalled();
+    expect(denied.sendMessage).not.toHaveBeenCalled();
     const invalid = fixture();
     const response = await invalid.application.inject({
       method: 'POST',
@@ -101,12 +102,12 @@ describe('Fanvue account-scoped machine text send', () => {
       payload: { text: '', clientActionId },
     });
     expect(response.statusCode).toBe(400);
-    expect(invalid.sendText).not.toHaveBeenCalled();
+    expect(invalid.sendMessage).not.toHaveBeenCalled();
   });
 
   it('exposes unknown outcome and hides an unavailable account', async () => {
     const context = fixture();
-    context.sendText.mockResolvedValueOnce({ state: 'unknown' });
+    context.sendMessage.mockResolvedValueOnce({ state: 'unknown' });
     const unknown = await context.application.inject({
       method: 'POST',
       url,
@@ -115,7 +116,7 @@ describe('Fanvue account-scoped machine text send', () => {
     });
     expect(unknown.statusCode).toBe(202);
     expect(unknown.json()).toMatchObject({ data: { state: 'unknown' } });
-    context.sendText.mockRejectedValueOnce(new FanvueReadUnavailableError('account_not_found'));
+    context.sendMessage.mockRejectedValueOnce(new FanvueReadUnavailableError('account_not_found'));
     const missing = await context.application.inject({
       method: 'POST',
       url,
@@ -123,7 +124,7 @@ describe('Fanvue account-scoped machine text send', () => {
       payload: { text: 'Hello', clientActionId },
     });
     expect(missing.statusCode).toBe(404);
-    context.sendText.mockRejectedValueOnce(new FanvueMessageActionConflictError());
+    context.sendMessage.mockRejectedValueOnce(new FanvueMessageActionConflictError());
     const conflict = await context.application.inject({
       method: 'POST',
       url,
@@ -131,5 +132,43 @@ describe('Fanvue account-scoped machine text send', () => {
       payload: { text: 'Hello', clientActionId },
     });
     expect(conflict.statusCode).toBe(409);
+  });
+
+  it('forwards free and priced provider media to the same scoped command', async () => {
+    const context = fixture();
+    const free = await context.application.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: { clientActionId, mediaUuids: [mediaUuid] },
+    });
+    expect(free.statusCode).toBe(201);
+    expect(context.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaUuids: [mediaUuid], actor: { type: 'api-key', id: actorId } }),
+    );
+    const paid = await context.application.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: {
+        clientActionId,
+        text: 'Unlock',
+        mediaUuids: [mediaUuid],
+        price: 300,
+        mediaPreviewUuid: mediaUuid,
+      },
+    });
+    expect(paid.statusCode).toBe(201);
+    expect(context.sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ price: 300, mediaPreviewUuid: mediaUuid }),
+    );
+    const belowMinimum = await context.application.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: { clientActionId, mediaUuids: [mediaUuid], price: 299 },
+    });
+    expect(belowMinimum.statusCode).toBe(400);
+    expect(context.sendMessage).toHaveBeenCalledTimes(2);
   });
 });

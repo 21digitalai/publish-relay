@@ -10,12 +10,19 @@ import { ActionPolicyDeniedError } from '../policy/action-policy.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
 import {
   FanvueMessageActionConflictError,
+  FanvueMessageMediaUnavailableError,
   type FanvueMessageService,
 } from './fanvue-message.service.js';
 import { FanvueReadUnavailableError } from './fanvue-read.service.js';
 
 const params = z.strictObject({ accountId: z.uuid(), fanUuid: z.uuid() });
-const body = z.strictObject({ text: z.string().min(1).max(5000), clientActionId: z.uuid() });
+export const fanvueMessageRequestSchema = z.strictObject({
+  clientActionId: z.uuid(),
+  text: z.string().min(1).max(5000).optional(),
+  mediaUuids: z.array(z.uuid()).min(1).max(10).optional(),
+  mediaPreviewUuid: z.uuid().optional(),
+  price: z.number().int().min(300).optional(),
+});
 
 export function registerFanvueMessageRoutes(
   application: FastifyInstance,
@@ -40,7 +47,7 @@ export function registerFanvueMessageRoutes(
             .code(401)
             .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
         const path = params.parse(request.params);
-        const payload = body.parse(request.body);
+        const payload = fanvueMessageRequestSchema.parse(request.body);
         const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
         if (!decision.allowed) {
           void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);
@@ -48,12 +55,15 @@ export function registerFanvueMessageRoutes(
             .code(429)
             .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
         }
-        const result = await service.sendText({
+        const result = await service.sendMessage({
           workspaceId: principal.workspaceId,
           accountId: path.accountId,
           fanUuid: path.fanUuid,
           clientActionId: payload.clientActionId,
-          text: payload.text,
+          ...(payload.text ? { text: payload.text } : {}),
+          ...(payload.mediaUuids ? { mediaUuids: payload.mediaUuids } : {}),
+          ...(payload.mediaPreviewUuid ? { mediaPreviewUuid: payload.mediaPreviewUuid } : {}),
+          ...(payload.price !== undefined ? { price: payload.price } : {}),
           actor: { type: principal.kind, id: principal.actorId },
         });
         const status = result.state === 'confirmed' ? 201 : result.state === 'unknown' ? 202 : 409;
@@ -74,6 +84,8 @@ function sendMessageError(error: unknown, request: FastifyRequest, reply: Fastif
       .send(errorEnvelope('invalid_request', 'Invalid message request', request.id));
   if (error instanceof FanvueMessageActionConflictError)
     return reply.code(409).send(errorEnvelope('action_conflict', error.message, request.id));
+  if (error instanceof FanvueMessageMediaUnavailableError)
+    return reply.code(409).send(errorEnvelope('media_not_ready', error.message, request.id));
   if (error instanceof FanvueReadUnavailableError)
     return reply
       .code(error.reason === 'account_not_found' ? 404 : 409)

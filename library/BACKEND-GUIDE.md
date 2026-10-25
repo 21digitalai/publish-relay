@@ -4,7 +4,7 @@ Fanvue account-scoped reads use the selected connected account and its workspace
 
 ## Fanvue publishing connection foundation
 
-Fanvue one-to-one chat sending uses `fanvue-message-client.ts` as a transport-only boundary. It validates the documented `POST /chats/{userUuid}/message` text, ready-media UUID, USD-cent price (minimum 300), and attached free-preview shape; it pins API version `2025-06-26` and returns only the stable `messageUuid`. Definite 400/403/429 failures are classified as provider errors. A fetch failure, 5xx, unexpected status or malformed 201 response is an unknown send outcome, never permission to resend. `fanvue-message.service.ts` currently composes only the text-only command: selected-account existing-chat and `read:chat`/`write:chat` preflight, neutral `engagement.send` action policy for the authenticated actor, durable action ID reservation before one POST, and confirmed/definite-failure/unknown settlement. Ready media and native price/preview require a later exact local-to-provider media binding; no arbitrary provider media UUID is accepted by this command. Neither this service nor the transport grants chat consent, machine/browser send authority, or a live provider release.
+Fanvue one-to-one chat sending uses `fanvue-message-client.ts` as a transport-only boundary. It validates the documented `POST /chats/{userUuid}/message` text, ready-media UUID, USD-cent price (minimum 300), and attached free-preview shape; it pins API version `2025-06-26` and returns only the stable `messageUuid`. Definite 400/403/429 failures are classified as provider errors. A fetch failure, 5xx, unexpected status or malformed 201 response is an unknown send outcome, never permission to resend. `fanvue-message.service.ts` composes the selected-account existing-chat and `read:chat`/`write:chat` preflight, neutral `engagement.send` action policy, durable action ID reservation before one POST, and confirmed/definite-failure/unknown settlement. For already-uploaded provider media selected through the account-scoped media read tool, it rechecks each stable UUID is `ready` on that exact selected account before accepting free or native priced/preview send. Local Relay media ID to provider media upload/staging is still a separate acceptance slice; no local asset is silently treated as a ready Fanvue UUID. Neither service nor transport grants chat consent or a live provider release.
 
 `fanvue_action_intents` is the tenant/account-bound, pre-provider-call reservation shared by future one-to-one message and top-level comment commands. A `clientActionId` is unique per account; exact replay returns its existing reserved/confirmed/failed/unknown state, while a changed action kind, target or fingerprint conflicts. The reservation must commit before POST, so a process death after reservation leaves a conservative ambiguous state. Only the original sender settles a reserved row. The existing API/browser mutation-result ledgers cannot substitute for this boundary because they roll back the insert when the provider call fails. Migration 0079 owns the table and forced tenant RLS. This ledger is not an offer-matching or approval-policy layer.
 
@@ -383,15 +383,15 @@ Selected Meta remote-grant revoke reserves the connection with durable `revoking
 ## Fanvue message send command
 
 `POST /api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages` is the account-scoped,
-text-only machine command. It requires `fanvue:chats:send`, separately from read/propose access,
+machine command for text or selected ready provider media. It requires `fanvue:chats:send`, separately from read/propose access,
 and derives workspace and actor from the authenticated API key or delegated grant. The route
-validates input and mutation rate, then calls the single `FanvueMessageService.sendText` path;
+validates input and mutation rate, then calls the single `FanvueMessageService.sendMessage` path;
 it does not create a second provider send implementation. The service rechecks the selected
 creator/chat and current `read:chat` plus `write:chat` consent, applies neutral `engagement.send`
 policy, reserves durable `clientActionId` intent before one provider POST, and returns bounded
 confirmed/failed/unknown state. Unknown never implies retry authority. The route returns no
-provider token, private chat body, internal fingerprint or account metadata. Free/paid media
-remain separate acceptance slices. The selected-account optional send-consent OAuth intent
+provider token, private chat body, internal fingerprint or account metadata. Local-media staging
+and browser approval remain separate acceptance slices. The selected-account optional send-consent OAuth intent
 requests exactly publishing plus `read:chat` and `write:chat`; the callback checks returned
 scope and exact creator before replacing the existing connection. A read-only grant never
 silently becomes send authority. Refresh accepts this known expanded scope while command

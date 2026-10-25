@@ -26,12 +26,14 @@ const input = {
   actor: { type: 'api-key' as const, id: '00000000-0000-4000-8000-000000000007' },
 };
 const messageUuid = '00000000-0000-4000-8000-000000000005';
+const mediaUuid = '00000000-0000-4000-8000-000000000008';
 const events: string[] = [];
 const reads = {
   getExistingChatForMessage: vi.fn(() => {
     events.push('preflight');
     return Promise.resolve({ accessToken: 'token' });
   }),
+  getMediaStatus: vi.fn(() => Promise.resolve({ uuid: mediaUuid, status: 'ready' })),
 };
 const client = {
   sendMessage: vi.fn(() => {
@@ -115,5 +117,50 @@ describe('Fanvue existing-chat text send command', () => {
       expect.anything(),
       expect.objectContaining({ result: { state: 'unknown' } }),
     );
+  });
+
+  it('sends selected ready provider media for free or native paid unlock with preview', async () => {
+    await expect(
+      service.sendMessage({ ...input, text: undefined, mediaUuids: [mediaUuid] }),
+    ).resolves.toEqual({ state: 'confirmed', messageUuid });
+    expect(reads.getMediaStatus).toHaveBeenCalledWith({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      mediaUuid,
+    });
+    expect(client.sendMessage).toHaveBeenCalledWith('token', input.fanUuid, {
+      mediaUuids: [mediaUuid],
+    });
+    await expect(
+      service.sendMessage({
+        ...input,
+        clientActionId: mediaUuid,
+        text: 'Unlock',
+        mediaUuids: [mediaUuid],
+        price: 300,
+        mediaPreviewUuid: mediaUuid,
+      }),
+    ).resolves.toEqual({ state: 'confirmed', messageUuid });
+    expect(client.sendMessage).toHaveBeenLastCalledWith('token', input.fanUuid, {
+      text: 'Unlock',
+      mediaUuids: [mediaUuid],
+      price: 300,
+      mediaPreviewUuid: mediaUuid,
+    });
+  });
+
+  it('refuses not-ready or invalid paid media before reserving a send intent', async () => {
+    reads.getMediaStatus.mockResolvedValueOnce({ uuid: mediaUuid, status: 'processing' });
+    await expect(service.sendMessage({ ...input, mediaUuids: [mediaUuid] })).rejects.toThrow(
+      'not ready',
+    );
+    await expect(
+      service.sendMessage({ ...input, mediaUuids: [mediaUuid], price: 299 }),
+    ).rejects.toThrow();
+    await expect(
+      service.sendMessage({ ...input, mediaUuids: [mediaUuid], mediaPreviewUuid: mediaUuid }),
+    ).rejects.toThrow();
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
   });
 });

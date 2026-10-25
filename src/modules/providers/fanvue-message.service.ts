@@ -25,6 +25,27 @@ const textMessage = z.strictObject({
     id: z.uuid(),
   }),
 });
+const messageCommand = textMessage
+  .omit({ text: true })
+  .extend({
+    text: z.string().min(1).max(5000).optional(),
+    mediaUuids: z.array(z.uuid()).min(1).max(10).optional(),
+    mediaPreviewUuid: z.uuid().optional(),
+    price: z.number().int().min(300).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.text && !value.mediaUuids?.length)
+      context.addIssue({ code: 'custom', message: 'Text or media is required' });
+    if (value.mediaUuids && new Set(value.mediaUuids).size !== value.mediaUuids.length)
+      context.addIssue({ code: 'custom', message: 'Duplicate media is not allowed' });
+    if (value.price !== undefined && !value.mediaUuids?.length)
+      context.addIssue({ code: 'custom', message: 'Priced messages require media' });
+    if (
+      value.mediaPreviewUuid &&
+      (value.price === undefined || !value.mediaUuids?.includes(value.mediaPreviewUuid))
+    )
+      context.addIssue({ code: 'custom', message: 'Preview must be attached to priced media' });
+  });
 
 export type FanvueTextMessageResult =
   | { state: 'confirmed'; messageUuid: string }
@@ -37,9 +58,14 @@ export class FanvueMessageActionConflictError extends Error {
   }
 }
 
+export class FanvueMessageMediaUnavailableError extends Error {
+  constructor() {
+    super('Fanvue media is not ready for this account');
+  }
+}
+
 function replayResult(reservation: FanvueActionReservation): FanvueTextMessageResult {
-  if (reservation.kind === 'conflict')
-    throw new FanvueMessageActionConflictError();
+  if (reservation.kind === 'conflict') throw new FanvueMessageActionConflictError();
   if (reservation.kind === 'new') throw new Error('Expected an existing Fanvue action');
   if (reservation.state === 'confirmed' && reservation.providerObjectUuid)
     return { state: 'confirmed', messageUuid: reservation.providerObjectUuid };
@@ -48,7 +74,7 @@ function replayResult(reservation: FanvueActionReservation): FanvueTextMessageRe
   return { state: 'unknown' };
 }
 
-/** Text-only command; ready free/paid media must use a separately proved local media binding. */
+/** Existing provider media is account-scoped and rechecked before the same durable send intent. */
 export class FanvueMessageService {
   constructor(
     private readonly database: NodePgDatabase,
@@ -58,8 +84,20 @@ export class FanvueMessageService {
   ) {}
 
   async sendText(input: z.input<typeof textMessage>): Promise<FanvueTextMessageResult> {
-    const command = textMessage.parse(input);
+    return this.sendMessage(textMessage.parse(input));
+  }
+
+  async sendMessage(input: z.input<typeof messageCommand>): Promise<FanvueTextMessageResult> {
+    const command = messageCommand.parse(input);
     const { accessToken } = await this.reads.getExistingChatForMessage(command);
+    for (const mediaUuid of command.mediaUuids ?? []) {
+      const media = await this.reads.getMediaStatus({
+        workspaceId: command.workspaceId,
+        accountId: command.accountId,
+        mediaUuid,
+      });
+      if (media.status !== 'ready') throw new FanvueMessageMediaUnavailableError();
+    }
     await withTenantTransaction(this.database, command, (transaction) =>
       enforceWorkspaceAction(transaction, this.policy, {
         workspaceId: command.workspaceId,
@@ -70,7 +108,15 @@ export class FanvueMessageService {
       }),
     );
     const requestFingerprint = createHash('sha256')
-      .update(JSON.stringify({ fanUuid: command.fanUuid, text: command.text }))
+      .update(
+        JSON.stringify({
+          fanUuid: command.fanUuid,
+          text: command.text,
+          mediaUuids: command.mediaUuids,
+          mediaPreviewUuid: command.mediaPreviewUuid,
+          price: command.price,
+        }),
+      )
       .digest('hex');
     const intent = {
       workspaceId: command.workspaceId,
@@ -86,7 +132,10 @@ export class FanvueMessageService {
     let result: FanvueTextMessageResult;
     try {
       const message = await this.client.sendMessage(accessToken, command.fanUuid, {
-        text: command.text,
+        ...(command.text ? { text: command.text } : {}),
+        ...(command.mediaUuids ? { mediaUuids: command.mediaUuids } : {}),
+        ...(command.mediaPreviewUuid ? { mediaPreviewUuid: command.mediaPreviewUuid } : {}),
+        ...(command.price !== undefined ? { price: command.price } : {}),
       });
       result = { state: 'confirmed', messageUuid: message.messageUuid };
     } catch (error) {

@@ -1,5 +1,7 @@
 # Publish Relay Backend Guide
 
+Fanvue account-scoped reads use the selected connected account and its workspace-bound creator grant. Credential refresh failures are typed as reconnect-required and become a safe 409 read response; pending single-use refresh may be awaited, but a read must recheck that the exact account and connection remain active before sending the provider GET. An invalid or ambiguous refresh never replays the quarantined refresh token or becomes an unclassified 500.
+
 ## Fanvue publishing connection foundation
 
 `fanvue-read-client.ts` is an isolated, read-only provider transport. It requests chat messages with `markAsRead=false` and projects only stable IDs, message facts and media status; expiring media variant URLs are never returned through this layer. Offset chat/message/media results preserve Fanvue's `page`, `size` and `hasMore` metadata; v1 post/comment queries preserve opaque next cursors. Its callers must still enforce tenant/account reach and distinct module read grants before exposing any of these methods through browser or machine routes. The transport alone is not an enabled Fanvue engagement capability.

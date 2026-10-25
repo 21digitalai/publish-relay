@@ -12,7 +12,10 @@ import {
   registerFanvueBrowserReadRoutes,
   registerFanvueReadRoutes,
 } from '../src/modules/providers/fanvue-read.routes.js';
-import type { FanvueReadService } from '../src/modules/providers/fanvue-read.service.js';
+import {
+  FanvueReadUnavailableError,
+  type FanvueReadService,
+} from '../src/modules/providers/fanvue-read.service.js';
 import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000201';
@@ -100,6 +103,19 @@ describe('Fanvue agent read boundary', () => {
     expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({ error: { code: 'provider_read_failed' } });
     expect(response.body).not.toContain('invalid_response');
+  });
+
+  it('returns reconnect-required after a failed or ambiguous credential refresh', async () => {
+    const context = fixture(['fanvue:chats:read']);
+    context.listMessages.mockRejectedValue(new FanvueReadUnavailableError('reconnect_required'));
+    const response = await context.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages`,
+      headers,
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: { code: 'reconnect_required' } });
+    expect(response.body).not.toContain('refresh_pending');
   });
 
   it.each([

@@ -134,6 +134,92 @@ describe.skipIf(!connectionString)('Fanvue read account isolation on PostgreSQL'
         data: [],
       });
       expect(providerRequest).toHaveBeenCalledTimes(1);
+      expect(providerRequest.mock.calls[0]?.[1]?.headers).toMatchObject({
+        Authorization: 'Bearer access',
+      });
+      const siblingCreatorId = randomUUID();
+      await connectProvider(
+        database,
+        keys,
+        {
+          discoverAccounts: () =>
+            Promise.resolve([{ providerAccountId: siblingCreatorId, displayName: 'Sibling' }]),
+        },
+        {
+          workspaceId,
+          userId,
+          provider: 'fanvue',
+          externalSubjectId: siblingCreatorId,
+          accessToken: JSON.stringify({
+            ...token,
+            access_token: 'sibling',
+            scope: readScopes.join(' '),
+          }),
+          scopes: readScopes,
+          accessExpiresAt: new Date(Date.now() + 3_600_000),
+          requestId: randomUUID(),
+        },
+      );
+      const siblingAccounts = await pool.query<{ id: string }>(
+        'SELECT id FROM provider_accounts WHERE workspace_id=$1 AND destination_provider=$2 AND remote_account_id=$3',
+        [workspaceId, 'fanvue', siblingCreatorId],
+      );
+      const siblingAccountId = siblingAccounts.rows[0]?.id;
+      if (!siblingAccountId) throw new Error('Sibling Fanvue account was not persisted');
+      await service.listMedia({ workspaceId, accountId: siblingAccountId });
+      expect(providerRequest.mock.calls[1]?.[1]?.headers).toMatchObject({
+        Authorization: 'Bearer sibling',
+      });
+      await pool.query(
+        "UPDATE provider_connections SET status='reauth_required', last_error_code='refresh_pending' WHERE workspace_id=$1 AND external_subject_id=$2",
+        [workspaceId, siblingCreatorId],
+      );
+      await pool.query(
+        "UPDATE provider_accounts SET availability='reauth_required' WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, siblingAccountId],
+      );
+      const completeConcurrentRefresh = new Promise<void>((resolve, reject) => {
+        setTimeout(() => {
+          void pool
+            .query(
+              "UPDATE provider_connections SET status='active', last_error_code=NULL, access_expires_at=now()+interval '1 hour' WHERE workspace_id=$1 AND external_subject_id=$2",
+              [workspaceId, siblingCreatorId],
+            )
+            .then(() =>
+              pool.query(
+                "UPDATE provider_accounts SET availability='active' WHERE workspace_id=$1 AND id=$2",
+                [workspaceId, siblingAccountId],
+              ),
+            )
+            .then(() => {
+              resolve();
+            }, reject);
+        }, 50);
+      });
+      await expect(
+        service.listMedia({ workspaceId, accountId: siblingAccountId }),
+      ).resolves.toMatchObject({ data: [] });
+      await completeConcurrentRefresh;
+      await pool.query(
+        "UPDATE provider_connections SET access_expires_at=now()-interval '1 hour' WHERE workspace_id=$1 AND external_subject_id=$2",
+        [workspaceId, creatorId],
+      );
+      providerRequest.mockResolvedValueOnce(
+        Response.json({ error: 'invalid_grant' }, { status: 400 }),
+      );
+      await expect(service.listPosts({ workspaceId, accountId })).rejects.toMatchObject({
+        reason: 'reconnect_required',
+      });
+      await pool.query(
+        "UPDATE provider_connections SET access_expires_at=now()-interval '1 hour' WHERE workspace_id=$1 AND external_subject_id=$2",
+        [workspaceId, siblingCreatorId],
+      );
+      providerRequest.mockRejectedValueOnce(new TypeError('private timeout'));
+      await expect(
+        service.listMedia({ workspaceId, accountId: siblingAccountId }),
+      ).rejects.toMatchObject({
+        reason: 'reconnect_required',
+      });
     } finally {
       await pool.end();
     }

@@ -4,7 +4,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { providerAccounts, providerConnections } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
-import { getFreshFanvueToken } from './fanvue-credential.service.js';
+import {
+  FanvueReconnectionRequiredError,
+  getFreshFanvueToken,
+} from './fanvue-credential.service.js';
 import type { FanvueHttpClient } from './fanvue-http-client.js';
 import type { FanvueReadClient } from './fanvue-read-client.js';
 
@@ -17,7 +20,9 @@ const REQUIRED_SCOPES: Record<FanvueReadModule, string> = {
 };
 
 export class FanvueReadUnavailableError extends Error {
-  constructor(public readonly reason: 'account_not_found' | 'scope_missing') {
+  constructor(
+    public readonly reason: 'account_not_found' | 'scope_missing' | 'reconnect_required',
+  ) {
     super(
       reason === 'account_not_found'
         ? 'Fanvue account is unavailable'
@@ -98,7 +103,13 @@ export class FanvueReadService {
   ): Promise<string> {
     const [account] = await withTenantTransaction(this.database, input, (transaction) =>
       transaction
-        .select({ creatorId: providerAccounts.remoteAccountId, scopes: providerConnections.scopes })
+        .select({
+          creatorId: providerAccounts.remoteAccountId,
+          connectionId: providerConnections.id,
+          scopes: providerConnections.scopes,
+          connectionStatus: providerConnections.status,
+          lastErrorCode: providerConnections.lastErrorCode,
+        })
         .from(providerAccounts)
         .innerJoin(
           providerConnections,
@@ -112,24 +123,62 @@ export class FanvueReadService {
             eq(providerAccounts.workspaceId, input.workspaceId),
             eq(providerAccounts.id, input.accountId),
             eq(providerAccounts.destinationProvider, 'fanvue'),
-            eq(providerAccounts.availability, 'active'),
             isNull(providerAccounts.disconnectedAt),
             eq(providerConnections.provider, 'fanvue'),
-            eq(providerConnections.status, 'active'),
             isNull(providerConnections.revokedAt),
           ),
         )
         .limit(1),
     );
     if (!account) throw new FanvueReadUnavailableError('account_not_found');
+    if (
+      account.connectionStatus !== 'active' &&
+      !(
+        account.connectionStatus === 'reauth_required' &&
+        account.lastErrorCode === 'refresh_pending'
+      )
+    )
+      throw new FanvueReadUnavailableError('reconnect_required');
     if (!Array.isArray(account.scopes) || !account.scopes.includes(REQUIRED_SCOPES[module]))
       throw new FanvueReadUnavailableError('scope_missing');
-    const token = await getFreshFanvueToken(this.database, this.keys, this.oauthClient, {
-      workspaceId: input.workspaceId,
-      creatorId: account.creatorId,
-    });
+    let token;
+    try {
+      token = await getFreshFanvueToken(this.database, this.keys, this.oauthClient, {
+        workspaceId: input.workspaceId,
+        creatorId: account.creatorId,
+      });
+    } catch (error) {
+      if (error instanceof FanvueReconnectionRequiredError)
+        throw new FanvueReadUnavailableError('reconnect_required');
+      throw error;
+    }
     if (!token.scope.split(/\s+/).includes(REQUIRED_SCOPES[module]))
       throw new FanvueReadUnavailableError('scope_missing');
+    const [stillConnected] = await withTenantTransaction(this.database, input, (transaction) =>
+      transaction
+        .select({ id: providerAccounts.id })
+        .from(providerAccounts)
+        .innerJoin(
+          providerConnections,
+          and(
+            eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+            eq(providerConnections.id, providerAccounts.connectionId),
+          ),
+        )
+        .where(
+          and(
+            eq(providerAccounts.workspaceId, input.workspaceId),
+            eq(providerAccounts.id, input.accountId),
+            eq(providerAccounts.connectionId, account.connectionId),
+            eq(providerAccounts.availability, 'active'),
+            isNull(providerAccounts.disconnectedAt),
+            eq(providerConnections.status, 'active'),
+            isNull(providerConnections.revokedAt),
+          ),
+        )
+        .limit(1),
+    );
+    if (!stillConnected) throw new FanvueReadUnavailableError('account_not_found');
     return token.access_token;
   }
 }

@@ -62,7 +62,9 @@ test('review inbox edits and dismisses without a provider send', async ({ page }
               : [],
           nextCursor: null,
         }
-      : detail;
+      : request.method() === 'PATCH'
+        ? { ...detail, accountDisplayName: undefined }
+        : detail;
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data, error: null }),
@@ -81,6 +83,7 @@ test('review inbox edits and dismisses without a provider send', async ({ page }
   await page.getByLabel('Suggested reply').fill('Revised reply');
   await page.getByRole('button', { name: 'Save draft' }).click();
   await expect(page.getByText('Draft saved. No message was sent.')).toBeVisible();
+  await expect(page.getByText('Destination: Mira Studio')).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: /Fanvue message/ }).click();
   await expect(page.getByLabel('Suggested reply')).toHaveValue('Revised reply');
@@ -92,4 +95,72 @@ test('review inbox edits and dismisses without a provider send', async ({ page }
   await page.reload();
   await expect(page.getByText('No replies await review.')).toBeVisible();
   expect(sends).toBe(0);
+});
+
+test('failed list and detail loads offer a retry instead of an empty or endless loading state', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Review Owner',
+      email: `review-retry-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Review Retry Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  let listCalls = 0;
+  let detailCalls = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const list = new URL(route.request().url()).pathname.endsWith('/api/engagement-proposals');
+    const attempt = list ? ++listCalls : ++detailCalls;
+    if (attempt === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Temporarily unavailable' }),
+      });
+      return;
+    }
+    const data = list
+      ? {
+          items: [
+            {
+              id: '00000000-0000-4000-8000-000000000302',
+              accountDisplayName: 'Mira Studio',
+              provider: 'fanvue',
+              kind: 'dm',
+              sourcePreview: 'Hi',
+              contentPreview: 'Hello',
+              createdAt: '2026-10-25T12:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        }
+      : {
+          id: '00000000-0000-4000-8000-000000000302',
+          accountDisplayName: 'Mira Studio',
+          provider: 'fanvue',
+          kind: 'dm',
+          sourceContext: { text: 'Hi' },
+          content: { text: 'Hello' },
+          revision: 1,
+          status: 'pending',
+        };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await expect(page.getByRole('button', { name: 'Retry loading proposals' })).toBeVisible();
+  await expect(page.getByText('No replies await review.')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Retry loading proposals' }).click();
+  await page.getByRole('button', { name: /Fanvue message/ }).click();
+  await expect(page.getByRole('button', { name: 'Retry loading proposal' })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry loading proposal' }).click();
+  await expect(page.getByText('Destination: Mira Studio')).toBeVisible();
 });

@@ -49,6 +49,9 @@ export function EngagementProposalsPage() {
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
+  const [listFailed, setListFailed] = useState(false);
+  const [detailFailed, setDetailFailed] = useState(false);
+  const [detailReload, setDetailReload] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
@@ -75,8 +78,10 @@ export function EngagementProposalsPage() {
         setNextCursor(page.nextCursor);
       })
       .catch((failure: unknown) => {
-        if (active)
+        if (active) {
+          setListFailed(true);
           setError(failure instanceof Error ? failure.message : 'Could not load proposals');
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -93,6 +98,7 @@ export function EngagementProposalsPage() {
     }
     let active = true;
     setDetail(null);
+    setDetailFailed(false);
     setError(null);
     void readApi<ProposalDetail>(`/api/engagement-proposals/${selectedId}`)
       .then((proposal) => {
@@ -101,13 +107,15 @@ export function EngagementProposalsPage() {
         setDraft(proposal.content.text);
       })
       .catch((failure: unknown) => {
-        if (active)
+        if (active) {
+          setDetailFailed(true);
           setError(failure instanceof Error ? failure.message : 'Could not load proposal');
+        }
       });
     return () => {
       active = false;
     };
-  }, [selectedId]);
+  }, [selectedId, detailReload]);
 
   const mutate = async (action: 'edit' | 'dismiss') => {
     if (!detail || saving) return;
@@ -140,7 +148,7 @@ export function EngagementProposalsPage() {
         setDetail(null);
         setNotice('Proposal dismissed. No message was sent.');
       } else {
-        setDetail(updated);
+        setDetail({ ...updated, accountDisplayName: detail.accountDisplayName });
         setDraft(updated.content.text);
         setItems((current) =>
           current.map((item) =>
@@ -185,6 +193,29 @@ export function EngagementProposalsPage() {
           <section className="engagement-proposals-list" aria-label="Pending proposals">
             {loading ? (
               <p role="status">Loading proposed replies…</p>
+            ) : listFailed ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setLoading(true);
+                  setError(null);
+                  void loadPage()
+                    .then(() => {
+                      setListFailed(false);
+                    })
+                    .catch((failure: unknown) => {
+                      setError(
+                        failure instanceof Error ? failure.message : 'Could not load proposals',
+                      );
+                    })
+                    .finally(() => {
+                      setLoading(false);
+                    });
+                }}
+              >
+                Retry loading proposals
+              </button>
             ) : items.length === 0 ? (
               <p>No replies await review.</p>
             ) : (
@@ -233,6 +264,16 @@ export function EngagementProposalsPage() {
           <section className="engagement-proposal-detail" aria-label="Proposal detail">
             {!selectedId ? (
               <p>Select a proposal to inspect its context and draft.</p>
+            ) : detailFailed ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setDetailReload((current) => current + 1);
+                }}
+              >
+                Retry loading proposal
+              </button>
             ) : !detail ? (
               <p role="status">Loading proposal…</p>
             ) : (
@@ -253,7 +294,7 @@ export function EngagementProposalsPage() {
                 </label>
                 <textarea
                   id="engagement-proposal-draft"
-                  className="text-input engagement-proposal-draft"
+                  className="engagement-proposal-draft text-input"
                   value={draft}
                   maxLength={5000}
                   onChange={(event) => {

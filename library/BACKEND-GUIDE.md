@@ -58,9 +58,13 @@ and `/facebook-conversations` require the corresponding exact Page-local
 guard before Graph GET. Each accepts a maximum 100-row `limit` and provider
 `after` cursor, and returns only allowlisted post or conversation summaries and
 `nextCursor`. Provider failures return sanitized error envelopes; Page tokens,
-Graph paging URLs, and raw provider bodies never reach callers. Browser routes,
-conversation-message reads, and controlled provider proof
-remain separate work; current unknown grant state denies all read endpoints.
+Graph paging URLs, and raw provider bodies never reach callers. Browser GETs
+under `/api/provider-accounts/:accountId/facebook-*` reuse the same selected
+Page query services, require authenticated `content:read`, and send `no-store`
+responses; a missing/foreign/unavailable Page is a generic 404. They do not
+grant machine principals new rights. Conversation-message reads and controlled
+provider proof remain separate work; current unknown grant state denies all
+read endpoints.
 `/api/v1/destinations/:accountId/facebook-posts/:postId/comments` additionally
 requires `pages_read_user_content` on the selected Page connection and a fresh
 Graph `from.id` match before requesting the bounded comments page. A foreign or

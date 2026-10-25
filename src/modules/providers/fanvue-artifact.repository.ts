@@ -74,3 +74,40 @@ export async function reserveFanvueStagingArtifact(
     return existing.rows[0]?.id ?? null;
   });
 }
+
+/** Return only provider-ready UUIDs attached to the selected live job revision. */
+export async function getFinalizedFanvueMediaUuids(
+  database: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; leaseOwner: string },
+): Promise<Map<string, string>> {
+  return withTenantTransaction(database, input, async (transaction) => {
+    const result = await transaction.execute<{ mediaId: string; mediaUuid: string }>(sql`
+      SELECT artifact.media_id AS "mediaId", artifact.external_object_id AS "mediaUuid"
+      FROM publication_jobs job
+      JOIN provider_accounts account
+        ON account.workspace_id = job.workspace_id AND account.id = job.provider_account_id
+      JOIN revision_media attached
+        ON attached.workspace_id = job.workspace_id AND attached.revision_id = job.revision_id
+      JOIN media_objects media
+        ON media.workspace_id = attached.workspace_id AND media.id = attached.media_id
+      JOIN provider_staging_artifacts artifact
+        ON artifact.workspace_id = job.workspace_id AND artifact.job_id = job.id
+        AND artifact.media_id = media.id
+      WHERE job.workspace_id = ${input.workspaceId} AND job.id = ${input.jobId}
+        AND job.state = 'leased' AND job.lease_owner = ${input.leaseOwner}
+        AND job.lease_expires_at > clock_timestamp()
+        AND account.destination_provider = 'fanvue'
+        AND account.availability = 'active' AND account.disconnected_at IS NULL
+        AND media.state = 'ready' AND media.deleted_at IS NULL
+        AND artifact.provider_reference = 'fanvue:multipart'
+        AND artifact.upload_phase = 'finalized'
+        AND artifact.external_object_id IS NOT NULL
+        AND artifact.deleted_at IS NULL AND artifact.expires_at > clock_timestamp()
+        AND NOT EXISTS (
+          SELECT 1 FROM publication_attempts attempt
+          WHERE attempt.workspace_id = job.workspace_id AND attempt.job_id = job.id
+        )
+    `);
+    return new Map(result.rows.map((row) => [row.mediaId, row.mediaUuid]));
+  });
+}

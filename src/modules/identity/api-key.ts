@@ -11,6 +11,7 @@ export const API_KEY_CAPABILITIES = [
   'publishes:submit',
   'publishes:retry',
   'audit:read',
+  'fanvue:payments:read',
 ] as const;
 
 export type ApiKeyCapability = (typeof API_KEY_CAPABILITIES)[number];

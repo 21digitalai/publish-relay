@@ -381,9 +381,7 @@ that an active Fanvue connection and selected creator both match the event creat
 The `(workspace, account, event)` unique key deduplicates deliveries without rewriting facts,
 and a changed event under the same ID is an error. Forced tenant RLS and the account composite
 foreign key keep the receipt within Core tenancy. Tips preserve their provider source/context;
-they never imply a message purchase or an offer match. This repository does not discover
-cross-tenant webhook destinations, subscribe to live webhooks, or expose an API by itself; those
-need separate verified account mapping and read-scope consent.
+they never imply a message purchase or an offer match. `GET /api/v1/fanvue/accounts/:accountId/payment-signals` requires a distinct `fanvue:payments:read` API-key/delegated capability and exact workspace header. It returns only account-filtered, allowlisted provider facts in a 50-row keyset page; fingerprints, credential data and unrelated account fields never leave the server. This is a read-only surface over already receipted facts, not proof that a webhook was subscribed or received. The receiver still needs signature-before-parse, verified cross-tenant creator mapping and optional read:creator consent before live activation.
 
 ## External draft handoff
 

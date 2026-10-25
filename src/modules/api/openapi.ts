@@ -121,6 +121,26 @@ const externalDraftSchema = z.object({
   createdAt: z.iso.datetime(),
   links: z.object({ self: z.string(), cockpit: z.string(), post: z.string().optional() }),
 });
+const fanvuePaymentSignalCollectionSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        eventId: z.uuid(),
+        fanUuid: z.uuid(),
+        invoiceId: z.string(),
+        source: z.enum(['post', 'message', 'media', 'tip', 'subscription']),
+        grossMinor: z.number().int().nonnegative(),
+        currency: z.string().nullable(),
+        paidAt: z.iso.datetime().nullable(),
+        eventAt: z.iso.datetime(),
+        postUuid: z.uuid().nullable(),
+        messageUuid: z.uuid().nullable(),
+        tipContext: z.enum(['post', 'message']).nullable(),
+      }),
+    )
+    .max(50),
+  nextCursor: z.string().nullable(),
+});
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
   return {
@@ -306,6 +326,39 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing content:write capability' },
             '404': { description: 'Draft not found' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/payment-signals': {
+        get: {
+          operationId: 'listFanvuePaymentSignals',
+          description:
+            'Account-scoped verified payment/tip facts; a tip does not prove an offer match.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 512 } },
+          ],
+          responses: {
+            '200': {
+              description: 'At most 50 verified provider facts',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(
+                    successResponseSchema(fanvuePaymentSignalCollectionSchema),
+                  ),
+                },
+              },
+            },
+            '400': { description: 'Invalid account or cursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:payments:read capability' },
+            '429': { description: 'Read rate limit exceeded' },
           },
         },
       },

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, lt, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -85,4 +85,52 @@ export async function receiptFanvuePaymentForAccount(
       throw new Error('Fanvue payment event ID conflicts with prior facts');
     return 'duplicate';
   });
+}
+
+export async function listFanvuePaymentSignals(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    accountId: string;
+    limit: number;
+    before?: { eventAt: Date; id: string };
+  },
+) {
+  return withTenantTransaction(database, input, (transaction) =>
+    transaction
+      .select({
+        id: fanvuePaymentReceipts.id,
+        eventId: fanvuePaymentReceipts.eventId,
+        fanUuid: fanvuePaymentReceipts.fanUuid,
+        invoiceId: fanvuePaymentReceipts.invoiceId,
+        source: fanvuePaymentReceipts.source,
+        grossMinor: fanvuePaymentReceipts.grossMinor,
+        currency: fanvuePaymentReceipts.currency,
+        paidAt: fanvuePaymentReceipts.paidAt,
+        eventAt: fanvuePaymentReceipts.eventAt,
+        postUuid: fanvuePaymentReceipts.postUuid,
+        messageUuid: fanvuePaymentReceipts.messageUuid,
+        tipContext: fanvuePaymentReceipts.tipContext,
+      })
+      .from(fanvuePaymentReceipts)
+      .where(
+        and(
+          eq(fanvuePaymentReceipts.workspaceId, input.workspaceId),
+          eq(fanvuePaymentReceipts.accountId, input.accountId),
+          ...(input.before
+            ? [
+                or(
+                  lt(fanvuePaymentReceipts.eventAt, input.before.eventAt),
+                  and(
+                    eq(fanvuePaymentReceipts.eventAt, input.before.eventAt),
+                    lt(fanvuePaymentReceipts.id, input.before.id),
+                  ),
+                ),
+              ]
+            : []),
+        ),
+      )
+      .orderBy(desc(fanvuePaymentReceipts.eventAt), desc(fanvuePaymentReceipts.id))
+      .limit(input.limit),
+  );
 }

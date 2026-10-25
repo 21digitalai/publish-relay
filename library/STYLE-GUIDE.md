@@ -93,6 +93,14 @@ Normal text must meet 4.5:1 contrast and large text/UI boundaries 3:1. Semantic 
 
 ## Information architecture
 
+The optional engagement review inbox is `/w/:workspace/proposals` in the existing rail and
+`WorkspaceLayout`. `src/ui/engagement-proposals.tsx` owns a bounded pending list, selected
+detail, text draft edit, and dismiss confirmation using the shared confirmation dialog.
+It identifies agent-supplied source context as unverified, and explicitly says that saving
+or dismissing does not send. Media/price suggestions remain visible facts but cannot be
+previewed or approved until the canonical provider send integration is ready. The inbox
+does not impose review on direct-send agent permissions.
+
 Workspace Settings uses the existing `confirm-dialog` for deletion of an empty, non-current
 owned workspace. The row action is disabled with a reason for current, last, or non-owned rows;
 the dialog requires the exact displayed name and renders server resource blockers inline.

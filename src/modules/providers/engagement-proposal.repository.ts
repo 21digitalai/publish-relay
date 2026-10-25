@@ -163,10 +163,17 @@ export async function listPendingEngagementProposals(
   workspaceId: string,
   page?: { beforeCreatedAt?: Date; beforeId?: string; limit: number },
 ) {
-  return withTenantTransaction(database, { workspaceId }, (tx) =>
-    tx
-      .select()
+  return withTenantTransaction(database, { workspaceId }, async (tx) => {
+    const rows = await tx
+      .select({ proposal: engagementProposals, accountDisplayName: providerAccounts.displayName })
       .from(engagementProposals)
+      .innerJoin(
+        providerAccounts,
+        and(
+          eq(providerAccounts.workspaceId, engagementProposals.workspaceId),
+          eq(providerAccounts.id, engagementProposals.accountId),
+        ),
+      )
       .where(
         and(
           eq(engagementProposals.workspaceId, workspaceId),
@@ -185,8 +192,9 @@ export async function listPendingEngagementProposals(
         ),
       )
       .orderBy(desc(engagementProposals.createdAt), desc(engagementProposals.id))
-      .limit(page?.limit ?? 100),
-  );
+      .limit(page?.limit ?? 100);
+    return rows.map((row) => ({ ...row.proposal, accountDisplayName: row.accountDisplayName }));
+  });
 }
 
 export async function getEngagementProposal(
@@ -196,11 +204,18 @@ export async function getEngagementProposal(
 ) {
   return withTenantTransaction(database, { workspaceId }, async (tx) => {
     const [row] = await tx
-      .select()
+      .select({ proposal: engagementProposals, accountDisplayName: providerAccounts.displayName })
       .from(engagementProposals)
+      .innerJoin(
+        providerAccounts,
+        and(
+          eq(providerAccounts.workspaceId, engagementProposals.workspaceId),
+          eq(providerAccounts.id, engagementProposals.accountId),
+        ),
+      )
       .where(and(eq(engagementProposals.workspaceId, workspaceId), eq(engagementProposals.id, id)))
       .limit(1);
-    return row ?? null;
+    return row ? { ...row.proposal, accountDisplayName: row.accountDisplayName } : null;
   });
 }
 

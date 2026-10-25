@@ -145,6 +145,10 @@ describe('engagement proposal foundation', () => {
         listResponse.json<{ data: { items: { id: string }[]; nextCursor: string | null } }>().data
           .items[0]?.id,
       ).toBe(createdBody.data.id);
+      expect(
+        listResponse.json<{ data: { items: { accountDisplayName: string }[] } }>().data.items[0]
+          ?.accountDisplayName,
+      ).toBe('Page A');
       expect(listResponse.body).not.toContain('proposerId');
       expect(listResponse.body).not.toContain('credentialId');
       expect(listResponse.body).not.toContain('targetId');
@@ -198,6 +202,9 @@ describe('engagement proposal foundation', () => {
       });
       expect(detail.statusCode).toBe(200);
       expect(detail.json<{ data: { targetId: string } }>().data.targetId).toBe('comment-2');
+      expect(detail.json<{ data: { accountDisplayName: string } }>().data.accountDisplayName).toBe(
+        'Page A',
+      );
       const foreignDetail = await app.inject({
         method: 'GET',
         url: `/api/engagement-proposals/${createdBody.data.id}`,

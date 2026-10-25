@@ -495,3 +495,10 @@ Production releases install production dependencies without building on the host
 - The proposal API is split by actor: `POST /api/v1/engagement-proposals` requires a machine `engagement:propose` capability and an explicit workspace header; browser create, list, detail, edit and dismiss under `/api/engagement-proposals` require authenticated workspace content permissions, with CSRF on mutations. Both paths call the same workspace-bound repository. Input fields and pending-list output are bounded; the list is keyset-paginated at 50 small preview rows, while exact source/proposed text is available only through workspace-authorized detail. Provider tokens and full account records are never serialized. These endpoints stage review data only and cannot send to a provider.
 - SQL enforces same-workspace account foreign keys and tenant RLS. Proposal creation checks exact active account/connection reach; provider media readiness, price validity and send capability must still be rechecked by the later canonical approve/send command. This foundation performs no provider call.
 - Proposal creation resolves exact-action replay before admission, so disconnect cannot erase a prior receipt. For new actions it locks both the selected account and its active, unrevoked connection before insert; concurrent disconnect/revoke must serialize behind that admission. Tenant RLS is forced even for the table owner.
+# Engagement proposal account label
+
+Pending proposal summaries and exact browser detail join the workspace-bound provider
+account to project only its friendly display name. The page does not download all
+accounts or expose a raw account ID as its destination label. Create/edit/dismiss keep
+their existing bounded contracts; current account and send permission must still be
+rechecked by the later approve command.

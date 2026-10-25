@@ -3055,3 +3055,57 @@ textarea:focus-visible {
     animation: none;
   }
 }
+.engagement-proposals-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.engagement-proposals-page .page-header { margin-bottom: 24px; }
+.engagement-proposals-page .muted { color: var(--text-muted, #a7adbd); }
+.engagement-proposals-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
+  gap: 16px;
+}
+.engagement-proposals-list,
+.engagement-proposal-detail {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border, #2c3140);
+  border-radius: 12px;
+  background: var(--surface-1, #11131a);
+}
+.engagement-proposals-list { display: flex; flex-direction: column; gap: 8px; }
+.engagement-proposal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border, #2c3140);
+  border-radius: 8px;
+  background: var(--surface-2, #181b24);
+  color: var(--text, #f4f6fa);
+  text-align: left;
+  cursor: pointer;
+}
+.engagement-proposal-row.selected { border-color: var(--focus, #a98bff); }
+.engagement-proposal-row span { overflow-wrap: anywhere; }
+.engagement-proposal-row small { color: var(--text-muted, #a7adbd); }
+.engagement-proposal-source {
+  margin: 16px 0;
+  padding: 12px;
+  border-left: 3px solid var(--focus, #a98bff);
+  background: var(--surface-2, #181b24);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.engagement-proposal-draft { width: 100%; min-height: 150px; resize: vertical; }
+.engagement-proposal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.engagement-proposal-actions button { min-height: 40px; }
+@media (max-width: 767px) {
+  .engagement-proposals-page { padding: 12px; }
+  .engagement-proposals-layout { grid-template-columns: minmax(0, 1fr); }
+  .engagement-proposal-actions button { min-height: 44px; }
+}

@@ -46,6 +46,9 @@ import type { FanvueHttpClient } from '../modules/providers/fanvue-http-client.j
 import { registerFanvueOauthRoutes } from '../modules/providers/fanvue-oauth.routes.js';
 import { FanvueReadClient } from '../modules/providers/fanvue-read-client.js';
 import { FanvueReadService } from '../modules/providers/fanvue-read.service.js';
+import { FanvueMessageClient } from '../modules/providers/fanvue-message-client.js';
+import { FanvueMessageService } from '../modules/providers/fanvue-message.service.js';
+import { registerFanvueMessageRoutes } from '../modules/providers/fanvue-message.routes.js';
 import {
   registerFanvueBrowserReadRoutes,
   registerFanvueReadRoutes,
@@ -195,19 +198,22 @@ function registerMachineApiRoutes(
       ? { keys: options.tiktokOauth.keys, client: options.tiktokOauth.client }
       : undefined,
   );
-  if (options.fanvueOauth)
-    registerFanvueReadRoutes(
+  if (options.fanvueOauth) {
+    const reads = new FanvueReadService(
+      database,
+      options.fanvueOauth.keys,
+      options.fanvueOauth.client,
+      new FanvueReadClient(),
+    );
+    registerFanvueReadRoutes(application, reads, apiKeys, rateLimiter, delegatedAuthorization);
+    registerFanvueMessageRoutes(
       application,
-      new FanvueReadService(
-        database,
-        options.fanvueOauth.keys,
-        options.fanvueOauth.client,
-        new FanvueReadClient(),
-      ),
+      new FanvueMessageService(database, reads, new FanvueMessageClient(), actionPolicy),
       apiKeys,
       rateLimiter,
       delegatedAuthorization,
     );
+  }
   if (!config.CURSOR_SIGNING_SECRET)
     throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
   registerPostRoutes(

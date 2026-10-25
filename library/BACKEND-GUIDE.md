@@ -380,6 +380,20 @@ Migration 0073 owns Page-wide advisory occupancy. `list_facebook_page_occupancy`
 
 Selected Meta remote-grant revoke reserves the connection with durable `revoking` status before calling Meta. Workspace-row locking serializes that reservation with subject reconnect, local account disconnect, and post creation/revision admission. A `revoking` connection cannot receive new jobs or credentials; active/reconciliation jobs block reservation. The selected credential ID is rechecked at finalization, which atomically disconnects linked accounts and revokes authority/Page credentials. Transient remote failure or remote-success/local-failure leaves `revoking` in place: retry uses the same credential, treats Meta already-invalid grant responses as success, and finishes local cleanup without replacing a newer grant. A completed `revoked` retry is idempotent. The API returns a recovery-oriented pending message rather than silently reopening admission.
 
+## Fanvue message send command
+
+`POST /api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages` is the account-scoped,
+text-only machine command. It requires `fanvue:chats:send`, separately from read/propose access,
+and derives workspace and actor from the authenticated API key or delegated grant. The route
+validates input and mutation rate, then calls the single `FanvueMessageService.sendText` path;
+it does not create a second provider send implementation. The service rechecks the selected
+creator/chat and current `read:chat` plus `write:chat` consent, applies neutral `engagement.send`
+policy, reserves durable `clientActionId` intent before one provider POST, and returns bounded
+confirmed/failed/unknown state. Unknown never implies retry authority. The route returns no
+provider token, private chat body, internal fingerprint or account metadata. Free/paid media
+and the optional write-consent UI remain separate acceptance slices; this text route alone
+does not activate sending for an account without the necessary grant.
+
 ## External draft handoff
 
 The authenticated `GET /api/workflow/drafts/:draftId` browser detail projects only ordered attached media ID, MIME type, byte size, verified duration, ready flag, and a workspace-authenticated preview URL for ready media. It does not expose storage keys, hashes, credentials, source actor/client IDs, or arbitrary media metadata. Missing media metadata remains explicit rather than inferred from attachment count; Composer removal is local selection, not a mutation of the source draft.

@@ -31,9 +31,15 @@ export type FanvueTextMessageResult =
   | { state: 'failed'; failureStatus: number }
   | { state: 'unknown' };
 
+export class FanvueMessageActionConflictError extends Error {
+  constructor() {
+    super('Fanvue action ID conflicts with prior input');
+  }
+}
+
 function replayResult(reservation: FanvueActionReservation): FanvueTextMessageResult {
   if (reservation.kind === 'conflict')
-    throw new Error('Fanvue action ID conflicts with prior input');
+    throw new FanvueMessageActionConflictError();
   if (reservation.kind === 'new') throw new Error('Expected an existing Fanvue action');
   if (reservation.state === 'confirmed' && reservation.providerObjectUuid)
     return { state: 'confirmed', messageUuid: reservation.providerObjectUuid };

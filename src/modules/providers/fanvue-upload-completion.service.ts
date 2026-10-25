@@ -2,7 +2,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { withProviderStagingLock } from '../content/provider-staging-lock.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
-import type { FanvueMediaUploadClient } from './fanvue-media-upload-client.js';
+import {
+  fanvueCompletionStatusSchema,
+  type FanvueMediaUploadClient,
+} from './fanvue-media-upload-client.js';
 import {
   confirmFanvueUploadCompletion,
   reserveFanvueUploadCompletion,
@@ -34,7 +37,13 @@ export async function completeFanvueUpload(
       throw new Error('Fanvue upload parts are incomplete');
     if (!(await reserveFanvueUploadCompletion(database, keys, input)))
       throw new Error('Fanvue upload completion is not eligible for dispatch');
-    await client.completeSession(input.accessToken, session.uploadId, session.parts);
+    const response = await client.completeSession(
+      input.accessToken,
+      session.uploadId,
+      session.parts,
+    );
+    if (!fanvueCompletionStatusSchema.safeParse(response.status).success)
+      throw new Error('Fanvue upload completion was not confirmed');
     if (!(await confirmFanvueUploadCompletion(database, keys, input)))
       throw new Error('Fanvue upload completion could not be persisted');
   });

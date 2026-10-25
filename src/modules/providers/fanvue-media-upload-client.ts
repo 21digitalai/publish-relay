@@ -22,6 +22,7 @@ const mediaStatus = z.object({
   status: z.enum(['created', 'processing', 'ready', 'error']),
   errorReason: z.string().nullish(),
 });
+export const fanvueCompletionStatusSchema = z.enum(['processing', 'ready']);
 
 export class FanvueMediaUploadClient {
   constructor(
@@ -122,7 +123,7 @@ export class FanvueMediaUploadClient {
       accessToken,
       `/media/uploads/${id}`,
       { method: 'PATCH', body: JSON.stringify(body) },
-      z.object({ status: z.string() }),
+      z.object({ status: fanvueCompletionStatusSchema }),
     );
   }
 
@@ -161,7 +162,7 @@ export class FanvueMediaUploadClient {
       throw new FanvueRequestError(502, 'invalid_response');
     }
     const parsed = schema.safeParse(body);
-    if (!parsed.success) throw new FanvueRequestError(response.status, 'invalid_response');
+    if (!parsed.success) throw new FanvueRequestError(502, 'invalid_response');
     return parsed.data;
   }
 }

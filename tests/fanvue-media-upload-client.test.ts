@@ -107,6 +107,15 @@ describe('Fanvue multipart media transport', () => {
     ).rejects.toMatchObject({ status: 502, code: 'invalid_response' });
   });
 
+  it('rejects a completion response that does not confirm processing or readiness', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: 'error' }));
+    await expect(
+      new FanvueMediaUploadClient(request).completeSession('token', 'session', [
+        { PartNumber: 1, ETag: 'etag' },
+      ]),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_response' });
+  });
+
   it.each([
     [1, [{ partNumber: 2, url: 'https://uploads.example.test/2' }]],
     [2, [{ partNumber: 1, url: 'https://uploads.example.test/1' }]],

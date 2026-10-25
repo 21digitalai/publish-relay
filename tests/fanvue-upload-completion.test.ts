@@ -81,4 +81,14 @@ describe('Fanvue upload completion', () => {
     expect(events).toEqual(['reserve']);
     expect(mock.confirm).not.toHaveBeenCalled();
   });
+
+  it('does not record processing when the provider reports an error status', async () => {
+    client.completeSession.mockResolvedValueOnce({ status: 'error' });
+    await expect(
+      completeFanvueUpload({} as never, client as never, {} as never, input),
+    ).rejects.toThrow('not confirmed');
+    expect(events).toEqual(['reserve']);
+    expect(client.completeSession).toHaveBeenCalledTimes(1);
+    expect(mock.confirm).not.toHaveBeenCalled();
+  });
 });

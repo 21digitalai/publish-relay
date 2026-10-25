@@ -22,12 +22,24 @@ const EXIT = {
   terminal: 9,
   timeout: 10,
 } as const;
-const MUTATIONS = new Set(['drafts:create', 'posts:create', 'media:upload', 'publishes:retry']);
+const MUTATIONS = new Set([
+  'drafts:create',
+  'posts:create',
+  'media:upload',
+  'publishes:retry',
+  'fanvue-guidance:set',
+]);
 const ROUTES: Record<string, { method: string; path: string; body?: boolean }> = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
   'fanvue:followers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/followers' },
   'fanvue:subscribers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/subscribers' },
+  'fanvue-guidance:show': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/guidance' },
+  'fanvue-guidance:set': {
+    method: 'PATCH',
+    path: '/api/v1/fanvue/accounts/:id/guidance',
+    body: true,
+  },
   'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
   'drafts:show': { method: 'GET', path: '/api/v1/drafts/:id' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
@@ -91,6 +103,8 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'relationship',
     'subscriptionStatus',
   ]),
+  'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
+  'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
   'destinations:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
@@ -585,10 +599,18 @@ async function run(): Promise<Json> {
   if (parsed.command === 'media:upload' && typeof parsed.flags['content-type'] !== 'string')
     throw new CliError(EXIT.usage, 'Media upload requires --content-type');
   const body =
-    parsed.command === 'media:upload' ? media : await readBody(parsed.flags['body-file']);
+    parsed.command === 'media:upload'
+      ? media
+      : parsed.command === 'fanvue-guidance:set' && typeof parsed.flags.file === 'string'
+        ? JSON.stringify({ guidance: await readFile(parsed.flags.file, 'utf8') })
+        : await readBody(parsed.flags['body-file']);
   if (parsed.command === 'media:upload' && !body)
     throw new CliError(EXIT.usage, 'Media upload requires --file');
-  if (route.body && !body) throw new CliError(EXIT.usage, 'This command requires --body-file');
+  if (route.body && !body)
+    throw new CliError(
+      EXIT.usage,
+      'This command requires --body-file (or --file for Fanvue guidance)',
+    );
   const idempotencyKey = parsed.flags['idempotency-key'];
   if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')
     throw new CliError(EXIT.usage, 'Mutations require --idempotency-key');

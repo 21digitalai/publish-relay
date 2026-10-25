@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 test('Fanvue publishing consent appears only as its own adapter and persists a creator connection', async ({
@@ -284,4 +287,110 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.getByLabel('Post body').fill('Blocked by capability snapshot');
   await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   expect(requests).toHaveLength(1);
+  await page.goto(accountsPath);
+  await expect(page.getByText('Fixture Creator').first()).toBeVisible();
+  const initialGuidance = await page.request.get(`/api/fanvue/accounts/${accountId}/guidance`);
+  expect(initialGuidance.status(), await initialGuidance.text()).toBe(200);
+  const editor = page.getByRole('textbox', { name: 'Agent guidance' });
+  await expect(editor).toBeVisible();
+  await editor.fill(
+    'Offer a friendly greeting. Do not promise content without checking availability.',
+  );
+  await page.getByRole('button', { name: 'Save guidance' }).click();
+  await expect(page.getByText('Agent guidance saved.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Agent guidance' })).toHaveValue(
+    'Offer a friendly greeting. Do not promise content without checking availability.',
+  );
+  const guidanceResponse = await page.request.get(`/api/fanvue/accounts/${accountId}/guidance`);
+  const guidanceBody = (await guidanceResponse.json()) as { data: { guidance: string } };
+  expect(guidanceBody.data.guidance).toContain('Offer a friendly greeting');
+  expect(accounts.data.accounts.find((account) => account.id === accountId)).not.toHaveProperty(
+    'fanvueAgentGuidance',
+  );
+
+  const makeKey = async (capabilities: string[]) => {
+    const response = await page.request.post('/api/settings/api-keys', {
+      headers: { 'x-csrf-token': csrf },
+      data: { label: `Guidance ${randomUUID()}`, capabilities },
+    });
+    expect(response.status()).toBe(201);
+    return ((await response.json()) as { data: { token: string } }).data.token;
+  };
+  const readKey = await makeKey(['fanvue:guidance:read']);
+  const writeKey = await makeKey(['fanvue:guidance:write']);
+  const machineHeaders = (token: string) => ({
+    authorization: `Bearer ${token}`,
+    'x-publish-relay-workspace': workspaceId,
+  });
+  expect(
+    (
+      await page.request.patch(`/api/v1/fanvue/accounts/${accountId}/guidance`, {
+        headers: machineHeaders(readKey),
+        data: { guidance: 'Not authorized' },
+      })
+    ).status(),
+  ).toBe(403);
+  expect(
+    (
+      await page.request.get(`/api/v1/fanvue/accounts/${accountId}/guidance`, {
+        headers: machineHeaders(writeKey),
+      })
+    ).status(),
+  ).toBe(403);
+  expect(
+    (
+      await page.request.get(`/api/v1/fanvue/accounts/${randomUUID()}/guidance`, {
+        headers: machineHeaders(readKey),
+      })
+    ).status(),
+  ).toBe(404);
+  expect(
+    (
+      await page.request.get(`/api/v1/fanvue/accounts/${accountId}/guidance`, {
+        headers: { ...machineHeaders(readKey), 'x-publish-relay-workspace': randomUUID() },
+      })
+    ).status(),
+  ).toBe(401);
+  expect(
+    (
+      await page.request.patch(`/api/v1/fanvue/accounts/${accountId}/guidance`, {
+        headers: machineHeaders(writeKey),
+        data: { guidance: 'x'.repeat(10_001) },
+      })
+    ).status(),
+  ).toBe(400);
+
+  const directory = mkdtempSync(join(tmpdir(), 'publish-relay-guidance-'));
+  try {
+    const textFile = join(directory, 'guidance.txt');
+    writeFileSync(textFile, 'CLI-edited account guidance');
+    const cli = (args: string[], token: string): { data: { guidance: string } } =>
+      JSON.parse(
+        execFileSync(
+          'node',
+          [
+            'dist/entrypoints/cli.js',
+            'fanvue-guidance',
+            ...args,
+            '--base-url',
+            'http://127.0.0.1:43199',
+            '--require-workspace',
+            workspaceId,
+          ],
+          { env: { ...process.env, PUBLISH_RELAY_API_KEY: token }, encoding: 'utf8' },
+        ),
+      ) as { data: { guidance: string } };
+    expect(
+      cli(['set', accountId, '--file', textFile, '--idempotency-key', randomUUID()], writeKey).data
+        .guidance,
+    ).toBe('CLI-edited account guidance');
+    expect(cli(['show', accountId], readKey).data.guidance).toBe('CLI-edited account guidance');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Agent guidance' })).toHaveValue(
+    'CLI-edited account guidance',
+  );
 });

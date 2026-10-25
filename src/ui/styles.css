@@ -1145,6 +1145,24 @@ textarea:focus-visible {
 .fanvue-audience-list li {
   overflow-wrap: anywhere;
 }
+.fanvue-guidance-control {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+}
+.fanvue-guidance-control textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+}
+.fanvue-guidance-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .account-module-success {
   padding: 12px 16px;
   border: 1px solid var(--success);

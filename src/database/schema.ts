@@ -520,6 +520,7 @@ export const providerAccounts = pgTable(
     displayName: text('display_name').notNull(),
     adapterDefaults: jsonb('adapter_defaults').notNull().default({}),
     xLongPostsAllowed: boolean('x_long_posts_allowed').notNull().default(false),
+    fanvueAgentGuidance: text('fanvue_agent_guidance').notNull().default(''),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
     ...timestamps,
   },

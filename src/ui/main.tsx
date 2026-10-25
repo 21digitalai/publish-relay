@@ -7,6 +7,7 @@ import { DefaultsSelect } from './defaults-select.js';
 import { EngagementProposalsPage } from './engagement-proposals.js';
 import { FacebookPageExposureControl } from './facebook-page-exposure-control.js';
 import { FanvueAudienceControl } from './fanvue-audience-control.js';
+import { FanvueGuidanceControl } from './fanvue-guidance-control.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
@@ -1031,6 +1032,7 @@ function AccountRow({
   onEnableAudienceRead,
   onDefaultsSaved,
   originWorkspaceId,
+  canManageAccount,
 }: {
   account: Account;
   onDisconnect: (account: Account) => void;
@@ -1042,6 +1044,7 @@ function AccountRow({
   onEnableAudienceRead: () => void;
   onDefaultsSaved: (account: Account) => void;
   originWorkspaceId: string | null;
+  canManageAccount: boolean;
 }) {
   const revocationPending = account.health === 'Revocation pending';
   const publishingUnavailable = account.availability === 'publishing_unavailable';
@@ -1220,6 +1223,9 @@ function AccountRow({
               ? 'Message reading is enabled. Message sending requires separate permission.'
               : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
         </p>
+      )}
+      {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && canManageAccount && (
+        <FanvueGuidanceControl accountId={account.id} />
       )}
       {!account.isExposed &&
         account.provider.toLowerCase() === 'fanvue' &&
@@ -1894,6 +1900,7 @@ function AccountsPage() {
                     {rows.map((account) => (
                       <AccountRow
                         account={account}
+                        canManageAccount={managedWorkspaceId !== null}
                         key={account.id}
                         onDisconnect={(selected) => {
                           setDisconnecting({ account: selected, remote: false });

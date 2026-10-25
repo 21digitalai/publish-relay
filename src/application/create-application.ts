@@ -75,6 +75,7 @@ import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-t
 import { registerTikTokMediaRoutes } from '../modules/providers/tiktok-media.routes.js';
 import { TikTokMediaGrantService } from '../modules/providers/tiktok-media-grant.service.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
+import { registerFanvueGuidanceRoutes } from '../modules/credentials/fanvue-guidance.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
 import { registerRedactedNotFoundHandler, requestLoggerOptions } from './request-logger.js';
@@ -200,6 +201,14 @@ function registerMachineApiRoutes(
   const rateLimiter = createApiRateLimiter();
   registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
   if (!database) return;
+  registerFanvueGuidanceRoutes(
+    application,
+    database,
+    auth,
+    apiKeys,
+    rateLimiter,
+    delegatedAuthorization,
+  );
   registerDestinationRoutes(
     application,
     database,

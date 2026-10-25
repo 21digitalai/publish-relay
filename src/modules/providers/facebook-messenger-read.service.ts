@@ -113,7 +113,11 @@ export async function listAccountPageConversations(
       accessToken?: unknown;
       pageId?: unknown;
     };
-    if (credential.pageId !== page.pageId || typeof credential.accessToken !== 'string')
+    if (
+      credential.pageId !== page.pageId ||
+      typeof credential.accessToken !== 'string' ||
+      credential.accessToken.length === 0
+    )
       throw new Error('Facebook Page Messenger access is unavailable');
     return await runtime.client.listPageConversations({
       pageId: page.pageId,

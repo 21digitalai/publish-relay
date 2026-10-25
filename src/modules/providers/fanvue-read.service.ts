@@ -1,5 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { z } from 'zod';
 
 import { providerAccounts, providerConnections } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -61,6 +62,21 @@ export class FanvueReadService {
     return this.readClient.listMessages(token, input.fanUuid, input);
   }
 
+  /** A returned counterpart message proves this selected creator already has the fan chat. */
+  async getExistingChatForMessage(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+  }) {
+    const fanUuid = z.uuid().parse(input.fanUuid);
+    const token = await this.accessToken(input, 'chat', ['write:chat']);
+    const messages = await this.readClient.listMessages(token, fanUuid, { size: 1 });
+    const first = messages.data[0];
+    if (!first || (first.sender.uuid !== fanUuid && first.recipient.uuid !== fanUuid))
+      throw new FanvueReadUnavailableError('account_not_found');
+    return { accessToken: token };
+  }
+
   async listMedia(input: { workspaceId: string; accountId: string; page?: number; size?: number }) {
     const token = await this.accessToken(input, 'media');
     return this.readClient.listMedia(token, input);
@@ -100,7 +116,9 @@ export class FanvueReadService {
   private async accessToken(
     input: { workspaceId: string; accountId: string },
     module: FanvueReadModule,
+    additionalScopes: readonly string[] = [],
   ): Promise<string> {
+    const requiredScopes = [REQUIRED_SCOPES[module], ...additionalScopes];
     const [account] = await withTenantTransaction(this.database, input, (transaction) =>
       transaction
         .select({
@@ -139,7 +157,11 @@ export class FanvueReadService {
       )
     )
       throw new FanvueReadUnavailableError('reconnect_required');
-    if (!Array.isArray(account.scopes) || !account.scopes.includes(REQUIRED_SCOPES[module]))
+    const storedScopes = z.array(z.string()).safeParse(account.scopes);
+    if (
+      !storedScopes.success ||
+      !requiredScopes.every((scope) => storedScopes.data.includes(scope))
+    )
       throw new FanvueReadUnavailableError('scope_missing');
     let token;
     try {
@@ -152,7 +174,8 @@ export class FanvueReadService {
         throw new FanvueReadUnavailableError('reconnect_required');
       throw error;
     }
-    if (!token.scope.split(/\s+/).includes(REQUIRED_SCOPES[module]))
+    const grantedScopes = token.scope.split(/\s+/);
+    if (!requiredScopes.every((scope) => grantedScopes.includes(scope)))
       throw new FanvueReadUnavailableError('scope_missing');
     const [stillConnected] = await withTenantTransaction(this.database, input, (transaction) =>
       transaction

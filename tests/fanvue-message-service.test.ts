@@ -1,0 +1,98 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const ledger = vi.hoisted(() => ({ reserve: vi.fn(), settle: vi.fn() }));
+vi.mock('../src/modules/providers/fanvue-action-intent.repository.js', () => ({
+  reserveFanvueAction: ledger.reserve,
+  settleFanvueAction: ledger.settle,
+}));
+
+import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
+import { FanvueMessageService } from '../src/modules/providers/fanvue-message.service.js';
+
+const input = {
+  workspaceId: '00000000-0000-4000-8000-000000000001',
+  accountId: '00000000-0000-4000-8000-000000000002',
+  fanUuid: '00000000-0000-4000-8000-000000000003',
+  clientActionId: '00000000-0000-4000-8000-000000000004',
+  text: 'Hello',
+};
+const messageUuid = '00000000-0000-4000-8000-000000000005';
+const events: string[] = [];
+const reads = {
+  getExistingChatForMessage: vi.fn(() => {
+    events.push('preflight');
+    return Promise.resolve({ accessToken: 'token' });
+  }),
+};
+const client = {
+  sendMessage: vi.fn(() => {
+    events.push('send');
+    return Promise.resolve({ messageUuid });
+  }),
+};
+const service = new FanvueMessageService({} as never, reads as never, client as never);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  events.length = 0;
+  ledger.reserve.mockImplementation(() => {
+    events.push('reserve');
+    return Promise.resolve({ kind: 'new', id: '00000000-0000-4000-8000-000000000006' });
+  });
+  ledger.settle.mockImplementation(() => {
+    events.push('settle');
+    return Promise.resolve();
+  });
+});
+
+describe('Fanvue existing-chat text send command', () => {
+  it('preflights selected creator/fan and commits intent before one text-only send', async () => {
+    await expect(service.sendText(input)).resolves.toEqual({ state: 'confirmed', messageUuid });
+    expect(events).toEqual(['preflight', 'reserve', 'send', 'settle']);
+    expect(reads.getExistingChatForMessage).toHaveBeenCalledWith(input);
+    expect(client.sendMessage).toHaveBeenCalledWith('token', input.fanUuid, { text: input.text });
+    expect(ledger.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ result: { state: 'confirmed', providerObjectUuid: messageUuid } }),
+    );
+  });
+
+  it('never reserves or sends without account, chat or write-scope reach', async () => {
+    reads.getExistingChatForMessage.mockRejectedValueOnce(new Error('scope missing'));
+    await expect(service.sendText(input)).rejects.toThrow('scope missing');
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not resend an existing or conflicting action ID', async () => {
+    ledger.reserve.mockResolvedValueOnce({
+      kind: 'existing',
+      state: 'unknown',
+      providerObjectUuid: null,
+      failureStatus: null,
+    });
+    await expect(service.sendText(input)).resolves.toEqual({ state: 'unknown' });
+    ledger.reserve.mockResolvedValueOnce({ kind: 'conflict' });
+    await expect(service.sendText({ ...input, text: 'Changed' })).rejects.toThrow('conflicts');
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(ledger.settle).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 403, 429])('settles definite HTTP %i as failed', async (status) => {
+    client.sendMessage.mockRejectedValueOnce(new FanvueRequestError(status));
+    await expect(service.sendText(input)).resolves.toEqual({
+      state: 'failed',
+      failureStatus: status,
+    });
+  });
+
+  it('settles timeout as unknown without retrying the send', async () => {
+    client.sendMessage.mockRejectedValueOnce(new Error('timeout'));
+    await expect(service.sendText(input)).resolves.toEqual({ state: 'unknown' });
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(ledger.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ result: { state: 'unknown' } }),
+    );
+  });
+});

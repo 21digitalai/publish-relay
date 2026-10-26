@@ -150,7 +150,13 @@ describe('Meta OAuth service', () => {
       workspaceId: 'w1',
       state: 'state',
       userId: 'u1',
-      provider: ['meta', 'meta:facebook_pages', 'meta:instagram', 'meta:facebook_page_messages'],
+      provider: [
+        'meta',
+        'meta:facebook_pages',
+        'meta:instagram',
+        'meta:facebook_page_messages',
+        'meta:facebook_page_comments',
+      ],
     });
     expect(client.exchangeCode).not.toHaveBeenCalled();
   });

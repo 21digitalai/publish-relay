@@ -116,6 +116,7 @@ const migrations = [
   '0088_fanvue_agent_guidance.sql',
   '0090_facebook_page_engagement_foundation.sql',
   '0092_facebook_page_messages_grant.sql',
+  '0093_facebook_page_comments_grant.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

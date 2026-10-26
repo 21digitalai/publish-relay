@@ -5,6 +5,7 @@ export const META_PERMISSIONS = [
   'pages_read_engagement',
   'pages_manage_posts',
   'pages_read_user_content',
+  'pages_manage_engagement',
   'pages_messaging',
   'pages_manage_metadata',
   'instagram_basic',

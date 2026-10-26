@@ -677,6 +677,39 @@ export const facebookPageDmActions = pgTable(
   ],
 );
 
+export const facebookPageCommentActions = pgTable(
+  'facebook_page_comment_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    commentId: text('comment_id').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    state: text('state').notNull().default('reserved'),
+    providerCommentId: text('provider_comment_id'),
+    failureStatus: integer('failure_status'),
+    actorType: actorType('actor_type').notNull(),
+    actorId: uuid('actor_id').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('facebook_page_comment_actions_workspace_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_comment_actions_account_fk',
+    }).onDelete('restrict'),
+    check(
+      'facebook_page_comment_actions_state_check',
+      sql`${table.state} IN ('reserved', 'confirmed', 'failed', 'unknown')`,
+    ),
+  ],
+);
+
 // Provider-neutral review-first queue. Approval uses the canonical provider command, not this row.
 export const engagementProposals = pgTable(
   'engagement_proposals',

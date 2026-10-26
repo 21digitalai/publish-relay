@@ -51,6 +51,7 @@ export function isPageReadEligible(
   evidence: PageReadEvidence,
   module: PageReadModule,
   additionalScopes: readonly string[] = [],
+  additionalTasks: readonly string[] = [],
 ): boolean {
   const scopes = module === 'dms' ? evidence.dmsGrantedScopes : evidence.commentsGrantedScopes;
   const grantedScopes = Array.isArray(scopes) ? scopes : [];
@@ -70,7 +71,8 @@ export function isPageReadEligible(
     (module !== 'dms' || evidence.dmsCredentialId === evidence.credentialId) &&
     [...requirement.scopes, ...additionalScopes].every((scope) => grantedScopes.includes(scope)) &&
     Array.isArray(tasks) &&
-    tasks.includes(requirement.task)
+    tasks.includes(requirement.task) &&
+    additionalTasks.every((task) => tasks.includes(task))
   );
 }
 
@@ -141,13 +143,14 @@ export async function withPageReadToken<T>(
     accountId: string;
     module: PageReadModule;
     additionalScopes?: readonly string[];
+    additionalTasks?: readonly string[];
   },
   read: (pageId: string, accessToken: string) => Promise<T>,
 ): Promise<T> {
   const page = await loadPageReadEvidence(runtime.database, input);
   if (
     !page ||
-    !isPageReadEligible(page, input.module, input.additionalScopes) ||
+    !isPageReadEligible(page, input.module, input.additionalScopes, input.additionalTasks) ||
     !(input.module === 'comments' ? page.commentsCredentialId : page.credentialId)
   )
     throw new PageReadUnavailableError();

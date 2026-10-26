@@ -48,6 +48,34 @@ describe('Facebook Page Messenger read eligibility', () => {
     }
   });
 
+  it('requires send-specific Comments scope and moderation task without weakening reads', () => {
+    const granted = {
+      ...permitted,
+      commentsGrantedScopes: [
+        ...(permitted.commentsGrantedScopes as string[]),
+        'pages_read_user_content',
+        'pages_manage_engagement',
+      ],
+    };
+    expect(isPageReadEligible(granted, 'comments', ['pages_read_user_content'])).toBe(true);
+    expect(
+      isPageReadEligible(
+        granted,
+        'comments',
+        ['pages_read_user_content', 'pages_manage_engagement'],
+        ['MODERATE'],
+      ),
+    ).toBe(false);
+    expect(
+      isPageReadEligible(
+        { ...granted, capabilitySnapshot: { tasks: ['CREATE_CONTENT', 'MODERATE'] } },
+        'comments',
+        ['pages_read_user_content', 'pages_manage_engagement'],
+        ['MODERATE'],
+      ),
+    ).toBe(true);
+  });
+
   it('requires the Comments read scope and selected Page task', () => {
     expect(isPageReadEligible(permitted, 'comments')).toBe(true);
     expect(

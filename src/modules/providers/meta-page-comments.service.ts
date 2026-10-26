@@ -26,7 +26,7 @@ import {
   type MetaPermission,
 } from './meta-http-client.js';
 
-const COMMENT_PERMISSIONS = ['pages_read_user_content'] as const;
+const COMMENT_PERMISSIONS = ['pages_read_user_content', 'pages_manage_engagement'] as const;
 const intentSchema = z.object({
   accountId: z.uuid(),
   pageId: z.string().min(1),
@@ -145,7 +145,8 @@ export function selectVerifiedCommentsPage(
   if (subjectId !== intent.subjectId) throw new MetaPageCommentsError('account-mismatch');
   const page = pages.find((candidate) => candidate.id === intent.pageId);
   if (!page) throw new MetaPageCommentsError('account-mismatch');
-  if (!page.tasks.includes('CREATE_CONTENT')) throw new MetaPageCommentsError('permissions');
+  if (!page.tasks.includes('CREATE_CONTENT') || !page.tasks.includes('MODERATE'))
+    throw new MetaPageCommentsError('permissions');
   return page;
 }
 

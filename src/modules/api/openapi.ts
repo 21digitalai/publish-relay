@@ -19,6 +19,7 @@ import {
 import { fanvueDmStageRequestSchema } from '../providers/fanvue-dm-stage.routes.js';
 import { fanvueCommentRequestSchema } from '../providers/fanvue-comment.routes.js';
 import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
+import { facebookCommentSendRequestSchema } from '../providers/facebook-comment-send.routes.js';
 import { facebookDmSendRequestSchema } from '../providers/facebook-messenger-send.routes.js';
 import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
@@ -419,6 +420,40 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing Page-local comments:read grant' },
             '409': { description: 'Selected Page, Comments grant or post ownership unavailable' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/facebook-posts/{postId}/comments/{commentId}/replies': {
+        post: {
+          operationId: 'replyToFacebookPageComment',
+          description:
+            'Send one reply under an exact selected Page-owned post/comment; requires comments:send, Page-local ACL and verified Comments grant. Unknown outcomes are not resent.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'postId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'commentId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(facebookCommentSendRequestSchema) },
+            },
+          },
+          responses: {
+            '201': { description: 'Provider comment confirmed; action state and comment ID only' },
+            '202': { description: 'Provider outcome unknown; do not resend' },
+            '400': { description: 'Invalid reply request' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing comments:send or Page-local ACL' },
+            '409': { description: 'Page, grant, post/comment ancestry or action unavailable' },
+            '429': { description: 'Mutation rate limit exceeded' },
+            '502': { description: 'Provider preflight failed' },
           },
         },
       },

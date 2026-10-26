@@ -211,6 +211,44 @@ export class FacebookHttpClient {
     return post.data.from.id;
   }
 
+  /** Follow bounded Graph parent edges; only the exact selected post is accepted. */
+  public async isCommentUnderPost(
+    commentId: string,
+    postId: string,
+    accessToken: string,
+  ): Promise<boolean> {
+    let current = graphIdSchema.parse(commentId);
+    const target = graphIdSchema.parse(postId);
+    const seen = new Set<string>();
+    for (let depth = 0; depth < 10; depth += 1) {
+      if (seen.has(current)) return false;
+      seen.add(current);
+      const body = await this.get(`/${current}`, { fields: 'id,parent{id}' }, accessToken);
+      const node = z
+        .object({
+          id: graphIdSchema,
+          parent: z.object({ id: graphIdSchema }),
+        })
+        .safeParse(body);
+      if (!node.success || node.data.id !== current) return false;
+      const parent = node.data.parent.id;
+      if (parent === target) return true;
+      current = parent;
+    }
+    return false;
+  }
+
+  /** A confirmed Graph ID is the only successful reply receipt. */
+  public async replyToComment(input: {
+    commentId: string;
+    text: string;
+    accessToken: string;
+  }): Promise<string> {
+    const commentId = graphIdSchema.parse(input.commentId);
+    const text = z.string().trim().min(1).max(2000).parse(input.text);
+    return this.create(`/${commentId}/comments`, { message: text }, input.accessToken);
+  }
+
   /** Caller must first prove that postId belongs to its selected Page. */
   public async listPostComments(input: {
     postId: string;

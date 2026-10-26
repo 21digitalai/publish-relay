@@ -20,6 +20,7 @@ const MUTATIONS = new Set([
   'publishes:retry',
   'fanvue-guidance:set',
   'fanvue:create-chat',
+  'facebook-comments:reply',
   'facebook-dms:send',
 ]);
 const ROUTES = {
@@ -29,6 +30,11 @@ const ROUTES = {
   'facebook-comments:list': {
     method: 'GET',
     path: '/api/v1/destinations/:id/facebook-posts/:postId/comments',
+  },
+  'facebook-comments:reply': {
+    method: 'POST',
+    path: '/api/v1/destinations/:id/facebook-posts/:postId/comments/:commentId/replies',
+    body: true,
   },
   'facebook-dms:list': { method: 'GET', path: '/api/v1/destinations/:id/facebook-conversations' },
   'facebook-dms:messages': {
@@ -125,6 +131,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'createdAt',
     'senderId',
   ]),
+  'facebook-comments:reply': new Set([...ENVELOPE_OUTPUT_KEYS, 'commentId', 'failureStatus']),
   'facebook-dms:send': new Set([...ENVELOPE_OUTPUT_KEYS, 'messageId', 'failureStatus']),
   'fanvue:followers': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
@@ -515,6 +522,7 @@ function routePath(route, command, id, flags) {
   const path = route.path
     .replace(':id', encodeURIComponent(id ?? ''))
     .replace(':postId', encodeURIComponent(String(postId ?? '')))
+    .replace(':commentId', encodeURIComponent(String(flags['comment-id'] ?? '')))
     .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')));
   if (
     command !== 'posts:list' &&
@@ -595,7 +603,7 @@ async function pollJob(profile, key, workspace, path, jobId, flags) {
 async function run() {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.6.1' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.7.0' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);
@@ -655,6 +663,19 @@ async function run() {
       EXIT.usage,
       'This command requires --body-file (or --file for Fanvue DM guidance)',
     );
+  if (parsed.command === 'facebook-comments:reply') {
+    const actionId = JSON.parse(String(body)).clientActionId;
+    if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])
+      throw new CliError(
+        EXIT.usage,
+        'Facebook comment clientActionId must match --idempotency-key',
+      );
+    if (
+      typeof parsed.flags['comment-id'] !== 'string' ||
+      !/^[0-9]+(?:_[0-9]+)*$/.test(parsed.flags['comment-id'])
+    )
+      throw new CliError(EXIT.usage, 'Facebook comment reply requires numeric --comment-id');
+  }
   if (parsed.command === 'facebook-dms:send') {
     const actionId = JSON.parse(String(body)).clientActionId;
     if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])

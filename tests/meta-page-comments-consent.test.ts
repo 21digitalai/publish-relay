@@ -19,7 +19,7 @@ const selected = {
   id: 'selected-page',
   name: 'Selected',
   accessToken: 'token',
-  tasks: ['CREATE_CONTENT'],
+  tasks: ['CREATE_CONTENT', 'MODERATE'],
 };
 const sibling = { ...selected, id: 'sibling-page' };
 
@@ -34,6 +34,12 @@ describe('selected Facebook Page Comments consent', () => {
     );
     expect(() =>
       selectVerifiedCommentsPage(intent, 'meta-user', [{ ...selected, tasks: [] }]),
+    ).toThrow(new MetaPageCommentsError('permissions'));
+  });
+
+  it('requires the Page moderation task for reply authority', () => {
+    expect(() =>
+      selectVerifiedCommentsPage(intent, 'meta-user', [{ ...selected, tasks: ['CREATE_CONTENT'] }]),
     ).toThrow(new MetaPageCommentsError('permissions'));
   });
 

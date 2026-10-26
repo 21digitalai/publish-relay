@@ -103,7 +103,7 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.6.1' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.7.0' } });
     },
   );
 
@@ -174,6 +174,63 @@ describe('Publish Relay CLI', () => {
       );
       expect(invalid.code).toBe(2);
       expect(paths).toHaveLength(2);
+    },
+  );
+
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'sends one Page-scoped comment reply with exact action key and bounded receipt in %s',
+    async (entrypoint) => {
+      const accountId = '00000000-0000-4000-8000-000000000002';
+      const actionId = '00000000-0000-4000-8000-000000000003';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        201,
+        {
+          success: true,
+          data: { state: 'confirmed', commentId: '123_456_900', accessToken: 'private' },
+        },
+        undefined,
+        paths,
+      );
+      const folder = await mkdtemp(join(tmpdir(), 'relay-comment-'));
+      const bodyFile = join(folder, 'reply.json');
+      await writeFile(bodyFile, JSON.stringify({ clientActionId: actionId, text: 'Thanks' }));
+      const args = [
+        'facebook-comments',
+        'reply',
+        accountId,
+        '--post-id',
+        '123_456',
+        '--comment-id',
+        '123_456_789',
+        '--body-file',
+        bodyFile,
+        '--idempotency-key',
+        actionId,
+        '--base-url',
+        baseUrl,
+      ];
+      const sent = await cli(args, { PUBLISH_RELAY_API_KEY: 'test-key' }, entrypoint);
+      expect(sent.code).toBe(0);
+      expect(paths).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-posts/123_456/comments/123_456_789/replies`,
+      ]);
+      expect(JSON.parse(sent.stdout)).toMatchObject({
+        data: { state: 'confirmed', commentId: '123_456_900', accessToken: '[REDACTED]' },
+      });
+      const invalid = await cli(
+        [
+          ...args.slice(0, -4),
+          '--idempotency-key',
+          '00000000-0000-4000-8000-000000000005',
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(invalid.code).toBe(2);
+      expect(paths).toHaveLength(1);
     },
   );
 

@@ -39,6 +39,7 @@ import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth
 import type { MetaHttpClient, MetaPermission } from '../modules/providers/meta-http-client.js';
 import type { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-page-read.routes.js';
+import { registerFacebookPageCommentSendRoute } from '../modules/providers/facebook-comment-send.routes.js';
 import { registerFacebookPageDmSendRoute } from '../modules/providers/facebook-messenger-send.routes.js';
 import { registerFacebookPageBrowserReadRoutes } from '../modules/providers/facebook-page-browser-read.routes.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
@@ -233,6 +234,13 @@ function registerMachineApiRoutes(
     registerFacebookPageReadRoutes(
       application,
       facebook,
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+    registerFacebookPageCommentSendRoute(
+      application,
+      { ...facebook, policy: actionPolicy },
       apiKeys,
       rateLimiter,
       delegatedAuthorization,

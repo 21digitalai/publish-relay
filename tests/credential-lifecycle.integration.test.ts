@@ -1480,6 +1480,7 @@ describe('credential and OAuth persistence', () => {
       'pages_read_engagement',
       'pages_manage_posts',
       'pages_read_user_content',
+      'pages_manage_engagement',
     ];
     let subject = 'meta-user';
     let scopes = required;
@@ -1488,9 +1489,14 @@ describe('credential and OAuth persistence', () => {
         id: 'selected',
         name: 'Selected',
         accessToken: 'comments-page-1',
-        tasks: ['CREATE_CONTENT'],
+        tasks: ['CREATE_CONTENT', 'MODERATE'],
       },
-      { id: 'sibling', name: 'Sibling', accessToken: 'sibling-page', tasks: ['CREATE_CONTENT'] },
+      {
+        id: 'sibling',
+        name: 'Sibling',
+        accessToken: 'sibling-page',
+        tasks: ['CREATE_CONTENT', 'MODERATE'],
+      },
     ];
     const client = {
       authorizationUrl: ({ state }: { state: string }) => `https://facebook.test/?state=${state}`,
@@ -1581,7 +1587,7 @@ describe('credential and OAuth persistence', () => {
         id: 'selected',
         name: 'Selected',
         accessToken: 'comments-page-1',
-        tasks: ['CREATE_CONTENT'],
+        tasks: ['CREATE_CONTENT', 'MODERATE'],
       },
       ...pages,
     ];

@@ -47,6 +47,7 @@ beforeEach(async () => {
       workspace_id uuid NOT NULL, account_id uuid NOT NULL,
       comments_enabled boolean NOT NULL, dms_enabled boolean NOT NULL,
       comments_provider_grant text NOT NULL, dms_provider_grant text NOT NULL,
+      comments_credential_id uuid, comments_granted_scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
       dms_credential_id uuid, dms_granted_scopes jsonb NOT NULL DEFAULT '[]'::jsonb
     );
     CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
@@ -107,12 +108,14 @@ beforeEach(async () => {
     await postgres.query(
       `INSERT INTO facebook_page_engagement_modules
         (workspace_id, account_id, comments_enabled, dms_enabled,
-         comments_provider_grant, dms_provider_grant, dms_credential_id, dms_granted_scopes)
-        VALUES ($1,$2,true,true,'verified','verified',$3,$4)`,
+         comments_provider_grant, comments_credential_id, comments_granted_scopes,
+         dms_provider_grant, dms_credential_id, dms_granted_scopes)
+        VALUES ($1,$2,true,true,'verified',$3,$4,'verified',$3,$5)`,
       [
         workspaceId,
         id,
         credentialId,
+        JSON.stringify(['pages_show_list', 'pages_read_engagement']),
         JSON.stringify([
           'pages_show_list',
           'pages_read_engagement',

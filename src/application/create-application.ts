@@ -39,6 +39,7 @@ import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth
 import type { MetaHttpClient, MetaPermission } from '../modules/providers/meta-http-client.js';
 import type { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-page-read.routes.js';
+import { registerFacebookPageDmSendRoute } from '../modules/providers/facebook-messenger-send.routes.js';
 import { registerFacebookPageBrowserReadRoutes } from '../modules/providers/facebook-page-browser-read.routes.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
@@ -193,6 +194,14 @@ function registerMachineApiRoutes(
     registerFacebookPageReadRoutes(
       application,
       { database, ...options.facebookRead },
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+  if (options.facebookRead)
+    registerFacebookPageDmSendRoute(
+      application,
+      { database, ...options.facebookRead, policy: actionPolicy },
       apiKeys,
       rateLimiter,
       delegatedAuthorization,

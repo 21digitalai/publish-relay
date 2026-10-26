@@ -629,6 +629,39 @@ export const facebookPageEngagementGrants = pgTable(
   ],
 );
 
+export const facebookPageDmActions = pgTable(
+  'facebook_page_dm_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    state: text('state').notNull().default('reserved'),
+    providerMessageId: text('provider_message_id'),
+    failureStatus: integer('failure_status'),
+    actorType: actorType('actor_type').notNull(),
+    actorId: uuid('actor_id').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('facebook_page_dm_actions_workspace_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_actions_account_fk',
+    }).onDelete('restrict'),
+    check(
+      'facebook_page_dm_actions_state_check',
+      sql`${table.state} IN ('reserved', 'confirmed', 'failed', 'unknown')`,
+    ),
+  ],
+);
+
 // Exposure grants selectability without moving the canonical account or credential.
 export const providerAccountExposures = pgTable(
   'provider_account_exposures',

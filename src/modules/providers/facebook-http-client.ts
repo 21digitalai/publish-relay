@@ -48,6 +48,10 @@ const conversationMessageSchema = z.object({
   created_time: graphTimestampSchema,
   from: z.object({ id: z.string().min(1).max(256) }).optional(),
 });
+const sentMessageSchema = z.object({
+  recipient_id: z.string().min(1).max(256),
+  message_id: z.string().min(1).max(256),
+});
 const graphPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({
     data: z.array(item).max(100),
@@ -309,6 +313,42 @@ export class FacebookHttpClient {
     if (Buffer.byteLength(JSON.stringify(result), 'utf8') > MAX_MESSAGE_PAGE_BYTES)
       throw new FacebookRequestError({ kind: 'permanent', status: 502 });
     return result;
+  }
+
+  /** Only a verified Page-scoped conversation may supply recipientId. */
+  public async sendPageMessage(input: {
+    pageId: string;
+    recipientId: string;
+    text: string;
+    accessToken: string;
+  }): Promise<string> {
+    const pageId = graphIdSchema.parse(input.pageId);
+    const recipientId = z.string().min(1).max(256).parse(input.recipientId);
+    const text = z.string().min(1).max(2000).parse(input.text);
+    let response: Response;
+    try {
+      response = await this.request(this.url(`/${pageId}/messages`, {}), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${input.accessToken}`,
+          accept: 'application/json',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          recipient: { id: recipientId },
+          messaging_type: 'RESPONSE',
+          message: { text },
+        }),
+      });
+    } catch {
+      throw new FacebookRequestError({ kind: 'transient', status: 0 }, true);
+    }
+    const body = await this.responseJson(response);
+    if (!response.ok) throw new Error('Unreachable Facebook response state');
+    const parsed = sentMessageSchema.safeParse(body);
+    if (!parsed.success || parsed.data.recipient_id !== recipientId)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 }, true);
+    return parsed.data.message_id;
   }
 
   private url(path: string, fields: Record<string, string>): URL {

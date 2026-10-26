@@ -38,6 +38,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
   } | null>(null);
   const [savingGrants, setSavingGrants] = useState(false);
   const [connectingMessages, setConnectingMessages] = useState(false);
+  const [connectingComments, setConnectingComments] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -94,6 +95,19 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Messages connection could not start');
       setConnectingMessages(false);
+    }
+  }
+
+  async function connectComments() {
+    const adapter = getPostingAdapter('facebook_page');
+    if (!adapter || connectingComments) return;
+    setConnectingComments(true);
+    setError(null);
+    try {
+      await beginAdapterConnection(adapter, accountId, 'comments');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Comments connection could not start');
+      setConnectingComments(false);
     }
   }
 
@@ -184,6 +198,20 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
                   : state.dms.providerGrant === 'verified'
                     ? 'Reconnect Messages'
                     : 'Enable Messages'}
+              </button>
+            )}
+            {module === 'comments' && (
+              <button
+                type="button"
+                className="facebook-comments-connect secondary-button"
+                disabled={connectingComments}
+                onClick={() => void connectComments()}
+              >
+                {connectingComments
+                  ? 'Opening Facebook…'
+                  : state.comments.providerGrant === 'verified'
+                    ? 'Reconnect Comments'
+                    : 'Enable Comments'}
               </button>
             )}
           </div>

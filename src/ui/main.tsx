@@ -1548,6 +1548,16 @@ function AccountsPage() {
       'Messages were not enabled. This Page needs both publishing and messaging access. Review Page tasks and retry.',
     'meta-facebook_page_messages-service-error':
       'Messages were not enabled. Facebook could not verify this permission; the Page remains connected.',
+    'meta-facebook_page_comments-denied':
+      'Comments were not enabled. Authorization was cancelled; publishing and Messages remain connected.',
+    'meta-facebook_page_comments-unavailable':
+      'Comments were not enabled. The selected Page changed or disconnected; reconnect publishing and retry.',
+    'meta-facebook_page_comments-account-mismatch':
+      'Comments were not enabled. Select the same Facebook account and Page, then retry.',
+    'meta-facebook_page_comments-permissions':
+      'Comments were not enabled. Facebook did not grant the selected Page comment-reading permission.',
+    'meta-facebook_page_comments-service-error':
+      'Comments were not enabled. Facebook could not verify this permission; publishing and Messages remain connected.',
     'meta-instagram-denied':
       'No Instagram account was connected. Authorization was not completed. Start a new Instagram connection to try again.',
     'meta-expired':
@@ -1573,6 +1583,7 @@ function AccountsPage() {
   const fanvueChatReadConnected = oauthResult === 'fanvue-chat-read-connected';
   const fanvueChatSendConnected = oauthResult === 'fanvue-chat-send-connected';
   const facebookMessagesConnected = oauthResult === 'meta-facebook_page_messages-connected';
+  const facebookCommentsConnected = oauthResult === 'meta-facebook_page_comments-connected';
   const oauthErrorReported = useRef(false);
   useEffect(() => {
     if (oauthError && !oauthErrorReported.current) {
@@ -1820,6 +1831,11 @@ function AccountsPage() {
           {facebookMessagesConnected && (
             <div className="account-module-success" role="status">
               Facebook Page Messages permission was verified for the selected Page.
+            </div>
+          )}
+          {facebookCommentsConnected && (
+            <div className="account-module-success" role="status">
+              Facebook Page Comments permission was verified for the selected Page.
             </div>
           )}
           <div className="account-toolbar">

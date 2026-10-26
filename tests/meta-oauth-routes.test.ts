@@ -20,6 +20,11 @@ vi.mock('../src/modules/providers/meta-oauth.service.js', () => ({
       super('Messages callback failed', { cause });
     }
   },
+  MetaPageCommentsCallbackError: class MetaPageCommentsCallbackError extends Error {
+    constructor(public override readonly cause: unknown) {
+      super('Comments callback failed', { cause });
+    }
+  },
   MetaNoUsableDestinationsError: class MetaNoUsableDestinationsError extends Error {
     constructor(public readonly family: 'facebook_pages' | 'instagram') {
       super(`No usable ${family} destinations were discovered`);
@@ -38,6 +43,15 @@ vi.mock('../src/modules/providers/meta-page-messages.service.js', () => ({
     }
   },
   beginPageMessagesConsent: vi.fn(),
+}));
+
+vi.mock('../src/modules/providers/meta-page-comments.service.js', () => ({
+  MetaPageCommentsError: class MetaPageCommentsError extends Error {
+    constructor(public readonly reason: 'unavailable' | 'account-mismatch' | 'permissions') {
+      super(reason);
+    }
+  },
+  beginPageCommentsConsent: vi.fn(),
 }));
 
 import { createStandaloneApplication } from '../src/application/create-application.js';
@@ -60,6 +74,11 @@ import {
   beginPageMessagesConsent,
   MetaPageMessagesError,
 } from '../src/modules/providers/meta-page-messages.service.js';
+import {
+  beginPageCommentsConsent,
+  MetaPageCommentsError,
+} from '../src/modules/providers/meta-page-comments.service.js';
+import { MetaPageCommentsCallbackError } from '../src/modules/providers/meta-oauth.service.js';
 
 const applications = [] as ReturnType<typeof createStandaloneApplication>[];
 afterEach(async () => {
@@ -133,6 +152,55 @@ const session = 'publish_relay_session=w1.token';
 const csrf = { cookie: `${session}; publish_relay_csrf=csrf`, 'x-csrf-token': 'csrf' };
 
 describe('Meta OAuth routes', () => {
+  it('starts only selected-Page Comments consent and keeps denied/partial callbacks safe', async () => {
+    const app = application(true);
+    const path = '/api/oauth/meta/facebook-page-comments';
+    expect((await app.inject({ method: 'POST', url: path })).statusCode).toBe(401);
+    expect(
+      (await app.inject({ method: 'POST', url: path, headers: { cookie: session } })).statusCode,
+    ).toBe(403);
+    expect(
+      (await app.inject({ method: 'POST', url: path, headers: csrf, payload: {} })).statusCode,
+    ).toBe(400);
+    vi.mocked(beginPageCommentsConsent).mockResolvedValue({
+      authorizationUrl: 'https://facebook.test/consent',
+      expiresAt: new Date(),
+    });
+    const accountId = '00000000-0000-4000-8000-000000000001';
+    const started = await app.inject({
+      method: 'POST',
+      url: path,
+      headers: csrf,
+      payload: { accountId },
+    });
+    expect(started.statusCode).toBe(200);
+    expect(vi.mocked(beginPageCommentsConsent).mock.calls[0]?.[3]).toMatchObject({
+      accountId,
+      workspaceId: 'w1',
+      userId: 'u1',
+    });
+    vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+      new MetaPageCommentsCallbackError(new MetaPageCommentsError('account-mismatch')),
+    );
+    const mismatch = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=secret-state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(mismatch.headers.location).toBe(
+      '/app?oauth=meta-facebook_page_comments-account-mismatch',
+    );
+    vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+      new MetaPageCommentsCallbackError(new MetaRequestError(403, 'permission')),
+    );
+    const partial = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=secret-state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(partial.headers.location).toBe('/app?oauth=meta-facebook_page_comments-permissions');
+    expect(partial.body).not.toMatch(/secret-state|secret-code/);
+  });
   it('starts only selected-Page Messages consent and maps callback failures safely', async () => {
     const app = application(true);
     const path = '/api/oauth/meta/facebook-page-messages';

@@ -14,6 +14,7 @@ import {
   MetaConnectionHasActiveJobsError,
   MetaFamilyCallbackError,
   MetaPageMessagesCallbackError,
+  MetaPageCommentsCallbackError,
   MetaNoUsableDestinationsError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
@@ -22,6 +23,7 @@ import {
   MetaRevocationPendingError,
 } from './meta-oauth.service.js';
 import { beginPageMessagesConsent, MetaPageMessagesError } from './meta-page-messages.service.js';
+import { beginPageCommentsConsent, MetaPageCommentsError } from './meta-page-comments.service.js';
 
 const successCallbackSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
 const failureCallbackSchema = z.object({ state: z.string().min(1), error: z.string().min(1) });
@@ -126,6 +128,42 @@ export function registerMetaOauthRoutes(
     }
   });
 
+  application.post('/api/oauth/meta/facebook-page-comments', async (request, reply) => {
+    const identity = await authenticateRequest(request, dependencies.auth);
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!hasValidCsrf(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const body = messagesSchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ data: null, error: 'Select a Facebook Page' });
+    try {
+      const result = await beginPageCommentsConsent(
+        dependencies.database,
+        dependencies.keys,
+        dependencies.client,
+        {
+          ...identity,
+          accountId: body.data.accountId,
+          callbackUrl: dependencies.callbackUrl,
+          requestId: request.id,
+        },
+        dependencies.actionPolicy,
+      );
+      return { data: result, error: null };
+    } catch (error) {
+      if (error instanceof MetaPageCommentsError)
+        return reply
+          .code(409)
+          .send({
+            data: null,
+            error:
+              'The selected Page is no longer ready. Reconnect publishing, then retry Comments.',
+          });
+      if (error instanceof ActionPolicyDeniedError)
+        return reply.code(403).send({ data: null, error: error.message, code: error.code });
+      throw error;
+    }
+  });
+
   application.get('/api/oauth/meta/callback', async (request, reply) => {
     const identity = await authenticateRequest(request, dependencies.auth);
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
@@ -158,6 +196,25 @@ export function registerMetaOauthRoutes(
         dependencies.familyPermissions ?? {},
       );
     } catch (error) {
+      if (error instanceof MetaPageCommentsCallbackError) {
+        if (error.cause instanceof MetaRequestError)
+          request.log.warn(
+            {
+              provider: 'meta',
+              module: 'facebook_page_comments',
+              status: error.cause.status,
+              ...error.cause.diagnostic,
+            },
+            'Facebook Page Comments consent validation failed',
+          );
+        const reason =
+          error.cause instanceof MetaPageCommentsError
+            ? error.cause.reason
+            : error.cause instanceof MetaRequestError && error.cause.kind === 'permission'
+              ? 'permissions'
+              : 'service-error';
+        return reply.redirect(`/app?oauth=meta-facebook_page_comments-${reason}`);
+      }
       if (error instanceof MetaPageMessagesCallbackError) {
         if (error.cause instanceof MetaRequestError)
           request.log.warn(

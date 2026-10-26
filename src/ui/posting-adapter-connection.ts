@@ -11,18 +11,20 @@ export function getCsrfToken(): string {
 export async function beginAdapterConnection(
   adapter: PostingAdapterConfig,
   accountId?: string,
-  option?: 'read-chat' | 'send-chat' | 'read-payments' | 'read-audience' | 'messages',
+  option?: 'read-chat' | 'send-chat' | 'read-payments' | 'read-audience' | 'messages' | 'comments',
 ): Promise<void> {
   emitAnalyticsAction('provider_connect_attempted', { provider: adapter.id });
   const response = await fetch(
-    option === 'messages' && adapter.id === 'facebook_page'
-      ? '/api/oauth/meta/facebook-page-messages'
+    (option === 'messages' || option === 'comments') && adapter.id === 'facebook_page'
+      ? `/api/oauth/meta/facebook-page-${option}`
       : adapter.auth.startPath,
     {
       method: 'POST',
       headers: { 'x-csrf-token': getCsrfToken(), 'content-type': 'application/json' },
       body: JSON.stringify(
-        option === 'messages' && adapter.id === 'facebook_page' && accountId
+        (option === 'messages' || option === 'comments') &&
+          adapter.id === 'facebook_page' &&
+          accountId
           ? { accountId }
           : option === 'read-chat' && adapter.id === 'fanvue' && accountId
             ? { readChatAccountId: accountId }

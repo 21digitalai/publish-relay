@@ -18,6 +18,7 @@ import {
   reviseEngagementProposal,
   type ProposalContent,
 } from './engagement-proposal.repository.js';
+import { authorizePageEngagement } from './facebook-page-engagement.service.js';
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1).max(5000),
@@ -34,6 +35,12 @@ export const createEngagementProposalSchema = z.strictObject({
     .strictObject({
       text: z.string().max(5000).optional(),
       authorLabel: z.string().max(200).optional(),
+      postId: z
+        .string()
+        .regex(/^[0-9]+(?:_[0-9]+)*$/)
+        .max(256)
+        .optional(),
+      sourceMessageId: z.string().max(256).optional(),
     })
     .optional(),
   content: contentSchema,
@@ -46,6 +53,19 @@ const reviseSchema = z.strictObject({
 const dismissSchema = z.strictObject({ expectedRevision: z.number().int().positive() });
 const cursorSchema = z.strictObject({ createdAt: z.iso.datetime(), id: z.uuid() });
 const PAGE_SIZE = 50;
+
+function validFacebookProposal(input: z.infer<typeof createEngagementProposalSchema>): boolean {
+  if (input.provider !== 'facebook_page') return true;
+  if (
+    input.content.mediaIds?.length ||
+    input.content.priceCents !== undefined ||
+    input.content.text.length > 2000
+  )
+    return false;
+  if (input.kind === 'comment')
+    return /^[0-9]+(?:_[0-9]+)*$/.test(input.targetId) && Boolean(input.sourceContext?.postId);
+  return /^[A-Za-z0-9_]+$/.test(input.targetId);
+}
 
 function parseCursor(value: string | undefined): z.infer<typeof cursorSchema> | null {
   if (!value) return null;
@@ -150,8 +170,21 @@ export function registerEngagementProposalRoutes(
         if (decision && !decision.allowed)
           return await reply.code(429).send({ data: null, error: 'Rate limit exceeded' });
         const input = createEngagementProposalSchema.safeParse(request.body);
-        if (!input.success)
+        if (!input.success || !validFacebookProposal(input.data))
           return await reply.code(400).send({ data: null, error: 'Invalid proposal' });
+        if (input.data.provider === 'facebook_page') {
+          const allowed = await authorizePageEngagement(database, {
+            workspaceId: principal.workspaceId,
+            accountId: input.data.accountId,
+            principal: {
+              kind: principal.kind,
+              actorId: principal.actorId,
+              workspaceId: principal.workspaceId,
+            },
+            capability: input.data.kind === 'comment' ? 'comments:propose' : 'dms:propose',
+          });
+          if (!allowed) throw new MachineAuthorizationError('Page proposal access is unavailable');
+        }
         const row = await createEngagementProposal(database, {
           ...input.data,
           content: normalizeContent(input.data.content),
@@ -223,7 +256,8 @@ export function registerEngagementProposalRoutes(
     if (!validCsrf(request))
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
     const input = createEngagementProposalSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send({ data: null, error: 'Invalid proposal' });
+    if (!input.success || !validFacebookProposal(input.data))
+      return reply.code(400).send({ data: null, error: 'Invalid proposal' });
     try {
       const row = await createEngagementProposal(database, {
         ...input.data,

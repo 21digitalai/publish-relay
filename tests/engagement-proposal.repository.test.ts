@@ -15,6 +15,7 @@ import { registerEngagementProposalRoutes } from '../src/modules/providers/engag
 import { registerEngagementApprovalRoutes } from '../src/modules/providers/engagement-approval.routes.js';
 import { registerEngagementDmMediaRoutes } from '../src/modules/providers/engagement-dm-media.routes.js';
 import { markFanvuePreSendError } from '../src/modules/providers/fanvue-pre-send-error.js';
+import { PageReadUnavailableError } from '../src/modules/providers/facebook-page-read-context.service.js';
 
 import {
   claimEngagementProposal,
@@ -80,6 +81,8 @@ describe('engagement proposal foundation', () => {
       const sendMessage = vi
         .fn()
         .mockResolvedValue({ state: 'confirmed', messageUuid: fanvuePost });
+      const sendPageComment = vi.fn().mockResolvedValue({ state: 'confirmed', commentId: '900_3' });
+      const sendPageDm = vi.fn().mockResolvedValue({ state: 'confirmed', messageId: 'mid_7' });
       registerEngagementProposalRoutes(app, {
         database,
         auth,
@@ -101,6 +104,7 @@ describe('engagement proposal foundation', () => {
         auth,
         comments: { send: sendComment },
         messages: { sendText, sendMessage },
+        facebook: { sendComment: sendPageComment, sendDm: sendPageDm },
       });
       const stageMedia = vi.fn().mockResolvedValue('ready');
       registerEngagementDmMediaRoutes(app, { database, auth, stage: stageMedia });
@@ -109,11 +113,11 @@ describe('engagement proposal foundation', () => {
         'x-publish-relay-workspace': workspace,
       };
       const proposalBody = {
-        accountId: account,
+        accountId: fanvueAccount,
         clientActionId: '00000000-0000-4000-8000-000000000213',
-        provider: 'facebook_page',
+        provider: 'fanvue',
         kind: 'comment',
-        targetId: 'comment-2',
+        targetId: fanvuePost,
         sourceContext: { text: 'Source' },
         content: { text: 'Draft' },
       };
@@ -157,12 +161,40 @@ describe('engagement proposal foundation', () => {
         data: { id: string; accountId: string; status: string; content: { text: string } };
       }>();
       expect(createdBody.data).toMatchObject({
-        accountId: account,
+        accountId: fanvueAccount,
         status: 'pending',
         content: { text: 'Draft' },
       });
       expect(createdBody.data).not.toHaveProperty('proposerId');
       expect(createdBody.data).not.toHaveProperty('workspaceId');
+      const pageProposalBody = {
+        ...proposalBody,
+        accountId: account,
+        provider: 'facebook_page',
+        clientActionId: '00000000-0000-4000-8000-000000000228',
+        targetId: '900_2',
+        sourceContext: { postId: '900_1', text: 'Visitor comment' },
+      };
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/v1/engagement-proposals',
+            headers,
+            payload: { ...pageProposalBody, sourceContext: { text: 'Missing post' } },
+          })
+        ).statusCode,
+      ).toBe(400);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/v1/engagement-proposals',
+            headers,
+            payload: pageProposalBody,
+          })
+        ).statusCode,
+      ).toBe(403);
       const browserHeaders = { cookie: `publish_relay_session=${workspace}.test-token` };
       const listResponse = await app.inject({
         method: 'GET',
@@ -177,7 +209,7 @@ describe('engagement proposal foundation', () => {
       expect(
         listResponse.json<{ data: { items: { accountDisplayName: string }[] } }>().data.items[0]
           ?.accountDisplayName,
-      ).toBe('Page A');
+      ).toBe('Creator A');
       expect(listResponse.body).not.toContain('proposerId');
       expect(listResponse.body).not.toContain('credentialId');
       expect(listResponse.body).not.toContain('targetId');
@@ -230,9 +262,9 @@ describe('engagement proposal foundation', () => {
         headers: browserHeaders,
       });
       expect(detail.statusCode).toBe(200);
-      expect(detail.json<{ data: { targetId: string } }>().data.targetId).toBe('comment-2');
+      expect(detail.json<{ data: { targetId: string } }>().data.targetId).toBe(fanvuePost);
       expect(detail.json<{ data: { accountDisplayName: string } }>().data.accountDisplayName).toBe(
-        'Page A',
+        'Creator A',
       );
       expect(detail.json<{ data: { canApprove: boolean } }>().data.canApprove).toBe(true);
       const foreignDetail = await app.inject({
@@ -426,7 +458,7 @@ describe('engagement proposal foundation', () => {
       const priced = await createEngagementProposal(database, {
         workspaceId: workspace,
         accountId: fanvueAccount,
-        clientActionId: '00000000-0000-4000-8000-000000000224',
+        clientActionId: '00000000-0000-4000-8000-000000000226',
         provider: 'fanvue',
         kind: 'dm',
         targetId: fanvuePost,
@@ -453,7 +485,7 @@ describe('engagement proposal foundation', () => {
       const underMinimum = await createEngagementProposal(database, {
         workspaceId: workspace,
         accountId: fanvueAccount,
-        clientActionId: '00000000-0000-4000-8000-000000000225',
+        clientActionId: '00000000-0000-4000-8000-000000000227',
         provider: 'fanvue',
         kind: 'dm',
         targetId: fanvuePost,
@@ -518,6 +550,134 @@ describe('engagement proposal foundation', () => {
       expect((await getEngagementProposal(database, workspace, messageProposal.id))?.status).toBe(
         'unknown',
       );
+      const pageComment = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000224',
+        provider: 'facebook_page',
+        kind: 'comment',
+        targetId: '900_2',
+        sourceContext: { postId: '900_1', text: 'Visitor comment' },
+        content: { text: 'Reviewed Page reply' },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const pageCommentUrl = `/api/engagement-proposals/${pageComment.id}/approve`;
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: pageCommentUrl,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(200);
+      expect(sendPageComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: workspace,
+          accountId: account,
+          postId: '900_1',
+          commentId: '900_2',
+          clientActionId: pageComment.clientActionId,
+          text: 'Reviewed Page reply',
+          actor: { type: 'user', id: proposer },
+        }),
+      );
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: pageCommentUrl,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect(sendPageComment).toHaveBeenCalledTimes(1);
+      const pageDm = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000225',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_900',
+        sourceContext: { text: 'Inbound message', sourceMessageId: 'mid_1' },
+        content: { text: 'Reviewed Page DM' },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const pageDmUrl = `/api/engagement-proposals/${pageDm.id}/approve`;
+      sendPageDm.mockRejectedValueOnce(new PageReadUnavailableError());
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: pageDmUrl,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect((await getEngagementProposal(database, workspace, pageDm.id))?.status).toBe('pending');
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: pageDmUrl,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(200);
+      expect(sendPageDm).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          workspaceId: workspace,
+          accountId: account,
+          conversationId: 't_900',
+          clientActionId: pageDm.clientActionId,
+          text: 'Reviewed Page DM',
+          actor: { type: 'user', id: proposer },
+        }),
+      );
+      const uncertainPageDm = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000229',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_901',
+        sourceContext: { text: 'Another inbound message' },
+        content: { text: 'One reviewed reply' },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const uncertainUrl = `/api/engagement-proposals/${uncertainPageDm.id}/approve`;
+      sendPageDm.mockResolvedValueOnce({ state: 'unknown' });
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: uncertainUrl,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(202);
+      expect((await getEngagementProposal(database, workspace, uncertainPageDm.id))?.status).toBe(
+        'unknown',
+      );
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: uncertainUrl,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect(sendPageDm).toHaveBeenCalledTimes(3);
       await dismissEngagementProposal(database, {
         workspaceId: workspace,
         id: createdBody.data.id,
@@ -688,7 +848,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('9');
+      ).toBe('12');
     } finally {
       await client.close();
     }

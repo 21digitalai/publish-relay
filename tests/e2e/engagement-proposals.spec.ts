@@ -1,5 +1,118 @@
 import { expect, test } from '@playwright/test';
 
+test('Facebook Page proposals use the shared review panel on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Page Review Owner',
+      email: `page-review-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Page Review Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const commentId = '00000000-0000-4000-8000-000000000411';
+  const dmId = '00000000-0000-4000-8000-000000000412';
+  let sentComment = false;
+  let dmUnknown = false;
+  let approvals = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('/approve')) {
+      approvals += 1;
+      expect(request.postDataJSON()).toEqual({ expectedRevision: 1 });
+      if (path.includes(commentId)) sentComment = true;
+      else dmUnknown = true;
+      await route.fulfill({
+        status: path.includes(commentId) ? 200 : 202,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            id: path.includes(commentId) ? commentId : dmId,
+            status: path.includes(commentId) ? 'sent' : 'unknown',
+          },
+          error: null,
+        }),
+      });
+      return;
+    }
+    const list = path.endsWith('/api/engagement-proposals');
+    const id = path.includes(commentId) ? commentId : dmId;
+    const data = list
+      ? {
+          items: [
+            ...(!sentComment
+              ? [
+                  {
+                    id: commentId,
+                    accountDisplayName: 'Eli Page',
+                    provider: 'facebook_page',
+                    kind: 'comment',
+                    status: 'pending',
+                    sourcePreview: 'Visitor comment',
+                    contentPreview: 'Thanks',
+                    createdAt: '2026-10-26T12:01:00Z',
+                  },
+                ]
+              : []),
+            {
+              id: dmId,
+              accountDisplayName: 'Eli Page',
+              provider: 'facebook_page',
+              kind: 'dm',
+              status: dmUnknown ? 'unknown' : 'pending',
+              sourcePreview: 'Inbound message',
+              contentPreview: 'Hello',
+              createdAt: '2026-10-26T12:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        }
+      : {
+          id,
+          accountDisplayName: 'Eli Page',
+          provider: 'facebook_page',
+          kind: id === commentId ? 'comment' : 'dm',
+          targetId: id === commentId ? '900_2' : 't_900',
+          sourceContext:
+            id === commentId
+              ? { text: 'Visitor comment', postId: '900_1' }
+              : { text: 'Inbound message', sourceMessageId: 'mid_1' },
+          content: { text: id === commentId ? 'Thanks' : 'Hello' },
+          revision: 1,
+          status: id === commentId ? 'pending' : dmUnknown ? 'unknown' : 'pending',
+          canApprove: true,
+        };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: /Facebook Page comment/ }).click();
+  await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('facebook-comment-ready.png') });
+  await page.getByRole('button', { name: 'Approve and send', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Eli Page');
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
+  await expect(page.getByText('Reply sent through Facebook Page.')).toBeVisible();
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Approve and send', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
+  await expect(page.getByText(/Send outcome is unknown/).first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('facebook-dm-unknown.png') });
+  await page.reload();
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0);
+  expect(approvals).toBe(2);
+});
+
 test('late stage result from another proposal cannot unlock reused media', async ({ page }) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {

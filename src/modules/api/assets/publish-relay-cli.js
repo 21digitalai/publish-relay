@@ -22,9 +22,11 @@ const MUTATIONS = new Set([
   'fanvue:create-chat',
   'facebook-comments:reply',
   'facebook-dms:send',
+  'proposals:create',
 ]);
 const ROUTES = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
+  'proposals:create': { method: 'POST', path: '/api/v1/engagement-proposals', body: true },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
   'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
   'facebook-comments:list': {
@@ -603,7 +605,7 @@ async function pollJob(profile, key, workspace, path, jobId, flags) {
 async function run() {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.7.0' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.0' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);
@@ -680,6 +682,11 @@ async function run() {
     const actionId = JSON.parse(String(body)).clientActionId;
     if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])
       throw new CliError(EXIT.usage, 'Facebook DM clientActionId must match --idempotency-key');
+  }
+  if (parsed.command === 'proposals:create') {
+    const actionId = JSON.parse(String(body)).clientActionId;
+    if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])
+      throw new CliError(EXIT.usage, 'Proposal clientActionId must match --idempotency-key');
   }
   const idempotencyKey = parsed.flags['idempotency-key'];
   if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')

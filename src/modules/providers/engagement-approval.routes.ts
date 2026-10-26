@@ -19,9 +19,7 @@ export function registerEngagementApprovalRoutes(
   dependencies: {
     database: NodePgDatabase;
     auth: AuthService;
-    comments: EngagementSendCommands['comments'];
-    messages: EngagementSendCommands['messages'];
-  },
+  } & EngagementSendCommands,
 ): void {
   application.post('/api/engagement-proposals/:proposalId/approve', async (request, reply) => {
     void reply.header('Cache-Control', 'no-store');

@@ -99,11 +99,71 @@ async function cli(
 
 describe('Publish Relay CLI', () => {
   it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'stages a Page proposal with an exact action key and redacted receipt in %s',
+    async (entrypoint) => {
+      const actionId = '00000000-0000-4000-8000-000000000403';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        201,
+        {
+          data: {
+            id: '00000000-0000-4000-8000-000000000404',
+            status: 'pending',
+            content: { text: 'Private draft' },
+            credentialId: 'private',
+          },
+          error: null,
+        },
+        undefined,
+        paths,
+      );
+      const folder = await mkdtemp(join(tmpdir(), 'relay-proposal-'));
+      const bodyFile = join(folder, 'proposal.json');
+      await writeFile(
+        bodyFile,
+        JSON.stringify({
+          accountId: '00000000-0000-4000-8000-000000000402',
+          clientActionId: actionId,
+          provider: 'facebook_page',
+          kind: 'comment',
+          targetId: '900_2',
+          sourceContext: { postId: '900_1', text: 'Visitor comment' },
+          content: { text: 'Private draft' },
+        }),
+      );
+      const args = [
+        'proposals',
+        'create',
+        '--body-file',
+        bodyFile,
+        '--idempotency-key',
+        actionId,
+        '--base-url',
+        baseUrl,
+      ];
+      const result = await cli(args, { PUBLISH_RELAY_API_KEY: 'test-key' }, entrypoint);
+      expect(result.code).toBe(0);
+      expect(paths).toEqual(['/api/v1/engagement-proposals']);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        data: {
+          status: 'pending',
+          content: '[REDACTED]',
+          credentialId: '[REDACTED]',
+        },
+      });
+      const wrongArgs = [...args];
+      wrongArgs[5] = '00000000-0000-4000-8000-000000000405';
+      const wrongKey = await cli(wrongArgs, { PUBLISH_RELAY_API_KEY: 'test-key' }, entrypoint);
+      expect(wrongKey.code).toBe(2);
+      expect(paths).toHaveLength(1);
+    },
+  );
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
     'reports the published manifest CLI version in %s',
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.7.0' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.0' } });
     },
   );
 

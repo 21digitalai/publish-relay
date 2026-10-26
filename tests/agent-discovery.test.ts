@@ -89,9 +89,10 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.8.0');
-    expect(manifest.data.cliVersion).toBe('1.7.0');
+    expect(manifest.data.contractVersion).toBe('1.9.0');
+    expect(manifest.data.cliVersion).toBe('1.8.0');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
+    expect(skill.body).toContain('proposals create --body-file');
     expect(skill.body).toContain('destinations list');
     expect(skill.body).toContain('publishes retry <job-id>');
     expect(skill.body).toContain('facebook-comments posts <account-id>');

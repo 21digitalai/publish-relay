@@ -41,6 +41,8 @@ import type { FacebookHttpClient } from '../modules/providers/facebook-http-clie
 import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-page-read.routes.js';
 import { registerFacebookPageCommentSendRoute } from '../modules/providers/facebook-comment-send.routes.js';
 import { registerFacebookPageDmSendRoute } from '../modules/providers/facebook-messenger-send.routes.js';
+import { sendAccountPageCommentReply } from '../modules/providers/facebook-comment-send.service.js';
+import { sendAccountPageConversationMessage } from '../modules/providers/facebook-messenger-send.service.js';
 import { registerFacebookPageBrowserReadRoutes } from '../modules/providers/facebook-page-browser-read.routes.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
@@ -72,6 +74,7 @@ import { registerFanvuePaymentRoutes } from '../modules/providers/fanvue-payment
 import { registerFanvuePaymentWebhook } from '../modules/providers/fanvue-payment-webhook.routes.js';
 import { registerEngagementProposalRoutes } from '../modules/providers/engagement-proposal.routes.js';
 import { registerEngagementApprovalRoutes } from '../modules/providers/engagement-approval.routes.js';
+import type { EngagementSendCommands } from '../modules/providers/engagement-approval.service.js';
 import { registerEngagementDmMediaRoutes } from '../modules/providers/engagement-dm-media.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
@@ -372,6 +375,21 @@ function registerBrowserRoutes(
         auth,
       );
     registerEngagementProposalRoutes(application, { database, auth });
+    const facebookRuntime = options.facebookRead
+      ? { database, ...options.facebookRead, policy: actionPolicy }
+      : null;
+    const approvalCommands: EngagementSendCommands = {
+      ...(facebookRuntime
+        ? {
+            facebook: {
+              sendComment: (input: Parameters<typeof sendAccountPageCommentReply>[1]) =>
+                sendAccountPageCommentReply(facebookRuntime, input),
+              sendDm: (input: Parameters<typeof sendAccountPageConversationMessage>[1]) =>
+                sendAccountPageConversationMessage(facebookRuntime, input),
+            },
+          }
+        : {}),
+    };
     if (fanvueOauth) {
       const reads = new FanvueReadService(
         database,
@@ -379,22 +397,18 @@ function registerBrowserRoutes(
         fanvueOauth.client,
         fanvueOauth.readClient ?? new FanvueReadClient(),
       );
-      registerEngagementApprovalRoutes(application, {
+      approvalCommands.comments = new FanvueCommentService(
         database,
-        auth,
-        comments: new FanvueCommentService(
-          database,
-          reads,
-          new FanvueCommentClient(),
-          actionPolicy,
-        ),
-        messages: new FanvueMessageService(
-          database,
-          reads,
-          new FanvueMessageClient(),
-          actionPolicy,
-        ),
-      });
+        reads,
+        new FanvueCommentClient(),
+        actionPolicy,
+      );
+      approvalCommands.messages = new FanvueMessageService(
+        database,
+        reads,
+        new FanvueMessageClient(),
+        actionPolicy,
+      );
       if (mediaStorage) {
         const uploadClient = new FanvueMediaUploadClient();
         registerEngagementDmMediaRoutes(application, {
@@ -412,6 +426,8 @@ function registerBrowserRoutes(
         });
       }
     }
+    if (approvalCommands.facebook || approvalCommands.comments)
+      registerEngagementApprovalRoutes(application, { database, auth, ...approvalCommands });
     registerProviderAccountRoutes(application, {
       auth,
       database,

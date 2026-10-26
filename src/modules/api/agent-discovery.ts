@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.8.0';
-const CLI_VERSION = '1.7.0';
+const CONTRACT_VERSION = '1.9.0';
+const CLI_VERSION = '1.8.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -45,6 +45,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - facebook-comments posts/list: comments:read on the selected Page, plus its optional Comments module and verified provider grant. Publishing connection alone does not authorize comment reading.
 - facebook-dms list/messages: dms:read on the selected Page, plus its connected Messages module grant. Publishing connection alone does not authorize inbox access.
 - facebook-dms send: dms:send on the selected Page, its Messages grant, and a recent inbound message from that conversation. This replies to an existing person-initiated conversation; it cannot cold-message a Page follower.
+- proposals create: engagement:propose plus selected-Page comments:propose or dms:propose. This stages a human-reviewed suggestion only; it never sends and does not require send scope.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
 
 For the shipped CLI, set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE (the workspace UUID, not its display label). Profiles may name the API-key environment variable but must never contain its value. Delegated clients call the same HTTP contract directly with their encrypted token store. Before a mutation, verify the expected workspace through a read endpoint and keep X-Publish-Relay-Workspace explicit. A label is rejected locally because the API key is looked up under the exact workspace UUID; a label would otherwise produce a misleading authentication error.
@@ -81,12 +82,14 @@ YouTube scheduling example: set title and any sparse provider override in the po
 Retry example: after publishes show confirms state=failed and no reconciliation is required, run publishes retry <job-id> with a unique --idempotency-key. Poll the same job link afterward; never retry accepted_pending or unknown outcomes blindly.
 
 ## Facebook Page Comments
+For review-first mode, use proposals create --body-file <proposal.json> --idempotency-key <clientActionId>. Set provider=facebook_page, kind=comment, accountId to the selected Page, targetId to the exact comment ID, sourceContext.postId to the Page-owned post ID, sourceContext.text/authorLabel to the reviewed context, and content.text to the proposed reply. The JSON clientActionId must match the flag. Keep the same ID for an exact replay; an edit is performed by the human reviewer. Only an owner/admin can approve in the Proposed replies panel. Approval rechecks Page and comment ancestry before using the direct send command.
 To reply directly, use facebook-comments reply <account-id> --post-id <post-id> --comment-id <comment-id> --body-file <json> --idempotency-key <clientActionId>. The JSON contains text and the same clientActionId UUID. Only the selected Page and exact post/comment ancestry may be used. A confirmed response returns commentId; unknown means do not resend with a new action ID. This direct-send command requires comments:send plus Page-local send ACL and provider grant; a review-first proposal is a separate path.
 
 
 Use destinations list to choose the connected Facebook Page account ID. Run facebook-comments posts <account-id> --limit 25 and follow data.nextCursor with --after <cursor>; the server limits pages to 100. Posts contain Page-owned provider IDs, text, createdAt and a permalink only when Meta returns one. To read comments on a selected Page-owned post, run facebook-comments list <account-id> --post-id <post-id> --limit 25, following its cursor in the same way. The server proves the selected Page owns that post before reading visitor comments. Returned comment IDs, text, createdAt, replyCount and likeCount are provider-reported fields; null counts are unavailable, not zero. These reads require the selected Page's Comments grant, including pages_read_user_content for visitor comments. Do not infer reach, quality, full history, or availability of visitor content from an empty result or missing count. A 403 means the agent lacks Page-local comments:read; a 409 page_read_unavailable means the selected Page, Comments module or provider grant is unavailable. Do not search raw Meta credentials or another Page to bypass either condition.
 
 ## Facebook Page Messages
+For review-first mode, use proposals create with provider=facebook_page, kind=dm, accountId as the selected Page, targetId as the existing conversation ID, sourceContext.text/authorLabel (and optional sourceMessageId), content.text, and matching clientActionId/idempotency flag. It stages only a suggestion. Human approval rechecks the Page grant, selected conversation and recent inbound reply window through the direct send command; a pending proposal does not guarantee later send eligibility.
 
 Use destinations list to choose the connected Facebook Page account ID, then facebook-dms list <account-id> --limit 25. Follow data.nextCursor with --after <cursor>; the server limits pages to 100. Each Page-scoped conversation projects displayName when Meta supplies the sole non-Page participant's name. Read one conversation with facebook-dms messages <account-id> --conversation-id <id> --limit 25 and page it with --after. Its displayName is the same selected conversation participant identity; read text, senderId, createdAt and participantId in that Page context. A null displayName means identity is unknown, not that the opaque participantId is a person's name. Do not infer identity from IDs or search another Page to locate a conversation. If a named-person match matters, do not send until the name is actually verified.
 

@@ -21,7 +21,7 @@ interface ProposalDetail {
   provider: string;
   kind: 'dm' | 'comment';
   targetId: string;
-  sourceContext: { text?: string; authorLabel?: string };
+  sourceContext: { text?: string; authorLabel?: string; postId?: string; sourceMessageId?: string };
   content: { text: string; mediaIds?: string[]; priceCents?: number };
   revision: number;
   status: string;
@@ -210,9 +210,9 @@ export function EngagementProposalsPage() {
       );
       setNotice(
         outcome.status === 'sent'
-          ? 'Reply sent through Fanvue.'
+          ? `Reply sent through ${detail.provider === 'facebook_page' ? 'Facebook Page' : 'Fanvue'}.`
           : outcome.status === 'failed'
-            ? 'Fanvue rejected the send. No reply was sent.'
+            ? 'The provider rejected the send. No reply was sent.'
             : 'Send outcome is unknown. Do not submit this reply again until it is reconciled.',
       );
     } catch (failure) {
@@ -266,21 +266,31 @@ export function EngagementProposalsPage() {
     detail.content.priceCents === 0 ||
     detail.content.priceCents >= 300;
   const priceHasMedia = !detail?.content.priceCents || Boolean(detail.content.mediaIds?.length);
-
-  const canApprove =
-    detail?.status === 'pending' &&
-    selectedId === detail.id &&
-    activeProposalRef.current === `${detail.id}:${String(detail.revision)}` &&
-    detail.canApprove &&
+  const facebookReady =
+    detail?.provider === 'facebook_page' &&
+    !detail.content.mediaIds?.length &&
+    detail.content.priceCents === undefined &&
+    detail.content.text.length <= 2000 &&
+    (detail.kind === 'dm'
+      ? /^[A-Za-z0-9_]+$/.test(detail.targetId)
+      : /^[0-9]+(?:_[0-9]+)*$/.test(detail.targetId) && Boolean(detail.sourceContext.postId));
+  const fanvueReady =
+    detail?.provider === 'fanvue' &&
     document.body.dataset.fanvueEnabled === 'true' &&
-    detail.provider === 'fanvue' &&
     (detail.kind === 'dm' ||
       (!detail.content.mediaIds?.length && detail.content.priceCents === undefined)) &&
     mediaReady &&
     priceValid &&
     priceHasMedia &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(detail.targetId) &&
-    detail.content.text.length <= (detail.kind === 'comment' ? 600 : 5000) &&
+    detail.content.text.length <= (detail.kind === 'comment' ? 600 : 5000);
+
+  const canApprove =
+    detail?.status === 'pending' &&
+    selectedId === detail.id &&
+    activeProposalRef.current === `${detail.id}:${String(detail.revision)}` &&
+    detail.canApprove &&
+    (facebookReady || fanvueReady) &&
     draft.trim() === detail.content.text &&
     !sendUncertain;
 
@@ -292,8 +302,8 @@ export function EngagementProposalsPage() {
             <p className="eyebrow">Engagement</p>
             <h1 id="engagement-proposals-title">Proposed replies</h1>
             <p className="muted">
-              Review agent suggestions and unresolved sends. Fanvue text replies and ready-media
-              messages can be approved; other proposals remain drafts.
+              Review Fanvue and Facebook Page suggestions and unresolved sends. Supported replies
+              can be approved; other proposals remain drafts.
             </p>
           </div>
         </header>

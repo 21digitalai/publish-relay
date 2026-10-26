@@ -132,7 +132,7 @@ describe('Facebook comment reply Graph boundary', () => {
         new Response(
           JSON.stringify({
             data: [{ id: '999_888_777' }],
-            paging: { next: 'next', cursors: { after: `cursor-${page}` } },
+            paging: { next: 'next', cursors: { after: `cursor-${String(page)}` } },
           }),
         ),
       );

@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.6.0';
-const CLI_VERSION = '1.5.0';
+const CONTRACT_VERSION = '1.6.1';
+const CLI_VERSION = '1.5.1';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -45,7 +45,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - facebook-dms send: dms:send on the selected Page, its Messages grant, and a recent inbound message from that conversation. This replies to an existing person-initiated conversation; it cannot cold-message a Page follower.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
 
-For the shipped CLI, set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE. Profiles may name the API-key environment variable but must never contain its value. Delegated clients call the same HTTP contract directly with their encrypted token store. Before a mutation, verify the expected workspace through a read endpoint and keep X-Publish-Relay-Workspace explicit.
+For the shipped CLI, set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE (the workspace UUID, not its display label). Profiles may name the API-key environment variable but must never contain its value. Delegated clients call the same HTTP contract directly with their encrypted token store. Before a mutation, verify the expected workspace through a read endpoint and keep X-Publish-Relay-Workspace explicit. A label is rejected locally because the API key is looked up under the exact workspace UUID; a label would otherwise produce a misleading authentication error.
 
 Use a unique idempotency key for every intended mutation. Reuse it only to replay the same request. Keep all list pagination server-side and follow returned cursors.
 

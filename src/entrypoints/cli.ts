@@ -22,6 +22,7 @@ const EXIT = {
   terminal: 9,
   timeout: 10,
 } as const;
+const WORKSPACE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MUTATIONS = new Set([
   'drafts:create',
   'posts:create',
@@ -479,7 +480,7 @@ async function requireWorkspace(profile: Profile, key: string, expected: string)
       response.body,
     );
   const envelope = response.body as { data?: { workspaceId?: string; workspaceLabel?: string } };
-  if (envelope.data?.workspaceId !== expected && envelope.data?.workspaceLabel !== expected)
+  if (envelope.data?.workspaceId !== expected)
     throw new CliError(
       EXIT.authorization,
       'Authenticated workspace does not match required workspace',
@@ -608,7 +609,7 @@ async function pollJob(
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.5.0' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.5.1' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);
@@ -635,7 +636,12 @@ async function run(): Promise<Json> {
   if (parsed.command !== 'health' && !expected)
     throw new CliError(
       EXIT.usage,
-      'Authenticated commands require a workspace in the profile or --require-workspace',
+      'Authenticated commands require a workspace UUID in the profile or --require-workspace',
+    );
+  if (parsed.command !== 'health' && !WORKSPACE_ID_PATTERN.test(expected))
+    throw new CliError(
+      EXIT.usage,
+      'A workspace UUID is required; workspace labels cannot authenticate API keys',
     );
   if (MUTATIONS.has(parsed.command)) {
     if (!expected) throw new CliError(EXIT.usage, 'Mutations require an expected workspace');

@@ -99,6 +99,15 @@ async function cli(
 
 describe('Publish Relay CLI', () => {
   it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'reports the published manifest CLI version in %s',
+    async (entrypoint) => {
+      const result = await cli(['version'], {}, entrypoint);
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.4.0' } });
+    },
+  );
+
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
     'discovers and reads Page conversations with bounded output in %s',
     async (entrypoint) => {
       const accountId = '00000000-0000-4000-8000-000000000002';

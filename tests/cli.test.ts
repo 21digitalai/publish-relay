@@ -103,7 +103,7 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.6.0' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.6.1' } });
     },
   );
 
@@ -174,6 +174,26 @@ describe('Publish Relay CLI', () => {
       );
       expect(invalid.code).toBe(2);
       expect(paths).toHaveLength(2);
+    },
+  );
+
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'rejects a workspace label before making an authenticated request in %s',
+    async (entrypoint) => {
+      const result = await cli(
+        [
+          'account',
+          'current',
+          '--base-url',
+          'http://127.0.0.1:1',
+          '--require-workspace',
+          '21digital',
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain('workspace UUID is required');
     },
   );
 

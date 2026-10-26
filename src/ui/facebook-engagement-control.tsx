@@ -130,7 +130,10 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
   }
 
   return (
-    <div className="x-long-post-setting" aria-label="Facebook Page engagement modules">
+    <div
+      className="facebook-engagement-control x-long-post-setting"
+      aria-label="Facebook Page engagement modules"
+    >
       <strong>Optional Page modules</strong>
       <small>Local settings only. Provider permissions are shown separately.</small>
       {state &&
@@ -138,7 +141,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
           <div key={module}>
             <button
               type="button"
-              className="defaults-toggle"
+              className="facebook-engagement-module-toggle defaults-toggle"
               role="switch"
               aria-checked={state[module].localEnabled}
               disabled={saving !== null}
@@ -160,7 +163,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
         <div className="facebook-engagement-principals">
           <button
             type="button"
-            className="secondary-button"
+            className="facebook-engagement-principals-toggle secondary-button"
             aria-expanded={showPrincipals}
             onClick={() => {
               if (showPrincipals) setShowPrincipals(false);
@@ -202,7 +205,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
                             <button
                               type="button"
                               key={choice.value}
-                              className={`capability-button ${editing.capabilities.includes(choice.value) ? 'active' : ''}`}
+                              className={`facebook-engagement-capability-button capability-button ${editing.capabilities.includes(choice.value) ? 'active' : ''}`}
                               aria-pressed={editing.capabilities.includes(choice.value)}
                               disabled={savingGrants}
                               onClick={() => {
@@ -225,7 +228,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
                       </div>
                       <button
                         type="button"
-                        className="primary-button"
+                        className="facebook-engagement-save-access primary-button"
                         disabled={savingGrants}
                         onClick={() => void saveGrants()}
                       >
@@ -233,7 +236,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
                       </button>
                       <button
                         type="button"
-                        className="secondary-button"
+                        className="facebook-engagement-cancel-access secondary-button"
                         disabled={savingGrants}
                         onClick={() => {
                           setEditing(null);
@@ -245,7 +248,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
                   ) : (
                     <button
                       type="button"
-                      className="secondary-button"
+                      className="facebook-engagement-edit-access secondary-button"
                       onClick={() => {
                         setEditing({ principal, capabilities: [...principal.capabilities] });
                       }}

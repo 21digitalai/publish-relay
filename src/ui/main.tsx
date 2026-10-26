@@ -2629,7 +2629,7 @@ function SettingsPage() {
             <div className="advanced-capabilities">
               <p className="field-label">Permissions</p>
               <p className="field-hint">
-                All available permissions are on by default. Turn off any this key should not have.
+                Review permissions before creating a key. Facebook engagement permissions start off.
               </p>
               <div className="capability-grid">
                 {eligibleCapabilities.map((capability) => {

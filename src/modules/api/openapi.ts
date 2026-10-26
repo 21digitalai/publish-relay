@@ -385,7 +385,9 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             { name: 'after', in: 'query', schema: { type: 'string' } },
           ],
           responses: {
-            '200': { description: 'Page conversation summaries with nullable displayName and nextCursor' },
+            '200': {
+              description: 'Page conversation summaries with nullable displayName and nextCursor',
+            },
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing Page-local dms:read grant' },
             '409': { description: 'Selected Page or Messages grant unavailable' },
@@ -410,7 +412,10 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             { name: 'after', in: 'query', schema: { type: 'string' } },
           ],
           responses: {
-            '200': { description: 'Selected Page participant ID, nullable displayName, bounded messages and nextCursor' },
+            '200': {
+              description:
+                'Selected Page participant ID, nullable displayName, bounded messages and nextCursor',
+            },
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing Page-local dms:read grant' },
             '409': { description: 'Selected Page or Messages grant unavailable' },

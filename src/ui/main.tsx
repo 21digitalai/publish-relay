@@ -2168,6 +2168,7 @@ function SettingsPage() {
   const settingsLoadErrorReported = useRef(false);
   const [secret, setSecret] = useState<string | null>(null);
   const [eligibleCapabilities, setEligibleCapabilities] = useState<string[]>([]);
+  const [defaultCapabilities, setDefaultCapabilities] = useState<string[]>([]);
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [editingKey, setEditingKey] = useState<{
     id: string;
@@ -2197,13 +2198,18 @@ function SettingsPage() {
   const loadApiKeys = async () => {
     const response = await fetch('/api/settings/api-keys');
     const result = (await response.json()) as {
-      data: { items: ManagedApiKey[]; eligibleCapabilities: string[] } | null;
+      data: {
+        items: ManagedApiKey[];
+        eligibleCapabilities: string[];
+        defaultCapabilities: string[];
+      } | null;
       error: string | null;
     };
     if (!response.ok || !result.data)
       throw new Error(result.error ?? 'API keys could not be loaded');
     setKeys(result.data.items);
     setEligibleCapabilities(result.data.eligibleCapabilities);
+    setDefaultCapabilities(result.data.defaultCapabilities);
     setKeyListRefreshFailed(false);
   };
   useEffect(() => {
@@ -2221,10 +2227,15 @@ function SettingsPage() {
         const result = (await primary.json()) as { data: unknown; error: string | null };
         if (!primary.ok) throw new Error(result.error ?? 'Settings could not be loaded');
         if (isAutomation) {
-          const keyData = result.data as { items: ManagedApiKey[]; eligibleCapabilities: string[] };
+          const keyData = result.data as {
+            items: ManagedApiKey[];
+            eligibleCapabilities: string[];
+            defaultCapabilities: string[];
+          };
           setKeys(keyData.items);
           setEligibleCapabilities(keyData.eligibleCapabilities);
-          setCapabilities([...keyData.eligibleCapabilities]);
+          setDefaultCapabilities(keyData.defaultCapabilities);
+          setCapabilities([...keyData.defaultCapabilities]);
         } else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
         else {
           setWorkspace(result.data as typeof workspace);
@@ -2373,6 +2384,7 @@ function SettingsPage() {
         throw new Error(result.error ?? 'API key could not be created');
       setSecret(result.data.token);
       setLabel('');
+      setCapabilities([...defaultCapabilities]);
       setMessage('API key created');
       try {
         await loadApiKeys();

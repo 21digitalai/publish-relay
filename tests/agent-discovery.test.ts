@@ -44,6 +44,20 @@ describe('agent discovery', () => {
     const contract = await application.inject({ method: 'GET', url: '/api/v1/openapi.json' });
     expect(contract.statusCode).toBe(200);
     expect(contract.json()).toMatchObject({ openapi: '3.1.0' });
+    const paths = contract.json<{
+      paths: Record<string, { get?: { operationId: string }; post?: { operationId: string } }>;
+    }>().paths;
+    expect(paths['/api/v1/destinations/{accountId}/facebook-conversations']?.get?.operationId).toBe(
+      'listFacebookPageConversations',
+    );
+    expect(
+      paths['/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/messages']
+        ?.get?.operationId,
+    ).toBe('listFacebookPageConversationMessages');
+    expect(
+      paths['/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/messages']
+        ?.post?.operationId,
+    ).toBe('sendFacebookPageConversationMessage');
   });
 
   it('documents sparse destination overrides and authoritative effective settings', async () => {
@@ -69,11 +83,14 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.4.0');
-    expect(manifest.data.cliVersion).toBe('1.3.0');
+    expect(manifest.data.contractVersion).toBe('1.5.0');
+    expect(manifest.data.cliVersion).toBe('1.4.0');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('destinations list');
     expect(skill.body).toContain('publishes retry <job-id>');
+    expect(skill.body).toContain('facebook-dms messages <account-id>');
+    expect(skill.body).toContain('facebook-dms send <account-id>');
+    expect(skill.body).toContain('never use a new action ID or resend automatically');
     expect(manifest.data.cli.path).toBe('/publish-relay-skill/publish-relay-cli.js');
     expect(manifest.data.cli.updatePolicy).toBe('warn-only');
     expect(manifest.data.assets.map(({ path }) => path)).toEqual([

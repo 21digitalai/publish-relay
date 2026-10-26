@@ -368,7 +368,54 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/destinations/{accountId}/facebook-conversations': {
+        get: {
+          operationId: 'listFacebookPageConversations',
+          description:
+            'List bounded selected-Page conversations; requires dms:read and the Page Messages grant.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Page conversation summaries and nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page-local dms:read grant' },
+            '409': { description: 'Selected Page or Messages grant unavailable' },
+          },
+        },
+      },
       '/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/messages': {
+        get: {
+          operationId: 'listFacebookPageConversationMessages',
+          description:
+            'Read bounded messages in one selected Page conversation; requires dms:read.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Selected Page participant ID, bounded messages and nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page-local dms:read grant' },
+            '409': { description: 'Selected Page or Messages grant unavailable' },
+          },
+        },
         post: {
           operationId: 'sendFacebookPageConversationMessage',
           description:

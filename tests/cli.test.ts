@@ -69,9 +69,13 @@ async function fixture(
   return `http://127.0.0.1:${String(address.port)}`;
 }
 
-async function cli(args: string[], env: Record<string, string> = {}) {
+async function cli(
+  args: string[],
+  env: Record<string, string> = {},
+  entrypoint = 'src/entrypoints/cli.ts',
+) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-    const child = spawn(process.execPath, ['--import', 'tsx', 'src/entrypoints/cli.ts', ...args], {
+    const child = spawn(process.execPath, ['--import', 'tsx', entrypoint, ...args], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -94,6 +98,125 @@ async function cli(args: string[], env: Record<string, string> = {}) {
 }
 
 describe('Publish Relay CLI', () => {
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'discovers and reads Page conversations with bounded output in %s',
+    async (entrypoint) => {
+      const accountId = '00000000-0000-4000-8000-000000000002';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        200,
+        {
+          success: true,
+          data: {
+            messages: [
+              {
+                id: 'm_1',
+                text: 'Hello',
+                senderId: 'sender_1',
+                createdAt: '2026-10-26T12:00:00Z',
+                providerToken: 'private',
+              },
+            ],
+            participantId: 'sender_1',
+            nextCursor: 'cursor-2',
+          },
+        },
+        '00000000-0000-4000-8000-000000000201',
+        paths,
+      );
+      const list = await cli(
+        [
+          'facebook-dms',
+          'list',
+          accountId,
+          '--limit',
+          '5',
+          '--after',
+          'cursor-1',
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(list.code).toBe(0);
+      expect(paths[0]).toBe(
+        `/api/v1/destinations/${accountId}/facebook-conversations?limit=5&after=cursor-1`,
+      );
+      const result = await cli(
+        [
+          'facebook-dms',
+          'messages',
+          accountId,
+          '--conversation-id',
+          't_123',
+          '--limit',
+          '5',
+          '--after',
+          'cursor-1',
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(result.code).toBe(0);
+      expect(paths.slice(1)).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-conversations/t_123/messages?limit=5&after=cursor-1`,
+      ]);
+      expect((JSON.parse(result.stdout) as { data: unknown }).data).toMatchObject({
+        messages: [{ text: 'Hello', providerToken: '[REDACTED]' }],
+        nextCursor: 'cursor-2',
+      });
+    },
+  );
+
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'sends through the canonical Page route with matched action ID in %s',
+    async (entrypoint) => {
+      const accountId = '00000000-0000-4000-8000-000000000002';
+      const actionId = '00000000-0000-4000-8000-000000000003';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        202,
+        { success: true, data: { state: 'unknown', secret: 'private' } },
+        '00000000-0000-4000-8000-000000000201',
+        paths,
+      );
+      const directory = await mkdtemp(join(tmpdir(), 'relay-facebook-dm-'));
+      const bodyFile = join(directory, 'reply.json');
+      await writeFile(bodyFile, JSON.stringify({ clientActionId: actionId, text: 'Hello' }));
+      const args = [
+        'facebook-dms',
+        'send',
+        accountId,
+        '--conversation-id',
+        't_123',
+        '--body-file',
+        bodyFile,
+        '--idempotency-key',
+        actionId,
+        '--base-url',
+        baseUrl,
+      ];
+      const result = await cli(args, { PUBLISH_RELAY_API_KEY: 'test-key' }, entrypoint);
+      expect(result.code).toBe(0);
+      expect(paths).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-conversations/t_123/messages`,
+      ]);
+      expect((JSON.parse(result.stdout) as { data: unknown }).data).toEqual({
+        state: 'unknown',
+        secret: '[REDACTED]',
+      });
+      const rejected = await cli(
+        args.map((value) => (value === actionId ? '00000000-0000-4000-8000-000000000004' : value)),
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(rejected.code).toBe(2);
+      expect(paths).toHaveLength(1);
+    },
+  );
   it('routes a selected Fanvue chat creation with workspace preflight and bounded output', async () => {
     const accountId = '00000000-0000-4000-8000-000000000002';
     const fanUuid = '00000000-0000-4000-8000-000000000003';

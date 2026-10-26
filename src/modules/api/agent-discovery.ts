@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.4.0';
-const CLI_VERSION = '1.3.0';
+const CONTRACT_VERSION = '1.5.0';
+const CLI_VERSION = '1.4.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -18,7 +18,7 @@ Read the skill and manifest before calling the API. Never send credentials to di
 `;
 const SKILL_MARKDOWN = `---
 name: publish-relay
-description: "Create, inspect, and reconcile workspace-scoped Publish Relay posts and publication jobs."
+description: "Manage workspace-scoped publishing and authorized Facebook Page conversations."
 ---
 
 # Publish Relay
@@ -41,6 +41,8 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - drafts create/show: content:write. Create a tenant-scoped imported-media draft with a stable opaque externalId, ordered ready mediaIds, and optional label/HTTPS returnUrl. Open the returned cockpit link for the user to complete the canonical Relay composer; the resulting post link appears after that one-time transition.
 - destinations list: destinations:read.
 - publishes retry: publishes:retry. Retry only a failed job after inspection; Relay rejects jobs whose outcome still requires reconciliation.
+- facebook-dms list/messages: dms:read on the selected Page, plus its connected Messages module grant. Publishing connection alone does not authorize inbox access.
+- facebook-dms send: dms:send on the selected Page, its Messages grant, and a recent inbound message from that conversation. This replies to an existing person-initiated conversation; it cannot cold-message a Page follower.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
 
 For the shipped CLI, set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE. Profiles may name the API-key environment variable but must never contain its value. Delegated clients call the same HTTP contract directly with their encrypted token store. Before a mutation, verify the expected workspace through a read endpoint and keep X-Publish-Relay-Workspace explicit.
@@ -75,6 +77,14 @@ Media example: add media upload with --file <image-path> --content-type image/pn
 Draft handoff example: upload each local asset, then run drafts create with a JSON body containing externalId and the returned mediaIds plus a unique idempotency key. Retain the returned self and cockpit links; do not build a second scheduler UI in the source client.
 YouTube scheduling example: set title and any sparse provider override in the posts create body, select the connected destination, then retain data.jobs[].effectiveProviderSettings from the response. Do not repeat unchanged privacy, Made for Kids, notification, tags, or category defaults on every request.
 Retry example: after publishes show confirms state=failed and no reconciliation is required, run publishes retry <job-id> with a unique --idempotency-key. Poll the same job link afterward; never retry accepted_pending or unknown outcomes blindly.
+
+## Facebook Page Messages
+
+Use destinations list to choose the connected Facebook Page account ID, then facebook-dms list <account-id> --limit 25. Follow data.nextCursor with --after <cursor>; the server limits pages to 100. Read one conversation with facebook-dms messages <account-id> --conversation-id <id> --limit 25 and page it with --after. Read the returned text, senderId, createdAt and participantId in the context of the selected Page; do not infer a person's identity from an opaque ID. Do not query another Page to locate a conversation.
+
+To respond, write a JSON body containing only clientActionId (a fresh UUID) and text (1–2000 characters). Run facebook-dms send <account-id> --conversation-id <id> --body-file <reply.json> --idempotency-key <same-clientActionId>. Verify the account and intended conversation before sending; send is an external side effect. Keep the UUID and exact request for replay. A confirmed result includes messageId. An unknown result means provider outcome is uncertain: never use a new action ID or resend automatically; inspect the conversation and reconcile before any later action. A definite failed result is not confirmation of delivery. Relay enforces the provider's standard recent-inbound reply window, tenant/account scope, grants and duplicate-send protection; the agent's own instructions decide message content and timing.
+
+401 means the key is unavailable; 403 means the key lacks the Page-local dms:read/dms:send capability or account access. A 409 page_read_unavailable/page_dm_unavailable means the selected Page or Messages grant is unavailable; messaging_window_unproven means no eligible recent inbound message; action_conflict means the action ID was reused for different input. Do not treat these as a prompt to search raw Meta credentials. 429 honors Retry-After. A provider read/preflight failure needs grant/provider diagnosis, not a blind send retry.
 
 X live publish, credential migration, reconnect, revocation, and capability canaries require a separate explicitly authorized ticket with rollback criteria.
 `;

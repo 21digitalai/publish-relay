@@ -19,10 +19,21 @@ const MUTATIONS = new Set([
   'publishes:retry',
   'fanvue-guidance:set',
   'fanvue:create-chat',
+  'facebook-dms:send',
 ]);
 const ROUTES = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
+  'facebook-dms:list': { method: 'GET', path: '/api/v1/destinations/:id/facebook-conversations' },
+  'facebook-dms:messages': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/messages',
+  },
+  'facebook-dms:send': {
+    method: 'POST',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/messages',
+    body: true,
+  },
   'fanvue:followers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/followers' },
   'fanvue:subscribers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/subscribers' },
   'fanvue-guidance:show': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/guidance' },
@@ -74,6 +85,22 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ];
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
+  'facebook-dms:list': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'conversations',
+    'nextCursor',
+    'updatedAt',
+  ]),
+  'facebook-dms:messages': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'participantId',
+    'messages',
+    'nextCursor',
+    'text',
+    'createdAt',
+    'senderId',
+  ]),
+  'facebook-dms:send': new Set([...ENVELOPE_OUTPUT_KEYS, 'messageId', 'failureStatus']),
   'fanvue:followers': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'pagination',
@@ -451,24 +478,40 @@ function jobState(body) {
     : undefined;
 }
 function routePath(route, command, id, flags) {
-  const path = route.path.replace(':id', encodeURIComponent(id ?? ''));
+  const conversationId = flags['conversation-id'];
+  if (route.path.includes(':conversationId') && typeof conversationId !== 'string')
+    throw new CliError(EXIT.usage, 'Facebook DM command requires --conversation-id');
+  const path = route.path
+    .replace(':id', encodeURIComponent(id ?? ''))
+    .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')));
   if (
     command !== 'posts:list' &&
     command !== 'destinations:list' &&
     command !== 'publishes:list' &&
     command !== 'fanvue:followers' &&
-    command !== 'fanvue:subscribers'
+    command !== 'fanvue:subscribers' &&
+    command !== 'facebook-dms:list' &&
+    command !== 'facebook-dms:messages'
   )
     return path;
   const query = new URLSearchParams();
   const names =
     command === 'destinations:list'
       ? ['cursor']
-      : command === 'fanvue:followers' || command === 'fanvue:subscribers'
-        ? ['page', 'size', 'cursor']
-        : command === 'publishes:list'
-          ? ['cursor', 'limit', 'states', 'providerAccountId', 'scheduledAfter', 'scheduledBefore']
-          : ['cursor', 'limit'];
+      : command === 'facebook-dms:list' || command === 'facebook-dms:messages'
+        ? ['limit', 'after']
+        : command === 'fanvue:followers' || command === 'fanvue:subscribers'
+          ? ['page', 'size', 'cursor']
+          : command === 'publishes:list'
+            ? [
+                'cursor',
+                'limit',
+                'states',
+                'providerAccountId',
+                'scheduledAfter',
+                'scheduledBefore',
+              ]
+            : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
     if (typeof value === 'string') query.set(name, value);
@@ -570,6 +613,11 @@ async function run() {
       EXIT.usage,
       'This command requires --body-file (or --file for Fanvue DM guidance)',
     );
+  if (parsed.command === 'facebook-dms:send') {
+    const actionId = JSON.parse(String(body)).clientActionId;
+    if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])
+      throw new CliError(EXIT.usage, 'Facebook DM clientActionId must match --idempotency-key');
+  }
   const idempotencyKey = parsed.flags['idempotency-key'];
   if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')
     throw new CliError(EXIT.usage, 'Mutations require --idempotency-key');

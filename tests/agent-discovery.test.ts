@@ -47,6 +47,12 @@ describe('agent discovery', () => {
     const paths = contract.json<{
       paths: Record<string, { get?: { operationId: string }; post?: { operationId: string } }>;
     }>().paths;
+    expect(paths['/api/v1/destinations/{accountId}/facebook-posts']?.get?.operationId).toBe(
+      'listFacebookPagePosts',
+    );
+    expect(
+      paths['/api/v1/destinations/{accountId}/facebook-posts/{postId}/comments']?.get?.operationId,
+    ).toBe('listFacebookPagePostComments');
     expect(paths['/api/v1/destinations/{accountId}/facebook-conversations']?.get?.operationId).toBe(
       'listFacebookPageConversations',
     );
@@ -88,6 +94,8 @@ describe('agent discovery', () => {
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('destinations list');
     expect(skill.body).toContain('publishes retry <job-id>');
+    expect(skill.body).toContain('facebook-comments posts <account-id>');
+    expect(skill.body).toContain('facebook-comments list <account-id> --post-id <post-id>');
     expect(skill.body).toContain('facebook-dms messages <account-id>');
     expect(skill.body).toContain('A null displayName means identity is unknown');
     expect(skill.body).toContain('facebook-dms send <account-id>');

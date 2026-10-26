@@ -368,6 +368,60 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/destinations/{accountId}/facebook-posts': {
+        get: {
+          operationId: 'listFacebookPagePosts',
+          description:
+            'List bounded posts for the selected Page; requires comments:read and its optional Comments grant.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Selected Page post summaries and nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page-local comments:read grant' },
+            '409': { description: 'Selected Page or Comments grant unavailable' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/facebook-posts/{postId}/comments': {
+        get: {
+          operationId: 'listFacebookPagePostComments',
+          description:
+            'List bounded comments on a post owned by the selected Page; visitor content requires pages_read_user_content.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'postId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[0-9]+(?:_[0-9]+)*$' },
+            },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Selected post comments and nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page-local comments:read grant' },
+            '409': { description: 'Selected Page, Comments grant or post ownership unavailable' },
+          },
+        },
+      },
       '/api/v1/destinations/{accountId}/facebook-conversations': {
         get: {
           operationId: 'listFacebookPageConversations',

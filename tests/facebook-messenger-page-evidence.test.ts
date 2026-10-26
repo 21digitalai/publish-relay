@@ -14,6 +14,8 @@ const permitted: PageReadEvidence = {
   connectionStatus: 'active',
   connectionRevokedAt: null,
   scopes: ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'],
+  commentsCredentialId: 'comments-page-credential',
+  commentsGrantedScopes: ['pages_show_list', 'pages_read_engagement'],
   dmsCredentialId: 'page-credential',
   dmsGrantedScopes: [
     'pages_show_list',
@@ -50,17 +52,30 @@ describe('Facebook Page Messenger read eligibility', () => {
     expect(isPageReadEligible(permitted, 'comments')).toBe(true);
     expect(
       isPageReadEligible(
-        { ...permitted, scopes: ['pages_messaging', 'pages_manage_metadata'] },
+        { ...permitted, commentsGrantedScopes: ['pages_messaging', 'pages_manage_metadata'] },
         'comments',
       ),
     ).toBe(false);
     expect(
-      isPageReadEligible({ ...permitted, scopes: ['pages_read_engagement'] }, 'comments'),
+      isPageReadEligible(
+        { ...permitted, commentsGrantedScopes: ['pages_read_engagement'] },
+        'comments',
+      ),
     ).toBe(false);
+    expect(isPageReadEligible({ ...permitted, commentsCredentialId: null }, 'comments')).toBe(
+      false,
+    );
+    expect(isPageReadEligible({ ...permitted, commentsGrantedScopes: [] }, 'comments')).toBe(false);
     expect(isPageReadEligible(permitted, 'comments', ['pages_read_user_content'])).toBe(false);
     expect(
       isPageReadEligible(
-        { ...permitted, scopes: [...(permitted.scopes as string[]), 'pages_read_user_content'] },
+        {
+          ...permitted,
+          commentsGrantedScopes: [
+            ...(permitted.commentsGrantedScopes as string[]),
+            'pages_read_user_content',
+          ],
+        },
         'comments',
         ['pages_read_user_content'],
       ),

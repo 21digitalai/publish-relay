@@ -62,10 +62,19 @@ export async function readPageEngagementState(
             await getActiveCredential(transaction, input.workspaceId, modules.dmsCredentialId),
           )
         : false;
+      const commentsCredentialActive = modules?.commentsCredentialId
+        ? Boolean(
+            await getActiveCredential(transaction, input.workspaceId, modules.commentsCredentialId),
+          )
+        : false;
       return {
         comments: {
           localEnabled: modules?.commentsEnabled ?? false,
-          providerGrant: (modules?.commentsProviderGrant ?? 'unknown') as ProviderGrantEvidence,
+          providerGrant: (modules
+            ? modules.commentsCredentialId && commentsCredentialActive
+              ? modules.commentsProviderGrant
+              : 'missing'
+            : 'unknown') as ProviderGrantEvidence,
         },
         dms: {
           localEnabled: modules?.dmsEnabled ?? false,
@@ -204,6 +213,7 @@ export async function authorizePageEngagement(
               ? facebookPageEngagementModules.commentsProviderGrant
               : facebookPageEngagementModules.dmsProviderGrant,
           dmsCredentialId: facebookPageEngagementModules.dmsCredentialId,
+          commentsCredentialId: facebookPageEngagementModules.commentsCredentialId,
           accountCredentialId: providerAccounts.credentialId,
         })
         .from(providerAccounts)
@@ -228,7 +238,13 @@ export async function authorizePageEngagement(
         .where(pageAccountCriteria(input.workspaceId, input.accountId))
         .limit(1);
       if (!result?.enabled || result.providerGrant !== 'verified') return false;
-      if (module === 'comments') return true;
+      if (module === 'comments')
+        return (
+          result.commentsCredentialId !== null &&
+          Boolean(
+            await getActiveCredential(transaction, input.workspaceId, result.commentsCredentialId),
+          )
+        );
       return (
         result.dmsCredentialId === result.accountCredentialId &&
         result.dmsCredentialId !== null &&

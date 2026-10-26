@@ -232,9 +232,11 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
       expect(await allowed(page, key, 'dms:read')).toBe(false);
       await pool.query(
         `UPDATE facebook_page_engagement_modules
-          SET comments_provider_grant = 'verified', comments_verified_at = now()
+          SET comments_provider_grant = 'verified', comments_verified_at = now(),
+              comments_credential_id = $3,
+              comments_granted_scopes = '["pages_show_list", "pages_read_engagement"]'::jsonb
           WHERE workspace_id = $1 AND account_id = $2`,
-        [owner, page],
+        [owner, page, credential],
       );
       expect(await allowed(page, key, 'comments:read')).toBe(true);
       expect(await allowed(page, key, 'comments:send')).toBe(false);

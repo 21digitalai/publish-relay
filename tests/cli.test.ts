@@ -103,7 +103,7 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.4.0' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.5.0' } });
     },
   );
 
@@ -127,6 +127,8 @@ describe('Publish Relay CLI', () => {
               },
             ],
             participantId: 'sender_1',
+            displayName: 'Birkan Reyhan',
+            providerProfile: { email: 'private@example.test' },
             nextCursor: 'cursor-2',
           },
         },
@@ -152,6 +154,10 @@ describe('Publish Relay CLI', () => {
       expect(paths[0]).toBe(
         `/api/v1/destinations/${accountId}/facebook-conversations?limit=5&after=cursor-1`,
       );
+      expect((JSON.parse(list.stdout) as { data: unknown }).data).toMatchObject({
+        displayName: 'Birkan Reyhan',
+        providerProfile: '[REDACTED]',
+      });
       const result = await cli(
         [
           'facebook-dms',
@@ -174,6 +180,7 @@ describe('Publish Relay CLI', () => {
         `/api/v1/destinations/${accountId}/facebook-conversations/t_123/messages?limit=5&after=cursor-1`,
       ]);
       expect((JSON.parse(result.stdout) as { data: unknown }).data).toMatchObject({
+        displayName: 'Birkan Reyhan',
         messages: [{ text: 'Hello', providerToken: '[REDACTED]' }],
         nextCursor: 'cursor-2',
       });

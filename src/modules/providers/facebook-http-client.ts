@@ -32,12 +32,29 @@ const postCommentSchema = z.object({
 const conversationSchema = z.object({
   id: conversationIdSchema,
   updated_time: graphTimestampSchema.optional(),
+  participants: z
+    .object({
+      data: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(256),
+            name: z.string().min(1).max(256).optional(),
+          }),
+        )
+        .max(10),
+    })
+    .optional(),
 });
 const conversationParticipantsSchema = z.object({
   id: conversationIdSchema,
   participants: z.object({
     data: z
-      .array(z.object({ id: z.string().min(1).max(256) }))
+      .array(
+        z.object({
+          id: z.string().min(1).max(256),
+          name: z.string().min(1).max(256).optional(),
+        }),
+      )
       .min(2)
       .max(10),
   }),
@@ -248,7 +265,11 @@ export class FacebookHttpClient {
     const after = input.after ? z.string().min(1).max(2048).parse(input.after) : undefined;
     const body = await this.get(
       `/${pageId}/conversations`,
-      { fields: 'id,updated_time', limit: String(limit), ...(after ? { after } : {}) },
+      {
+        fields: 'id,updated_time,participants{id,name}',
+        limit: String(limit),
+        ...(after ? { after } : {}),
+      },
       input.accessToken,
     );
     const page = graphPageSchema(conversationSchema).parse(body);
@@ -256,12 +277,32 @@ export class FacebookHttpClient {
       conversations: page.data.map((item) => ({
         id: item.id,
         updatedAt: item.updated_time ?? null,
+        displayName: this.pageParticipantName(item.participants?.data, pageId),
       })),
       nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
   }
 
-  /** Resolve ownership without projecting participant names or contact fields. */
+  private pageParticipantName(
+    participants: { id: string; name?: string | undefined }[] | undefined,
+    pageId: string,
+  ): string | null {
+    if (participants?.filter((item) => item.id === pageId).length !== 1) return null;
+    const people = participants.filter((item) => item.id !== pageId);
+    return people.length === 1 ? (people[0]?.name ?? null) : null;
+  }
+
+  /** Resolve the exact conversation with only bounded participant identity. */
+  public async getConversationParticipants(conversationId: string, accessToken: string) {
+    const id = conversationIdSchema.parse(conversationId);
+    const body = await this.get(`/${id}`, { fields: 'id,participants{id,name}' }, accessToken);
+    const conversation = conversationParticipantsSchema.safeParse(body);
+    if (!conversation.success || conversation.data.id !== id)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    return conversation.data.participants.data;
+  }
+
+  /** Ownership-only projection for the send preflight. */
   public async getConversationParticipantIds(
     conversationId: string,
     accessToken: string,

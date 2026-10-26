@@ -83,12 +83,13 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.5.0');
-    expect(manifest.data.cliVersion).toBe('1.4.0');
+    expect(manifest.data.contractVersion).toBe('1.6.0');
+    expect(manifest.data.cliVersion).toBe('1.5.0');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('destinations list');
     expect(skill.body).toContain('publishes retry <job-id>');
     expect(skill.body).toContain('facebook-dms messages <account-id>');
+    expect(skill.body).toContain('A null displayName means identity is unknown');
     expect(skill.body).toContain('facebook-dms send <account-id>');
     expect(skill.body).toContain('never use a new action ID or resend automatically');
     expect(manifest.data.cli.path).toBe('/publish-relay-skill/publish-relay-cli.js');

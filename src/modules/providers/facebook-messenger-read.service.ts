@@ -32,15 +32,15 @@ export async function listAccountConversationMessages(
   },
 ) {
   return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, accessToken) => {
-    const participantIds = await runtime.client.getConversationParticipantIds(
+    const participants = await runtime.client.getConversationParticipants(
       input.conversationId,
       accessToken,
     );
-    const fanIds = participantIds.filter((id) => id !== pageId);
+    const fans = participants.filter((person) => person.id !== pageId);
     if (
-      participantIds.filter((id) => id === pageId).length !== 1 ||
-      fanIds.length !== 1 ||
-      fanIds[0] === undefined
+      participants.filter((person) => person.id === pageId).length !== 1 ||
+      fans.length !== 1 ||
+      fans[0] === undefined
     )
       throw new PageReadUnavailableError();
     const result = await runtime.client.listConversationMessages({
@@ -49,6 +49,6 @@ export async function listAccountConversationMessages(
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...(input.after === undefined ? {} : { after: input.after }),
     });
-    return { participantId: fanIds[0], ...result };
+    return { participantId: fans[0].id, displayName: fans[0].name ?? null, ...result };
   });
 }

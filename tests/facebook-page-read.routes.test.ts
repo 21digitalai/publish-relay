@@ -162,9 +162,18 @@ describe('Facebook Page read machine API', () => {
     const app = await createApp();
     try {
       mocks.authorize.mockResolvedValue({ workspaceId, actorId: 'key' });
-      mocks.messages.mockResolvedValue({ participantId: 'psid_7', messages: [], nextCursor: null });
+      mocks.messages.mockResolvedValue({
+        participantId: 'psid_7',
+        displayName: 'Birkan Reyhan',
+        messages: [],
+        nextCursor: null,
+      });
       const response = await app.inject(`${path}/facebook-conversations/t_123/messages?limit=5`);
       expect(response.statusCode).toBe(200);
+      const payload: unknown = response.json();
+      expect(payload).toMatchObject({
+        data: { participantId: 'psid_7', displayName: 'Birkan Reyhan' },
+      });
       expect(mocks.authorize).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),

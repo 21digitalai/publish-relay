@@ -17,7 +17,9 @@ const input = {
 
 describe('Facebook selected-conversation message read', () => {
   it('denies a foreign Page or ambiguous participants before message retrieval', async () => {
-    const getConversationParticipantIds = vi.fn().mockResolvedValue(['999', 'psid_789']);
+    const getConversationParticipants = vi
+      .fn()
+      .mockResolvedValue([{ id: '999' }, { id: 'psid_789' }]);
     const listConversationMessages = vi.fn();
     mocks.tokenBoundary.mockImplementation(
       async (
@@ -29,10 +31,14 @@ describe('Facebook selected-conversation message read', () => {
     const runtime = {
       database: {} as never,
       keys: {} as never,
-      client: { getConversationParticipantIds, listConversationMessages } as never,
+      client: { getConversationParticipants, listConversationMessages } as never,
     };
     await expect(listAccountConversationMessages(runtime, input)).rejects.toThrow('unavailable');
-    getConversationParticipantIds.mockResolvedValue(['123', 'psid_1', 'psid_2']);
+    getConversationParticipants.mockResolvedValue([
+      { id: '123' },
+      { id: 'psid_1' },
+      { id: 'psid_2' },
+    ]);
     await expect(listAccountConversationMessages(runtime, input)).rejects.toThrow('unavailable');
     expect(listConversationMessages).not.toHaveBeenCalled();
     expect(mocks.tokenBoundary).toHaveBeenCalledWith(
@@ -43,7 +49,9 @@ describe('Facebook selected-conversation message read', () => {
   });
 
   it('reads only after proving the exact selected Page and one fan', async () => {
-    const getConversationParticipantIds = vi.fn().mockResolvedValue(['123', 'psid_789']);
+    const getConversationParticipants = vi
+      .fn()
+      .mockResolvedValue([{ id: '123' }, { id: 'psid_789', name: 'Birkan Reyhan' }]);
     const listConversationMessages = vi.fn().mockResolvedValue({ messages: [], nextCursor: null });
     mocks.tokenBoundary.mockImplementation(
       async (
@@ -56,16 +64,45 @@ describe('Facebook selected-conversation message read', () => {
       {
         database: {} as never,
         keys: {} as never,
-        client: { getConversationParticipantIds, listConversationMessages } as never,
+        client: { getConversationParticipants, listConversationMessages } as never,
       },
       input,
     );
-    expect(result).toEqual({ participantId: 'psid_789', messages: [], nextCursor: null });
-    expect(getConversationParticipantIds).toHaveBeenCalledWith('t_123', 'server-held-token');
+    expect(result).toEqual({
+      participantId: 'psid_789',
+      displayName: 'Birkan Reyhan',
+      messages: [],
+      nextCursor: null,
+    });
+    expect(getConversationParticipants).toHaveBeenCalledWith('t_123', 'server-held-token');
     expect(listConversationMessages).toHaveBeenCalledWith({
       conversationId: 't_123',
       accessToken: 'server-held-token',
       limit: 10,
     });
+  });
+
+  it('keeps absent provider names explicit instead of guessing from participant ID', async () => {
+    mocks.tokenBoundary.mockImplementation(
+      async (
+        _runtime: unknown,
+        _input: unknown,
+        read: (pageId: string, token: string) => Promise<unknown>,
+      ) => read('123', 'server-held-token'),
+    );
+    const result = await listAccountConversationMessages(
+      {
+        database: {} as never,
+        keys: {} as never,
+        client: {
+          getConversationParticipants: vi
+            .fn()
+            .mockResolvedValue([{ id: '123' }, { id: 'psid_789' }]),
+          listConversationMessages: vi.fn().mockResolvedValue({ messages: [], nextCursor: null }),
+        } as never,
+      },
+      input,
+    );
+    expect(result.displayName).toBeNull();
   });
 });

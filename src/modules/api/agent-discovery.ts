@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.5.0';
-const CLI_VERSION = '1.4.0';
+const CONTRACT_VERSION = '1.6.0';
+const CLI_VERSION = '1.5.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -80,7 +80,7 @@ Retry example: after publishes show confirms state=failed and no reconciliation 
 
 ## Facebook Page Messages
 
-Use destinations list to choose the connected Facebook Page account ID, then facebook-dms list <account-id> --limit 25. Follow data.nextCursor with --after <cursor>; the server limits pages to 100. Read one conversation with facebook-dms messages <account-id> --conversation-id <id> --limit 25 and page it with --after. Read the returned text, senderId, createdAt and participantId in the context of the selected Page; do not infer a person's identity from an opaque ID. Do not query another Page to locate a conversation.
+Use destinations list to choose the connected Facebook Page account ID, then facebook-dms list <account-id> --limit 25. Follow data.nextCursor with --after <cursor>; the server limits pages to 100. Each Page-scoped conversation projects displayName when Meta supplies the sole non-Page participant's name. Read one conversation with facebook-dms messages <account-id> --conversation-id <id> --limit 25 and page it with --after. Its displayName is the same selected conversation participant identity; read text, senderId, createdAt and participantId in that Page context. A null displayName means identity is unknown, not that the opaque participantId is a person's name. Do not infer identity from IDs or search another Page to locate a conversation. If a named-person match matters, do not send until the name is actually verified.
 
 To respond, write a JSON body containing only clientActionId (a fresh UUID) and text (1–2000 characters). Run facebook-dms send <account-id> --conversation-id <id> --body-file <reply.json> --idempotency-key <same-clientActionId>. Verify the account and intended conversation before sending; send is an external side effect. Keep the UUID and exact request for replay. A confirmed result includes messageId. An unknown result means provider outcome is uncertain: never use a new action ID or resend automatically; inspect the conversation and reconcile before any later action. A definite failed result is not confirmation of delivery. Relay enforces the provider's standard recent-inbound reply window, tenant/account scope, grants and duplicate-send protection; the agent's own instructions decide message content and timing.
 

@@ -27,6 +27,8 @@ export interface PageReadEvidence {
   connectionStatus: string;
   connectionRevokedAt: Date | null;
   scopes: unknown;
+  commentsCredentialId?: string | null;
+  commentsGrantedScopes?: unknown;
   dmsCredentialId?: string | null;
   dmsGrantedScopes?: unknown;
   capabilitySnapshot: unknown;
@@ -50,7 +52,7 @@ export function isPageReadEligible(
   module: PageReadModule,
   additionalScopes: readonly string[] = [],
 ): boolean {
-  const scopes = module === 'dms' ? evidence.dmsGrantedScopes : evidence.scopes;
+  const scopes = module === 'dms' ? evidence.dmsGrantedScopes : evidence.commentsGrantedScopes;
   const grantedScopes = Array.isArray(scopes) ? scopes : [];
   const tasks =
     evidence.capabilitySnapshot && typeof evidence.capabilitySnapshot === 'object'
@@ -64,6 +66,7 @@ export function isPageReadEligible(
     evidence.connectionStatus === 'active' &&
     evidence.connectionRevokedAt === null &&
     evidence.credentialId !== null &&
+    (module !== 'comments' || Boolean(evidence.commentsCredentialId)) &&
     (module !== 'dms' || evidence.dmsCredentialId === evidence.credentialId) &&
     [...requirement.scopes, ...additionalScopes].every((scope) => grantedScopes.includes(scope)) &&
     Array.isArray(tasks) &&
@@ -95,6 +98,8 @@ async function loadPageReadEvidence(
           connectionStatus: providerConnections.status,
           connectionRevokedAt: providerConnections.revokedAt,
           scopes: providerConnections.scopes,
+          commentsCredentialId: facebookPageEngagementModules.commentsCredentialId,
+          commentsGrantedScopes: facebookPageEngagementModules.commentsGrantedScopes,
           dmsCredentialId: facebookPageEngagementModules.dmsCredentialId,
           dmsGrantedScopes: facebookPageEngagementModules.dmsGrantedScopes,
           capabilitySnapshot: providerAccounts.capabilitySnapshot,
@@ -143,10 +148,11 @@ export async function withPageReadToken<T>(
   if (
     !page ||
     !isPageReadEligible(page, input.module, input.additionalScopes) ||
-    !page.credentialId
+    !(input.module === 'comments' ? page.commentsCredentialId : page.credentialId)
   )
     throw new PageReadUnavailableError();
-  const credentialId = page.credentialId;
+  const credentialId = input.module === 'comments' ? page.commentsCredentialId : page.credentialId;
+  if (!credentialId) throw new PageReadUnavailableError();
   const stored = await withTenantTransaction(
     runtime.database,
     { workspaceId: input.workspaceId },

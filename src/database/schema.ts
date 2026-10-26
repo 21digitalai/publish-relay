@@ -553,6 +553,8 @@ export const facebookPageEngagementModules = pgTable(
     commentsEnabled: boolean('comments_enabled').notNull().default(false),
     dmsEnabled: boolean('dms_enabled').notNull().default(false),
     commentsProviderGrant: text('comments_provider_grant').notNull().default('unknown'),
+    commentsCredentialId: uuid('comments_credential_id'),
+    commentsGrantedScopes: jsonb('comments_granted_scopes').notNull().default([]),
     dmsProviderGrant: text('dms_provider_grant').notNull().default('unknown'),
     dmsCredentialId: uuid('dms_credential_id'),
     dmsGrantedScopes: jsonb('dms_granted_scopes').notNull().default([]),
@@ -577,12 +579,17 @@ export const facebookPageEngagementModules = pgTable(
     ),
     check(
       'facebook_page_engagement_comments_evidence_check',
-      sql`(${table.commentsProviderGrant} = 'verified') = (${table.commentsVerifiedAt} IS NOT NULL)`,
+      sql`(${table.commentsProviderGrant} = 'verified') = (${table.commentsVerifiedAt} IS NOT NULL AND ${table.commentsCredentialId} IS NOT NULL)`,
     ),
     check(
       'facebook_page_engagement_dms_evidence_check',
       sql`(${table.dmsProviderGrant} = 'verified') = (${table.dmsVerifiedAt} IS NOT NULL AND ${table.dmsCredentialId} IS NOT NULL)`,
     ),
+    foreignKey({
+      columns: [table.workspaceId, table.commentsCredentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'facebook_page_engagement_comments_credential_fk',
+    }).onDelete('restrict'),
     foreignKey({
       columns: [table.workspaceId, table.dmsCredentialId],
       foreignColumns: [credentials.workspaceId, credentials.id],

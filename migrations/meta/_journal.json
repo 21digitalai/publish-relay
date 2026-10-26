@@ -652,6 +652,13 @@
       "when": 1793019000000,
       "tag": "0092_facebook_page_messages_grant",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1793027700000,
+      "tag": "0093_facebook_page_comments_grant",
+      "breakpoints": true
     }
   ]
 }

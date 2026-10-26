@@ -11,26 +11,33 @@ export function getCsrfToken(): string {
 export async function beginAdapterConnection(
   adapter: PostingAdapterConfig,
   accountId?: string,
-  option?: 'read-chat' | 'send-chat' | 'read-payments' | 'read-audience',
+  option?: 'read-chat' | 'send-chat' | 'read-payments' | 'read-audience' | 'messages',
 ): Promise<void> {
   emitAnalyticsAction('provider_connect_attempted', { provider: adapter.id });
-  const response = await fetch(adapter.auth.startPath, {
-    method: 'POST',
-    headers: { 'x-csrf-token': getCsrfToken(), 'content-type': 'application/json' },
-    body: JSON.stringify(
-      option === 'read-chat' && adapter.id === 'fanvue' && accountId
-        ? { readChatAccountId: accountId }
-        : option === 'send-chat' && adapter.id === 'fanvue' && accountId
-          ? { sendChatAccountId: accountId }
-          : option === 'read-payments' && adapter.id === 'fanvue' && accountId
-            ? { paymentAccountId: accountId }
-            : option === 'read-audience' && adapter.id === 'fanvue' && accountId
-              ? { audienceAccountId: accountId }
-              : accountId && adapter.id === 'linkedin'
-                ? { accountId }
-                : {},
-    ),
-  });
+  const response = await fetch(
+    option === 'messages' && adapter.id === 'facebook_page'
+      ? '/api/oauth/meta/facebook-page-messages'
+      : adapter.auth.startPath,
+    {
+      method: 'POST',
+      headers: { 'x-csrf-token': getCsrfToken(), 'content-type': 'application/json' },
+      body: JSON.stringify(
+        option === 'messages' && adapter.id === 'facebook_page' && accountId
+          ? { accountId }
+          : option === 'read-chat' && adapter.id === 'fanvue' && accountId
+            ? { readChatAccountId: accountId }
+            : option === 'send-chat' && adapter.id === 'fanvue' && accountId
+              ? { sendChatAccountId: accountId }
+              : option === 'read-payments' && adapter.id === 'fanvue' && accountId
+                ? { paymentAccountId: accountId }
+                : option === 'read-audience' && adapter.id === 'fanvue' && accountId
+                  ? { audienceAccountId: accountId }
+                  : accountId && adapter.id === 'linkedin'
+                    ? { accountId }
+                    : {},
+      ),
+    },
+  );
   const result = (await response.json()) as {
     data: { authorizationUrl: string } | null;
     error: string | null;

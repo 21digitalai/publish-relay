@@ -11,6 +11,7 @@ import {
   registeredClients,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { getActiveCredential } from '../credentials/credential.repository.js';
 import { PAGE_ENGAGEMENT_CAPABILITIES } from '../identity/api-key.js';
 
 export { PAGE_ENGAGEMENT_CAPABILITIES };
@@ -41,7 +42,7 @@ export async function readPageEngagementState(
     { workspaceId: input.workspaceId },
     async (transaction) => {
       const [account] = await transaction
-        .select({ id: providerAccounts.id })
+        .select({ id: providerAccounts.id, credentialId: providerAccounts.credentialId })
         .from(providerAccounts)
         .where(pageAccountCriteria(input.workspaceId, input.accountId))
         .limit(1);
@@ -56,6 +57,11 @@ export async function readPageEngagementState(
           ),
         )
         .limit(1);
+      const messagesCredentialActive = modules?.dmsCredentialId
+        ? Boolean(
+            await getActiveCredential(transaction, input.workspaceId, modules.dmsCredentialId),
+          )
+        : false;
       return {
         comments: {
           localEnabled: modules?.commentsEnabled ?? false,
@@ -63,7 +69,11 @@ export async function readPageEngagementState(
         },
         dms: {
           localEnabled: modules?.dmsEnabled ?? false,
-          providerGrant: (modules?.dmsProviderGrant ?? 'unknown') as ProviderGrantEvidence,
+          providerGrant: (modules
+            ? modules.dmsCredentialId === account.credentialId && messagesCredentialActive
+              ? modules.dmsProviderGrant
+              : 'missing'
+            : 'unknown') as ProviderGrantEvidence,
         },
       };
     },
@@ -193,6 +203,8 @@ export async function authorizePageEngagement(
             module === 'comments'
               ? facebookPageEngagementModules.commentsProviderGrant
               : facebookPageEngagementModules.dmsProviderGrant,
+          dmsCredentialId: facebookPageEngagementModules.dmsCredentialId,
+          accountCredentialId: providerAccounts.credentialId,
         })
         .from(providerAccounts)
         .innerJoin(
@@ -215,7 +227,13 @@ export async function authorizePageEngagement(
         )
         .where(pageAccountCriteria(input.workspaceId, input.accountId))
         .limit(1);
-      return result?.enabled === true && result.providerGrant === 'verified';
+      if (!result?.enabled || result.providerGrant !== 'verified') return false;
+      if (module === 'comments') return true;
+      return (
+        result.dmsCredentialId === result.accountCredentialId &&
+        result.dmsCredentialId !== null &&
+        Boolean(await getActiveCredential(transaction, input.workspaceId, result.dmsCredentialId))
+      );
     },
   );
 }

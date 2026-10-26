@@ -46,7 +46,8 @@ beforeEach(async () => {
     CREATE TABLE facebook_page_engagement_modules (
       workspace_id uuid NOT NULL, account_id uuid NOT NULL,
       comments_enabled boolean NOT NULL, dms_enabled boolean NOT NULL,
-      comments_provider_grant text NOT NULL, dms_provider_grant text NOT NULL
+      comments_provider_grant text NOT NULL, dms_provider_grant text NOT NULL,
+      dms_credential_id uuid, dms_granted_scopes jsonb NOT NULL DEFAULT '[]'::jsonb
     );
     CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
@@ -104,8 +105,21 @@ beforeEach(async () => {
       ],
     );
     await postgres.query(
-      `INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true,true,'verified','verified')`,
-      [workspaceId, id],
+      `INSERT INTO facebook_page_engagement_modules
+        (workspace_id, account_id, comments_enabled, dms_enabled,
+         comments_provider_grant, dms_provider_grant, dms_credential_id, dms_granted_scopes)
+        VALUES ($1,$2,true,true,'verified','verified',$3,$4)`,
+      [
+        workspaceId,
+        id,
+        credentialId,
+        JSON.stringify([
+          'pages_show_list',
+          'pages_read_engagement',
+          'pages_messaging',
+          'pages_manage_metadata',
+        ]),
+      ],
     );
   }
   for (const table of [
@@ -174,9 +188,10 @@ describe('Facebook Page read PostgreSQL tenant/account isolation', () => {
       [accountId],
     );
     await postgres.query(
-      `UPDATE provider_connections SET scopes='["pages_show_list","pages_read_engagement"]'::jsonb
-       WHERE id=$1`,
-      [connectionId],
+      `UPDATE facebook_page_engagement_modules
+       SET dms_granted_scopes='["pages_show_list","pages_read_engagement"]'::jsonb
+       WHERE account_id=$1`,
+      [accountId],
     );
     await postgres.exec('SET ROLE publish_relay_app;');
     await expect(listAccountPageConversations(runtime, { workspaceId, accountId })).rejects.toThrow(

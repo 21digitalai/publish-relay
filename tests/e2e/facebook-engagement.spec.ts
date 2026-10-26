@@ -19,6 +19,8 @@ test('Page owner manages separate local modules and explicit agent access', asyn
   const workspace = await page.request.get('/api/workspaces/current');
   const { data } = (await workspace.json()) as { data: { slug: string } };
   let commentsEnabled = false;
+  let messagesGrant: 'missing' | 'verified' = 'missing';
+  let messagesStartFailed = false;
   let capabilities: string[] = [];
   let failSave = true;
   await page.route('**/api/provider-accounts', (route) =>
@@ -53,7 +55,29 @@ test('Page owner manages separate local modules and explicit agent access', asyn
       body: JSON.stringify({
         data: {
           comments: { localEnabled: commentsEnabled, providerGrant: 'unknown' },
-          dms: { localEnabled: false, providerGrant: 'missing' },
+          dms: { localEnabled: messagesGrant === 'verified', providerGrant: messagesGrant },
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/oauth/meta/facebook-page-messages', (route) => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().postDataJSON()).toEqual({ accountId });
+    if (!messagesStartFailed) {
+      messagesStartFailed = true;
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Selected Page needs reconnection' }),
+      });
+    }
+    messagesGrant = 'verified';
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          authorizationUrl: `/w/${data.slug}/accounts?oauth=meta-facebook_page_messages-connected`,
         },
         error: null,
       }),
@@ -99,6 +123,16 @@ test('Page owner manages separate local modules and explicit agent access', asyn
   );
   await expect(control).toContainText('Provider grant: unknown');
   await expect(control).toContainText('Provider grant: missing');
+  await control.getByRole('button', { name: 'Enable Messages' }).click();
+  await expect(control.getByRole('alert')).toContainText('Selected Page needs reconnection');
+  await page.screenshot({ path: testInfo.outputPath('messages-start-error.png'), fullPage: true });
+  await control.getByRole('button', { name: 'Enable Messages' }).click();
+  await expect(page.locator('.account-module-success')).toContainText(
+    'Messages permission was verified',
+  );
+  await expect(control).toContainText('Provider grant: verified');
+  await expect(control.getByRole('button', { name: 'Reconnect Messages' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('messages-verified.png'), fullPage: true });
   await control.getByRole('switch', { name: 'Comments' }).click();
   await expect(control.getByRole('switch', { name: 'Comments' })).toHaveAttribute(
     'aria-checked',

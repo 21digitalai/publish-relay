@@ -14,6 +14,13 @@ const permitted: PageReadEvidence = {
   connectionStatus: 'active',
   connectionRevokedAt: null,
   scopes: ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'],
+  dmsCredentialId: 'page-credential',
+  dmsGrantedScopes: [
+    'pages_show_list',
+    'pages_messaging',
+    'pages_manage_metadata',
+    'pages_read_engagement',
+  ],
   capabilitySnapshot: { tasks: ['MESSAGING', 'CREATE_CONTENT'] },
 };
 
@@ -22,14 +29,16 @@ describe('Facebook Page Messenger read eligibility', () => {
     expect(isPageReadEligible(permitted, 'dms')).toBe(true);
     for (const denied of [
       { credentialId: null },
+      { dmsCredentialId: 'previous-page-credential' },
+      { dmsCredentialId: null },
       { localEnabled: false },
       { providerGrant: 'unknown' },
       { providerGrant: 'missing' },
       { availability: 'reauth_required' },
       { connectionStatus: 'revoked' },
       { connectionRevokedAt: new Date() },
-      { scopes: ['pages_messaging', 'pages_read_engagement'] },
-      { scopes: ['pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'] },
+      { dmsGrantedScopes: ['pages_messaging', 'pages_read_engagement'] },
+      { dmsGrantedScopes: ['pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'] },
       { capabilitySnapshot: { tasks: ['CREATE_CONTENT'] } },
       { capabilitySnapshot: {} },
     ]) {

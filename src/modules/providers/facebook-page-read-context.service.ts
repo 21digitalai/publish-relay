@@ -27,6 +27,8 @@ export interface PageReadEvidence {
   connectionStatus: string;
   connectionRevokedAt: Date | null;
   scopes: unknown;
+  dmsCredentialId?: string | null;
+  dmsGrantedScopes?: unknown;
   capabilitySnapshot: unknown;
 }
 
@@ -48,7 +50,8 @@ export function isPageReadEligible(
   module: PageReadModule,
   additionalScopes: readonly string[] = [],
 ): boolean {
-  const scopes = Array.isArray(evidence.scopes) ? evidence.scopes : [];
+  const scopes = module === 'dms' ? evidence.dmsGrantedScopes : evidence.scopes;
+  const grantedScopes = Array.isArray(scopes) ? scopes : [];
   const tasks =
     evidence.capabilitySnapshot && typeof evidence.capabilitySnapshot === 'object'
       ? (evidence.capabilitySnapshot as { tasks?: unknown }).tasks
@@ -61,7 +64,8 @@ export function isPageReadEligible(
     evidence.connectionStatus === 'active' &&
     evidence.connectionRevokedAt === null &&
     evidence.credentialId !== null &&
-    [...requirement.scopes, ...additionalScopes].every((scope) => scopes.includes(scope)) &&
+    (module !== 'dms' || evidence.dmsCredentialId === evidence.credentialId) &&
+    [...requirement.scopes, ...additionalScopes].every((scope) => grantedScopes.includes(scope)) &&
     Array.isArray(tasks) &&
     tasks.includes(requirement.task)
   );
@@ -91,6 +95,8 @@ async function loadPageReadEvidence(
           connectionStatus: providerConnections.status,
           connectionRevokedAt: providerConnections.revokedAt,
           scopes: providerConnections.scopes,
+          dmsCredentialId: facebookPageEngagementModules.dmsCredentialId,
+          dmsGrantedScopes: facebookPageEngagementModules.dmsGrantedScopes,
           capabilitySnapshot: providerAccounts.capabilitySnapshot,
         })
         .from(providerAccounts)

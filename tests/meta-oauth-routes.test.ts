@@ -15,6 +15,11 @@ vi.mock('../src/modules/providers/meta-oauth.service.js', () => ({
       super('Meta connection did not complete', { cause });
     }
   },
+  MetaPageMessagesCallbackError: class MetaPageMessagesCallbackError extends Error {
+    constructor(public override readonly cause: unknown) {
+      super('Messages callback failed', { cause });
+    }
+  },
   MetaNoUsableDestinationsError: class MetaNoUsableDestinationsError extends Error {
     constructor(public readonly family: 'facebook_pages' | 'instagram') {
       super(`No usable ${family} destinations were discovered`);
@@ -24,6 +29,15 @@ vi.mock('../src/modules/providers/meta-oauth.service.js', () => ({
   completeMetaOauthConnection: vi.fn(),
   failMetaOauthConnection: vi.fn(),
   revokeMetaConnection: vi.fn(),
+}));
+
+vi.mock('../src/modules/providers/meta-page-messages.service.js', () => ({
+  MetaPageMessagesError: class MetaPageMessagesError extends Error {
+    constructor(public readonly reason: 'unavailable' | 'account-mismatch' | 'permissions') {
+      super(reason);
+    }
+  },
+  beginPageMessagesConsent: vi.fn(),
 }));
 
 import { createStandaloneApplication } from '../src/application/create-application.js';
@@ -36,11 +50,16 @@ import {
   MetaConnectionHasActiveJobsError,
   MetaFamilyCallbackError,
   MetaNoUsableDestinationsError,
+  MetaPageMessagesCallbackError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
   failMetaOauthConnection,
   revokeMetaConnection,
 } from '../src/modules/providers/meta-oauth.service.js';
+import {
+  beginPageMessagesConsent,
+  MetaPageMessagesError,
+} from '../src/modules/providers/meta-page-messages.service.js';
 
 const applications = [] as ReturnType<typeof createStandaloneApplication>[];
 afterEach(async () => {
@@ -114,6 +133,59 @@ const session = 'publish_relay_session=w1.token';
 const csrf = { cookie: `${session}; publish_relay_csrf=csrf`, 'x-csrf-token': 'csrf' };
 
 describe('Meta OAuth routes', () => {
+  it('starts only selected-Page Messages consent and maps callback failures safely', async () => {
+    const app = application(true);
+    const path = '/api/oauth/meta/facebook-page-messages';
+    expect((await app.inject({ method: 'POST', url: path })).statusCode).toBe(401);
+    expect(
+      (await app.inject({ method: 'POST', url: path, headers: { cookie: session } })).statusCode,
+    ).toBe(403);
+    expect(
+      (await app.inject({ method: 'POST', url: path, headers: csrf, payload: {} })).statusCode,
+    ).toBe(400);
+    vi.mocked(beginPageMessagesConsent).mockResolvedValue({
+      authorizationUrl: 'https://facebook.test/consent',
+      expiresAt: new Date(),
+    });
+    const accountId = '00000000-0000-4000-8000-000000000001';
+    const started = await app.inject({
+      method: 'POST',
+      url: path,
+      headers: csrf,
+      payload: { accountId },
+    });
+    expect(started.statusCode).toBe(200);
+    expect(started.json()).toMatchObject({
+      data: { authorizationUrl: 'https://facebook.test/consent' },
+      error: null,
+    });
+    expect(vi.mocked(beginPageMessagesConsent).mock.calls[0]?.[3]).toMatchObject({
+      accountId,
+      workspaceId: 'w1',
+      userId: 'u1',
+    });
+    vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+      new MetaPageMessagesCallbackError(new MetaPageMessagesError('account-mismatch')),
+    );
+    const callback = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=secret-state&code=secret-code',
+      headers: { cookie: session },
+    });
+    expect(callback.headers.location).toBe(
+      '/app?oauth=meta-facebook_page_messages-account-mismatch',
+    );
+    expect(callback.body).not.toMatch(/secret-state|secret-code/);
+    vi.mocked(completeMetaOauthConnection).mockRejectedValue(
+      new MetaPageMessagesCallbackError(new MetaRequestError(403, 'permission')),
+    );
+    const partial = await app.inject({
+      method: 'GET',
+      url: '/api/oauth/meta/callback?state=another-state&code=another-code',
+      headers: { cookie: session },
+    });
+    expect(partial.headers.location).toBe('/app?oauth=meta-facebook_page_messages-permissions');
+  });
   it('does not issue state when a family has no verified permission configuration', async () => {
     const response = await application(true, false).inject({
       method: 'POST',

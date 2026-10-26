@@ -13,6 +13,7 @@ import { MetaRequestError } from './meta-http-client.js';
 import {
   MetaConnectionHasActiveJobsError,
   MetaFamilyCallbackError,
+  MetaPageMessagesCallbackError,
   MetaNoUsableDestinationsError,
   beginMetaOauthConnection,
   completeMetaOauthConnection,
@@ -20,10 +21,12 @@ import {
   revokeMetaConnection,
   MetaRevocationPendingError,
 } from './meta-oauth.service.js';
+import { beginPageMessagesConsent, MetaPageMessagesError } from './meta-page-messages.service.js';
 
 const successCallbackSchema = z.object({ state: z.string().min(1), code: z.string().min(1) });
 const failureCallbackSchema = z.object({ state: z.string().min(1), error: z.string().min(1) });
 const revokeSchema = z.object({ accountId: z.uuid() });
+const messagesSchema = z.object({ accountId: z.uuid() });
 
 function hasValidCsrf(request: {
   cookies: Record<string, string | undefined>;
@@ -90,6 +93,39 @@ export function registerMetaOauthRoutes(
       }
     });
 
+  application.post('/api/oauth/meta/facebook-page-messages', async (request, reply) => {
+    const identity = await authenticateRequest(request, dependencies.auth);
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (!hasValidCsrf(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const body = messagesSchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ data: null, error: 'Select a Facebook Page' });
+    try {
+      const result = await beginPageMessagesConsent(
+        dependencies.database,
+        dependencies.keys,
+        dependencies.client,
+        {
+          ...identity,
+          accountId: body.data.accountId,
+          callbackUrl: dependencies.callbackUrl,
+          requestId: request.id,
+        },
+        dependencies.actionPolicy,
+      );
+      return { data: result, error: null };
+    } catch (error) {
+      if (error instanceof MetaPageMessagesError)
+        return reply.code(409).send({
+          data: null,
+          error: 'The selected Page is no longer ready. Reconnect publishing, then retry Messages.',
+        });
+      if (error instanceof ActionPolicyDeniedError)
+        return reply.code(403).send({ data: null, error: error.message, code: error.code });
+      throw error;
+    }
+  });
+
   application.get('/api/oauth/meta/callback', async (request, reply) => {
     const identity = await authenticateRequest(request, dependencies.auth);
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
@@ -122,6 +158,25 @@ export function registerMetaOauthRoutes(
         dependencies.familyPermissions ?? {},
       );
     } catch (error) {
+      if (error instanceof MetaPageMessagesCallbackError) {
+        if (error.cause instanceof MetaRequestError)
+          request.log.warn(
+            {
+              provider: 'meta',
+              module: 'facebook_page_messages',
+              status: error.cause.status,
+              ...error.cause.diagnostic,
+            },
+            'Facebook Page Messages consent validation failed',
+          );
+        const reason =
+          error.cause instanceof MetaPageMessagesError
+            ? error.cause.reason
+            : error.cause instanceof MetaRequestError && error.cause.kind === 'permission'
+              ? 'permissions'
+              : 'service-error';
+        return reply.redirect(`/app?oauth=meta-facebook_page_messages-${reason}`);
+      }
       if (error instanceof MetaFamilyCallbackError) {
         if (error.cause instanceof MetaRequestError)
           request.log.warn(

@@ -37,6 +37,7 @@ import {
   type MetaPermission,
 } from './meta-http-client.js';
 import type { MetaHttpClient } from './meta-http-client.js';
+import { completePageMessagesConsent, pageMessagesIntent } from './meta-page-messages.service.js';
 
 const REQUIRED_PAGE_TASK = 'CREATE_CONTENT';
 
@@ -54,7 +55,18 @@ function familyFromTransaction(provider: string): MetaGrantFamily | null {
   return null;
 }
 
-const META_CALLBACK_PROVIDERS = ['meta', 'meta:facebook_pages', 'meta:instagram'] as const;
+const META_CALLBACK_PROVIDERS = [
+  'meta',
+  'meta:facebook_pages',
+  'meta:instagram',
+  'meta:facebook_page_messages',
+] as const;
+
+export class MetaPageMessagesCallbackError extends Error {
+  constructor(public override readonly cause: unknown) {
+    super('Facebook Page Messages connection did not complete', { cause });
+  }
+}
 
 export class MetaFamilyCallbackError extends Error {
   constructor(
@@ -339,6 +351,30 @@ export async function completeMetaOauthConnection(
     provider: META_CALLBACK_PROVIDERS,
   });
   if (!transaction) return null;
+  if (transaction.provider === 'meta:facebook_page_messages') {
+    try {
+      const result = await completePageMessagesConsent(database, keys, client, {
+        ...input,
+        redirectUri: transaction.redirectUri,
+        intent: pageMessagesIntent(transaction.intent),
+      });
+      return {
+        family: 'facebook_page_messages' as const,
+        connectionId: result.connectionId,
+        accounts: [
+          {
+            providerAccountId: result.pageId,
+            destinationProvider: 'facebook_page' as const,
+            displayName: result.displayName,
+            availability: 'active' as const,
+          },
+        ],
+      };
+    } catch (error) {
+      await recordMetaOauthAudit(database, input, 'meta.oauth.failed', 'facebook_pages');
+      throw new MetaPageMessagesCallbackError(error);
+    }
+  }
   const family = familyFromTransaction(transaction.provider);
   if (!family) return null;
   const permissions = familyPermissions[family];
@@ -373,15 +409,26 @@ export async function failMetaOauthConnection(
   database: NodePgDatabase,
   keys: MasterKeyProvider,
   input: { workspaceId: string; userId: string; state: string; requestId: string },
-): Promise<MetaGrantFamily | null> {
+): Promise<MetaGrantFamily | 'facebook_page_messages' | null> {
   const transaction = await consumeOauthCallback(database, keys, {
     workspaceId: input.workspaceId,
     state: input.state,
     userId: input.userId,
     provider: META_CALLBACK_PROVIDERS,
   });
-  const family = transaction ? familyFromTransaction(transaction.provider) : null;
-  if (family) await recordMetaOauthAudit(database, input, 'meta.oauth.failed', family);
+  const family =
+    transaction?.provider === 'meta:facebook_page_messages'
+      ? ('facebook_page_messages' as const)
+      : transaction
+        ? familyFromTransaction(transaction.provider)
+        : null;
+  if (family)
+    await recordMetaOauthAudit(
+      database,
+      input,
+      'meta.oauth.failed',
+      family === 'facebook_page_messages' ? 'facebook_pages' : family,
+    );
   return family;
 }
 

@@ -554,6 +554,8 @@ export const facebookPageEngagementModules = pgTable(
     dmsEnabled: boolean('dms_enabled').notNull().default(false),
     commentsProviderGrant: text('comments_provider_grant').notNull().default('unknown'),
     dmsProviderGrant: text('dms_provider_grant').notNull().default('unknown'),
+    dmsCredentialId: uuid('dms_credential_id'),
+    dmsGrantedScopes: jsonb('dms_granted_scopes').notNull().default([]),
     commentsVerifiedAt: timestamp('comments_verified_at', { withTimezone: true }),
     dmsVerifiedAt: timestamp('dms_verified_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -579,8 +581,13 @@ export const facebookPageEngagementModules = pgTable(
     ),
     check(
       'facebook_page_engagement_dms_evidence_check',
-      sql`(${table.dmsProviderGrant} = 'verified') = (${table.dmsVerifiedAt} IS NOT NULL)`,
+      sql`(${table.dmsProviderGrant} = 'verified') = (${table.dmsVerifiedAt} IS NOT NULL AND ${table.dmsCredentialId} IS NOT NULL)`,
     ),
+    foreignKey({
+      columns: [table.workspaceId, table.dmsCredentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'facebook_page_engagement_dms_credential_fk',
+    }).onDelete('restrict'),
   ],
 );
 

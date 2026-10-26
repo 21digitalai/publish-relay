@@ -1538,6 +1538,16 @@ function AccountsPage() {
       'No Meta account was connected. Authorization was not completed. Start a new connection if you want to try again.',
     'meta-facebook_pages-denied':
       'No Facebook Page was connected. Authorization was not completed. Start a new Facebook Pages connection to try again.',
+    'meta-facebook_page_messages-denied':
+      'Messages were not enabled. Authorization was cancelled; Page publishing remains connected.',
+    'meta-facebook_page_messages-unavailable':
+      'Messages were not enabled. The selected Page changed or disconnected; reconnect publishing and retry.',
+    'meta-facebook_page_messages-account-mismatch':
+      'Messages were not enabled. Select the same Facebook account and Page, then retry.',
+    'meta-facebook_page_messages-permissions':
+      'Messages were not enabled. This Page needs both publishing and messaging access. Review Page tasks and retry.',
+    'meta-facebook_page_messages-service-error':
+      'Messages were not enabled. Facebook could not verify this permission; the Page remains connected.',
     'meta-instagram-denied':
       'No Instagram account was connected. Authorization was not completed. Start a new Instagram connection to try again.',
     'meta-expired':
@@ -1562,6 +1572,7 @@ function AccountsPage() {
   const oauthError = oauthResult ? oauthErrorMessages[oauthResult] : undefined;
   const fanvueChatReadConnected = oauthResult === 'fanvue-chat-read-connected';
   const fanvueChatSendConnected = oauthResult === 'fanvue-chat-send-connected';
+  const facebookMessagesConnected = oauthResult === 'meta-facebook_page_messages-connected';
   const oauthErrorReported = useRef(false);
   useEffect(() => {
     if (oauthError && !oauthErrorReported.current) {
@@ -1804,6 +1815,11 @@ function AccountsPage() {
           {fanvueChatSendConnected && (
             <div className="account-module-success" role="status">
               Fanvue message sending is connected for the selected account.
+            </div>
+          )}
+          {facebookMessagesConnected && (
+            <div className="account-module-success" role="status">
+              Facebook Page Messages permission was verified for the selected Page.
             </div>
           )}
           <div className="account-toolbar">

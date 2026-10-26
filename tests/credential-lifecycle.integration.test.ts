@@ -55,10 +55,12 @@ import {
 import type { LinkedInHttpClient } from '../src/modules/providers/linkedin-http-client.js';
 import {
   completeMetaOauthConnection,
+  failMetaOauthConnection,
   MetaNoUsableDestinationsError,
 } from '../src/modules/providers/meta-oauth.service.js';
 import type { MetaFamilyCallbackError } from '../src/modules/providers/meta-oauth.service.js';
 import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
+import { beginPageMessagesConsent } from '../src/modules/providers/meta-page-messages.service.js';
 import { completeInstagramLogin } from '../src/modules/providers/instagram-login.service.js';
 import { getFreshInstagramLoginToken } from '../src/modules/providers/instagram-login-credential.service.js';
 import { promoteInstagramLoginAccount } from '../src/modules/providers/instagram-login-promotion.service.js';
@@ -112,6 +114,8 @@ const migrations = [
   '0075_machine_exposed_page_discovery.sql',
   '0077_publication_attempt_external_url.sql',
   '0088_fanvue_agent_guidance.sql',
+  '0090_facebook_page_engagement_foundation.sql',
+  '0092_facebook_page_messages_grant.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';
@@ -138,10 +142,15 @@ function encrypted(marker: number): EncryptedCredential {
 
 beforeEach(async () => {
   database = new PGlite();
-  for (const migration of migrations)
+  for (const migration of migrations) {
+    if (migration === '0090_facebook_page_engagement_foundation.sql')
+      await database.exec(
+        'CREATE UNIQUE INDEX api_keys_workspace_id_unique ON api_keys(workspace_id, id)',
+      );
     await database.exec(
       await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'),
     );
+  }
   await database.exec(`
     INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Credential Workspace', 'credential-workspace');
     INSERT INTO users (id, email, password_hash) VALUES ('${userId}', 'credential@example.test', 'redacted');
@@ -1254,6 +1263,206 @@ describe('credential and OAuth persistence', () => {
       'facebook_page',
       'instagram',
     ]);
+  });
+
+  it('enables selected Page Messages without replacing sibling or publishing authority on failure', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    const callbackUrl = 'https://relay.test/api/oauth/meta/callback';
+    const pages = [
+      { id: 'selected', name: 'Selected', accessToken: 'page-selected', tasks: ['CREATE_CONTENT'] },
+      { id: 'sibling', name: 'Sibling', accessToken: 'page-sibling', tasks: ['CREATE_CONTENT'] },
+    ];
+    const client = {
+      authorizationUrl: ({ state }: { state: string }) => `https://facebook.test/?state=${state}`,
+      exchangeCode: () =>
+        Promise.resolve({
+          accessToken: 'user-token',
+          userId: 'meta-user',
+          scopes: [
+            'pages_show_list',
+            'pages_read_engagement',
+            'pages_manage_posts',
+            'pages_messaging',
+            'pages_manage_metadata',
+          ],
+        }),
+      discoverPages: () => Promise.resolve(pages),
+    };
+    const base = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'meta:facebook_pages',
+      redirectUri: callbackUrl,
+    });
+    await completeMetaOauthConnection(
+      db,
+      keys,
+      client as never,
+      {
+        workspaceId,
+        userId,
+        state: base.state,
+        code: 'base',
+        requestId: 'base',
+      },
+      { facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'] },
+    );
+    const before = await database.query<{
+      id: string;
+      remote_account_id: string;
+      credential_id: string;
+    }>(
+      'SELECT id, remote_account_id, credential_id FROM provider_accounts ORDER BY remote_account_id',
+    );
+    const connectionBefore = await database.query<{ credential_id: string }>(
+      "SELECT credential_id FROM provider_connections WHERE grant_family = 'facebook_pages'",
+    );
+    const selected = before.rows.find((row) => row.remote_account_id === 'selected');
+    if (!selected) throw new Error('Selected Page fixture missing');
+    const post = await database.query<{ id: string }>(
+      'INSERT INTO posts (workspace_id, created_by_user_id) VALUES ($1, $2) RETURNING id',
+      [workspaceId, userId],
+    );
+    const revision = await database.query<{ id: string }>(
+      "INSERT INTO post_revisions (workspace_id, post_id, revision_number, content) VALUES ($1, $2, 1, '{}') RETURNING id",
+      [workspaceId, post.rows[0]?.id],
+    );
+    const job = await database.query<{ id: string }>(
+      "INSERT INTO publication_jobs (workspace_id, post_id, revision_id, provider_account_id, scheduled_at, state) VALUES ($1, $2, $3, $4, now(), 'scheduled') RETURNING id",
+      [workspaceId, post.rows[0]?.id, revision.rows[0]?.id, selected.id],
+    );
+    const start = async () =>
+      beginPageMessagesConsent(db, keys, client as never, {
+        workspaceId,
+        userId,
+        accountId: selected.id,
+        callbackUrl,
+        requestId: 'messages-start',
+      });
+    const finish = async (state: string) =>
+      completeMetaOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        state,
+        code: 'messages',
+        requestId: 'messages-finish',
+      });
+    const denied = await start();
+    await expect(
+      failMetaOauthConnection(db, keys, {
+        workspaceId,
+        userId,
+        state: oauthState(denied.authorizationUrl),
+        requestId: 'denied',
+      }),
+    ).resolves.toBe('facebook_page_messages');
+    let started = await start();
+    await expect(finish(oauthState(started.authorizationUrl))).rejects.toThrow();
+    const current = await database.query<{ credential_id: string }>(
+      'SELECT credential_id FROM provider_accounts WHERE id = $1',
+      [selected.id],
+    );
+    expect(current.rows[0]?.credential_id).toBe(selected.credential_id);
+    pages[0] = {
+      id: 'selected',
+      name: 'Selected',
+      accessToken: 'page-selected',
+      tasks: ['CREATE_CONTENT', 'MESSAGING'],
+    };
+    started = await start();
+    client.exchangeCode = () => Promise.reject(new MetaRequestError(403, 'permission'));
+    await expect(finish(oauthState(started.authorizationUrl))).rejects.toThrow();
+    client.exchangeCode = () =>
+      Promise.resolve({
+        accessToken: 'user-token',
+        userId: 'meta-user',
+        scopes: [
+          'pages_show_list',
+          'pages_read_engagement',
+          'pages_manage_posts',
+          'pages_messaging',
+          'pages_manage_metadata',
+        ],
+      });
+    pages[0] = {
+      id: 'different-page',
+      name: 'Different',
+      accessToken: 'other-page',
+      tasks: ['CREATE_CONTENT', 'MESSAGING'],
+    };
+    started = await start();
+    await expect(finish(oauthState(started.authorizationUrl))).rejects.toThrow();
+    pages[0] = {
+      id: 'selected',
+      name: 'Selected',
+      accessToken: 'page-selected',
+      tasks: ['CREATE_CONTENT', 'MESSAGING'],
+    };
+    started = await start();
+    client.exchangeCode = () =>
+      Promise.resolve({
+        accessToken: 'other-user-token',
+        userId: 'other-user',
+        scopes: [
+          'pages_show_list',
+          'pages_read_engagement',
+          'pages_manage_posts',
+          'pages_messaging',
+          'pages_manage_metadata',
+        ],
+      });
+    await expect(finish(oauthState(started.authorizationUrl))).rejects.toThrow();
+    client.exchangeCode = () =>
+      Promise.resolve({
+        accessToken: 'user-token',
+        userId: 'meta-user',
+        scopes: [
+          'pages_show_list',
+          'pages_read_engagement',
+          'pages_manage_posts',
+          'pages_messaging',
+          'pages_manage_metadata',
+        ],
+      });
+    started = await start();
+    const successState = oauthState(started.authorizationUrl);
+    await expect(finish(successState)).resolves.toMatchObject({
+      family: 'facebook_page_messages',
+    });
+    await expect(finish(successState)).resolves.toBeNull();
+    const afterSelected = await database.query<{ credential_id: string; availability: string }>(
+      'SELECT credential_id, availability FROM provider_accounts WHERE id = $1',
+      [selected.id],
+    );
+    expect(afterSelected.rows[0]?.credential_id).not.toBe(selected.credential_id);
+    expect(afterSelected.rows[0]?.availability).toBe('active');
+    const queued = await database.query<{ provider_account_id: string; state: string }>(
+      'SELECT provider_account_id, state FROM publication_jobs WHERE id = $1',
+      [job.rows[0]?.id],
+    );
+    expect(queued.rows[0]).toMatchObject({ provider_account_id: selected.id, state: 'scheduled' });
+    const sibling = await database.query<{ credential_id: string }>(
+      "SELECT credential_id FROM provider_accounts WHERE remote_account_id = 'sibling'",
+    );
+    expect(sibling.rows[0]?.credential_id).toBe(
+      before.rows.find((row) => row.remote_account_id === 'sibling')?.credential_id,
+    );
+    const connectionAfter = await database.query<{ credential_id: string }>(
+      "SELECT credential_id FROM provider_connections WHERE grant_family = 'facebook_pages'",
+    );
+    expect(connectionAfter.rows[0]?.credential_id).toBe(connectionBefore.rows[0]?.credential_id);
+    const grant = await database.query<{ dms_provider_grant: string; dms_credential_id: string }>(
+      'SELECT dms_provider_grant, dms_credential_id FROM facebook_page_engagement_modules WHERE account_id = $1',
+      [selected.id],
+    );
+    expect(grant.rows[0]).toMatchObject({
+      dms_provider_grant: 'verified',
+      dms_credential_id: afterSelected.rows[0]?.credential_id,
+    });
   });
 
   it('atomically reconnects Meta destinations, preserves IDs, and revokes rotated credentials', async () => {

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { LiveRegion } from './feedback.js';
-import { getCsrfToken } from './posting-adapter-connection.js';
+import { beginAdapterConnection, getCsrfToken } from './posting-adapter-connection.js';
+import { getPostingAdapter } from './posting-adapter-registry.js';
 
 type Module = 'comments' | 'dms';
 type GrantEvidence = 'unknown' | 'missing' | 'verified';
@@ -36,6 +37,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
     capabilities: Capability[];
   } | null>(null);
   const [savingGrants, setSavingGrants] = useState(false);
+  const [connectingMessages, setConnectingMessages] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -79,6 +81,19 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
       setError(cause instanceof Error ? cause.message : 'Page module could not be saved');
     } finally {
       setSaving(null);
+    }
+  }
+
+  async function connectMessages() {
+    const adapter = getPostingAdapter('facebook_page');
+    if (!adapter || connectingMessages) return;
+    setConnectingMessages(true);
+    setError(null);
+    try {
+      await beginAdapterConnection(adapter, accountId, 'messages');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Messages connection could not start');
+      setConnectingMessages(false);
     }
   }
 
@@ -157,6 +172,20 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
               {state[module].providerGrant !== 'verified' &&
                 'No agent access until grant verification.'}
             </small>
+            {module === 'dms' && (
+              <button
+                type="button"
+                className="facebook-messages-connect secondary-button"
+                disabled={connectingMessages}
+                onClick={() => void connectMessages()}
+              >
+                {connectingMessages
+                  ? 'Opening Facebook…'
+                  : state.dms.providerGrant === 'verified'
+                    ? 'Reconnect Messages'
+                    : 'Enable Messages'}
+              </button>
+            )}
           </div>
         ))}
       {state && (

@@ -12,6 +12,14 @@ describe('destination capabilities', () => {
     expect(destinationCapabilities('facebook_page').contentKinds).toEqual(['link', 'single_image']);
   });
 
+  it('advertises the same single Fanvue post shape used by Composer admission', () => {
+    expect(destinationCapabilities('fanvue')).toEqual({
+      schemaVersion: 1,
+      contentKinds: ['post'],
+      media: { maxImages: 20 },
+    });
+  });
+
   it('limits a combined Meta composition to the capability intersection', () => {
     expect(
       intersectContentKinds([

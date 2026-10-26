@@ -43,6 +43,10 @@ import {
   reconcileYouTubeJobs,
 } from '../modules/providers/youtube-media-dispatch.service.js';
 import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
+import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
+import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
+import { FanvuePostClient } from '../modules/providers/fanvue-post-client.js';
+import { dispatchDueFanvueJobs } from '../modules/providers/fanvue-post-dispatch.service.js';
 import { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import { TikTokMediaGrantService } from '../modules/providers/tiktok-media-grant.service.js';
 import { dispatchDueTikTokJobs } from '../modules/providers/tiktok-direct-post-dispatch.service.js';
@@ -178,6 +182,22 @@ const tiktokRuntime =
         verifiedMediaOrigin: tiktokConfig.verifiedMediaOrigin,
       }
     : null;
+const fanvueRuntime =
+  config.PUBLISH_RELAY_FANVUE_CLIENT_ID && config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET
+    ? {
+        database,
+        keys,
+        storage: mediaStorage,
+        oauthClient: new FanvueHttpClient({
+          clientId: config.PUBLISH_RELAY_FANVUE_CLIENT_ID,
+          clientSecret: config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET,
+        }),
+        mediaClient: new FanvueMediaUploadClient(),
+        postClient: new FanvuePostClient(),
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      }
+    : null;
 if (!xRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
@@ -201,6 +221,10 @@ if (!facebookRuntime)
 if (!tiktokRuntime)
   process.stdout.write(
     `${JSON.stringify({ event: 'provider_disabled', provider: 'tiktok', reason: 'missing_configuration' })}\n`,
+  );
+if (!fanvueRuntime)
+  process.stdout.write(
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'fanvue', reason: 'missing_configuration' })}\n`,
   );
 
 const destinationDispatchAdapters: DestinationDispatchAdapter[] = [];
@@ -239,6 +263,12 @@ if (tiktokRuntime)
     destinationProvider: 'tiktok',
     dispatch: () => dispatchDueTikTokJobs(tiktokRuntime),
     reconcile: () => reconcileTikTokDirectPosts(tiktokRuntime),
+  });
+if (fanvueRuntime)
+  destinationDispatchAdapters.push({
+    destinationProvider: 'fanvue',
+    dispatch: () => dispatchDueFanvueJobs(fanvueRuntime),
+    reconcile: () => Promise.resolve(0),
   });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

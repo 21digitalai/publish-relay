@@ -15,6 +15,10 @@ import {
 import { runMediaRetentionCycle } from '../src/modules/content/media-retention.worker.js';
 import type { MediaStorage } from '../src/modules/content/media-storage.js';
 import { createPost, editPost, reschedulePost } from '../src/modules/content/post.service.js';
+import {
+  bindFanvueDmAttachment,
+  releaseUnstartedFanvueDmAttachment,
+} from '../src/modules/providers/fanvue-dm-attachment.repository.js';
 import { validatePostTargets } from '../src/modules/content/post.repository.js';
 import type { ActionPolicy } from '../src/modules/policy/action-policy.js';
 import { claimDueJobs } from '../src/modules/scheduler/job.repository.js';
@@ -69,6 +73,7 @@ const migrations = [
   '0062_exposed_account_admission.sql',
   '0064_exposed_machine_admission.sql',
   '0077_publication_attempt_external_url.sql',
+  '0086_fanvue_dm_attachments.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000201';
 const userId = '00000000-0000-4000-8000-000000000202';
@@ -237,6 +242,80 @@ describe('Instagram Login scheduling admission', () => {
 });
 
 describe('media retention lifecycle', () => {
+  it('binds only selected-account ready Fanvue media and reverses an unused binding', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const accountId = '00000000-0000-4000-8000-000000000253';
+    const mediaId = '00000000-0000-4000-8000-000000000254';
+    const clientActionId = '00000000-0000-4000-8000-000000000255';
+    const connectionId = '00000000-0000-4000-8000-000000000256';
+    await database.exec(`
+      INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id)
+      VALUES ('${connectionId}', '${workspaceId}', 'fanvue',
+        '00000000-0000-4000-8000-000000000205', 'fanvue-creator');
+      INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id,
+        destination_provider, remote_account_id, display_name)
+      VALUES ('${accountId}', '${workspaceId}', '${connectionId}',
+        'fanvue-creator', 'fanvue', 'fanvue-creator', 'Creator');
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state)
+      VALUES ('${mediaId}', '${workspaceId}', 'dm-bind', 'dm-bind-hash', 'image/png', 12, 'ready');
+    `);
+    const key = { workspaceId, accountId, clientActionId, mediaId };
+    await expect(bindFanvueDmAttachment(db, { ...key, accountId: accountOne })).resolves.toBe(
+      false,
+    );
+    await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(true);
+    await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(true);
+    const rows = await database.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM fanvue_dm_attachments WHERE media_id = '${mediaId}'
+    `);
+    expect(rows.rows[0]?.count).toBe(1);
+    await expect(releaseUnstartedFanvueDmAttachment(db, key)).resolves.toBe(true);
+    await expect(releaseUnstartedFanvueDmAttachment(db, key)).resolves.toBe(false);
+    await expect(bindFanvueDmAttachment(db, key)).resolves.toBe(false);
+  });
+
+  it('protects account-bound DM media at every deletion gate until the unused binding is released', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const storage = new FakeMediaStorage();
+    const mediaId = '00000000-0000-4000-8000-000000000251';
+    const actionId = '00000000-0000-4000-8000-000000000252';
+    await database.exec(`
+      INSERT INTO media_objects (id, workspace_id, storage_key, sha256, mime_type, byte_size, state, retained_at)
+      VALUES ('${mediaId}', '${workspaceId}', 'dm-key', 'dm-hash', 'image/png', 10, 'ready', '2026-08-01');
+      INSERT INTO fanvue_dm_attachments (workspace_id, account_id, client_action_id, media_id)
+      VALUES ('${workspaceId}', '${accountOne}', '${actionId}', '${mediaId}');
+    `);
+    storage.objects.set('dm-key', Buffer.from('dm-bytes'));
+    const now = new Date('2026-09-02');
+    const policy = createFixedMediaRetentionPolicy(0);
+    await expect(deleteUnattachedMedia(db, storage, { workspaceId, mediaId, now })).resolves.toBe(
+      false,
+    );
+    await expect(evaluateMediaRetention(db, { workspaceId, now, policy })).resolves.toBe(0);
+    await database.exec(`
+      UPDATE media_objects SET state = 'cleanup_eligible', cleanup_eligible_at = '2026-09-01'
+      WHERE id = '${mediaId}';
+    `);
+    await expect(
+      cleanupRetainedMedia(db, storage, {
+        workspaceId,
+        now,
+        retryDelayMs: 1000,
+        staleClaimBefore: new Date('2026-09-01'),
+      }),
+    ).resolves.toEqual({ deleted: 0, failed: 0 });
+    await database.exec(`
+      UPDATE fanvue_dm_attachments SET state = 'released' WHERE media_id = '${mediaId}';
+    `);
+    await expect(
+      cleanupRetainedMedia(db, storage, {
+        workspaceId,
+        now,
+        retryDelayMs: 1000,
+        staleClaimBefore: new Date('2026-09-01'),
+      }),
+    ).resolves.toEqual({ deleted: 1, failed: 0 });
+  });
   it('retries abandoned upload deletion after storage failure and refuses attached media', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const storage = new FakeMediaStorage();

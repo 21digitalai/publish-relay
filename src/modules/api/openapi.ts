@@ -12,6 +12,14 @@ import {
   postValidationRequestSchema,
 } from '../content/post.contract.js';
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
+import {
+  fanvueCreateChatRequestSchema,
+  fanvueMessageRequestSchema,
+} from '../providers/fanvue-message.routes.js';
+import { fanvueDmStageRequestSchema } from '../providers/fanvue-dm-stage.routes.js';
+import { fanvueCommentRequestSchema } from '../providers/fanvue-comment.routes.js';
+import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
+import { facebookDmSendRequestSchema } from '../providers/facebook-messenger-send.routes.js';
 import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
@@ -53,7 +61,9 @@ const destinationCollectionSchema = z.object({
       remoteParentAccountId: z.string().nullable(),
       capabilitySnapshot: z.object({
         schemaVersion: z.literal(1),
-        contentKinds: z.array(z.enum(['text', 'video', 'single_image', 'carousel', 'link'])),
+        contentKinds: z.array(
+          z.enum(['text', 'video', 'single_image', 'carousel', 'link', 'post']),
+        ),
         media: z.object({ minImages: z.number().optional(), maxImages: z.number().optional() }),
       }),
       capabilitiesCheckedAt: z.iso.datetime().nullable(),
@@ -120,6 +130,55 @@ const externalDraftSchema = z.object({
   postId: z.uuid().nullable(),
   createdAt: z.iso.datetime(),
   links: z.object({ self: z.string(), cockpit: z.string(), post: z.string().optional() }),
+});
+const fanvueMessageResultSchema = z.union([
+  z.object({ state: z.literal('confirmed'), messageUuid: z.uuid() }),
+  z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
+  z.object({ state: z.literal('unknown') }),
+]);
+const fanvueCreateChatResultSchema = z.union([
+  z.object({ state: z.literal('confirmed'), fanUuid: z.uuid() }),
+  z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
+  z.object({ state: z.literal('unknown') }),
+]);
+const fanvueCommentResultSchema = z.union([
+  z.object({ state: z.literal('confirmed'), commentUuid: z.uuid() }),
+  z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
+  z.object({ state: z.literal('unknown') }),
+]);
+const fanvuePaymentSignalCollectionSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        eventId: z.uuid(),
+        fanUuid: z.uuid(),
+        invoiceId: z.string(),
+        source: z.enum(['post', 'message', 'media', 'tip', 'subscription']),
+        grossMinor: z.number().int().nonnegative(),
+        currency: z.string().nullable(),
+        paidAt: z.iso.datetime().nullable(),
+        eventAt: z.iso.datetime(),
+        postUuid: z.uuid().nullable(),
+        messageUuid: z.uuid().nullable(),
+        tipContext: z.enum(['post', 'message']).nullable(),
+      }),
+    )
+    .max(50),
+  nextCursor: z.string().nullable(),
+});
+const engagementProposalSchema = z.object({
+  id: z.uuid(),
+  accountId: z.uuid(),
+  provider: z.string(),
+  kind: z.enum(['dm', 'comment']),
+  targetId: z.string(),
+  sourceContext: z.record(z.string(), z.unknown()),
+  content: z.record(z.string(), z.unknown()),
+  proposerType: z.enum(['user', 'api_key', 'delegated']),
+  status: z.string(),
+  revision: z.number().int(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
 });
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
@@ -306,6 +365,274 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing content:write capability' },
             '404': { description: 'Draft not found' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/messages': {
+        post: {
+          operationId: 'sendFacebookPageConversationMessage',
+          description:
+            'Send one text RESPONSE to a Page-scoped participant with a proven recent inbound conversation. Unknown outcomes must not be resent.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(facebookDmSendRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Provider message confirmed; projected action state and message ID',
+            },
+            '202': { description: 'Provider outcome unknown; no automatic resend' },
+            '400': { description: 'Invalid Page message request' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page-local dms:send grant or policy denied' },
+            '409': {
+              description: 'Window, account or action unavailable, or definite provider failure',
+            },
+            '429': { description: 'Mutation rate limit exceeded' },
+            '502': { description: 'Provider preflight failed' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/posts/{postUuid}/comments': {
+        post: {
+          operationId: 'sendFanvueComment',
+          description:
+            'Create a top-level comment with an idempotent action ID. Unknown outcomes must not be blindly resent.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'postUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(fanvueCommentRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Provider comment confirmed',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(fanvueCommentResultSchema)),
+                },
+              },
+            },
+            '202': { description: 'Provider outcome unknown; no automatic resend' },
+            '400': { description: 'Invalid comment request' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:comments:send capability or policy denied' },
+            '404': { description: 'Account not found' },
+            '409': {
+              description: 'Account or action unavailable, including failed provider command',
+            },
+            '429': { description: 'Mutation rate limit exceeded' },
+            '502': { description: 'Provider preflight failed' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/chats': {
+        post: {
+          operationId: 'createFanvueChat',
+          description:
+            'Create a one-to-one chat with the selected fan; this does not send a message. Reuse the same clientActionId after uncertainty and never blindly retry the provider mutation.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(fanvueCreateChatRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Chat created',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(fanvueCreateChatResultSchema)),
+                },
+              },
+            },
+            '202': { description: 'Provider outcome unknown; no automatic retry' },
+            '400': { description: 'Invalid request or fan not contactable' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing send capability, provider grant or policy denied' },
+            '409': { description: 'Account or action unavailable' },
+            '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/chats/{fanUuid}/messages': {
+        post: {
+          operationId: 'sendFanvueMessage',
+          description:
+            'Send one-to-one text or account-verified ready Fanvue media; native priced media may include an attached free preview. Unknown outcomes must not be blindly resent.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'fanUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(fanvueMessageRequestSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Provider message confirmed',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(fanvueMessageResultSchema)),
+                },
+              },
+            },
+            '202': { description: 'Provider outcome unknown; no automatic resend' },
+            '400': { description: 'Invalid message or price/preview shape' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:chats:send capability' },
+            '409': { description: 'Account, media or action unavailable' },
+            '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/dm-media/stage': {
+        post: {
+          operationId: 'stageFanvueDmMedia',
+          description:
+            'Advance one phase of exact account/action/local-media DM staging. Repeat only with the same IDs; unknown outcome is not safe to replay.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: openApiJsonSchema(fanvueDmStageRequestSchema),
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Local media is ready for the canonical DM send command' },
+            '202': {
+              description: 'One phase advanced, or upload is processing, unknown, or failed',
+            },
+            '400': { description: 'Invalid account/action/media identifier shape' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:media:upload capability' },
+            '404': { description: 'Account unavailable to this workspace' },
+            '409': {
+              description: 'Media, provider consent, or stage unavailable; inspect before retry',
+            },
+            '429': { description: 'Mutation rate limit exceeded' },
+            '502': { description: 'Provider stage failed; inspect state before retry' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/payment-signals': {
+        get: {
+          operationId: 'listFanvuePaymentSignals',
+          description:
+            'Account-scoped verified payment/tip facts; a tip does not prove an offer match.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 512 } },
+          ],
+          responses: {
+            '200': {
+              description: 'At most 50 verified provider facts',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(
+                    successResponseSchema(fanvuePaymentSignalCollectionSchema),
+                  ),
+                },
+              },
+            },
+            '400': { description: 'Invalid account or cursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:payments:read capability' },
+            '429': { description: 'Read rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/engagement-proposals': {
+        post: {
+          operationId: 'createEngagementProposal',
+          description:
+            'Stage a DM or comment proposal for optional human review; this never sends to a provider.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: openApiJsonSchema(createEngagementProposalSchema) },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Proposal staged',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(engagementProposalSchema)),
+                },
+              },
+            },
+            '400': { description: 'Invalid proposal input' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing engagement:propose capability' },
+            '409': { description: 'Account unavailable or action ID conflict' },
+            '429': { description: 'Mutation rate limit exceeded' },
           },
         },
       },

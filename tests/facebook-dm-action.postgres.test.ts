@@ -42,7 +42,7 @@ beforeEach(async () => {
   `);
   await postgres.exec(
     readFileSync(
-      new URL('../migrations/0080_facebook_page_dm_actions.sql', import.meta.url),
+      new URL('../migrations/0091_facebook_page_dm_actions.sql', import.meta.url),
       'utf8',
     ),
   );

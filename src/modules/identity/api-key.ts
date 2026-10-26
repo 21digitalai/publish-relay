@@ -11,6 +11,17 @@ export const DEFAULT_API_KEY_CAPABILITIES = [
   'publishes:submit',
   'publishes:retry',
   'audit:read',
+  'fanvue:chats:read',
+  'fanvue:chats:send',
+  'fanvue:posts:read',
+  'fanvue:media:read',
+  'fanvue:audience:read',
+  'fanvue:media:upload',
+  'fanvue:comments:send',
+  'fanvue:payments:read',
+  'engagement:propose',
+  'fanvue:guidance:read',
+  'fanvue:guidance:write',
 ] as const;
 
 export const PAGE_ENGAGEMENT_CAPABILITIES = [

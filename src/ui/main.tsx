@@ -4,8 +4,11 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 import { DefaultsSelect } from './defaults-select.js';
+import { EngagementProposalsPage } from './engagement-proposals.js';
 import { FacebookPageExposureControl } from './facebook-page-exposure-control.js';
 import { FacebookEngagementControl } from './facebook-engagement-control.js';
+import { FanvueAudienceControl } from './fanvue-audience-control.js';
+import { FanvueGuidanceControl } from './fanvue-guidance-control.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
@@ -47,6 +50,12 @@ interface Account {
     categoryId?: string;
   };
   xLongPosts: { allowed: boolean; source: 'self_declared'; verified: false } | null;
+  fanvueModules?: {
+    chatRead: boolean;
+    chatSend: boolean;
+    paymentRead: boolean;
+    audienceRead: boolean;
+  };
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -65,6 +74,7 @@ interface AccountDto {
   capabilitySnapshot?: { contentKinds: string[] };
   adapterDefaults: Account['adapterDefaults'];
   xLongPosts?: Account['xLongPosts'];
+  fanvueModules?: Account['fanvueModules'];
   isExposed?: boolean;
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
@@ -92,6 +102,7 @@ function mapAccountDto(account: AccountDto): Account {
                 : account.provider,
     destinationProvider: account.destinationProvider ?? account.provider,
     ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
+    ...(account.fanvueModules ? { fanvueModules: account.fanvueModules } : {}),
     name: account.displayName.replace(/ \(@[^)]*\)$/, ''),
     handle: handleMatch?.[1] ? `@${handleMatch[1]}` : account.displayName,
     health:
@@ -176,7 +187,12 @@ function Mark({ provider }: { provider: string }) {
 
 function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    document.body.dataset.humanAuthMode === 'magic_link' &&
+    new URLSearchParams(window.location.search).get('magicLink') === 'invalid'
+      ? 'This sign-in link is invalid, expired, or already used. Enter your email to request a fresh link.'
+      : null,
+  );
   const [magicLink, setMagicLink] = useState<{ message: string; developmentUrl?: string } | null>(
     null,
   );
@@ -740,7 +756,7 @@ export function Rail({
 }: {
   open: boolean;
   onClose: () => void;
-  active?: 'queue' | 'calendar' | 'accounts' | 'settings';
+  active?: 'queue' | 'calendar' | 'accounts' | 'proposals' | 'settings';
   onCreate?: () => void;
 }) {
   const [profile, setProfile] = useState<{
@@ -976,6 +992,13 @@ export function Rail({
           ◉ <span>Accounts</span>
         </a>
         <a
+          className={active === 'proposals' ? 'active' : ''}
+          href={workspaceHref('proposals')}
+          aria-current={active === 'proposals' ? 'page' : undefined}
+        >
+          ▤ <span>Proposed replies</span>
+        </a>
+        <a
           className={active === 'settings' ? 'active' : ''}
           href={workspaceHref('settings/workspace')}
           aria-current={active === 'settings' ? 'page' : undefined}
@@ -1004,15 +1027,23 @@ function AccountRow({
   onDisconnect,
   onRevokeGrant,
   onReconnect,
+  onEnableChatRead,
+  onEnableChatSend,
+  onEnableAudienceRead,
   onDefaultsSaved,
   originWorkspaceId,
+  canManageAccount,
 }: {
   account: Account;
   onDisconnect: (account: Account) => void;
   onRevokeGrant: (account: Account) => void;
   onReconnect: () => void;
+  onEnableChatRead: () => void;
+  onEnableChatSend: () => void;
+  onEnableAudienceRead: () => void;
   onDefaultsSaved: (account: Account) => void;
   originWorkspaceId: string | null;
+  canManageAccount: boolean;
 }) {
   const revocationPending = account.health === 'Revocation pending';
   const publishingUnavailable = account.availability === 'publishing_unavailable';
@@ -1127,7 +1158,65 @@ function AccountRow({
             {account.grantFamily ? 'Disconnect Meta grant' : 'Revoke Meta connection'}
           </button>
         )}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
+          (account.fanvueModules?.chatRead ? (
+            <span className="fanvue-chat-read-status fanvue-module-enabled" role="status">
+              Message reading enabled
+            </span>
+          ) : (
+            <button className="fanvue-chat-read-enable secondary-button" onClick={onEnableChatRead}>
+              Allow message reading
+            </button>
+          ))}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
+          account.fanvueModules?.chatRead &&
+          (account.fanvueModules.chatSend ? (
+            <span className="fanvue-chat-send-status fanvue-module-enabled" role="status">
+              Message sending enabled
+            </span>
+          ) : (
+            <button className="fanvue-chat-send-enable secondary-button" onClick={onEnableChatSend}>
+              Allow message sending
+            </button>
+          ))}
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          !needsReconnect &&
+          (account.fanvueModules?.audienceRead ? (
+            <span className="fanvue-audience-read-status fanvue-module-enabled" role="status">
+              Audience enabled
+            </span>
+          ) : (
+            <button
+              className="fanvue-audience-read-enable secondary-button"
+              onClick={onEnableAudienceRead}
+            >
+              Allow Audience access
+            </button>
+          ))}
       </div>
+      {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && !needsReconnect && (
+        <p className="account-module-note">
+          {account.fanvueModules?.chatSend
+            ? 'Fanvue message reading and sending are enabled for this account.'
+            : account.fanvueModules?.chatRead
+              ? 'Message reading is enabled. Message sending requires separate permission.'
+              : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
+        </p>
+      )}
+      {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && canManageAccount && (
+        <FanvueGuidanceControl accountId={account.id} accountName={account.name} />
+      )}
+      {!account.isExposed &&
+        account.provider.toLowerCase() === 'fanvue' &&
+        account.fanvueModules?.audienceRead && <FanvueAudienceControl accountId={account.id} />}
+      {!account.isExposed &&
+        account.destinationProvider === 'facebook_page' &&
+        originWorkspaceId && <FacebookEngagementControl key={account.id} accountId={account.id} />}
       {!account.isExposed &&
         account.destinationProvider === 'facebook_page' &&
         originWorkspaceId && (
@@ -1137,9 +1226,6 @@ function AccountRow({
             originWorkspaceId={originWorkspaceId}
           />
         )}
-      {!account.isExposed &&
-        account.destinationProvider === 'facebook_page' &&
-        originWorkspaceId && <FacebookEngagementControl key={account.id} accountId={account.id} />}
       {account.destinationProvider === 'facebook_page' && originWorkspaceId && (
         <div className="account-calendar-visibility x-long-post-setting">
           <button
@@ -1373,6 +1459,59 @@ function AccountRow({
 function AccountsPage() {
   const oauthResult = new URLSearchParams(window.location.search).get('oauth');
   const oauthErrorMessages: Record<string, string> = {
+    'fanvue-chat-read-denied':
+      'Fanvue message reading was not enabled. Authorization was cancelled. The selected account remains connected; try again when ready.',
+    'fanvue-denied':
+      'No Fanvue account was connected. Authorization was cancelled; start a new connection to try again.',
+    'fanvue-scope-unavailable':
+      'No Fanvue account was connected. This app is not allowed to request a required Fanvue permission. Ask the app owner to enable it before trying again.',
+    'fanvue-provider-error':
+      'No Fanvue account was connected. Fanvue could not complete authorization. Check the app settings before trying again.',
+    'fanvue-chat-read-app-scope':
+      'Fanvue message reading was not enabled. This app is not allowed to request the required permission; the selected account remains connected.',
+    'fanvue-chat-read-provider-error':
+      'Fanvue message reading was not enabled because authorization failed; the selected account remains connected.',
+    'fanvue-chat-read-unavailable':
+      'Fanvue message reading was not enabled. The selected account changed or was disconnected. Reconnect it, then try again.',
+    'fanvue-chat-read-scope':
+      'Fanvue message reading was not enabled. The required read-only permission was not granted. Review the permission and try again.',
+    'fanvue-chat-read-account-mismatch':
+      'Fanvue message reading was not enabled. A different creator signed in. Switch to the selected creator account and try again.',
+    'fanvue-chat-send-denied':
+      'Fanvue message sending was not enabled. Authorization was cancelled; the selected account remains connected.',
+    'fanvue-chat-send-app-scope':
+      'Fanvue message sending was not enabled. This app is not allowed to request the required permission; the selected account remains connected.',
+    'fanvue-chat-send-provider-error':
+      'Fanvue message sending was not enabled because authorization failed; the selected account remains connected.',
+    'fanvue-chat-send-unavailable':
+      'Fanvue message sending was not enabled. The selected account changed or disconnected.',
+    'fanvue-chat-send-scope':
+      'Fanvue message sending was not enabled. The required permission was not granted.',
+    'fanvue-chat-send-account-mismatch':
+      'Fanvue message sending was not enabled. A different creator signed in.',
+    'fanvue-payment-denied':
+      'Fanvue payment signals were not enabled. Authorization was cancelled; the selected account remains connected.',
+    'fanvue-payment-app-scope':
+      'Fanvue payment signals were not enabled. This app is not allowed to request the required permission; the selected account remains connected.',
+    'fanvue-payment-provider-error':
+      'Fanvue payment signals were not enabled because authorization failed; the selected account remains connected.',
+    'fanvue-payment-unavailable':
+      'Fanvue payment signals were not enabled. The selected account changed or disconnected.',
+    'fanvue-payment-scope':
+      'Fanvue payment signals were not enabled. The required permission was not granted.',
+    'fanvue-payment-account-mismatch':
+      'Fanvue payment signals were not enabled. A different creator signed in.',
+    'fanvue-audience-denied': 'Fanvue Audience was not enabled. Authorization was cancelled.',
+    'fanvue-audience-app-scope':
+      'Fanvue Audience was not enabled. This app is not allowed to request read:fan.',
+    'fanvue-audience-provider-error':
+      'Fanvue Audience was not enabled because authorization failed.',
+    'fanvue-audience-unavailable':
+      'Fanvue Audience was not enabled. The selected account changed or disconnected.',
+    'fanvue-audience-scope':
+      'Fanvue Audience was not enabled. The required permission was not granted.',
+    'fanvue-audience-account-mismatch':
+      'Fanvue Audience was not enabled. A different creator signed in.',
     'instagram-denied':
       'No Instagram account was connected. Instagram authorization was not completed. Start a new connection to try again.',
     'instagram-expired':
@@ -1421,6 +1560,8 @@ function AccountsPage() {
       'No Instagram account was connected. This destination is linked to another connection. Contact support to resolve the conflict.',
   };
   const oauthError = oauthResult ? oauthErrorMessages[oauthResult] : undefined;
+  const fanvueChatReadConnected = oauthResult === 'fanvue-chat-read-connected';
+  const fanvueChatSendConnected = oauthResult === 'fanvue-chat-send-connected';
   const oauthErrorReported = useRef(false);
   useEffect(() => {
     if (oauthError && !oauthErrorReported.current) {
@@ -1654,6 +1795,17 @@ function AccountsPage() {
               {oauthError}
             </div>
           )}
+          {fanvueChatReadConnected && (
+            <div className="account-module-success" role="status">
+              Fanvue message reading is connected for the selected account. Sending messages remains
+              off.
+            </div>
+          )}
+          {fanvueChatSendConnected && (
+            <div className="account-module-success" role="status">
+              Fanvue message sending is connected for the selected account.
+            </div>
+          )}
           <div className="account-toolbar">
             <label className="search-control">
               <span aria-hidden="true">⌕</span>
@@ -1728,6 +1880,7 @@ function AccountsPage() {
                     {rows.map((account) => (
                       <AccountRow
                         account={account}
+                        canManageAccount={managedWorkspaceId !== null}
                         key={account.id}
                         onDisconnect={(selected) => {
                           setDisconnecting({ account: selected, remote: false });
@@ -1748,6 +1901,57 @@ function AccountsPage() {
                               'connection',
                               'validation',
                             );
+                        }}
+                        onEnableChatRead={() => {
+                          const adapter = getPostingAdapter('fanvue');
+                          if (!adapter) return;
+                          setActionError(null);
+                          void beginAdapterConnection(adapter, account.id, 'read-chat').catch(
+                            (error: unknown) => {
+                              showAnalyticsError(
+                                setActionError,
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Could not start Fanvue message-reading permission',
+                                'connection',
+                                'unknown',
+                              );
+                            },
+                          );
+                        }}
+                        onEnableChatSend={() => {
+                          const adapter = getPostingAdapter('fanvue');
+                          if (!adapter) return;
+                          setActionError(null);
+                          void beginAdapterConnection(adapter, account.id, 'send-chat').catch(
+                            (error: unknown) => {
+                              showAnalyticsError(
+                                setActionError,
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Could not start Fanvue message-sending permission',
+                                'connection',
+                                'unknown',
+                              );
+                            },
+                          );
+                        }}
+                        onEnableAudienceRead={() => {
+                          const adapter = getPostingAdapter('fanvue');
+                          if (!adapter) return;
+                          setActionError(null);
+                          void beginAdapterConnection(adapter, account.id, 'read-audience').catch(
+                            (error: unknown) => {
+                              showAnalyticsError(
+                                setActionError,
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Could not start Fanvue Audience permission',
+                                'connection',
+                                'unknown',
+                              );
+                            },
+                          );
                         }}
                         onDefaultsSaved={(updated) => {
                           setAccounts((current) =>
@@ -1964,7 +2168,6 @@ function SettingsPage() {
   const settingsLoadErrorReported = useRef(false);
   const [secret, setSecret] = useState<string | null>(null);
   const [eligibleCapabilities, setEligibleCapabilities] = useState<string[]>([]);
-  const [defaultCapabilities, setDefaultCapabilities] = useState<string[]>([]);
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [editingKey, setEditingKey] = useState<{
     id: string;
@@ -1994,18 +2197,13 @@ function SettingsPage() {
   const loadApiKeys = async () => {
     const response = await fetch('/api/settings/api-keys');
     const result = (await response.json()) as {
-      data: {
-        items: ManagedApiKey[];
-        eligibleCapabilities: string[];
-        defaultCapabilities: string[];
-      } | null;
+      data: { items: ManagedApiKey[]; eligibleCapabilities: string[] } | null;
       error: string | null;
     };
     if (!response.ok || !result.data)
       throw new Error(result.error ?? 'API keys could not be loaded');
     setKeys(result.data.items);
     setEligibleCapabilities(result.data.eligibleCapabilities);
-    setDefaultCapabilities(result.data.defaultCapabilities);
     setKeyListRefreshFailed(false);
   };
   useEffect(() => {
@@ -2023,15 +2221,10 @@ function SettingsPage() {
         const result = (await primary.json()) as { data: unknown; error: string | null };
         if (!primary.ok) throw new Error(result.error ?? 'Settings could not be loaded');
         if (isAutomation) {
-          const keyData = result.data as {
-            items: ManagedApiKey[];
-            eligibleCapabilities: string[];
-            defaultCapabilities: string[];
-          };
+          const keyData = result.data as { items: ManagedApiKey[]; eligibleCapabilities: string[] };
           setKeys(keyData.items);
           setEligibleCapabilities(keyData.eligibleCapabilities);
-          setDefaultCapabilities(keyData.defaultCapabilities);
-          setCapabilities([...keyData.defaultCapabilities]);
+          setCapabilities([...keyData.eligibleCapabilities]);
         } else if (isIntegrations) setGrants(result.data as DelegatedGrant[]);
         else {
           setWorkspace(result.data as typeof workspace);
@@ -2180,7 +2373,6 @@ function SettingsPage() {
         throw new Error(result.error ?? 'API key could not be created');
       setSecret(result.data.token);
       setLabel('');
-      setCapabilities([...defaultCapabilities]);
       setMessage('API key created');
       try {
         await loadApiKeys();
@@ -2425,7 +2617,7 @@ function SettingsPage() {
             <div className="advanced-capabilities">
               <p className="field-label">Permissions</p>
               <p className="field-hint">
-                Publishing permissions start on. Engagement permissions require an explicit choice.
+                All available permissions are on by default. Turn off any this key should not have.
               </p>
               <div className="capability-grid">
                 {eligibleCapabilities.map((capability) => {
@@ -2794,6 +2986,7 @@ export function App() {
   if (/\/w\/[^/]+\/calendar$/.test(path)) return <CalendarPage />;
   if (/\/w\/[^/]+\/calendar\/exposed-pages\/[^/]+$/.test(path)) return <CalendarMirrorDetailPage />;
   if (/\/w\/[^/]+\/jobs\/[^/]+$/.test(path)) return <JobDetailPage />;
+  if (/\/w\/[^/]+\/proposals$/.test(path)) return <EngagementProposalsPage />;
   if (/\/w\/[^/]+\/drafts\/[^/]+$/.test(path)) return <ExternalDraftPage />;
   if (/\/w\/[^/]+\/settings\/(workspace|automation|integrations)$/.test(path))
     return <SettingsPage />;

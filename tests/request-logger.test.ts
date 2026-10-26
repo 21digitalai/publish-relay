@@ -65,6 +65,13 @@ describe('request logger', () => {
       expect(bearerPath.statusCode).toBe(404);
       expect(JSON.stringify(bearerPath.json())).not.toContain('SYNTHETIC_TIKTOK_BEARER');
       expect(lines.join('')).not.toContain('SYNTHETIC_TIKTOK_BEARER');
+      const fanvuePath = await application.inject({
+        method: 'GET',
+        url: '/webhooks/fanvue/payments/SYNTHETIC_FANVUE_BEARER/near-match',
+      });
+      expect(fanvuePath.statusCode).toBe(404);
+      expect(JSON.stringify(fanvuePath.json())).not.toContain('SYNTHETIC_FANVUE_BEARER');
+      expect(lines.join('')).not.toContain('SYNTHETIC_FANVUE_BEARER');
     } finally {
       await application.close();
     }

@@ -94,6 +94,43 @@ async function cli(args: string[], env: Record<string, string> = {}) {
 }
 
 describe('Publish Relay CLI', () => {
+  it('routes a selected Fanvue chat creation with workspace preflight and bounded output', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000002';
+    const fanUuid = '00000000-0000-4000-8000-000000000003';
+    const clientActionId = '00000000-0000-4000-8000-000000000004';
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      201,
+      {
+        success: true,
+        data: { state: 'confirmed', fanUuid, accessToken: 'private' },
+      },
+      '00000000-0000-4000-8000-000000000201',
+      paths,
+    );
+    const directory = await mkdtemp(join(tmpdir(), 'relay-chat-'));
+    const bodyFile = join(directory, 'create-chat.json');
+    await writeFile(bodyFile, JSON.stringify({ fanUuid, clientActionId }));
+    const result = await cli(
+      [
+        'fanvue',
+        'create-chat',
+        accountId,
+        '--base-url',
+        baseUrl,
+        '--body-file',
+        bodyFile,
+        '--idempotency-key',
+        clientActionId,
+      ],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(paths).toEqual([`/api/v1/fanvue/accounts/${accountId}/chats`]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { state: 'confirmed', fanUuid, accessToken: '[REDACTED]' },
+    });
+  });
   it('matches the real account API authentication and response contract', async () => {
     const application = Fastify();
     registerApiKeyRoutes(application, {

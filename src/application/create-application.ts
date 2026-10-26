@@ -46,10 +46,32 @@ import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.j
 import { registerTikTokOauthRoutes } from '../modules/providers/tiktok-oauth.routes.js';
 import type { SnapchatHttpClient } from '../modules/providers/snapchat-http-client.js';
 import { registerSnapchatOauthRoutes } from '../modules/providers/snapchat-oauth.routes.js';
+import type { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
+import { registerFanvueOauthRoutes } from '../modules/providers/fanvue-oauth.routes.js';
+import { FanvueReadClient } from '../modules/providers/fanvue-read-client.js';
+import { FanvueReadService } from '../modules/providers/fanvue-read.service.js';
+import { FanvueCommentClient } from '../modules/providers/fanvue-comment-client.js';
+import { FanvueCommentService } from '../modules/providers/fanvue-comment.service.js';
+import { registerFanvueCommentRoutes } from '../modules/providers/fanvue-comment.routes.js';
+import { FanvueMessageClient } from '../modules/providers/fanvue-message-client.js';
+import { FanvueMessageService } from '../modules/providers/fanvue-message.service.js';
+import { registerFanvueMessageRoutes } from '../modules/providers/fanvue-message.routes.js';
+import { registerFanvueDmStageRoutes } from '../modules/providers/fanvue-dm-stage.routes.js';
+import { stageFanvueDmMediaStep } from '../modules/providers/fanvue-dm-stage-step.service.js';
+import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
+import {
+  registerFanvueBrowserReadRoutes,
+  registerFanvueReadRoutes,
+} from '../modules/providers/fanvue-read.routes.js';
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerTikTokDraftRoutes } from '../modules/providers/tiktok-draft.routes.js';
 import { registerTikTokScheduleRoutes } from '../modules/providers/tiktok-schedule.routes.js';
 import { registerSnapchatStoryResolutionRoutes } from '../modules/providers/snapchat-story-resolution.routes.js';
+import { registerFanvuePaymentRoutes } from '../modules/providers/fanvue-payment.routes.js';
+import { registerFanvuePaymentWebhook } from '../modules/providers/fanvue-payment-webhook.routes.js';
+import { registerEngagementProposalRoutes } from '../modules/providers/engagement-proposal.routes.js';
+import { registerEngagementApprovalRoutes } from '../modules/providers/engagement-approval.routes.js';
+import { registerEngagementDmMediaRoutes } from '../modules/providers/engagement-dm-media.routes.js';
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
@@ -57,6 +79,7 @@ import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-t
 import { registerTikTokMediaRoutes } from '../modules/providers/tiktok-media.routes.js';
 import { TikTokMediaGrantService } from '../modules/providers/tiktok-media-grant.service.js';
 import { registerProviderAccountRoutes } from '../modules/credentials/provider-account.routes.js';
+import { registerFanvueGuidanceRoutes } from '../modules/credentials/fanvue-guidance.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
 import { registerRedactedNotFoundHandler, requestLoggerOptions } from './request-logger.js';
@@ -103,6 +126,12 @@ interface SnapchatOauthOptions {
   client: SnapchatHttpClient;
   callbackUrl: string;
 }
+interface FanvueOauthOptions {
+  keys: MasterKeyProvider;
+  client: FanvueHttpClient;
+  callbackUrl: string;
+  readClient?: FanvueReadClient;
+}
 
 export interface CoreApplicationOptions {
   config: RuntimeConfig;
@@ -121,6 +150,7 @@ export interface CoreApplicationOptions {
   instagramOauth?: InstagramOauthOptions;
   tiktokOauth?: TikTokOauthOptions;
   snapchatOauth?: SnapchatOauthOptions;
+  fanvueOauth?: FanvueOauthOptions;
   delegatedAuthorization?: DelegatedAuthorizationService;
   magicLinks?: MagicLinkService;
   publicAuthShells?: boolean;
@@ -180,6 +210,14 @@ function registerMachineApiRoutes(
   const rateLimiter = createApiRateLimiter();
   registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
   if (!database) return;
+  registerFanvueGuidanceRoutes(
+    application,
+    database,
+    auth,
+    apiKeys,
+    rateLimiter,
+    delegatedAuthorization,
+  );
   registerDestinationRoutes(
     application,
     database,
@@ -190,22 +228,57 @@ function registerMachineApiRoutes(
       ? { keys: options.tiktokOauth.keys, client: options.tiktokOauth.client }
       : undefined,
   );
-  if (options.facebookRead)
+  if (options.facebookRead) {
+    const facebook = { database, ...options.facebookRead };
     registerFacebookPageReadRoutes(
       application,
-      { database, ...options.facebookRead },
+      facebook,
       apiKeys,
       rateLimiter,
       delegatedAuthorization,
     );
-  if (options.facebookRead)
     registerFacebookPageDmSendRoute(
       application,
-      { database, ...options.facebookRead, policy: actionPolicy },
+      { ...facebook, policy: actionPolicy },
       apiKeys,
       rateLimiter,
       delegatedAuthorization,
     );
+  }
+  if (options.fanvueOauth) {
+    const reads = new FanvueReadService(
+      database,
+      options.fanvueOauth.keys,
+      options.fanvueOauth.client,
+      options.fanvueOauth.readClient ?? new FanvueReadClient(),
+    );
+    registerFanvueReadRoutes(application, reads, apiKeys, rateLimiter, delegatedAuthorization);
+    registerFanvueCommentRoutes(
+      application,
+      new FanvueCommentService(database, reads, new FanvueCommentClient(), actionPolicy),
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+    registerFanvueMessageRoutes(
+      application,
+      new FanvueMessageService(database, reads, new FanvueMessageClient(), actionPolicy),
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+    if (mediaStorage) {
+      const uploadClient = new FanvueMediaUploadClient();
+      const keys = options.fanvueOauth.keys;
+      registerFanvueDmStageRoutes(
+        application,
+        (input) => stageFanvueDmMediaStep(database, mediaStorage, uploadClient, keys, reads, input),
+        apiKeys,
+        rateLimiter,
+        delegatedAuthorization,
+      );
+    }
+  }
   if (!config.CURSOR_SIGNING_SECRET)
     throw new Error('CURSOR_SIGNING_SECRET is required for API routes');
   registerPostRoutes(
@@ -218,6 +291,18 @@ function registerMachineApiRoutes(
     delegatedAuthorization,
   );
   registerExternalDraftRoutes(application, database, apiKeys, rateLimiter, delegatedAuthorization);
+  registerFanvuePaymentRoutes(application, {
+    database,
+    apiKeys,
+    rateLimiter,
+    ...(delegatedAuthorization ? { delegatedAuthorization } : {}),
+  });
+  registerEngagementProposalRoutes(application, {
+    database,
+    apiKeys,
+    rateLimiter,
+    ...(delegatedAuthorization ? { delegatedAuthorization } : {}),
+  });
   if (!mediaStorage) return;
   registerMediaRoutes(
     application,
@@ -257,6 +342,7 @@ function registerBrowserRoutes(
     instagramOauth,
     tiktokOauth,
     snapchatOauth,
+    fanvueOauth,
     delegatedAuthorization,
   } = options;
   if (database && mediaStorage && config.CURSOR_SIGNING_SECRET) {
@@ -277,6 +363,47 @@ function registerBrowserRoutes(
         { database, ...options.facebookRead },
         auth,
       );
+    registerEngagementProposalRoutes(application, { database, auth });
+    if (fanvueOauth) {
+      const reads = new FanvueReadService(
+        database,
+        fanvueOauth.keys,
+        fanvueOauth.client,
+        fanvueOauth.readClient ?? new FanvueReadClient(),
+      );
+      registerEngagementApprovalRoutes(application, {
+        database,
+        auth,
+        comments: new FanvueCommentService(
+          database,
+          reads,
+          new FanvueCommentClient(),
+          actionPolicy,
+        ),
+        messages: new FanvueMessageService(
+          database,
+          reads,
+          new FanvueMessageClient(),
+          actionPolicy,
+        ),
+      });
+      if (mediaStorage) {
+        const uploadClient = new FanvueMediaUploadClient();
+        registerEngagementDmMediaRoutes(application, {
+          database,
+          auth,
+          stage: (input) =>
+            stageFanvueDmMediaStep(
+              database,
+              mediaStorage,
+              uploadClient,
+              fanvueOauth.keys,
+              reads,
+              input,
+            ),
+        });
+      }
+    }
     registerProviderAccountRoutes(application, {
       auth,
       database,
@@ -325,6 +452,22 @@ function registerBrowserRoutes(
     registerTikTokOauthRoutes(application, { auth, database, actionPolicy, ...tiktokOauth });
   if (auth && database && snapchatOauth)
     registerSnapchatOauthRoutes(application, { auth, database, actionPolicy, ...snapchatOauth });
+  if (auth && database && fanvueOauth)
+    registerFanvueOauthRoutes(application, { auth, database, actionPolicy, ...fanvueOauth });
+  if (database && fanvueOauth)
+    registerFanvuePaymentWebhook(application, { database, keys: fanvueOauth.keys });
+  if (auth && database && fanvueOauth)
+    registerFanvueBrowserReadRoutes(
+      application,
+      new FanvueReadService(
+        database,
+        fanvueOauth.keys,
+        fanvueOauth.client,
+        fanvueOauth.readClient ?? new FanvueReadClient(),
+      ),
+      auth,
+      createApiRateLimiter(),
+    );
   if (auth && delegatedAuthorization)
     registerDelegatedAuthorizationRoutes(application, delegatedAuthorization, auth, shellHtml);
 }
@@ -345,7 +488,7 @@ export function registerCoreApplication(
   const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
     .replace(
       '<body>',
-      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}">`,
+      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}" data-fanvue-enabled="${String(Boolean(options.fanvueOauth))}">`,
     )
     .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
     .replace('href="/favicon.svg"', `href="${uiPrefix === '/' ? '/' : uiPrefix}favicon.svg"`);

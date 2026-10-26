@@ -558,15 +558,92 @@
     {
       "idx": 79,
       "version": "7",
-      "when": 1792886100000,
-      "tag": "0079_facebook_page_engagement_foundation",
+      "when": 1792890000000,
+      "tag": "0079_fanvue_action_intents",
       "breakpoints": true
     },
     {
       "idx": 80,
       "version": "7",
+      "when": 1792927500000,
+      "tag": "0080_fanvue_payment_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792927500001,
+      "tag": "0081_engagement_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792935000000,
+      "tag": "0082_fanvue_payment_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792935000001,
+      "tag": "0083_fanvue_payment_callback_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792935000002,
+      "tag": "0084_fanvue_payment_creation_probe",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1792935000003,
+      "tag": "0085_fanvue_payment_deletion_required",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792937450000,
+      "tag": "0086_fanvue_dm_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792940000000,
+      "tag": "0087_fanvue_dm_processing",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792945000000,
+      "tag": "0088_fanvue_agent_guidance",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792950000000,
+      "tag": "0089_fanvue_chat_create_intent",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1793007500000,
+      "tag": "0090_facebook_page_engagement_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
       "when": 1793007600000,
-      "tag": "0080_facebook_page_dm_actions",
+      "tag": "0091_facebook_page_dm_actions",
       "breakpoints": true
     }
   ]

@@ -27,7 +27,7 @@ const paramsSchema = z.strictObject({
     .regex(/^[A-Za-z0-9_]+$/)
     .max(256),
 });
-const bodySchema = z.strictObject({
+export const facebookDmSendRequestSchema = z.strictObject({
   clientActionId: z.uuid(),
   text: z.string().trim().min(1).max(2000),
 });
@@ -49,7 +49,7 @@ export function registerFacebookPageDmSendRoute(
     async (request, reply) => {
       void reply.header('Cache-Control', 'no-store');
       const path = paramsSchema.safeParse(request.params);
-      const body = bodySchema.safeParse(request.body);
+      const body = facebookDmSendRequestSchema.safeParse(request.body);
       if (!path.success || !body.success)
         return reply
           .code(400)

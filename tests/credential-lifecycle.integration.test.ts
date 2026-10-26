@@ -111,6 +111,7 @@ const migrations = [
   '0065_paginated_exposed_facebook_pages.sql',
   '0075_machine_exposed_page_discovery.sql',
   '0077_publication_attempt_external_url.sql',
+  '0088_fanvue_agent_guidance.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

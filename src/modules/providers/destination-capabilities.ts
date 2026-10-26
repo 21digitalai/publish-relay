@@ -1,7 +1,7 @@
 import type { DestinationProvider } from './contract.js';
 
 export type DestinationContentKind =
-  'text' | 'video' | 'single_image' | 'multi_image' | 'carousel' | 'link';
+  'text' | 'video' | 'single_image' | 'multi_image' | 'carousel' | 'link' | 'post';
 
 export interface DestinationCapabilitySnapshot {
   schemaVersion: 1;
@@ -31,6 +31,8 @@ const CAPABILITIES: Partial<Record<DestinationProvider, DestinationCapabilitySna
   tiktok: { schemaVersion: 1, contentKinds: [], media: {} },
   // Owner discovery is not proof of Public Profile posting access.
   snapchat: { schemaVersion: 1, contentKinds: [], media: {} },
+  // One explicit Fanvue post shape accepts text and optional ready image/video media.
+  fanvue: { schemaVersion: 1, contentKinds: ['post'], media: { maxImages: 20 } },
 };
 
 export function destinationCapabilities(provider: string): DestinationCapabilitySnapshot {

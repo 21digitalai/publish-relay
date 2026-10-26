@@ -520,6 +520,7 @@ export const providerAccounts = pgTable(
     displayName: text('display_name').notNull(),
     adapterDefaults: jsonb('adapter_defaults').notNull().default({}),
     xLongPostsAllowed: boolean('x_long_posts_allowed').notNull().default(false),
+    fanvueAgentGuidance: text('fanvue_agent_guidance').notNull().default(''),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
     ...timestamps,
   },
@@ -659,6 +660,42 @@ export const facebookPageDmActions = pgTable(
       'facebook_page_dm_actions_state_check',
       sql`${table.state} IN ('reserved', 'confirmed', 'failed', 'unknown')`,
     ),
+  ],
+);
+
+// Provider-neutral review-first queue. Approval uses the canonical provider command, not this row.
+export const engagementProposals = pgTable(
+  'engagement_proposals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    provider: text('provider').notNull(),
+    kind: text('kind').notNull(),
+    targetId: text('target_id').notNull(),
+    sourceContext: jsonb('source_context').notNull().default({}),
+    content: jsonb('content').notNull(),
+    proposerType: text('proposer_type').notNull(),
+    proposerId: uuid('proposer_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    revision: integer('revision').notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('engagement_proposals_workspace_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
+    uniqueIndex('engagement_proposals_workspace_id_unique').on(table.workspaceId, table.id),
+    index('engagement_proposals_pending_idx').on(table.workspaceId, table.createdAt),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'engagement_proposals_account_fk',
+    }).onDelete('restrict'),
   ],
 );
 
@@ -1261,6 +1298,161 @@ export const providerStagingArtifacts = pgTable(
       columns: [table.workspaceId, table.providerReferenceCredentialId],
       foreignColumns: [credentials.workspaceId, credentials.id],
       name: 'provider_staging_workspace_reference_credential_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvueActionIntents = pgTable(
+  'fanvue_action_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    actionKind: text('action_kind').notNull(),
+    targetUuid: uuid('target_uuid').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    state: text('state').notNull().default('reserved'),
+    providerObjectUuid: uuid('provider_object_uuid'),
+    failureStatus: integer('failure_status'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_action_intents_action_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.clientActionId,
+    ),
+    index('fanvue_action_intents_account_created_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.createdAt,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_action_intents_workspace_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvueDmAttachments = pgTable(
+  'fanvue_dm_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    mediaId: uuid('media_id').notNull(),
+    state: text('state').notNull().default('bound'),
+    providerMediaUuid: uuid('provider_media_uuid'),
+    uploadCredentialId: uuid('upload_credential_id'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_dm_attachments_action_media_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.clientActionId,
+      table.mediaId,
+    ),
+    index('fanvue_dm_attachments_media_active_idx')
+      .on(table.workspaceId, table.mediaId)
+      .where(sql`${table.state} <> 'released'`),
+    check(
+      'fanvue_dm_attachments_state_check',
+      sql`${table.state} in ('bound', 'uploading', 'unknown', 'ready', 'failed', 'released')`,
+    ),
+    check(
+      'fanvue_dm_attachments_ready_check',
+      sql`${table.state} <> 'ready' or ${table.providerMediaUuid} is not null`,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_dm_attachments_account_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.mediaId],
+      foreignColumns: [mediaObjects.workspaceId, mediaObjects.id],
+      name: 'fanvue_dm_attachments_media_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.uploadCredentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'fanvue_dm_attachments_upload_credential_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvuePaymentReceipts = pgTable(
+  'fanvue_payment_receipts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    eventId: uuid('event_id').notNull(),
+    eventFingerprint: text('event_fingerprint').notNull(),
+    creatorUuid: uuid('creator_uuid').notNull(),
+    fanUuid: uuid('fan_uuid').notNull(),
+    invoiceId: text('invoice_id').notNull(),
+    source: text('source').notNull(),
+    grossMinor: integer('gross_minor').notNull(),
+    currency: text('currency'),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+    eventAt: timestamp('event_at', { withTimezone: true }).notNull(),
+    postUuid: uuid('post_uuid'),
+    messageUuid: uuid('message_uuid'),
+    tipContext: text('tip_context'),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('fanvue_payment_receipts_event_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.eventId,
+    ),
+    index('fanvue_payment_receipts_account_paid_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.eventAt,
+      table.id,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_payment_receipts_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvuePaymentSubscriptions = pgTable(
+  'fanvue_payment_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    creatorUuid: uuid('creator_uuid').notNull(),
+    callbackHandleHash: text('callback_handle_hash').notNull(),
+    providerSubscriptionId: text('provider_subscription_id'),
+    signingCredentialId: uuid('signing_credential_id'),
+    state: text('state').notNull().default('probe_pending'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_payment_subscriptions_handle_unique').on(table.callbackHandleHash),
+    uniqueIndex('fanvue_payment_subscriptions_account_open_unique')
+      .on(table.workspaceId, table.accountId)
+      .where(sql`${table.state} <> 'disabled'`),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_payment_subscriptions_account_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.workspaceId, table.signingCredentialId],
+      foreignColumns: [credentials.workspaceId, credentials.id],
+      name: 'fanvue_payment_subscriptions_signing_credential_fk',
     }).onDelete('restrict'),
   ],
 );

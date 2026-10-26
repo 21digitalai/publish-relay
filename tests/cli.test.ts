@@ -103,7 +103,77 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.5.0' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.6.0' } });
+    },
+  );
+
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'reads selected Page posts and comments without leaking provider fields in %s',
+    async (entrypoint) => {
+      const accountId = '00000000-0000-4000-8000-000000000002';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        200,
+        {
+          success: true,
+          data: {
+            posts: [
+              {
+                id: '123_456',
+                text: 'Page post',
+                createdAt: '2026-10-26T12:00:00Z',
+                permalink: null,
+                accessToken: 'private',
+              },
+            ],
+            comments: [
+              {
+                id: '456_789',
+                text: 'Visitor reply',
+                createdAt: '2026-10-26T12:10:00Z',
+                replyCount: null,
+                likeCount: 2,
+                providerProfile: { email: 'private@example.test' },
+              },
+            ],
+            nextCursor: 'next-cursor',
+          },
+        },
+        '00000000-0000-4000-8000-000000000201',
+        paths,
+      );
+      const shared = ['--limit', '5', '--after', 'prior-cursor', '--base-url', baseUrl];
+      const posts = await cli(
+        ['facebook-comments', 'posts', accountId, ...shared],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      const comments = await cli(
+        ['facebook-comments', 'list', accountId, '--post-id', '123_456', ...shared],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(posts.code).toBe(0);
+      expect(comments.code).toBe(0);
+      expect(paths).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-posts?limit=5&after=prior-cursor`,
+        `/api/v1/destinations/${accountId}/facebook-posts/123_456/comments?limit=5&after=prior-cursor`,
+      ]);
+      expect((JSON.parse(posts.stdout) as { data: unknown }).data).toMatchObject({
+        posts: [{ text: 'Page post', accessToken: '[REDACTED]' }],
+        nextCursor: 'next-cursor',
+      });
+      expect((JSON.parse(comments.stdout) as { data: unknown }).data).toMatchObject({
+        comments: [{ text: 'Visitor reply', likeCount: 2, providerProfile: '[REDACTED]' }],
+        nextCursor: 'next-cursor',
+      });
+      const invalid = await cli(
+        ['facebook-comments', 'list', accountId, '--post-id', '../foreign', '--base-url', baseUrl],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(invalid.code).toBe(2);
+      expect(paths).toHaveLength(2);
     },
   );
 

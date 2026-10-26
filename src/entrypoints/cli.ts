@@ -34,6 +34,11 @@ const MUTATIONS = new Set([
 const ROUTES: Record<string, { method: string; path: string; body?: boolean }> = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
+  'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
+  'facebook-comments:list': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/facebook-posts/:postId/comments',
+  },
   'facebook-dms:list': { method: 'GET', path: '/api/v1/destinations/:id/facebook-conversations' },
   'facebook-dms:messages': {
     method: 'GET',
@@ -95,6 +100,23 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ] as const;
 const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
+  'facebook-comments:posts': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'posts',
+    'nextCursor',
+    'text',
+    'createdAt',
+    'permalink',
+  ]),
+  'facebook-comments:list': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'comments',
+    'nextCursor',
+    'text',
+    'createdAt',
+    'replyCount',
+    'likeCount',
+  ]),
   'facebook-dms:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'conversations',
@@ -520,10 +542,17 @@ function routePath(
   flags: Record<string, string | true>,
 ): string {
   const conversationId = flags['conversation-id'];
+  const postId = flags['post-id'];
   if (route.path.includes(':conversationId') && typeof conversationId !== 'string')
     throw new CliError(EXIT.usage, 'Facebook DM command requires --conversation-id');
+  if (
+    route.path.includes(':postId') &&
+    (typeof postId !== 'string' || !/^[0-9]+(?:_[0-9]+)*$/.test(postId))
+  )
+    throw new CliError(EXIT.usage, 'Facebook Comments command requires a numeric --post-id');
   const path = route.path
     .replace(':id', encodeURIComponent(id ?? ''))
+    .replace(':postId', encodeURIComponent(String(postId ?? '')))
     .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')));
   if (
     command !== 'posts:list' &&
@@ -531,6 +560,8 @@ function routePath(
     command !== 'publishes:list' &&
     command !== 'fanvue:followers' &&
     command !== 'fanvue:subscribers' &&
+    command !== 'facebook-comments:posts' &&
+    command !== 'facebook-comments:list' &&
     command !== 'facebook-dms:list' &&
     command !== 'facebook-dms:messages'
   )
@@ -539,7 +570,10 @@ function routePath(
   const names =
     command === 'destinations:list'
       ? ['cursor']
-      : command === 'facebook-dms:list' || command === 'facebook-dms:messages'
+      : command === 'facebook-dms:list' ||
+          command === 'facebook-dms:messages' ||
+          command === 'facebook-comments:posts' ||
+          command === 'facebook-comments:list'
         ? ['limit', 'after']
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
@@ -608,7 +642,7 @@ async function pollJob(
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.5.0' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.6.0' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);

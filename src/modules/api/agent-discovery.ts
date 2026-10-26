@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.6.0';
-const CLI_VERSION = '1.5.0';
+const CONTRACT_VERSION = '1.7.0';
+const CLI_VERSION = '1.6.0';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -18,7 +18,7 @@ Read the skill and manifest before calling the API. Never send credentials to di
 `;
 const SKILL_MARKDOWN = `---
 name: publish-relay
-description: "Manage workspace-scoped publishing and authorized Facebook Page conversations."
+description: "Manage workspace-scoped publishing and authorized Facebook Page comments and conversations."
 ---
 
 # Publish Relay
@@ -41,6 +41,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - drafts create/show: content:write. Create a tenant-scoped imported-media draft with a stable opaque externalId, ordered ready mediaIds, and optional label/HTTPS returnUrl. Open the returned cockpit link for the user to complete the canonical Relay composer; the resulting post link appears after that one-time transition.
 - destinations list: destinations:read.
 - publishes retry: publishes:retry. Retry only a failed job after inspection; Relay rejects jobs whose outcome still requires reconciliation.
+- facebook-comments posts/list: comments:read on the selected Page, plus its optional Comments module and verified provider grant. Publishing connection alone does not authorize comment reading.
 - facebook-dms list/messages: dms:read on the selected Page, plus its connected Messages module grant. Publishing connection alone does not authorize inbox access.
 - facebook-dms send: dms:send on the selected Page, its Messages grant, and a recent inbound message from that conversation. This replies to an existing person-initiated conversation; it cannot cold-message a Page follower.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
@@ -77,6 +78,10 @@ Media example: add media upload with --file <image-path> --content-type image/pn
 Draft handoff example: upload each local asset, then run drafts create with a JSON body containing externalId and the returned mediaIds plus a unique idempotency key. Retain the returned self and cockpit links; do not build a second scheduler UI in the source client.
 YouTube scheduling example: set title and any sparse provider override in the posts create body, select the connected destination, then retain data.jobs[].effectiveProviderSettings from the response. Do not repeat unchanged privacy, Made for Kids, notification, tags, or category defaults on every request.
 Retry example: after publishes show confirms state=failed and no reconciliation is required, run publishes retry <job-id> with a unique --idempotency-key. Poll the same job link afterward; never retry accepted_pending or unknown outcomes blindly.
+
+## Facebook Page Comments
+
+Use destinations list to choose the connected Facebook Page account ID. Run facebook-comments posts <account-id> --limit 25 and follow data.nextCursor with --after <cursor>; the server limits pages to 100. Posts contain Page-owned provider IDs, text, createdAt and a permalink only when Meta returns one. To read comments on a selected Page-owned post, run facebook-comments list <account-id> --post-id <post-id> --limit 25, following its cursor in the same way. The server proves the selected Page owns that post before reading visitor comments. Returned comment IDs, text, createdAt, replyCount and likeCount are provider-reported fields; null counts are unavailable, not zero. These reads require the selected Page's Comments grant, including pages_read_user_content for visitor comments. Do not infer reach, quality, full history, or availability of visitor content from an empty result or missing count. A 403 means the agent lacks Page-local comments:read; a 409 page_read_unavailable means the selected Page, Comments module or provider grant is unavailable. Do not search raw Meta credentials or another Page to bypass either condition.
 
 ## Facebook Page Messages
 

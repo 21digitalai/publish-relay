@@ -176,6 +176,8 @@ Facebook Pages and Instagram are separate picker entries and reconnect paths. Fa
 
 The origin-owned Facebook Page row reuses `FacebookEngagementControl` for separate Comments and Page DMs local switches and provider-grant state. `Enable Messages` starts a Page-bound OAuth redirect with pending/error feedback when grant evidence is unknown or missing; verified Pages offer `Reconnect Messages` for explicit reauthorization. Callback success uses the shared Accounts success receipt, while denial, wrong Page, partial permission and provider failure use fixed Accounts alerts and leave publishing connected. The control does not appear on exposed/shared Page rows. The Add Posting Adapter picker and base Page consent remain publishing-only.
 
+The same control offers `.facebook-comments-connect` as `Enable Comments` for unknown/missing selected-Page grant and `Reconnect Comments` for verified grant. It uses the existing secondary action, pending label, inline account error, and fixed OAuth callback feedback; local Comments enablement and provider grant remain distinct. Denial, partial scopes, wrong Page/user, stale publishing account and a revoked Comments credential must never show a verified grant or replace the Page publishing/Messages state. Reload reads the selected Page's persisted grant evidence; exposed Pages have no consent action.
+
 - Multiple accounts per provider are normal.
 - Each provider group has Connect another.
 - Search name/handle; filter provider, health, and workspace access.

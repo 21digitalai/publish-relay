@@ -151,13 +151,10 @@ export function registerMetaOauthRoutes(
       return { data: result, error: null };
     } catch (error) {
       if (error instanceof MetaPageCommentsError)
-        return reply
-          .code(409)
-          .send({
-            data: null,
-            error:
-              'The selected Page is no longer ready. Reconnect publishing, then retry Comments.',
-          });
+        return reply.code(409).send({
+          data: null,
+          error: 'The selected Page is no longer ready. Reconnect publishing, then retry Comments.',
+        });
       if (error instanceof ActionPolicyDeniedError)
         return reply.code(403).send({ data: null, error: error.message, code: error.code });
       throw error;

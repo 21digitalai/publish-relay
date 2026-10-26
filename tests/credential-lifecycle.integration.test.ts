@@ -61,6 +61,8 @@ import {
 import type { MetaFamilyCallbackError } from '../src/modules/providers/meta-oauth.service.js';
 import { MetaRequestError } from '../src/modules/providers/meta-http-client.js';
 import { beginPageMessagesConsent } from '../src/modules/providers/meta-page-messages.service.js';
+import { beginPageCommentsConsent } from '../src/modules/providers/meta-page-comments.service.js';
+import { readPageEngagementState } from '../src/modules/providers/facebook-page-engagement.service.js';
 import { completeInstagramLogin } from '../src/modules/providers/instagram-login.service.js';
 import { getFreshInstagramLoginToken } from '../src/modules/providers/instagram-login-credential.service.js';
 import { promoteInstagramLoginAccount } from '../src/modules/providers/instagram-login-promotion.service.js';
@@ -1463,6 +1465,175 @@ describe('credential and OAuth persistence', () => {
     expect(grant.rows[0]).toMatchObject({
       dms_provider_grant: 'verified',
       dms_credential_id: afterSelected.rows[0]?.credential_id,
+    });
+  });
+
+  it('binds Comments consent only to the selected Page and rotates only its Comments credential', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const keys: MasterKeyProvider = {
+      currentVersion: () => 'v1',
+      getKey: () => Promise.resolve(Buffer.alloc(32, 7)),
+    };
+    const callbackUrl = 'https://relay.test/api/oauth/meta/callback';
+    const required = [
+      'pages_show_list',
+      'pages_read_engagement',
+      'pages_manage_posts',
+      'pages_read_user_content',
+    ];
+    let subject = 'meta-user';
+    let scopes = required;
+    let pages = [
+      {
+        id: 'selected',
+        name: 'Selected',
+        accessToken: 'comments-page-1',
+        tasks: ['CREATE_CONTENT'],
+      },
+      { id: 'sibling', name: 'Sibling', accessToken: 'sibling-page', tasks: ['CREATE_CONTENT'] },
+    ];
+    const client = {
+      authorizationUrl: ({ state }: { state: string }) => `https://facebook.test/?state=${state}`,
+      exchangeCode: ({ permissions }: { permissions: string[] }) => {
+        if (permissions.some((permission) => !scopes.includes(permission)))
+          return Promise.reject(new MetaRequestError(403, 'permission'));
+        return Promise.resolve({ accessToken: 'user-token', userId: subject, scopes });
+      },
+      discoverPages: () => Promise.resolve(pages),
+    };
+    const base = await issueOauthTransaction(db, keys, {
+      workspaceId,
+      userId,
+      provider: 'meta:facebook_pages',
+      redirectUri: callbackUrl,
+    });
+    await completeMetaOauthConnection(
+      db,
+      keys,
+      client as never,
+      {
+        workspaceId,
+        userId,
+        state: base.state,
+        code: 'base',
+        requestId: 'base',
+      },
+      { facebook_pages: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'] },
+    );
+    const before = await database.query<{
+      id: string;
+      remote_account_id: string;
+      credential_id: string;
+    }>(
+      'SELECT id, remote_account_id, credential_id FROM provider_accounts ORDER BY remote_account_id',
+    );
+    const selected = before.rows.find((row) => row.remote_account_id === 'selected');
+    if (!selected) throw new Error('Selected Page fixture missing');
+    const connectionBefore = await database.query<{ credential_id: string }>(
+      "SELECT credential_id FROM provider_connections WHERE grant_family = 'facebook_pages'",
+    );
+    const start = async () =>
+      beginPageCommentsConsent(db, keys, client as never, {
+        workspaceId,
+        userId,
+        accountId: selected.id,
+        callbackUrl,
+        requestId: 'comments-start',
+      });
+    const finish = async (state: string) =>
+      completeMetaOauthConnection(db, keys, client as never, {
+        workspaceId,
+        userId,
+        state,
+        code: 'comments',
+        requestId: 'comments-finish',
+      });
+    const grant = async () =>
+      database.query<{
+        comments_credential_id: string;
+        comments_provider_grant: string;
+        comments_granted_scopes: string[];
+      }>(
+        'SELECT comments_credential_id, comments_provider_grant, comments_granted_scopes FROM facebook_page_engagement_modules WHERE account_id = $1',
+        [selected.id],
+      );
+
+    const denied = await start();
+    await expect(
+      failMetaOauthConnection(db, keys, {
+        workspaceId,
+        userId,
+        state: oauthState(denied.authorizationUrl),
+        requestId: 'denied',
+      }),
+    ).resolves.toBe('facebook_page_comments');
+    expect((await grant()).rows).toEqual([]);
+
+    scopes = required.slice(0, -1);
+    await expect(finish(oauthState((await start()).authorizationUrl))).rejects.toThrow();
+    expect((await grant()).rows).toEqual([]);
+    scopes = required;
+    pages = pages.slice(1);
+    await expect(finish(oauthState((await start()).authorizationUrl))).rejects.toThrow();
+    expect((await grant()).rows).toEqual([]);
+    pages = [
+      {
+        id: 'selected',
+        name: 'Selected',
+        accessToken: 'comments-page-1',
+        tasks: ['CREATE_CONTENT'],
+      },
+      ...pages,
+    ];
+    subject = 'other-user';
+    await expect(finish(oauthState((await start()).authorizationUrl))).rejects.toThrow();
+    expect((await grant()).rows).toEqual([]);
+    subject = 'meta-user';
+    const success = oauthState((await start()).authorizationUrl);
+    await expect(finish(success)).resolves.toMatchObject({ family: 'facebook_page_comments' });
+    await expect(finish(success)).resolves.toBeNull();
+    const first = (await grant()).rows[0];
+    expect(first).toMatchObject({ comments_provider_grant: 'verified' });
+    expect(first?.comments_granted_scopes).toContain('pages_read_user_content');
+    const selectedPage = pages[0];
+    if (!selectedPage) throw new Error('Selected Page disappeared from fixture');
+    pages[0] = { ...selectedPage, accessToken: 'comments-page-2' };
+    await expect(finish(oauthState((await start()).authorizationUrl))).resolves.toMatchObject({
+      family: 'facebook_page_comments',
+    });
+    const second = (await grant()).rows[0];
+    expect(second?.comments_credential_id).not.toBe(first?.comments_credential_id);
+    expect(
+      await readPageEngagementState(db, { workspaceId, accountId: selected.id }),
+    ).toMatchObject({
+      comments: { localEnabled: true, providerGrant: 'verified' },
+      dms: { localEnabled: false, providerGrant: 'missing' },
+    });
+    const prior = await database.query<{ revoked_at: Date | null }>(
+      'SELECT revoked_at FROM credentials WHERE id = $1',
+      [first?.comments_credential_id],
+    );
+    expect(prior.rows[0]?.revoked_at).not.toBeNull();
+    const after = await database.query<{ id: string; credential_id: string }>(
+      'SELECT id, credential_id FROM provider_accounts ORDER BY remote_account_id',
+    );
+    expect(after.rows).toEqual(before.rows.map(({ id, credential_id }) => ({ id, credential_id })));
+    const connectionAfter = await database.query<{ credential_id: string }>(
+      "SELECT credential_id FROM provider_connections WHERE grant_family = 'facebook_pages'",
+    );
+    expect(connectionAfter.rows).toEqual(connectionBefore.rows);
+    const messages = await database.query<{ dms_credential_id: string | null }>(
+      'SELECT dms_credential_id FROM facebook_page_engagement_modules WHERE account_id = $1',
+      [selected.id],
+    );
+    expect(messages.rows[0]?.dms_credential_id).toBeNull();
+    await database.query('UPDATE credentials SET revoked_at = now() WHERE id = $1', [
+      second?.comments_credential_id,
+    ]);
+    expect(
+      await readPageEngagementState(db, { workspaceId, accountId: selected.id }),
+    ).toMatchObject({
+      comments: { localEnabled: true, providerGrant: 'missing' },
     });
   });
 

@@ -82,6 +82,8 @@ const graphPageSchema = <T extends z.ZodType>(item: T) =>
 const MAX_RETRY_AFTER_SECONDS = 86_400;
 const MAX_MESSAGE_TEXT_BYTES = 16 * 1024;
 const MAX_MESSAGE_PAGE_BYTES = 64 * 1024;
+const MAX_COMMENT_ANCESTRY_DEPTH = 10;
+const MAX_POST_COMMENT_PROOF_PAGES = 10;
 
 export type FacebookErrorKind =
   'auth' | 'permission' | 'rate_limit' | 'validation' | 'transient' | 'permanent';
@@ -211,7 +213,7 @@ export class FacebookHttpClient {
     return post.data.from.id;
   }
 
-  /** Follow bounded Graph parent edges; only the exact selected post is accepted. */
+  /** Prove ancestry through parent edges or exact membership in the selected post's comments edge. */
   public async isCommentUnderPost(
     commentId: string,
     postId: string,
@@ -220,20 +222,46 @@ export class FacebookHttpClient {
     let current = graphIdSchema.parse(commentId);
     const target = graphIdSchema.parse(postId);
     const seen = new Set<string>();
-    for (let depth = 0; depth < 10; depth += 1) {
+    for (let depth = 0; depth < MAX_COMMENT_ANCESTRY_DEPTH; depth += 1) {
       if (seen.has(current)) return false;
       seen.add(current);
       const body = await this.get(`/${current}`, { fields: 'id,parent{id}' }, accessToken);
       const node = z
         .object({
           id: graphIdSchema,
-          parent: z.object({ id: graphIdSchema }),
+          parent: z.object({ id: graphIdSchema }).optional(),
         })
         .safeParse(body);
       if (!node.success || node.data.id !== current) return false;
+      if (!node.data.parent) return this.isDirectPostComment(current, target, accessToken);
       const parent = node.data.parent.id;
       if (parent === target) return true;
       current = parent;
+    }
+    return false;
+  }
+
+  private async isDirectPostComment(
+    commentId: string,
+    postId: string,
+    accessToken: string,
+  ): Promise<boolean> {
+    let after: string | undefined;
+    const cursors = new Set<string>();
+    for (let pageNumber = 0; pageNumber < MAX_POST_COMMENT_PROOF_PAGES; pageNumber += 1) {
+      const body = await this.get(
+        `/${postId}/comments`,
+        { fields: 'id', limit: '100', ...(after ? { after } : {}) },
+        accessToken,
+      );
+      const page = graphPageSchema(z.object({ id: graphIdSchema })).safeParse(body);
+      if (!page.success) return false;
+      if (page.data.data.some((comment) => comment.id === commentId)) return true;
+      if (!page.data.paging?.next) return false;
+      const next = page.data.paging.cursors?.after;
+      if (!next || cursors.has(next)) return false;
+      cursors.add(next);
+      after = next;
     }
     return false;
   }

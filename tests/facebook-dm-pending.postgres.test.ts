@@ -3,7 +3,13 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const sendMock = vi.hoisted(() => vi.fn());
+vi.mock('../src/modules/providers/facebook-messenger-send.service.js', async (loadOriginal) => ({
+  ...(await loadOriginal<object>()),
+  sendAccountPageConversationMessage: sendMock,
+}));
 
 import {
   cancelPendingPageDm,
@@ -13,6 +19,7 @@ import {
   getPageDmDelayWindow,
   PendingDmConflictError,
   PendingDmNoGoError,
+  renewClaimedPageDm,
   schedulePageDm,
   setPageDmDelayWindow,
 } from '../src/modules/providers/facebook-dm-pending.repository.js';
@@ -47,6 +54,7 @@ async function setup() {
     '0095_facebook_page_dm_no_go.sql',
     '0097_facebook_page_dm_pending_intents.sql',
     '0098_engagement_proposal_planned_due_at.sql',
+    '0099_page_dm_pre_send_attempts.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -133,7 +141,7 @@ describe('Page DM pending intent', () => {
         },
         dueAt,
       );
-      expect(counts).toEqual({ confirmed: 0, failed: 0, unknown: 1 });
+      expect(counts).toEqual({ confirmed: 0, failed: 0, unknown: 1, pending: 0 });
       const rows = await pg.query<{ status: string }>(
         'SELECT status FROM facebook_page_dm_pending_intents',
       );
@@ -165,7 +173,7 @@ describe('Page DM pending intent', () => {
         },
         new Date('2026-11-05T10:00:00.000Z'),
       );
-      expect(counts).toEqual({ confirmed: 0, failed: 1, unknown: 0 });
+      expect(counts).toEqual({ confirmed: 0, failed: 1, unknown: 0, pending: 0 });
       const rows = await pg.query<{ status: string }>(
         'SELECT status FROM facebook_page_dm_pending_intents',
       );
@@ -242,6 +250,166 @@ describe('Page DM pending intent', () => {
           state: 'unknown',
         }),
       ).toBe(true);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('renews one active lease and bounds pre-send retries without reserving an action', async () => {
+    const { pg, database } = await setup();
+    try {
+      const dueAt = new Date(Date.now() - 1000);
+      const first = await schedulePageDm(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'same-request',
+        actor: { type: 'user', id: actorId },
+        text: 'Later',
+        dueAt,
+      });
+      let now = new Date();
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const [claim] = await claimDuePageDms(database, {
+          workerId: 'worker-a',
+          now,
+          leaseMs: 1000,
+          limit: 1,
+        });
+        expect(claim?.id).toBe(first.id);
+        if (attempt === 1) {
+          expect(
+            await renewClaimedPageDm(database, {
+              workspaceId,
+              id: first.id,
+              workerId: 'worker-a',
+              leaseMs: 60_000,
+            }),
+          ).toBe(true);
+          expect(
+            await claimDuePageDms(database, {
+              workerId: 'worker-b',
+              now: new Date(Date.now() + 500),
+              leaseMs: 1000,
+              limit: 1,
+            }),
+          ).toEqual([]);
+        }
+        expect(
+          await finishClaimedPageDm(database, {
+            workspaceId,
+            id: first.id,
+            workerId: 'worker-a',
+            state: 'pending',
+          }),
+        ).toBe(true);
+        const result = await pg.query<{
+          status: string;
+          due_at: string;
+          pre_send_attempts: number;
+        }>('SELECT status, due_at, pre_send_attempts FROM facebook_page_dm_pending_intents');
+        expect(result.rows[0]?.pre_send_attempts).toBe(attempt);
+        expect(result.rows[0]?.status).toBe(attempt === 3 ? 'failed' : 'pending');
+        now = new Date(Date.parse(result.rows[0]?.due_at ?? '') + 1000);
+      }
+      expect((await pg.query('SELECT * FROM facebook_page_dm_actions')).rows).toHaveLength(0);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('retries a transient pre-reservation read failure then confirms once', async () => {
+    const { pg, database } = await setup();
+    try {
+      await pg.exec(`INSERT INTO memberships VALUES ('${workspaceId}', '${actorId}', 'admin')`);
+      await schedulePageDm(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'same-request',
+        actor: { type: 'user', id: actorId },
+        text: 'Later',
+        dueAt: new Date(Date.now() - 1000),
+      });
+      const runtime = {
+        database,
+        keys: {} as never,
+        client: {} as never,
+        workerId: 'worker-a',
+        leaseMs: 30_000,
+      };
+      sendMock
+        .mockReset()
+        .mockRejectedValueOnce(new Error('temporary Meta read outage'))
+        .mockResolvedValueOnce({ state: 'confirmed', messageId: 'mid_123' });
+      expect((await dispatchDuePageDms(runtime)).pending).toBe(1);
+      const [pending] = (
+        await pg.query<{ status: string; due_at: string }>(
+          'SELECT status, due_at FROM facebook_page_dm_pending_intents',
+        )
+      ).rows;
+      expect(pending?.status).toBe('pending');
+      expect(
+        (await dispatchDuePageDms(runtime, new Date(Date.parse(pending?.due_at ?? '') + 1000)))
+          .confirmed,
+      ).toBe(1);
+      expect(sendMock).toHaveBeenCalledTimes(2);
+      expect(
+        (await pg.query<{ status: string }>('SELECT status FROM facebook_page_dm_pending_intents'))
+          .rows[0]?.status,
+      ).toBe('confirmed');
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('does not let another worker reclaim a slow in-flight send after the first lease expires', async () => {
+    const { pg, database } = await setup();
+    try {
+      await pg.exec(`INSERT INTO memberships VALUES ('${workspaceId}', '${actorId}', 'admin')`);
+      await schedulePageDm(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'same-request',
+        actor: { type: 'user', id: actorId },
+        text: 'Later',
+        dueAt: new Date(Date.now() - 1000),
+      });
+      let releaseSend: (() => void) | undefined;
+      sendMock.mockReset().mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseSend = () => {
+              resolve({ state: 'confirmed', messageId: 'mid_123' });
+            };
+          }),
+      );
+      const dispatch = dispatchDuePageDms({
+        database,
+        keys: {} as never,
+        client: {} as never,
+        workerId: 'worker-a',
+        leaseMs: 300,
+      });
+      await vi.waitFor(() => {
+        expect(sendMock).toHaveBeenCalledOnce();
+      });
+      await new Promise((resolve) => setTimeout(resolve, 380));
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'worker-b',
+          now: new Date(),
+          leaseMs: 300,
+          limit: 1,
+        }),
+      ).toEqual([]);
+      releaseSend?.();
+      expect((await dispatch).confirmed).toBe(1);
+      expect(sendMock).toHaveBeenCalledOnce();
     } finally {
       await pg.close();
     }

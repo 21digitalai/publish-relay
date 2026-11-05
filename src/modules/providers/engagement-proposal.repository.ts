@@ -14,6 +14,7 @@ import { isPageConversationNoGoInTransaction } from './facebook-dm-no-go.reposit
 export type ProposalKind = 'dm' | 'comment';
 export interface ProposalContent {
   text: string;
+  followUps?: [string, string];
   mediaIds?: string[];
   priceCents?: number;
 }

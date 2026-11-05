@@ -85,6 +85,17 @@ export function registerEngagementApprovalRoutes(
       if (
         proposal?.provider === 'facebook_page' &&
         proposal.kind === 'dm' &&
+        body.data.sendMode === 'immediate' &&
+        typeof proposal.content === 'object' &&
+        proposal.content !== null &&
+        'followUps' in proposal.content
+      )
+        return await reply
+          .code(409)
+          .send({ data: null, error: 'Grouped replies must be approved as one scheduled plan' });
+      if (
+        proposal?.provider === 'facebook_page' &&
+        proposal.kind === 'dm' &&
         body.data.sendMode !== 'immediate'
       ) {
         const scheduled = await scheduleApprovedPageDm(dependencies.database, {

@@ -701,6 +701,13 @@
       "when": 1793879100000,
       "tag": "0099_page_dm_pre_send_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1793880000000,
+      "tag": "0100_page_dm_grouped_approval",
+      "breakpoints": true
     }
   ]
 }

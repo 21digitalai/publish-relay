@@ -33,6 +33,9 @@ import {
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1).max(5000),
+  followUps: z
+    .tuple([z.string().trim().min(1).max(2000), z.string().trim().min(1).max(2000)])
+    .optional(),
   mediaIds: z.array(z.uuid()).max(10).optional(),
   priceCents: z.number().int().nonnegative().max(100000000).optional(),
 });
@@ -67,17 +70,19 @@ const cursorSchema = z.strictObject({ createdAt: z.iso.datetime(), id: z.uuid() 
 const PAGE_SIZE = 50;
 
 function validFacebookProposal(input: z.infer<typeof createEngagementProposalSchema>): boolean {
-  if (input.provider !== 'facebook_page') return true;
+  if (input.provider !== 'facebook_page') return !input.content.followUps;
   if (
     input.content.mediaIds?.length ||
     input.content.priceCents !== undefined ||
-    input.content.text.length > 2000
+    input.content.text.length > 2000 ||
+    (input.content.followUps && input.kind !== 'dm')
   )
     return false;
   if (input.kind === 'comment')
     return /^[0-9]+(?:_[0-9]+)*$/.test(input.targetId) && Boolean(input.sourceContext?.postId);
   return (
     /^[A-Za-z0-9_]+$/.test(input.targetId) &&
+    (!input.content.followUps || Boolean(input.sourceContext?.sourceMessageId)) &&
     Boolean(input.plannedDueAt) &&
     Date.parse(input.plannedDueAt ?? '') > Date.now()
   );
@@ -103,6 +108,7 @@ function validCsrf(request: FastifyRequest): boolean {
 function normalizeContent(input: z.infer<typeof contentSchema>): ProposalContent {
   return {
     text: input.text,
+    ...(input.followUps ? { followUps: input.followUps } : {}),
     ...(input.mediaIds !== undefined ? { mediaIds: input.mediaIds } : {}),
     ...(input.priceCents !== undefined ? { priceCents: input.priceCents } : {}),
   };
@@ -134,6 +140,11 @@ function previewText(value: unknown): string {
   return typeof value.text === 'string' ? value.text.slice(0, 280) : '';
 }
 
+function bubbleCount(value: unknown): number {
+  if (typeof value !== 'object' || value === null || !('followUps' in value)) return 1;
+  return Array.isArray(value.followUps) && value.followUps.length === 2 ? 3 : 1;
+}
+
 function summary(
   row: Awaited<ReturnType<typeof createEngagementProposal>> & { accountDisplayName: string },
 ) {
@@ -146,6 +157,8 @@ function summary(
     status: row.status,
     sourcePreview: previewText(row.sourceContext),
     contentPreview: previewText(row.content),
+    bubbleCount:
+      row.provider === 'facebook_page' && row.kind === 'dm' ? bubbleCount(row.content) : 1,
     revision: row.revision,
     createdAt: row.createdAt.toISOString(),
   };
@@ -197,7 +210,9 @@ export function registerEngagementProposalRoutes(
           capability: 'dms:propose',
         });
         if (!allowed)
-          return await reply.code(403).send({ data: null, error: 'Page proposal access is unavailable' });
+          return await reply
+            .code(403)
+            .send({ data: null, error: 'Page proposal access is unavailable' });
         const window = await getPageDmDelayWindow(database, {
           workspaceId: principal.workspaceId,
           accountId: params.data.accountId,
@@ -602,6 +617,23 @@ export function registerEngagementProposalRoutes(
     if (!params.success || !body.success)
       return reply.code(400).send({ data: null, error: 'Invalid proposal edit' });
     try {
+      const current = await getEngagementProposal(
+        database,
+        identity.workspaceId,
+        params.data.proposalId,
+      );
+      if (
+        body.data.content.followUps &&
+        (current?.provider !== 'facebook_page' ||
+          current.kind !== 'dm' ||
+          !current.sourceContext ||
+          typeof current.sourceContext !== 'object' ||
+          !('sourceMessageId' in current.sourceContext) ||
+          !current.sourceContext.sourceMessageId)
+      )
+        return await reply
+          .code(400)
+          .send({ data: null, error: 'Grouped reply requires a Page DM with a source message' });
       const row = await reviseEngagementProposal(database, {
         workspaceId: identity.workspaceId,
         id: params.data.proposalId,

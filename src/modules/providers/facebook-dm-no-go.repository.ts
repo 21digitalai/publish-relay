@@ -203,10 +203,13 @@ export async function setPageConversationNoGo(
           eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
           eq(facebookPageDmPendingIntents.accountId, input.accountId),
           eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
-          eq(facebookPageDmPendingIntents.status, 'pending'),
+          inArray(facebookPageDmPendingIntents.status, ['pending', 'waiting']),
         ),
       )
-      .returning({ clientActionId: facebookPageDmPendingIntents.clientActionId });
+      .returning({
+        clientActionId: facebookPageDmPendingIntents.clientActionId,
+        groupId: facebookPageDmPendingIntents.groupId,
+      });
     if (cancelled.length)
       await tx
         .update(engagementProposals)
@@ -214,9 +217,15 @@ export async function setPageConversationNoGo(
         .where(
           and(
             eq(engagementProposals.workspaceId, input.workspaceId),
-            inArray(
-              engagementProposals.clientActionId,
-              cancelled.map((row) => row.clientActionId),
+            or(
+              inArray(
+                engagementProposals.clientActionId,
+                cancelled.map((row) => row.clientActionId),
+              ),
+              inArray(
+                engagementProposals.id,
+                cancelled.flatMap((row) => (row.groupId ? [row.groupId] : [])),
+              ),
             ),
             eq(engagementProposals.status, 'scheduled'),
           ),

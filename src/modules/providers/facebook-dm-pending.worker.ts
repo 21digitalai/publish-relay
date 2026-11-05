@@ -16,6 +16,7 @@ import {
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 import {
   FacebookDmActionConflictError,
+  FacebookDmConversationChangedError,
   FacebookDmNoGoError,
   FacebookDmWindowClosedError,
   sendAccountPageConversationMessage,
@@ -105,6 +106,9 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<DispatchSt
         conversationId: intent.conversationId,
         clientActionId: intent.clientActionId,
         text: intent.text,
+        ...(intent.expectedLatestInboundMessageId
+          ? { expectedLatestInboundMessageId: intent.expectedLatestInboundMessageId }
+          : {}),
         actor: {
           type:
             intent.actorType === 'api_key'
@@ -123,6 +127,7 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<DispatchSt
     if (await existingActionState(runtime.database, intent)) return 'unknown';
     if (
       error instanceof FacebookDmNoGoError ||
+      error instanceof FacebookDmConversationChangedError ||
       error instanceof FacebookDmWindowClosedError ||
       error instanceof FacebookDmActionConflictError ||
       error instanceof PageReadUnavailableError ||

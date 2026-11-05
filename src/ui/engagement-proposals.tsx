@@ -13,6 +13,7 @@ interface ProposalSummary {
   status: string;
   sourcePreview: string;
   contentPreview: string;
+  bubbleCount?: number;
   createdAt: string;
 }
 
@@ -23,7 +24,7 @@ interface ProposalDetail {
   kind: 'dm' | 'comment';
   targetId: string;
   sourceContext: { text?: string; authorLabel?: string; postId?: string; sourceMessageId?: string };
-  content: { text: string; mediaIds?: string[]; priceCents?: number };
+  content: { text: string; followUps?: [string, string]; mediaIds?: string[]; priceCents?: number };
   plannedDueAt?: string;
   revision: number;
   status: string;
@@ -69,6 +70,7 @@ export function EngagementProposalsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
   const [draft, setDraft] = useState('');
+  const [draftFollowUps, setDraftFollowUps] = useState<[string, string]>(['', '']);
   const [loading, setLoading] = useState(true);
   const [listFailed, setListFailed] = useState(false);
   const [detailFailed, setDetailFailed] = useState(false);
@@ -187,6 +189,7 @@ export function EngagementProposalsPage() {
         setDetail(proposal);
         activeProposalRef.current = `${proposal.id}:${String(proposal.revision)}`;
         setDraft(proposal.content.text);
+        setDraftFollowUps(proposal.content.followUps ?? ['', '']);
         setSendUncertain(false);
         setDmTiming('scheduled');
         setDelayMinMinutes((proposal.scheduleWindow?.earliestDelaySeconds ?? 300) / 60);
@@ -209,6 +212,14 @@ export function EngagementProposalsPage() {
       setError('Reply must contain 1–5,000 characters.');
       return;
     }
+    if (
+      action === 'edit' &&
+      detail.content.followUps &&
+      draftFollowUps.some((text) => !text.trim() || text.length > 2000)
+    ) {
+      setError('Each follow-up bubble must contain 1–2,000 characters.');
+      return;
+    }
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -223,7 +234,13 @@ export function EngagementProposalsPage() {
               ? { expectedRevision: detail.revision }
               : {
                   expectedRevision: detail.revision,
-                  content: { ...detail.content, text: draft.trim() },
+                  content: {
+                    ...detail.content,
+                    text: draft.trim(),
+                    ...(detail.content.followUps
+                      ? { followUps: draftFollowUps.map((text) => text.trim()) }
+                      : {}),
+                  },
                 },
           ),
         },
@@ -241,6 +258,7 @@ export function EngagementProposalsPage() {
           canApprove: detail.canApprove,
         });
         setDraft(updated.content.text);
+        setDraftFollowUps(updated.content.followUps ?? ['', '']);
         setItems((current) =>
           current.map((item) =>
             item.id === detail.id
@@ -324,7 +342,11 @@ export function EngagementProposalsPage() {
       });
       setDetailReload((current) => current + 1);
       setItems((current) => current.filter((item) => item.id !== detail.id));
-      setNotice('Scheduled reply cancelled before dispatch. No message was sent.');
+      setNotice(
+        detail.content.followUps
+          ? 'Remaining scheduled bubbles cancelled. Earlier confirmed bubbles, if any, remain in Page DM history.'
+          : 'Scheduled reply cancelled before dispatch. No message was sent.',
+      );
     } catch (failure) {
       setError(
         failure instanceof Error ? failure.message : 'Could not cancel this scheduled reply',
@@ -410,6 +432,7 @@ export function EngagementProposalsPage() {
     !detail.content.mediaIds?.length &&
     detail.content.priceCents === undefined &&
     detail.content.text.length <= 2000 &&
+    (!detail.content.followUps || detail.content.followUps.every((text) => text.length <= 2000)) &&
     (detail.kind === 'dm'
       ? /^[A-Za-z0-9_]+$/.test(detail.targetId)
       : /^[0-9]+(?:_[0-9]+)*$/.test(detail.targetId) && Boolean(detail.sourceContext.postId));
@@ -432,6 +455,8 @@ export function EngagementProposalsPage() {
     !detail.noGo &&
     (facebookReady || fanvueReady) &&
     draft.trim() === detail.content.text &&
+    (!detail.content.followUps ||
+      detail.content.followUps.every((text, index) => draftFollowUps[index]?.trim() === text)) &&
     !(
       detail.provider === 'facebook_page' &&
       detail.kind === 'dm' &&
@@ -508,6 +533,7 @@ export function EngagementProposalsPage() {
                   }}
                 >
                   <strong>{proposalLabel(item)}</strong>
+                  {item.bubbleCount === 3 && <span>3-bubble group · one approval</span>}
                   {item.status !== 'pending' && (
                     <span>
                       {item.status === 'scheduled'
@@ -584,7 +610,7 @@ export function EngagementProposalsPage() {
                   </p>
                 )}
                 <label className="field-label" htmlFor="engagement-proposal-draft">
-                  Suggested reply
+                  {detail.content.followUps ? 'Bubble 1' : 'Suggested reply'}
                 </label>
                 <textarea
                   id="engagement-proposal-draft"
@@ -595,6 +621,26 @@ export function EngagementProposalsPage() {
                     setDraft(event.target.value);
                   }}
                 />
+                {detail.provider === 'facebook_page' &&
+                  detail.kind === 'dm' &&
+                  detail.content.followUps?.map((_, index) => (
+                    <label className="field-label" key={index}>
+                      Bubble {index + 2}
+                      <textarea
+                        className="engagement-proposal-draft text-input"
+                        value={draftFollowUps[index]}
+                        maxLength={2000}
+                        onChange={(event) => {
+                          setDraftFollowUps(
+                            (current) =>
+                              current.map((text, itemIndex) =>
+                                itemIndex === index ? event.target.value : text,
+                              ) as [string, string],
+                          );
+                        }}
+                      />
+                    </label>
+                  ))}
                 {detail.content.mediaIds?.length ? (
                   <section className="engagement-proposal-media" aria-label="Proposed attachments">
                     <h3>Attachments</h3>
@@ -681,6 +727,11 @@ export function EngagementProposalsPage() {
                             : 'This proposal has no bot-selected time. Scheduling is unavailable; request a new proposal.'}
                         </p>
                         <p className="muted">
+                          {detail.content.followUps
+                            ? 'One approval schedules all three bubbles. Bubbles 2 and 3 follow the preceding confirmed send by 4–10 seconds; a changed conversation or failed send stops the rest.'
+                            : ''}
+                        </p>
+                        <p className="muted">
                           Default for this Page:{' '}
                           {Math.round((detail.scheduleWindow?.earliestDelaySeconds ?? 300) / 60)}–
                           {Math.round((detail.scheduleWindow?.latestDelaySeconds ?? 2700) / 60)}{' '}
@@ -696,16 +747,18 @@ export function EngagementProposalsPage() {
                         >
                           Approve scheduled time
                         </button>
-                        <button
-                          type="button"
-                          className={`secondary-button engagement-timing-immediate ${dmTiming === 'immediate' ? 'selected' : ''}`}
-                          aria-pressed={dmTiming === 'immediate'}
-                          onClick={() => {
-                            setDmTiming('immediate');
-                          }}
-                        >
-                          Send immediately
-                        </button>
+                        {!detail.content.followUps && (
+                          <button
+                            type="button"
+                            className={`secondary-button engagement-timing-immediate ${dmTiming === 'immediate' ? 'selected' : ''}`}
+                            aria-pressed={dmTiming === 'immediate'}
+                            onClick={() => {
+                              setDmTiming('immediate');
+                            }}
+                          >
+                            Send immediately
+                          </button>
+                        )}
                         {detail.canApprove && (
                           <div className="engagement-page-delay-settings">
                             <label className="field-label" htmlFor="engagement-delay-min">
@@ -776,7 +829,9 @@ export function EngagementProposalsPage() {
                       {detail.provider === 'facebook_page' &&
                       detail.kind === 'dm' &&
                       dmTiming === 'scheduled'
-                        ? 'Approve and schedule'
+                        ? detail.content.followUps
+                          ? 'Approve and schedule 3 bubbles'
+                          : 'Approve and schedule'
                         : 'Approve and send'}
                     </button>
                   )}
@@ -800,7 +855,11 @@ export function EngagementProposalsPage() {
                       saving ||
                       detail.status !== 'pending' ||
                       !draft.trim() ||
-                      draft.trim() === detail.content.text
+                      (draft.trim() === detail.content.text &&
+                        (!detail.content.followUps ||
+                          detail.content.followUps.every(
+                            (text, index) => draftFollowUps[index]?.trim() === text,
+                          )))
                     }
                     onClick={() => {
                       void mutate('edit');
@@ -850,7 +909,10 @@ export function EngagementProposalsPage() {
                         ? 'A future bot-selected send time is required before approval.'
                         : !detail.canApprove
                           ? 'Only a workspace owner or admin can approve and send.'
-                          : draft.trim() !== detail.content.text
+                          : draft.trim() !== detail.content.text ||
+                              detail.content.followUps?.some(
+                                (text, index) => draftFollowUps[index]?.trim() !== text,
+                              )
                             ? 'Save the edited draft before approving.'
                             : !mediaReady
                               ? 'Prepare every attachment and confirm it is ready before approving.'
@@ -1009,12 +1071,14 @@ export function EngagementProposalsPage() {
           titleId="engagement-approve-title"
           title={
             dmTiming === 'scheduled' && detail.provider === 'facebook_page' && detail.kind === 'dm'
-              ? 'Approve and schedule this reply?'
+              ? detail.content.followUps
+                ? 'Approve and schedule all three bubbles?'
+                : 'Approve and schedule this reply?'
               : 'Approve and send this reply?'
           }
           description={
             dmTiming === 'scheduled' && detail.provider === 'facebook_page' && detail.kind === 'dm'
-              ? `Schedule the reviewed reply to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for ${detail.plannedDueAt ? new Date(detail.plannedDueAt).toLocaleString() : 'an unavailable time'}. You can cancel before dispatch.`
+              ? `Schedule the reviewed ${detail.content.followUps ? 'three-bubble reply' : 'reply'} to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for ${detail.plannedDueAt ? new Date(detail.plannedDueAt).toLocaleString() : 'an unavailable time'}.${detail.content.followUps ? ' Later bubbles follow confirmed sends by 4–10 seconds.' : ''} You can cancel remaining pending bubbles.`
               : `Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`
           }
           cancelLabel="Keep reviewing"

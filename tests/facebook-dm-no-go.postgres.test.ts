@@ -47,6 +47,12 @@ describe('Page DM no-go list', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0100_page_dm_grouped_approval.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const db = drizzle(pg) as unknown as NodePgDatabase;
       await setPageConversationNoGo(db, { ...key, blocked: true, displayName: 'Alexandra' });
       expect(await isPageConversationNoGo(db, key)).toBe(true);

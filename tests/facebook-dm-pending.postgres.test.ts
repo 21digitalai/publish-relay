@@ -20,6 +20,7 @@ import {
   PendingDmConflictError,
   PendingDmNoGoError,
   renewClaimedPageDm,
+  scheduleApprovedPageDm,
   schedulePageDm,
   setPageDmDelayWindow,
 } from '../src/modules/providers/facebook-dm-pending.repository.js';
@@ -43,7 +44,10 @@ async function setup() {
     CREATE TABLE memberships (workspace_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL);
     CREATE TABLE engagement_proposals (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
       account_id uuid NOT NULL, client_action_id uuid NOT NULL DEFAULT gen_random_uuid(), provider text NOT NULL, kind text NOT NULL,
-      target_id text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+      target_id text NOT NULL, source_context jsonb NOT NULL DEFAULT '{}', content jsonb NOT NULL DEFAULT '{}',
+      proposer_type text NOT NULL DEFAULT 'api_key', proposer_id uuid NOT NULL DEFAULT gen_random_uuid(),
+      status text NOT NULL, revision integer NOT NULL DEFAULT 1,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE facebook_page_dm_actions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       workspace_id uuid NOT NULL, client_action_id uuid NOT NULL, request_fingerprint text NOT NULL DEFAULT 'other-request',
       state text NOT NULL DEFAULT 'reserved');
@@ -55,6 +59,7 @@ async function setup() {
     '0097_facebook_page_dm_pending_intents.sql',
     '0098_engagement_proposal_planned_due_at.sql',
     '0099_page_dm_pre_send_attempts.sql',
+    '0100_page_dm_grouped_approval.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -62,6 +67,158 @@ async function setup() {
 }
 
 describe('Page DM pending intent', () => {
+  it('passes the reviewed inbound identity to the canonical sender', async () => {
+    const { pg, database } = await setup();
+    try {
+      sendMock.mockReset();
+      sendMock.mockResolvedValue({ state: 'confirmed' });
+      await pg.query('INSERT INTO memberships (workspace_id, user_id, role) VALUES ($1, $2, $3)', [
+        workspaceId,
+        actorId,
+        'owner',
+      ]);
+      await pg.query(
+        `INSERT INTO facebook_page_dm_pending_intents
+        (workspace_id, account_id, conversation_id, client_action_id, request_fingerprint,
+         actor_type, actor_id, text_body, due_at, group_id, sequence_index, gap_seconds,
+         expected_latest_inbound_message_id)
+        VALUES ($1, $2, 't_123', $3, 'test', 'user', $4, 'First', $5, $6, 0, 0, 'mid-1')`,
+        [
+          workspaceId,
+          accountId,
+          actionId,
+          actorId,
+          new Date(Date.now() - 1000),
+          '00000000-0000-4000-8000-000000000006',
+        ],
+      );
+      // The next waiting bubble is intentionally not claimable until confirmation.
+      await pg.query(
+        `INSERT INTO facebook_page_dm_pending_intents
+        (workspace_id, account_id, conversation_id, client_action_id, request_fingerprint,
+         actor_type, actor_id, text_body, due_at, group_id, sequence_index, gap_seconds,
+         expected_latest_inbound_message_id, status)
+        VALUES ($1, $2, 't_123', $3, 'test-2', 'user', $4, 'Second', $5, $6, 1, 5, 'mid-1', 'waiting')`,
+        [
+          workspaceId,
+          accountId,
+          '00000000-0000-4000-8000-000000000007',
+          actorId,
+          new Date(Date.now() - 1000),
+          '00000000-0000-4000-8000-000000000006',
+        ],
+      );
+      const counts = await dispatchDuePageDms({
+        database,
+        keys: {} as never,
+        client: {} as never,
+        workerId: 'w',
+        leaseMs: 30_000,
+      });
+      expect(counts.confirmed).toBe(1);
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(sendMock.mock.calls[0]?.[1]).toMatchObject({
+        expectedLatestInboundMessageId: 'mid-1',
+        text: 'First',
+      });
+      const rows = await pg.query<{ status: string }>(
+        'SELECT status FROM facebook_page_dm_pending_intents ORDER BY sequence_index',
+      );
+      expect(rows.rows.map((row) => row.status)).toEqual(['confirmed', 'pending']);
+    } finally {
+      await pg.close();
+      sendMock.mockReset();
+    }
+  });
+
+  it('approves one three-bubble plan and releases each tail only after confirmation', async () => {
+    const { pg, database } = await setup();
+    try {
+      const proposalId = '00000000-0000-4000-8000-000000000006';
+      const dueAt = new Date(Date.now() + 60_000);
+      await pg.query(
+        `INSERT INTO engagement_proposals
+        (id, workspace_id, account_id, client_action_id, provider, kind, target_id, source_context, content, status, planned_due_at)
+        VALUES ($1, $2, $3, $4, 'facebook_page', 'dm', 't_123', $5, $6, 'pending', $7)`,
+        [
+          proposalId,
+          workspaceId,
+          accountId,
+          actionId,
+          JSON.stringify({ sourceMessageId: 'mid-1' }),
+          JSON.stringify({ text: 'First', followUps: ['Second', 'Third'] }),
+          dueAt,
+        ],
+      );
+      const approved = await scheduleApprovedPageDm(database, {
+        workspaceId,
+        userId: actorId,
+        proposalId,
+        expectedRevision: 1,
+      });
+      expect(approved.status).toBe('scheduled');
+      const rows = await pg.query<{
+        id: string;
+        status: string;
+        gap_seconds: number;
+        expected_latest_inbound_message_id: string;
+      }>(
+        `SELECT id, status, gap_seconds, expected_latest_inbound_message_id
+         FROM facebook_page_dm_pending_intents ORDER BY sequence_index`,
+      );
+      expect(rows.rows.map((row) => row.status)).toEqual(['pending', 'waiting', 'waiting']);
+      expect(rows.rows.every((row) => row.expected_latest_inbound_message_id === 'mid-1')).toBe(
+        true,
+      );
+      expect(rows.rows.slice(1).every((row) => row.gap_seconds >= 4 && row.gap_seconds <= 10)).toBe(
+        true,
+      );
+      const [firstRow, secondRow] = rows.rows;
+      if (!firstRow || !secondRow) throw new Error('Grouped intents were not created');
+      expect(
+        await claimDuePageDms(database, { workerId: 'w', now: dueAt, leaseMs: 30_000, limit: 3 }),
+      ).toHaveLength(1);
+      await finishClaimedPageDm(database, {
+        workspaceId,
+        id: firstRow.id,
+        workerId: 'w',
+        state: 'confirmed',
+      });
+      const second = await pg.query<{ status: string; due_at: Date }>(
+        `SELECT status, due_at FROM facebook_page_dm_pending_intents WHERE id = $1`,
+        [secondRow.id],
+      );
+      expect(second.rows[0]?.status).toBe('pending');
+      const nextDue = second.rows[0]?.due_at;
+      if (!nextDue) throw new Error('Second bubble has no due time');
+      expect(new Date(nextDue).getTime()).toBeGreaterThan(Date.now());
+      const nextClaim = await claimDuePageDms(database, {
+        workerId: 'w',
+        now: new Date(Date.now() + 11_000),
+        leaseMs: 30_000,
+        limit: 3,
+      });
+      expect(nextClaim.map((row) => row.id)).toEqual([secondRow.id]);
+      await finishClaimedPageDm(database, {
+        workspaceId,
+        id: secondRow.id,
+        workerId: 'w',
+        state: 'unknown',
+      });
+      const stopped = await pg.query<{ status: string }>(
+        `SELECT status FROM facebook_page_dm_pending_intents ORDER BY sequence_index`,
+      );
+      expect(stopped.rows.map((row) => row.status)).toEqual(['confirmed', 'unknown', 'cancelled']);
+      const proposal = await pg.query<{ status: string }>(
+        'SELECT status FROM engagement_proposals WHERE id = $1',
+        [proposalId],
+      );
+      expect(proposal.rows[0]?.status).toBe('unknown');
+    } finally {
+      await pg.close();
+    }
+  });
+
   it('persists a selected Page delay default and cancels only its pending proposal', async () => {
     const { pg, database } = await setup();
     try {

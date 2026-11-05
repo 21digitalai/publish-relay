@@ -1,5 +1,94 @@
 import { expect, test } from '@playwright/test';
 
+test('one Page DM approval reviews and edits all three scheduled bubbles', async ({ page }) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Group Review Owner',
+      email: `group-review-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Group Review Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const id = '00000000-0000-4000-8000-000000000412';
+  const dueAt = new Date(Date.now() + 3_600_000).toISOString();
+  let revision = 1;
+  let texts: [string, string, string] = ['Здрасти', 'Как си?', 'Играеш ли днес?'];
+  let approvals = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('/approve')) {
+      approvals += 1;
+      expect(request.postDataJSON()).toEqual({ expectedRevision: 2, sendMode: 'scheduled' });
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id, status: 'scheduled', dueAt }, error: null }),
+      });
+      return;
+    }
+    if (request.method() === 'PATCH') {
+      const body = request.postDataJSON() as {
+        content: { text: string; followUps: [string, string] };
+      };
+      texts = [body.content.text, ...body.content.followUps];
+      revision = 2;
+    }
+    const list = path.endsWith('/api/engagement-proposals');
+    const data = list
+      ? {
+          items: [
+            {
+              id,
+              accountDisplayName: 'Eli Page',
+              provider: 'facebook_page',
+              kind: 'dm',
+              status: 'pending',
+              sourcePreview: 'Здравей',
+              contentPreview: texts[0],
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          nextCursor: null,
+        }
+      : {
+          id,
+          accountDisplayName: 'Eli Page',
+          provider: 'facebook_page',
+          kind: 'dm',
+          targetId: 't_123',
+          sourceContext: { text: 'Здравей', authorLabel: 'Иван Иванов', sourceMessageId: 'mid_1' },
+          content: { text: texts[0], followUps: [texts[1], texts[2]] },
+          plannedDueAt: dueAt,
+          revision,
+          status: 'pending',
+          canApprove: true,
+          noGo: false,
+          scheduleWindow: { earliestDelaySeconds: 300, latestDelaySeconds: 2700 },
+        };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByText('Иван Иванов:')).toBeVisible();
+  await expect(page.getByText(/One approval schedules all three bubbles/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send immediately' })).toHaveCount(0);
+  await page.getByLabel('Bubble 2').fill('Добре съм');
+  await page.getByRole('button', { name: 'Save draft' }).click();
+  await expect(page.getByLabel('Bubble 2')).toHaveValue('Добре съм');
+  await page.getByRole('button', { name: 'Approve and schedule 3 bubbles' }).click();
+  await expect(page.getByText('Approve and schedule all three bubbles?')).toBeVisible();
+  await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
+  expect(approvals).toBe(1);
+  expect(texts).toEqual(['Здрасти', 'Добре съм', 'Играеш ли днес?']);
+});
+
 test('Page DM history filters by recipient without showing raw conversation IDs', async ({
   page,
 }) => {

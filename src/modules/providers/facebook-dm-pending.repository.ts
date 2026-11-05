@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { and, eq, inArray, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -127,6 +127,9 @@ const projection = {
   dueAt: facebookPageDmPendingIntents.dueAt,
   preSendAttempts: facebookPageDmPendingIntents.preSendAttempts,
   status: facebookPageDmPendingIntents.status,
+  groupId: facebookPageDmPendingIntents.groupId,
+  sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
+  expectedLatestInboundMessageId: facebookPageDmPendingIntents.expectedLatestInboundMessageId,
 };
 
 /** Schedule once. The action ID remains the provider idempotency key at dispatch. */
@@ -187,7 +190,12 @@ export async function schedulePageDm(database: NodePgDatabase, input: PendingDmI
   return withTenantTransaction(database, input, (tx) => schedulePageDmInTransaction(tx, input));
 }
 
-const proposalTextSchema = z.strictObject({ text: z.string().trim().min(1).max(2000) });
+const proposalTextSchema = z.strictObject({
+  text: z.string().trim().min(1).max(2000),
+  followUps: z
+    .tuple([z.string().trim().min(1).max(2000), z.string().trim().min(1).max(2000)])
+    .optional(),
+});
 
 /** One approval atomically arms one exact Page DM revision instead of sending now. */
 export async function scheduleApprovedPageDm(
@@ -241,6 +249,13 @@ export async function scheduleApprovedPageDm(
       throw new PendingDmConflictError(
         'Bot-selected send time is missing or has passed; request a new proposal',
       );
+    const source = z
+      .object({ sourceMessageId: z.string().min(1).max(256).optional() })
+      .safeParse(proposal.sourceContext);
+    if (content.data.followUps && (!source.success || !source.data.sourceMessageId))
+      throw new PendingDmConflictError(
+        'Grouped reply requires the reviewed latest inbound message ID',
+      );
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify({
@@ -261,6 +276,44 @@ export async function scheduleApprovedPageDm(
       text: content.data.text,
       dueAt: proposal.plannedDueAt,
     });
+    if (content.data.followUps) {
+      await tx
+        .update(facebookPageDmPendingIntents)
+        .set({
+          groupId: proposal.id,
+          sequenceIndex: 0,
+          gapSeconds: 0,
+          expectedLatestInboundMessageId: source.success ? source.data.sourceMessageId : null,
+        })
+        .where(eq(facebookPageDmPendingIntents.id, intent.id));
+      for (const [index, text] of content.data.followUps.entries()) {
+        await tx.insert(facebookPageDmPendingIntents).values({
+          workspaceId: input.workspaceId,
+          accountId: proposal.accountId,
+          conversationId: proposal.targetId,
+          clientActionId: randomUUID(),
+          requestFingerprint: createHash('sha256')
+            .update(
+              JSON.stringify({
+                proposalId: proposal.id,
+                revision: proposal.revision,
+                sequenceIndex: index + 1,
+                text,
+              }),
+            )
+            .digest('hex'),
+          actorType: 'user',
+          actorId: input.userId,
+          textBody: text,
+          dueAt: proposal.plannedDueAt,
+          groupId: proposal.id,
+          sequenceIndex: index + 1,
+          gapSeconds: 4 + Math.floor(Math.random() * 7),
+          expectedLatestInboundMessageId: source.success ? source.data.sourceMessageId : null,
+          status: 'waiting',
+        });
+      }
+    }
     await tx
       .update(engagementProposals)
       .set({ status: 'scheduled', updatedAt: new Date() })
@@ -319,6 +372,7 @@ export async function cancelScheduledProposalPageDm(
   return withTenantTransaction(database, input, async (tx) => {
     const [proposal] = await tx
       .select({
+        id: engagementProposals.id,
         accountId: engagementProposals.accountId,
         conversationId: engagementProposals.targetId,
         clientActionId: engagementProposals.clientActionId,
@@ -335,7 +389,18 @@ export async function cancelScheduledProposalPageDm(
       )
       .limit(1);
     if (proposal?.status !== 'scheduled') return false;
-    const [intent] = await tx
+    const groupRows = await tx
+      .select({ status: facebookPageDmPendingIntents.status })
+      .from(facebookPageDmPendingIntents)
+      .where(
+        and(
+          eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageDmPendingIntents.groupId, proposal.id),
+        ),
+      )
+      .for('update');
+    if (groupRows.some((row) => row.status === 'claimed')) return false;
+    const intents = await tx
       .update(facebookPageDmPendingIntents)
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(
@@ -343,12 +408,15 @@ export async function cancelScheduledProposalPageDm(
           eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
           eq(facebookPageDmPendingIntents.accountId, proposal.accountId),
           eq(facebookPageDmPendingIntents.conversationId, proposal.conversationId),
-          eq(facebookPageDmPendingIntents.clientActionId, proposal.clientActionId),
-          eq(facebookPageDmPendingIntents.status, 'pending'),
+          or(
+            eq(facebookPageDmPendingIntents.clientActionId, proposal.clientActionId),
+            eq(facebookPageDmPendingIntents.groupId, proposal.id),
+          ),
+          inArray(facebookPageDmPendingIntents.status, ['pending', 'waiting']),
         ),
       )
       .returning({ id: facebookPageDmPendingIntents.id });
-    if (!intent) return false;
+    if (!intents.length) return false;
     await tx
       .update(engagementProposals)
       .set({ status: 'cancelled', updatedAt: new Date() })
@@ -372,6 +440,7 @@ export async function getScheduledProposalPageDm(
       .select({
         dueAt: facebookPageDmPendingIntents.dueAt,
         status: facebookPageDmPendingIntents.status,
+        groupId: facebookPageDmPendingIntents.groupId,
       })
       .from(facebookPageDmPendingIntents)
       .where(
@@ -381,7 +450,30 @@ export async function getScheduledProposalPageDm(
         ),
       )
       .limit(1);
-    return intent ? { dueAt: intent.dueAt.toISOString(), status: intent.status } : null;
+    if (!intent) return null;
+    if (intent.groupId) {
+      const [next] = await tx
+        .select({
+          dueAt: facebookPageDmPendingIntents.dueAt,
+          status: facebookPageDmPendingIntents.status,
+        })
+        .from(facebookPageDmPendingIntents)
+        .where(
+          and(
+            eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+            eq(facebookPageDmPendingIntents.groupId, intent.groupId),
+            inArray(facebookPageDmPendingIntents.status, ['pending', 'waiting', 'claimed']),
+          ),
+        )
+        .orderBy(facebookPageDmPendingIntents.sequenceIndex)
+        .limit(1);
+      if (next)
+        return {
+          dueAt: next.dueAt.toISOString(),
+          status: next.status === 'waiting' ? 'pending' : next.status,
+        };
+    }
+    return { dueAt: intent.dueAt.toISOString(), status: intent.status };
   });
 }
 
@@ -484,6 +576,8 @@ export async function finishClaimedPageDm(
       .select({
         clientActionId: facebookPageDmPendingIntents.clientActionId,
         preSendAttempts: facebookPageDmPendingIntents.preSendAttempts,
+        groupId: facebookPageDmPendingIntents.groupId,
+        sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
       })
       .from(facebookPageDmPendingIntents)
       .where(
@@ -524,17 +618,103 @@ export async function finishClaimedPageDm(
         updatedAt: new Date(),
       })
       .where(eq(facebookPageDmPendingIntents.id, input.id));
-    if (state !== 'pending')
+    if (
+      state === 'confirmed' &&
+      intent.groupId &&
+      intent.sequenceIndex !== null &&
+      intent.sequenceIndex < 2
+    ) {
+      const [next] = await tx
+        .update(facebookPageDmPendingIntents)
+        .set({
+          status: 'pending',
+          dueAt: new Date(
+            Date.now() +
+              (await getGroupGapSeconds(
+                tx,
+                input.workspaceId,
+                intent.groupId,
+                intent.sequenceIndex + 1,
+              )) *
+                1000,
+          ),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+            eq(facebookPageDmPendingIntents.groupId, intent.groupId),
+            eq(facebookPageDmPendingIntents.sequenceIndex, intent.sequenceIndex + 1),
+            eq(facebookPageDmPendingIntents.status, 'waiting'),
+          ),
+        )
+        .returning({ id: facebookPageDmPendingIntents.id });
+      if (!next) {
+        const [stopped] = await tx
+          .select({ status: facebookPageDmPendingIntents.status })
+          .from(facebookPageDmPendingIntents)
+          .where(
+            and(
+              eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+              eq(facebookPageDmPendingIntents.groupId, intent.groupId),
+              eq(facebookPageDmPendingIntents.sequenceIndex, intent.sequenceIndex + 1),
+            ),
+          )
+          .limit(1);
+        if (stopped?.status !== 'cancelled')
+          throw new Error('Grouped Page DM next bubble is not waiting');
+      }
+    }
+    if (state !== 'pending' && state !== 'confirmed' && intent.groupId)
+      await tx
+        .update(facebookPageDmPendingIntents)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+            eq(facebookPageDmPendingIntents.groupId, intent.groupId),
+            eq(facebookPageDmPendingIntents.status, 'waiting'),
+          ),
+        );
+    if (
+      state !== 'pending' &&
+      (!intent.groupId || state !== 'confirmed' || intent.sequenceIndex === 2)
+    )
       await tx
         .update(engagementProposals)
         .set({ status: state === 'confirmed' ? 'sent' : state, updatedAt: new Date() })
         .where(
           and(
             eq(engagementProposals.workspaceId, input.workspaceId),
-            eq(engagementProposals.clientActionId, intent.clientActionId),
+            or(
+              eq(engagementProposals.clientActionId, intent.clientActionId),
+              ...(intent.groupId ? [eq(engagementProposals.id, intent.groupId)] : []),
+            ),
             eq(engagementProposals.status, 'scheduled'),
           ),
         );
     return true;
   });
+}
+
+async function getGroupGapSeconds(
+  tx: NodePgDatabase,
+  workspaceId: string,
+  groupId: string,
+  sequenceIndex: number,
+) {
+  const [next] = await tx
+    .select({ gapSeconds: facebookPageDmPendingIntents.gapSeconds })
+    .from(facebookPageDmPendingIntents)
+    .where(
+      and(
+        eq(facebookPageDmPendingIntents.workspaceId, workspaceId),
+        eq(facebookPageDmPendingIntents.groupId, groupId),
+        eq(facebookPageDmPendingIntents.sequenceIndex, sequenceIndex),
+      ),
+    )
+    .limit(1);
+  if (!next?.gapSeconds || next.gapSeconds < 4 || next.gapSeconds > 10)
+    throw new Error('Grouped Page DM gap is missing');
+  return next.gapSeconds;
 }

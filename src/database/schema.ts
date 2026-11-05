@@ -709,6 +709,10 @@ export const facebookPageDmPendingIntents = pgTable(
     actorId: uuid('actor_id').notNull(),
     textBody: text('text_body').notNull(),
     dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    groupId: uuid('group_id'),
+    sequenceIndex: integer('sequence_index'),
+    gapSeconds: integer('gap_seconds'),
+    expectedLatestInboundMessageId: text('expected_latest_inbound_message_id'),
     preSendAttempts: integer('pre_send_attempts').notNull().default(0),
     status: text('status').notNull().default('pending'),
     leaseOwner: text('lease_owner'),
@@ -721,6 +725,11 @@ export const facebookPageDmPendingIntents = pgTable(
       table.clientActionId,
     ),
     index('facebook_page_dm_pending_intents_due_idx').on(table.dueAt, table.id),
+    uniqueIndex('facebook_page_dm_pending_intents_group_sequence_unique').on(
+      table.workspaceId,
+      table.groupId,
+      table.sequenceIndex,
+    ),
     foreignKey({
       columns: [table.workspaceId, table.accountId],
       foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
@@ -728,7 +737,7 @@ export const facebookPageDmPendingIntents = pgTable(
     }).onDelete('restrict'),
     check(
       'facebook_page_dm_pending_intents_status_check',
-      sql`${table.status} IN ('pending', 'claimed', 'cancelled', 'confirmed', 'failed', 'unknown')`,
+      sql`${table.status} IN ('waiting', 'pending', 'claimed', 'cancelled', 'confirmed', 'failed', 'unknown')`,
     ),
     check(
       'facebook_page_dm_pending_intents_text_check',

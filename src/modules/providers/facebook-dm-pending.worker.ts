@@ -149,7 +149,7 @@ export async function dispatchDuePageDms(runtime: Runtime, now = new Date()) {
         void renewClaimedPageDm(runtime.database, {
           workspaceId: intent.workspaceId,
           id: intent.id,
-          workerId: runtime.workerId,
+          workerId: intent.leaseOwner ?? '',
           leaseMs: runtime.leaseMs,
         }).catch(() => {
           // A lost database lease is still protected from duplicate provider I/O
@@ -168,7 +168,7 @@ export async function dispatchDuePageDms(runtime: Runtime, now = new Date()) {
     await finishClaimedPageDm(runtime.database, {
       workspaceId: intent.workspaceId,
       id: intent.id,
-      workerId: runtime.workerId,
+      workerId: intent.leaseOwner ?? '',
       state,
     });
     counts[state] += 1;

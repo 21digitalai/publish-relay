@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { and, eq, inArray, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -127,6 +127,7 @@ const projection = {
   dueAt: facebookPageDmPendingIntents.dueAt,
   preSendAttempts: facebookPageDmPendingIntents.preSendAttempts,
   status: facebookPageDmPendingIntents.status,
+  leaseOwner: facebookPageDmPendingIntents.leaseOwner,
 };
 
 /** Schedule once. The action ID remains the provider idempotency key at dispatch. */
@@ -433,7 +434,7 @@ export async function claimDuePageDms(
       .update(facebookPageDmPendingIntents)
       .set({
         status: 'claimed',
-        leaseOwner: input.workerId,
+        leaseOwner: `${input.workerId}:${randomUUID()}`,
         leaseUntil: new Date(input.now.getTime() + input.leaseMs),
         updatedAt: input.now,
       })

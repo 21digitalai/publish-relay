@@ -15,6 +15,16 @@ import {
   cancelScheduledProposalPageDm,
   scheduleApprovedPageDm,
 } from './facebook-dm-pending.repository.js';
+import { PageDmScheduleWindowError } from './facebook-dm-schedule-time.js';
+import {
+  inboundFingerprint,
+  previewApprovedPageDm,
+} from './facebook-dm-approval-preview.service.js';
+import {
+  FacebookDmConversationChangedError,
+  FacebookDmWindowClosedError,
+} from './facebook-messenger-send.service.js';
+import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 import {
   approveEngagementProposal,
   type EngagementSendCommands,
@@ -24,6 +34,9 @@ const paramsSchema = z.strictObject({ proposalId: z.uuid() });
 const approvalSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
   sendMode: z.enum(['scheduled', 'immediate']).optional(),
+  dueAt: z.iso.datetime().optional(),
+  previewedAt: z.iso.datetime().optional(),
+  latestInboundFingerprint: z.string().length(64).optional(),
 });
 
 export function registerEngagementApprovalRoutes(
@@ -33,6 +46,51 @@ export function registerEngagementApprovalRoutes(
     auth: AuthService;
   } & EngagementSendCommands,
 ): void {
+  application.post(
+    '/api/engagement-proposals/:proposalId/approve-preview',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (
+        !verifyCsrfToken(
+          request.cookies[CSRF_COOKIE],
+          request.headers['x-csrf-token'] as string | undefined,
+        )
+      )
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = paramsSchema.safeParse(request.params);
+      const body = z
+        .strictObject({ expectedRevision: z.number().int().positive() })
+        .safeParse(request.body);
+      if (!params.success || !body.success)
+        return reply.code(400).send({ data: null, error: 'Invalid approval preview' });
+      if (!dependencies.facebook)
+        return reply.code(409).send({ data: null, error: 'Proposal cannot be scheduled' });
+      try {
+        const preview = await previewApprovedPageDm(
+          dependencies.database,
+          dependencies.facebook.previewDmWindow,
+          {
+            workspaceId: identity.workspaceId,
+            proposalId: params.data.proposalId,
+            expectedRevision: body.data.expectedRevision,
+          },
+        );
+        return { data: preview, error: null };
+      } catch (error) {
+        if (
+          error instanceof PageDmScheduleWindowError ||
+          error instanceof PendingDmConflictError ||
+          error instanceof PageReadUnavailableError ||
+          error instanceof FacebookDmWindowClosedError ||
+          error instanceof FacebookDmConversationChangedError
+        )
+          return reply.code(409).send({ data: null, error: error.message });
+        throw error;
+      }
+    },
+  );
   application.post(
     '/api/engagement-proposals/:proposalId/cancel-scheduled',
     async (request, reply) => {
@@ -98,11 +156,39 @@ export function registerEngagementApprovalRoutes(
         proposal.kind === 'dm' &&
         body.data.sendMode !== 'immediate'
       ) {
+        if (
+          !body.data.dueAt ||
+          !body.data.previewedAt ||
+          !body.data.latestInboundFingerprint ||
+          !dependencies.facebook
+        )
+          return await reply
+            .code(409)
+            .send({ data: null, error: 'Preview the final send time first' });
+        const window = await dependencies.facebook.previewDmWindow({
+          workspaceId: identity.workspaceId,
+          accountId: proposal.accountId,
+          conversationId: proposal.targetId,
+        });
+        if (
+          inboundFingerprint(window.latestInboundMessageId) !== body.data.latestInboundFingerprint
+        )
+          throw new FacebookDmConversationChangedError();
+        const source = proposal.sourceContext as { sourceMessageId?: unknown };
+        if (
+          typeof source.sourceMessageId === 'string' &&
+          source.sourceMessageId !== window.latestInboundMessageId
+        )
+          throw new FacebookDmConversationChangedError();
         const scheduled = await scheduleApprovedPageDm(dependencies.database, {
           workspaceId: identity.workspaceId,
           userId: identity.userId,
           proposalId: params.data.proposalId,
           expectedRevision: body.data.expectedRevision,
+          dueAt: new Date(body.data.dueAt),
+          previewedAt: new Date(body.data.previewedAt),
+          windowDeadline: window.windowDeadline,
+          latestInboundMessageId: window.latestInboundMessageId,
         });
         return await reply.code(202).send({ data: scheduled, error: null });
       }
@@ -118,7 +204,13 @@ export function registerEngagementApprovalRoutes(
     } catch (error) {
       if (error instanceof EngagementProposalError)
         return reply.code(error.statusCode).send({ data: null, error: error.message });
-      if (error instanceof PendingDmConflictError || error instanceof PendingDmNoGoError)
+      if (
+        error instanceof PendingDmConflictError ||
+        error instanceof PendingDmNoGoError ||
+        error instanceof PageReadUnavailableError ||
+        error instanceof FacebookDmWindowClosedError ||
+        error instanceof FacebookDmConversationChangedError
+      )
         return reply.code(409).send({ data: null, error: error.message });
       throw error;
     }

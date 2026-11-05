@@ -155,6 +155,10 @@ describe('Page DM pending intent', () => {
         userId: actorId,
         proposalId,
         expectedRevision: 1,
+        previewedAt: new Date(),
+        dueAt: new Date(dueAt.getTime() + 300_000),
+        windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
+        latestInboundMessageId: 'mid-1',
       });
       expect(approved.status).toBe('scheduled');
       const rows = await pg.query<{
@@ -177,7 +181,7 @@ describe('Page DM pending intent', () => {
       if (!firstRow || !secondRow) throw new Error('Grouped intents were not created');
       const firstClaim = await claimDuePageDms(database, {
         workerId: 'w',
-        now: dueAt,
+        now: approved.dueAt,
         leaseMs: 30_000,
         limit: 3,
       });

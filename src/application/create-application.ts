@@ -42,7 +42,10 @@ import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-pa
 import { registerFacebookPageCommentSendRoute } from '../modules/providers/facebook-comment-send.routes.js';
 import { registerFacebookPageDmSendRoute } from '../modules/providers/facebook-messenger-send.routes.js';
 import { sendAccountPageCommentReply } from '../modules/providers/facebook-comment-send.service.js';
-import { sendAccountPageConversationMessage } from '../modules/providers/facebook-messenger-send.service.js';
+import {
+  getPageDmApprovalWindow,
+  sendAccountPageConversationMessage,
+} from '../modules/providers/facebook-messenger-send.service.js';
 import { registerFacebookPageBrowserReadRoutes } from '../modules/providers/facebook-page-browser-read.routes.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
@@ -382,6 +385,11 @@ function registerBrowserRoutes(
       ...(facebookRuntime
         ? {
             facebook: {
+              previewDmWindow: (input: {
+                workspaceId: string;
+                accountId: string;
+                conversationId: string;
+              }) => getPageDmApprovalWindow(facebookRuntime, input),
               sendComment: (input: Parameters<typeof sendAccountPageCommentReply>[1]) =>
                 sendAccountPageCommentReply(facebookRuntime, input),
               sendDm: (input: Parameters<typeof sendAccountPageConversationMessage>[1]) =>

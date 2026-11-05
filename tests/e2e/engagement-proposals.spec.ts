@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('expired Page DM plan explains approval without sending', async ({ page }) => {
+test('expired Page DM plan previews a re-anchored send time before approval', async ({ page }) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Expired Review Owner',
@@ -16,13 +16,37 @@ test('expired Page DM plan explains approval without sending', async ({ page }) 
   const id = '00000000-0000-4000-8000-000000000413';
   const plannedDueAt = new Date(Date.now() - 60_000).toISOString();
   let approvals = 0;
-  let status = 'pending';
+  let status = 'expired';
+  const dueAt = new Date(Date.now() + 600_000).toISOString();
+  const previewedAt = new Date().toISOString();
+  const latestInboundFingerprint = 'a'.repeat(64);
   await page.route('**/api/engagement-proposals**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path.endsWith('/approve-preview')) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { dueAt, previewedAt, latestInboundFingerprint },
+          error: null,
+        }),
+      });
+      return;
+    }
     if (path.endsWith('/approve')) {
       approvals += 1;
-      await route.fulfill({ status: 409, body: JSON.stringify({ data: null, error: 'Expired' }) });
+      expect(request.postDataJSON()).toEqual({
+        expectedRevision: 1,
+        sendMode: 'scheduled',
+        dueAt,
+        previewedAt,
+        latestInboundFingerprint,
+      });
+      status = 'scheduled';
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id, status, dueAt }, error: null }),
+      });
       return;
     }
     const list = path.endsWith('/api/engagement-proposals');
@@ -63,19 +87,23 @@ test('expired Page DM plan explains approval without sending', async ({ page }) 
     });
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
-  await expect(page.getByText('Expired · new draft required')).toBeVisible();
+  await expect(page.getByText('Planned time passed · approval re-anchors')).toBeVisible();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
-  await expect(page.getByText(/This planned send time has passed/)).toBeVisible();
+  await expect(page.getByText(/Approval schedules from now plus the Page delay/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send immediately' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Approval unavailable · time expired' }).click();
-  await expect(page.getByRole('alert')).toContainText('Nothing was sent');
-  status = 'expired';
+  await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText(new Date(dueAt).toLocaleString());
+  expect(approvals).toBe(0);
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await expect(page.getByText(/Reply scheduled for/)).toBeVisible();
+  expect(approvals).toBe(1);
+  status = 'superseded';
   await page.reload();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
-  await expect(page.getByText('Expired · new draft required')).toBeVisible();
-  await page.getByRole('button', { name: 'Approval unavailable · time expired' }).click();
-  await expect(page.getByRole('alert')).toContainText('Nothing was sent');
-  expect(approvals).toBe(0);
+  await expect(page.getByText(/A newer draft replaced this one/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Approval unavailable · newer draft' }),
+  ).toBeDisabled();
 });
 
 test('one Page DM approval reviews and edits all three scheduled bubbles', async ({ page }) => {
@@ -93,15 +121,34 @@ test('one Page DM approval reviews and edits all three scheduled bubbles', async
   };
   const id = '00000000-0000-4000-8000-000000000412';
   const dueAt = new Date(Date.now() + 3_600_000).toISOString();
+  const previewedAt = new Date().toISOString();
+  const latestInboundFingerprint = 'a'.repeat(64);
   let revision = 1;
   let texts: [string, string, string] = ['Здрасти', 'Как си?', 'Играеш ли днес?'];
   let approvals = 0;
   await page.route('**/api/engagement-proposals**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path.endsWith('/approve-preview')) {
+      expect(request.postDataJSON()).toEqual({ expectedRevision: 2 });
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { dueAt, previewedAt, latestInboundFingerprint },
+          error: null,
+        }),
+      });
+      return;
+    }
     if (path.endsWith('/approve')) {
       approvals += 1;
-      expect(request.postDataJSON()).toEqual({ expectedRevision: 2, sendMode: 'scheduled' });
+      expect(request.postDataJSON()).toEqual({
+        expectedRevision: 2,
+        sendMode: 'scheduled',
+        dueAt,
+        previewedAt,
+        latestInboundFingerprint,
+      });
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({ data: { id, status: 'scheduled', dueAt }, error: null }),
@@ -433,6 +480,8 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
   };
   const id = '00000000-0000-4000-8000-000000000721';
   const dueAt = new Date(Date.now() + 3_600_000).toISOString();
+  const previewedAt = new Date().toISOString();
+  const latestInboundFingerprint = 'a'.repeat(64);
   let status = 'pending';
   let earliestDelaySeconds = 300;
   let latestDelaySeconds = 2700;
@@ -449,11 +498,16 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
       earliestDelaySeconds = input.earliestDelaySeconds;
       latestDelaySeconds = input.latestDelaySeconds;
       data = input;
+    } else if (path.endsWith('/approve-preview')) {
+      data = { dueAt, previewedAt, latestInboundFingerprint };
     } else if (path.endsWith('/approve')) {
       approvals += 1;
       expect(request.postDataJSON()).toEqual({
         expectedRevision: 1,
         sendMode: 'scheduled',
+        dueAt,
+        previewedAt,
+        latestInboundFingerprint,
       });
       status = 'scheduled';
       data = { id, status, dueAt };

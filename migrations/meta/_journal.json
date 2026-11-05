@@ -715,6 +715,13 @@
       "when": 1793890800000,
       "tag": "0101_engagement_proposal_expiry",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1793893200000,
+      "tag": "0102_engagement_proposal_superseded",
+      "breakpoints": true
     }
   ]
 }

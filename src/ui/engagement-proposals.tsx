@@ -81,6 +81,11 @@ export function EngagementProposalsPage() {
   const [saving, setSaving] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
+  const [approvalPreview, setApprovalPreview] = useState<{
+    dueAt: string;
+    previewedAt: string;
+    latestInboundFingerprint: string;
+  } | null>(null);
   const [confirmNoGo, setConfirmNoGo] = useState(false);
   const [confirmCancelSchedule, setConfirmCancelSchedule] = useState(false);
   const [dmTiming, setDmTiming] = useState<'scheduled' | 'immediate'>('scheduled');
@@ -301,7 +306,7 @@ export function EngagementProposalsPage() {
           body: JSON.stringify({
             expectedRevision: detail.revision,
             ...(detail.provider === 'facebook_page' && detail.kind === 'dm'
-              ? { sendMode: dmTiming }
+              ? { sendMode: dmTiming, ...(dmTiming === 'scheduled' ? approvalPreview : {}) }
               : {}),
           }),
         },
@@ -339,6 +344,36 @@ export function EngagementProposalsPage() {
     } finally {
       setSaving(false);
       setConfirmApprove(false);
+      setApprovalPreview(null);
+    }
+  };
+
+  const openApprovalConfirmation = async () => {
+    if (!detail || saving) return;
+    if (detail.provider !== 'facebook_page' || detail.kind !== 'dm' || dmTiming !== 'scheduled') {
+      setConfirmApprove(true);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const preview = await readApi<{
+        dueAt: string;
+        previewedAt: string;
+        latestInboundFingerprint: string;
+      }>(`/api/engagement-proposals/${detail.id}/approve-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({ expectedRevision: detail.revision }),
+      });
+      setApprovalPreview(preview);
+      setConfirmApprove(true);
+    } catch (failure) {
+      setError(
+        failure instanceof Error ? failure.message : 'Could not preview the final send time',
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -465,11 +500,13 @@ export function EngagementProposalsPage() {
       detail.kind === 'dm' &&
       Boolean(detail.plannedDueAt && Date.parse(detail.plannedDueAt) <= now));
   const canApprove =
-    detail?.status === 'pending' &&
+    (detail?.status === 'pending' ||
+      (detail?.status === 'expired' &&
+        detail.provider === 'facebook_page' &&
+        detail.kind === 'dm')) &&
     selectedId === detail.id &&
     activeProposalRef.current === `${detail.id}:${String(detail.revision)}` &&
     detail.canApprove &&
-    !expiredScheduled &&
     !detail.noGo &&
     (facebookReady || fanvueReady) &&
     draft.trim() === detail.content.text &&
@@ -479,7 +516,7 @@ export function EngagementProposalsPage() {
       detail.provider === 'facebook_page' &&
       detail.kind === 'dm' &&
       dmTiming === 'scheduled' &&
-      (!detail.plannedDueAt || Date.parse(detail.plannedDueAt) <= Date.now())
+      !detail.plannedDueAt
     ) &&
     !sendUncertain;
 
@@ -564,10 +601,12 @@ export function EngagementProposalsPage() {
                             (item.status === 'pending' &&
                               item.plannedDueAt &&
                               Date.parse(item.plannedDueAt) <= now)
-                          ? 'Expired · new draft required'
-                          : item.status === 'unknown' || item.status === 'sending'
-                            ? 'Send outcome unknown'
-                            : 'Provider rejected send'}
+                          ? 'Planned time passed · approval re-anchors'
+                          : item.status === 'superseded'
+                            ? 'Superseded by a newer draft'
+                            : item.status === 'unknown' || item.status === 'sending'
+                              ? 'Send outcome unknown'
+                              : 'Provider rejected send'}
                     </span>
                   )}
                   <span>{item.accountDisplayName}</span>
@@ -727,19 +766,21 @@ export function EngagementProposalsPage() {
                   <p className={expiredScheduled ? 'form-error' : 'form-success'} role="status">
                     {detail.status === 'sent'
                       ? 'Sent'
-                      : expiredScheduled
-                        ? 'This planned send time has passed. This proposal cannot be approved or sent; ask the agent to create a new draft and time.'
-                        : detail.status === 'scheduled'
-                          ? detail.schedule
-                            ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
-                            : 'Scheduled; refresh to see the send time.'
-                          : detail.status === 'cancelled'
-                            ? 'Cancelled before dispatch'
-                            : detail.status === 'dismissed'
-                              ? 'Dismissed without sending'
-                              : detail.status === 'failed'
-                                ? 'Provider rejected this send'
-                                : 'Send outcome is unknown; do not send again'}
+                      : detail.status === 'superseded'
+                        ? 'A newer draft replaced this one. This proposal cannot be approved or sent.'
+                        : expiredScheduled
+                          ? 'The agent-selected time has passed. Approval schedules from now plus the Page delay, if no newer draft exists and the Messenger reply window still fits.'
+                          : detail.status === 'scheduled'
+                            ? detail.schedule
+                              ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
+                              : 'Scheduled; refresh to see the send time.'
+                            : detail.status === 'cancelled'
+                              ? 'Cancelled before dispatch'
+                              : detail.status === 'dismissed'
+                                ? 'Dismissed without sending'
+                                : detail.status === 'failed'
+                                  ? 'Provider rejected this send'
+                                  : 'Send outcome is unknown; do not send again'}
                   </p>
                 )}
                 <div className="engagement-proposal-actions">
@@ -751,8 +792,8 @@ export function EngagementProposalsPage() {
                         <p className="muted engagement-planned-due-at">
                           {detail.plannedDueAt
                             ? Date.parse(detail.plannedDueAt) <= Date.now()
-                              ? `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()} has passed. Request a new proposal before scheduling.`
-                              : `Scheduled for ${new Date(detail.plannedDueAt).toLocaleString()} after approval.`
+                              ? `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()} has passed. Approval starts a new Page delay from now.`
+                              : `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()}; approval adds the Page delay on top.`
                             : 'This proposal has no bot-selected time. Scheduling is unavailable; request a new proposal.'}
                         </p>
                         <p className="muted">
@@ -845,27 +886,18 @@ export function EngagementProposalsPage() {
                         )}
                       </fieldset>
                     )}
-                  {(detail.status === 'pending' || detail.status === 'expired') && (
+                  {['pending', 'expired', 'superseded'].includes(detail.status) && (
                     <button
                       ref={approveTrigger}
                       className="primary-button engagement-proposal-approve"
                       type="button"
-                      title={
-                        expiredScheduled ? 'Planned time passed; request a new proposal' : undefined
-                      }
-                      disabled={saving || (!canApprove && !expiredScheduled)}
+                      disabled={saving || !canApprove}
                       onClick={() => {
-                        if (expiredScheduled) {
-                          setError(
-                            'This planned send time has passed. Ask the agent for a new proposal. Nothing was sent.',
-                          );
-                          return;
-                        }
-                        setConfirmApprove(true);
+                        void openApprovalConfirmation();
                       }}
                     >
-                      {expiredScheduled
-                        ? 'Approval unavailable · time expired'
+                      {detail.status === 'superseded'
+                        ? 'Approval unavailable · newer draft'
                         : detail.provider === 'facebook_page' &&
                             detail.kind === 'dm' &&
                             dmTiming === 'scheduled'
@@ -911,7 +943,9 @@ export function EngagementProposalsPage() {
                     ref={dismissTrigger}
                     className="danger-button engagement-proposal-dismiss"
                     type="button"
-                    disabled={saving || detail.status !== 'pending' || sendUncertain}
+                    disabled={
+                      saving || !['pending', 'expired'].includes(detail.status) || sendUncertain
+                    }
                     onClick={() => {
                       setConfirmDismiss(true);
                     }}
@@ -938,27 +972,25 @@ export function EngagementProposalsPage() {
                       </button>
                     )}
                 </div>
-                {detail.status === 'pending' && !canApprove && (
+                {(detail.status === 'pending' || detail.status === 'expired') && !canApprove && (
                   <p className="muted">
                     {sendUncertain
                       ? 'Refresh to verify the latest send state before continuing.'
-                      : expiredScheduled
-                        ? 'This proposal has expired. Ask the agent to create a new draft with a future time.'
-                        : dmTiming === 'scheduled' &&
-                            detail.provider === 'facebook_page' &&
-                            detail.kind === 'dm' &&
-                            !detail.plannedDueAt
-                          ? 'A future bot-selected send time is required before approval.'
-                          : !detail.canApprove
-                            ? 'Only a workspace owner or admin can approve and send.'
-                            : draft.trim() !== detail.content.text ||
-                                detail.content.followUps?.some(
-                                  (text, index) => draftFollowUps[index]?.trim() !== text,
-                                )
-                              ? 'Save the edited draft before approving.'
-                              : !mediaReady
-                                ? 'Prepare every attachment and confirm it is ready before approving.'
-                                : 'Sending is not available for this provider or proposal shape.'}
+                      : dmTiming === 'scheduled' &&
+                          detail.provider === 'facebook_page' &&
+                          detail.kind === 'dm' &&
+                          !detail.plannedDueAt
+                        ? 'A future bot-selected send time is required before approval.'
+                        : !detail.canApprove
+                          ? 'Only a workspace owner or admin can approve and send.'
+                          : draft.trim() !== detail.content.text ||
+                              detail.content.followUps?.some(
+                                (text, index) => draftFollowUps[index]?.trim() !== text,
+                              )
+                            ? 'Save the edited draft before approving.'
+                            : !mediaReady
+                              ? 'Prepare every attachment and confirm it is ready before approving.'
+                              : 'Sending is not available for this provider or proposal shape.'}
                   </p>
                 )}
                 {sendUncertain && (
@@ -1120,7 +1152,7 @@ export function EngagementProposalsPage() {
           }
           description={
             dmTiming === 'scheduled' && detail.provider === 'facebook_page' && detail.kind === 'dm'
-              ? `Schedule the reviewed ${detail.content.followUps ? 'three-bubble reply' : 'reply'} to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for ${detail.plannedDueAt ? new Date(detail.plannedDueAt).toLocaleString() : 'an unavailable time'}.${detail.content.followUps ? ' Later bubbles follow confirmed sends by 4–10 seconds.' : ''} You can cancel remaining pending bubbles.`
+              ? `Schedule the reviewed ${detail.content.followUps ? 'three-bubble reply' : 'reply'} to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for ${approvalPreview ? new Date(approvalPreview.dueAt).toLocaleString() : 'an unavailable time'}.${detail.content.followUps ? ' Later bubbles follow confirmed sends by 4–10 seconds.' : ''} You can cancel remaining pending bubbles.`
               : `Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`
           }
           cancelLabel="Keep reviewing"
@@ -1138,6 +1170,7 @@ export function EngagementProposalsPage() {
           returnFocusTo={approveTrigger.current}
           onCancel={() => {
             setConfirmApprove(false);
+            setApprovalPreview(null);
           }}
           onConfirm={() => {
             void approve();

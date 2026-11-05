@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { and, eq, inArray, lte, or } from 'drizzle-orm';
+import { and, eq, inArray, lte, ne, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -206,6 +206,10 @@ export async function scheduleApprovedPageDm(
     userId: string;
     proposalId: string;
     expectedRevision: number;
+    dueAt: Date;
+    previewedAt: Date;
+    windowDeadline: Date;
+    latestInboundMessageId: string;
   },
 ) {
   return withTenantTransaction(database, input, async (tx) => {
@@ -238,7 +242,7 @@ export async function scheduleApprovedPageDm(
     const content = proposalTextSchema.safeParse(proposal?.content);
     if (!proposal) throw new PendingDmConflictError();
     if (
-      proposal.status !== 'pending' ||
+      !['pending', 'expired'].includes(proposal.status) ||
       proposal.revision !== input.expectedRevision ||
       proposal.provider !== 'facebook_page' ||
       proposal.kind !== 'dm' ||
@@ -246,9 +250,62 @@ export async function scheduleApprovedPageDm(
       !content.success
     )
       throw new PendingDmConflictError();
-    if (!proposal.plannedDueAt || proposal.plannedDueAt.getTime() <= Date.now())
+    if (!proposal.plannedDueAt)
+      throw new PendingDmConflictError('Bot-selected send time is missing');
+    const now = Date.now();
+    const previewedAt = input.previewedAt.getTime();
+    const due = input.dueAt.getTime();
+    const deadline = input.windowDeadline.getTime();
+    const [settings] = await tx
+      .select({
+        earliest: facebookPageDmDelaySettings.earliestDelaySeconds,
+        latest: facebookPageDmDelaySettings.latestDelaySeconds,
+      })
+      .from(facebookPageDmDelaySettings)
+      .where(
+        and(
+          eq(facebookPageDmDelaySettings.workspaceId, input.workspaceId),
+          eq(facebookPageDmDelaySettings.accountId, proposal.accountId),
+        ),
+      )
+      .limit(1);
+    const earliest = settings?.earliest ?? 300;
+    const latest = settings?.latest ?? 2700;
+    const base = Math.max(proposal.plannedDueAt.getTime(), previewedAt);
+    if (
+      !Number.isFinite(due) ||
+      !Number.isFinite(previewedAt) ||
+      !Number.isFinite(deadline) ||
+      previewedAt > now ||
+      now - previewedAt > 120_000 ||
+      due <= now ||
+      due > deadline ||
+      due < base + earliest * 1000 ||
+      due > base + latest * 1000 ||
+      !input.latestInboundMessageId ||
+      input.latestInboundMessageId.length > 256
+    )
       throw new PendingDmConflictError(
-        'Bot-selected send time is missing or has passed; request a new proposal',
+        'Approval preview is stale; preview the final send time again',
+      );
+    const [other] = await tx
+      .select({ id: engagementProposals.id })
+      .from(engagementProposals)
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.accountId, proposal.accountId),
+          eq(engagementProposals.provider, 'facebook_page'),
+          eq(engagementProposals.kind, 'dm'),
+          eq(engagementProposals.targetId, proposal.targetId),
+          ne(engagementProposals.id, proposal.id),
+          inArray(engagementProposals.status, ['pending', 'scheduled', 'sending', 'unknown']),
+        ),
+      )
+      .limit(1);
+    if (other)
+      throw new PendingDmConflictError(
+        'A newer or unresolved proposal exists for this conversation',
       );
     const source = z
       .object({ sourceMessageId: z.string().min(1).max(256).optional() })
@@ -257,6 +314,12 @@ export async function scheduleApprovedPageDm(
       throw new PendingDmConflictError(
         'Grouped reply requires the reviewed latest inbound message ID',
       );
+    if (
+      source.success &&
+      source.data.sourceMessageId &&
+      source.data.sourceMessageId !== input.latestInboundMessageId
+    )
+      throw new PendingDmConflictError('Conversation changed after this proposal was drafted');
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify({
@@ -275,8 +338,12 @@ export async function scheduleApprovedPageDm(
       requestFingerprint: fingerprint,
       actor: { type: 'user', id: input.userId },
       text: content.data.text,
-      dueAt: proposal.plannedDueAt,
+      dueAt: input.dueAt,
     });
+    await tx
+      .update(facebookPageDmPendingIntents)
+      .set({ expectedLatestInboundMessageId: input.latestInboundMessageId })
+      .where(eq(facebookPageDmPendingIntents.id, intent.id));
     if (content.data.followUps) {
       await tx
         .update(facebookPageDmPendingIntents)
@@ -284,7 +351,6 @@ export async function scheduleApprovedPageDm(
           groupId: proposal.id,
           sequenceIndex: 0,
           gapSeconds: 0,
-          expectedLatestInboundMessageId: source.success ? source.data.sourceMessageId : null,
         })
         .where(eq(facebookPageDmPendingIntents.id, intent.id));
       for (const [index, text] of content.data.followUps.entries()) {
@@ -306,11 +372,11 @@ export async function scheduleApprovedPageDm(
           actorType: 'user',
           actorId: input.userId,
           textBody: text,
-          dueAt: proposal.plannedDueAt,
+          dueAt: input.dueAt,
           groupId: proposal.id,
           sequenceIndex: index + 1,
           gapSeconds: 4 + Math.floor(Math.random() * 7),
-          expectedLatestInboundMessageId: source.success ? source.data.sourceMessageId : null,
+          expectedLatestInboundMessageId: input.latestInboundMessageId,
           status: 'waiting',
         });
       }

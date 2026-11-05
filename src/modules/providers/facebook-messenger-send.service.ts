@@ -81,7 +81,12 @@ async function findEligibleRecipient(
   accessToken: string,
   now: number,
   expectedLatestInboundMessageId?: string,
-): Promise<{ id: string; label: string | null }> {
+): Promise<{
+  id: string;
+  label: string | null;
+  latestInboundMessageId: string | null;
+  windowDeadline: Date;
+}> {
   const participants = await client.getConversationParticipants(conversationId, accessToken);
   const fans = participants.filter((person) => person.id !== pageId);
   if (
@@ -92,25 +97,54 @@ async function findEligibleRecipient(
     throw new PageReadUnavailableError();
   const recipient = fans[0];
   const result = await client.listConversationMessages({ conversationId, accessToken, limit: 100 });
-  const recentInbound = result.messages.some((message) => {
-    const timestamp = Date.parse(message.createdAt);
-    return (
-      message.senderId === recipient.id &&
-      timestamp <= now &&
-      timestamp >= now - STANDARD_WINDOW_MS + WINDOW_SAFETY_MS
-    );
-  });
-  if (!recentInbound) throw new FacebookDmWindowClosedError();
+  const inbound = result.messages
+    .filter((message) => message.senderId === recipient.id)
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  const latest = inbound[0];
+  const latestTime = latest ? Date.parse(latest.createdAt) : NaN;
+  if (
+    !Number.isFinite(latestTime) ||
+    latestTime > now ||
+    latestTime < now - STANDARD_WINDOW_MS + WINDOW_SAFETY_MS
+  )
+    throw new FacebookDmWindowClosedError();
+  if (
+    inbound[1] &&
+    Date.parse(inbound[1].createdAt) === latestTime &&
+    expectedLatestInboundMessageId
+  )
+    throw new FacebookDmConversationChangedError();
   if (expectedLatestInboundMessageId) {
-    const inbound = result.messages
-      .filter((message) => message.senderId === recipient.id)
-      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
-    if (!inbound[0]?.id || inbound[0].id !== expectedLatestInboundMessageId)
-      throw new FacebookDmConversationChangedError();
-    if (inbound[1] && Date.parse(inbound[0].createdAt) === Date.parse(inbound[1].createdAt))
+    if (latest?.id !== expectedLatestInboundMessageId)
       throw new FacebookDmConversationChangedError();
   }
-  return { id: recipient.id, label: recipient.name?.trim().slice(0, 200) ?? null };
+  return {
+    id: recipient.id,
+    label: recipient.name?.trim().slice(0, 200) ?? null,
+    latestInboundMessageId: latest?.id ?? null,
+    windowDeadline: new Date(latestTime + STANDARD_WINDOW_MS - WINDOW_SAFETY_MS),
+  };
+}
+
+/** Approval uses the same identity and reply-window proof as actual dispatch. */
+export async function getPageDmApprovalWindow(
+  runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
+  input: { workspaceId: string; accountId: string; conversationId: string },
+): Promise<{ latestInboundMessageId: string; windowDeadline: Date }> {
+  return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, token) => {
+    const proof = await findEligibleRecipient(
+      runtime.client,
+      input.conversationId,
+      pageId,
+      token,
+      Date.now(),
+    );
+    if (!proof.latestInboundMessageId) throw new PageReadUnavailableError();
+    return {
+      latestInboundMessageId: proof.latestInboundMessageId,
+      windowDeadline: proof.windowDeadline,
+    };
+  });
 }
 
 /** One Page-local text RESPONSE, never a new conversation or an automatic retry. */

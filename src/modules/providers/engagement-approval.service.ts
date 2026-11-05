@@ -37,6 +37,11 @@ export interface EngagementSendCommands {
     sendDm: (
       input: Parameters<typeof sendAccountPageConversationMessage>[1],
     ) => ReturnType<typeof sendAccountPageConversationMessage>;
+    previewDmWindow: (input: {
+      workspaceId: string;
+      accountId: string;
+      conversationId: string;
+    }) => Promise<{ latestInboundMessageId: string; windowDeadline: Date }>;
   };
 }
 

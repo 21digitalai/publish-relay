@@ -178,7 +178,14 @@ describe('engagement proposal foundation', () => {
         auth,
         comments: { send: sendComment },
         messages: { sendText, sendMessage },
-        facebook: { sendComment: sendPageComment, sendDm: sendPageDm },
+        facebook: {
+          sendComment: sendPageComment,
+          sendDm: sendPageDm,
+          previewDmWindow: vi.fn().mockResolvedValue({
+            latestInboundMessageId: 'mid_1',
+            windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
+          }),
+        },
       });
       const stageMedia = vi.fn().mockResolvedValue('ready');
       registerEngagementDmMediaRoutes(app, { database, auth, stage: stageMedia });
@@ -1085,14 +1092,21 @@ describe('engagement proposal foundation', () => {
         proposerType: 'api_key',
         proposerId: proposer,
       });
+      const previewedAt = new Date();
+      if (!scheduledProposal.plannedDueAt) throw new Error('Planned time missing');
+      const dueAt = new Date(scheduledProposal.plannedDueAt.getTime() + 300_000);
       const scheduled = await scheduleApprovedPageDm(database, {
         workspaceId: workspace,
         userId: proposer,
         proposalId: scheduledProposal.id,
         expectedRevision: 1,
+        dueAt,
+        previewedAt,
+        windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
+        latestInboundMessageId: 'mid_1',
       });
       expect(scheduled.status).toBe('scheduled');
-      expect(scheduled.dueAt.toISOString()).toBe(scheduledProposal.plannedDueAt?.toISOString());
+      expect(scheduled.dueAt.toISOString()).toBe(dueAt.toISOString());
       expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
         'scheduled',
       );
@@ -1103,11 +1117,12 @@ describe('engagement proposal foundation', () => {
       expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
         'scheduled',
       );
-      const intent = await client.query<{ id: string }>(
-        `SELECT id FROM facebook_page_dm_pending_intents WHERE workspace_id = '${workspace}' AND client_action_id = '${scheduledProposal.clientActionId}'`,
+      const intent = await client.query<{ id: string; expected_latest_inbound_message_id: string }>(
+        `SELECT id, expected_latest_inbound_message_id FROM facebook_page_dm_pending_intents WHERE workspace_id = '${workspace}' AND client_action_id = '${scheduledProposal.clientActionId}'`,
       );
       expect(intent.rows).toHaveLength(1);
       if (!intent.rows[0]) throw new Error('Scheduled intent missing');
+      expect(intent.rows[0].expected_latest_inbound_message_id).toBe('mid_1');
       expect(
         await cancelPendingPageDm(database, {
           workspaceId: workspace,
@@ -1119,6 +1134,127 @@ describe('engagement proposal foundation', () => {
       expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
         'cancelled',
       );
+      const late = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000700',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_late',
+        content: { text: 'Late approved reply' },
+        plannedDueAt: new Date(Date.now() - 60_000),
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      expect((await getEngagementProposal(database, workspace, late.id))?.status).toBe('expired');
+      const lateApp = Fastify();
+      await lateApp.register(cookie);
+      registerEngagementApprovalRoutes(lateApp, {
+        database,
+        auth,
+        facebook: {
+          sendComment: sendPageComment,
+          sendDm: sendPageDm,
+          previewDmWindow: vi.fn().mockResolvedValue({
+            latestInboundMessageId: 'mid_1',
+            windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
+          }),
+        },
+      });
+      const lateUrl = `/api/engagement-proposals/${late.id}`;
+      const previewResponse = await lateApp.inject({
+        method: 'POST',
+        url: `${lateUrl}/approve-preview`,
+        headers: approvedHeaders,
+        payload: { expectedRevision: 1 },
+      });
+      expect(previewResponse.statusCode).toBe(200);
+      const preview = previewResponse.json<{
+        data: {
+          dueAt: string;
+          previewedAt: string;
+          latestInboundFingerprint: string;
+        };
+      }>().data;
+      expect(new Date(preview.dueAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(preview.previewedAt).getTime() + 300_000,
+      );
+      expect(
+        (
+          await lateApp.inject({
+            method: 'POST',
+            url: `${lateUrl}/approve`,
+            headers: approvedHeaders,
+            payload: {
+              expectedRevision: 1,
+              sendMode: 'scheduled',
+              ...preview,
+              latestInboundFingerprint: 'b'.repeat(64),
+            },
+          })
+        ).statusCode,
+      ).toBe(409);
+      const approvedLate = await lateApp.inject({
+        method: 'POST',
+        url: `${lateUrl}/approve`,
+        headers: approvedHeaders,
+        payload: { expectedRevision: 1, sendMode: 'scheduled', ...preview },
+      });
+      expect(approvedLate.statusCode).toBe(202);
+      expect(approvedLate.json<{ data: { dueAt: string } }>().data.dueAt).toBe(preview.dueAt);
+      await lateApp.close();
+      await expect(
+        createEngagementProposal(database, {
+          workspaceId: workspace,
+          accountId: account,
+          clientActionId: '00000000-0000-4000-8000-000000000701',
+          provider: 'facebook_page',
+          kind: 'dm',
+          targetId: 't_late',
+          content: { text: 'Duplicate while scheduled' },
+          plannedDueAt: new Date(Date.now() + 600_000),
+          proposerType: 'api_key',
+          proposerId: proposer,
+        }),
+      ).rejects.toThrow('active or unresolved');
+      const old = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000702',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_redraft',
+        content: { text: 'Old draft' },
+        plannedDueAt: new Date(Date.now() - 60_000),
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const fresh = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000703',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_redraft',
+        content: { text: 'Fresh draft' },
+        plannedDueAt: new Date(Date.now() + 600_000),
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      expect((await getEngagementProposal(database, workspace, old.id))?.status).toBe('superseded');
+      expect((await getEngagementProposal(database, workspace, fresh.id))?.status).toBe('pending');
+      await expect(
+        scheduleApprovedPageDm(database, {
+          workspaceId: workspace,
+          userId: proposer,
+          proposalId: old.id,
+          expectedRevision: 1,
+          previewedAt: new Date(),
+          dueAt: new Date(Date.now() + 300_000),
+          windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
+          latestInboundMessageId: 'mid_1',
+        }),
+      ).rejects.toThrow();
       await client.exec(`
         CREATE ROLE proposal_reader NOLOGIN NOBYPASSRLS;
         GRANT USAGE ON SCHEMA public TO proposal_reader;
@@ -1141,7 +1277,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('13');
+      ).toBe('16');
     } finally {
       await client.close();
     }

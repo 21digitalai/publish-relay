@@ -9,7 +9,10 @@ import {
   providerConnections,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import { isPageConversationNoGoInTransaction } from './facebook-dm-no-go.repository.js';
+import {
+  isPageConversationNoGoInTransaction,
+  lockPageDmAccount,
+} from './facebook-dm-no-go.repository.js';
 
 export type ProposalKind = 'dm' | 'comment';
 export interface ProposalContent {
@@ -148,16 +151,54 @@ export async function createEngagementProposal(
     ) {
       throw new EngagementProposalError('Proposal destination is unavailable', 409);
     }
-    if (
-      input.provider === 'facebook_page' &&
-      input.kind === 'dm' &&
-      (await isPageConversationNoGoInTransaction(tx, {
-        workspaceId: input.workspaceId,
-        accountId: input.accountId,
-        conversationId: input.targetId.trim(),
-      }))
-    )
-      throw new EngagementProposalError('This Page conversation is on the no-go list', 409);
+    if (input.provider === 'facebook_page' && input.kind === 'dm') {
+      await lockPageDmAccount(tx, input);
+      if (
+        await isPageConversationNoGoInTransaction(tx, {
+          workspaceId: input.workspaceId,
+          accountId: input.accountId,
+          conversationId: input.targetId.trim(),
+        })
+      )
+        throw new EngagementProposalError('This Page conversation is on the no-go list', 409);
+      const sameConversation = and(
+        eq(engagementProposals.workspaceId, input.workspaceId),
+        eq(engagementProposals.accountId, input.accountId),
+        eq(engagementProposals.provider, 'facebook_page'),
+        eq(engagementProposals.kind, 'dm'),
+        eq(engagementProposals.targetId, input.targetId.trim()),
+      );
+      const now = new Date();
+      await tx
+        .update(engagementProposals)
+        .set({ status: 'expired', updatedAt: now })
+        .where(
+          and(
+            sameConversation,
+            eq(engagementProposals.status, 'pending'),
+            lte(engagementProposals.plannedDueAt, now),
+          ),
+        );
+      const [active] = await tx
+        .select({ id: engagementProposals.id })
+        .from(engagementProposals)
+        .where(
+          and(
+            sameConversation,
+            inArray(engagementProposals.status, ['pending', 'scheduled', 'sending', 'unknown']),
+          ),
+        )
+        .limit(1);
+      if (active)
+        throw new EngagementProposalError(
+          'This conversation already has an active or unresolved proposal',
+          409,
+        );
+      await tx
+        .update(engagementProposals)
+        .set({ status: 'superseded', updatedAt: now })
+        .where(and(sameConversation, eq(engagementProposals.status, 'expired')));
+    }
     const [created] = await tx
       .insert(engagementProposals)
       .values({
@@ -231,6 +272,7 @@ export async function listEngagementReviewQueue(
             'unknown',
             'failed',
             'expired',
+            'superseded',
           ]),
           ...(page?.beforeCreatedAt && page.beforeId
             ? [
@@ -327,7 +369,7 @@ export async function dismissEngagementProposal(
           eq(engagementProposals.workspaceId, input.workspaceId),
           eq(engagementProposals.id, input.id),
           eq(engagementProposals.revision, input.expectedRevision),
-          eq(engagementProposals.status, 'pending'),
+          inArray(engagementProposals.status, ['pending', 'expired']),
         ),
       )
       .returning();

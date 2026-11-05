@@ -4,6 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { isPageConversationNoGo } from './facebook-dm-no-go.repository.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { enforceWorkspaceAction, type ActionPolicy } from '../policy/action-policy.js';
 import {
@@ -47,6 +48,12 @@ export class FacebookDmActionConflictError extends Error {
 export class FacebookDmWindowClosedError extends Error {
   constructor() {
     super('No recent inbound message proves a standard Messenger reply window');
+  }
+}
+
+export class FacebookDmNoGoError extends Error {
+  constructor() {
+    super('This Page conversation is on the no-go list');
   }
 }
 
@@ -118,6 +125,7 @@ export async function sendAccountPageConversationMessage(
   );
   const existing = await findFacebookDmAction(runtime.database, action);
   if (existing) return replay(existing);
+  if (await isPageConversationNoGo(runtime.database, command)) throw new FacebookDmNoGoError();
   return withPageReadToken(runtime, { ...command, module: 'dms' }, async (pageId, token) => {
     const recipientId = await findEligibleRecipient(
       runtime.client,
@@ -126,6 +134,7 @@ export async function sendAccountPageConversationMessage(
       token,
       Date.now(),
     );
+    if (await isPageConversationNoGo(runtime.database, command)) throw new FacebookDmNoGoError();
     const reservation = await reserveFacebookDmAction(runtime.database, action);
     if (reservation.kind !== 'new') return replay(reservation);
     let outcome: FacebookDmOutcome;

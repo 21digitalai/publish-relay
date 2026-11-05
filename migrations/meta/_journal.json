@@ -666,6 +666,13 @@
       "when": 1793031600000,
       "tag": "0094_facebook_page_comment_actions",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1793870400000,
+      "tag": "0095_facebook_page_dm_no_go",
+      "breakpoints": true
     }
   ]
 }

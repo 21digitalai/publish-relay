@@ -2,6 +2,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import type { FacebookHttpClient } from './facebook-http-client.js';
+import { pageNoGoConversationIds } from './facebook-dm-no-go.repository.js';
 import {
   PageReadUnavailableError,
   withPageReadToken,
@@ -11,14 +12,23 @@ export async function listAccountPageConversations(
   runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
   input: { workspaceId: string; accountId: string; limit?: number; after?: string },
 ) {
-  return withPageReadToken(runtime, { ...input, module: 'dms' }, (pageId, accessToken) =>
-    runtime.client.listPageConversations({
+  return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, accessToken) => {
+    const result = await runtime.client.listPageConversations({
       pageId,
       accessToken,
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...(input.after === undefined ? {} : { after: input.after }),
-    }),
-  );
+    });
+    const blocked = await pageNoGoConversationIds(runtime.database, {
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      conversationIds: result.conversations.map((item) => item.id),
+    });
+    return {
+      ...result,
+      conversations: result.conversations.map((item) => ({ ...item, noGo: blocked.has(item.id) })),
+    };
+  });
 }
 
 export async function listAccountConversationMessages(

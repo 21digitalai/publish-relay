@@ -113,6 +113,101 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
   expect(approvals).toBe(2);
 });
 
+test('Page DM no-go block survives reload and can be removed from the list', async ({ page }) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'No Go Owner',
+      email: `no-go-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'No Go Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const id = '00000000-0000-4000-8000-000000000601';
+  const accountId = '00000000-0000-4000-8000-000000000602';
+  let blocked = false;
+  await page.route('**/api/facebook-page-dm-no-go**', async (route) => {
+    if (route.request().method() === 'DELETE') blocked = false;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data:
+          route.request().method() === 'GET'
+            ? {
+                canManage: true,
+                items: blocked
+                  ? [
+                      {
+                        accountId,
+                        conversationId: 't_900',
+                        displayName: 'Alexandra',
+                        accountDisplayName: 'Eli Page',
+                        createdAt: '2026-11-05T09:00:00Z',
+                      },
+                    ]
+                  : [],
+              }
+            : { noGo: false },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/no-go')) blocked = route.request().method() === 'POST';
+    const data = path.endsWith('/api/engagement-proposals')
+      ? {
+          items: [
+            {
+              id,
+              accountDisplayName: 'Eli Page',
+              provider: 'facebook_page',
+              kind: 'dm',
+              status: blocked ? 'dismissed' : 'pending',
+              sourcePreview: 'Hello',
+              contentPreview: 'Hi',
+              createdAt: '2026-11-05T09:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        }
+      : path.endsWith('/no-go')
+        ? { noGo: blocked }
+        : {
+            id,
+            accountId,
+            accountDisplayName: 'Eli Page',
+            provider: 'facebook_page',
+            kind: 'dm',
+            targetId: 't_900',
+            sourceContext: { authorLabel: 'Alexandra', text: 'Hello' },
+            content: { text: 'Hi' },
+            revision: 1,
+            status: blocked ? 'dismissed' : 'pending',
+            canApprove: true,
+            noGo: blocked,
+          };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await page.getByRole('button', { name: 'Do not message this person' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Block and dismiss' }).click();
+  await expect(
+    page.getByText('No-go conversation: new proposals and sends are blocked.'),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Alexandra · Eli Page')).toBeVisible();
+  await page.getByRole('button', { name: 'Allow messages' }).click();
+  await expect(page.getByText('No Page conversations are blocked.')).toBeVisible();
+});
+
 test('late stage result from another proposal cannot unlock reused media', async ({ page }) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {

@@ -677,6 +677,25 @@ export const facebookPageDmActions = pgTable(
   ],
 );
 
+export const facebookPageDmNoGo = pgTable(
+  'facebook_page_dm_no_go',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    displayName: text('display_name'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId, table.conversationId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_no_go_account_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
 export const facebookPageCommentActions = pgTable(
   'facebook_page_comment_actions',
   {

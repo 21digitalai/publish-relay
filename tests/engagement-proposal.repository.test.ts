@@ -16,6 +16,7 @@ import { registerEngagementApprovalRoutes } from '../src/modules/providers/engag
 import { registerEngagementDmMediaRoutes } from '../src/modules/providers/engagement-dm-media.routes.js';
 import { markFanvuePreSendError } from '../src/modules/providers/fanvue-pre-send-error.js';
 import { PageReadUnavailableError } from '../src/modules/providers/facebook-page-read-context.service.js';
+import { setPageConversationNoGo } from '../src/modules/providers/facebook-dm-no-go.repository.js';
 
 import {
   claimEngagementProposal,
@@ -68,6 +69,26 @@ describe('engagement proposal foundation', () => {
           ('${otherAccount}', '${otherWorkspace}', '${otherConnection}', 'page-b', 'facebook_page', 'page-b', 'Page B');
       `);
       const database = drizzle(client) as unknown as NodePgDatabase;
+      await setPageConversationNoGo(database, {
+        workspaceId: workspace,
+        accountId: account,
+        conversationId: 't_blocked',
+        blocked: true,
+        displayName: 'Blocked participant',
+      });
+      await expect(
+        createEngagementProposal(database, {
+          workspaceId: workspace,
+          accountId: account,
+          clientActionId: '00000000-0000-4000-8000-000000000611',
+          provider: 'facebook_page',
+          kind: 'dm',
+          targetId: 't_blocked',
+          content: { text: 'No send' },
+          proposerType: 'api_key',
+          proposerId: proposer,
+        }),
+      ).rejects.toThrow('no-go list');
       const app = Fastify();
       await app.register(cookie);
       const auth = {

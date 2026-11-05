@@ -11,7 +11,10 @@ import {
 import type { FanvueCommentService } from './fanvue-comment.service.js';
 import type { FanvueMessageService } from './fanvue-message.service.js';
 import { isFanvuePreSendError } from './fanvue-pre-send-error.js';
-import { FacebookDmWindowClosedError } from './facebook-messenger-send.service.js';
+import {
+  FacebookDmNoGoError,
+  FacebookDmWindowClosedError,
+} from './facebook-messenger-send.service.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 import { FacebookRequestError } from './facebook-http-client.js';
 import {
@@ -48,6 +51,7 @@ function isProvenPreSendError(error: unknown): boolean {
     error instanceof EngagementProposalError ||
     error instanceof PageReadUnavailableError ||
     error instanceof FacebookDmWindowClosedError ||
+    error instanceof FacebookDmNoGoError ||
     error instanceof FacebookRequestError ||
     error instanceof FacebookCommentActionConflictError ||
     error instanceof FacebookDmActionConflictError ||

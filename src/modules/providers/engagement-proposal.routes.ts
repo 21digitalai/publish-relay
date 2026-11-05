@@ -19,6 +19,11 @@ import {
   type ProposalContent,
 } from './engagement-proposal.repository.js';
 import { authorizePageEngagement } from './facebook-page-engagement.service.js';
+import {
+  isPageConversationNoGo,
+  listWorkspacePageNoGo,
+  setPageConversationNoGo,
+} from './facebook-dm-no-go.repository.js';
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1).max(5000),
@@ -202,6 +207,54 @@ export function registerEngagementProposalRoutes(
     });
 
   if (!auth) return;
+  application.get('/api/facebook-page-dm-no-go', async (request, reply) => {
+    void reply.header('Cache-Control', 'no-store');
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const rows = await listWorkspacePageNoGo(database, identity.workspaceId);
+    return {
+      data: {
+        canManage: identity.role === 'owner' || identity.role === 'admin',
+        items: rows.map((row) => ({
+          accountId: row.accountId,
+          conversationId: row.conversationId,
+          displayName: row.displayName,
+          accountDisplayName: row.accountDisplayName,
+          createdAt: row.createdAt.toISOString(),
+        })),
+      },
+      error: null,
+    };
+  });
+  application.delete(
+    '/api/facebook-page-dm-no-go/:accountId/:conversationId',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const identity = await authorizeRequest(request, auth, 'content:write');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (identity.role !== 'owner' && identity.role !== 'admin')
+        return reply.code(403).send({ data: null, error: 'Workspace admin required' });
+      if (!validCsrf(request))
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = z
+        .strictObject({
+          accountId: z.uuid(),
+          conversationId: z
+            .string()
+            .regex(/^[A-Za-z0-9_]+$/)
+            .max(256),
+        })
+        .safeParse(request.params);
+      if (!params.success)
+        return reply.code(400).send({ data: null, error: 'Invalid Page conversation' });
+      await setPageConversationNoGo(database, {
+        workspaceId: identity.workspaceId,
+        ...params.data,
+        blocked: false,
+      });
+      return { data: { noGo: false }, error: null };
+    },
+  );
   application.get('/api/engagement-proposals', async (request, reply) => {
     void reply.header('Cache-Control', 'no-store');
     const identity = await authorizeRequest(request, auth, 'content:read');
@@ -240,14 +293,63 @@ export function registerEngagementProposalRoutes(
     if (!params.success) return reply.code(404).send({ data: null, error: 'Proposal not found' });
     const row = await getEngagementProposal(database, identity.workspaceId, params.data.proposalId);
     if (!row) return reply.code(404).send({ data: null, error: 'Proposal not found' });
+    const noGo =
+      row.provider === 'facebook_page' && row.kind === 'dm'
+        ? await isPageConversationNoGo(database, {
+            workspaceId: identity.workspaceId,
+            accountId: row.accountId,
+            conversationId: row.targetId,
+          })
+        : false;
     return {
       data: {
         ...representation(row),
         canApprove: identity.role === 'owner' || identity.role === 'admin',
+        noGo,
       },
       error: null,
     };
   });
+
+  for (const blocked of [true, false])
+    application.route({
+      method: blocked ? 'POST' : 'DELETE',
+      url: '/api/engagement-proposals/:proposalId/no-go',
+      handler: async (request, reply) => {
+        void reply.header('Cache-Control', 'no-store');
+        const identity = await authorizeRequest(request, auth, 'content:write');
+        if (!identity)
+          return reply.code(401).send({ data: null, error: 'Authentication required' });
+        if (identity.role !== 'owner' && identity.role !== 'admin')
+          return reply.code(403).send({ data: null, error: 'Workspace admin required' });
+        if (!validCsrf(request))
+          return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+        const params = paramsSchema.safeParse(request.params);
+        if (!params.success)
+          return reply.code(404).send({ data: null, error: 'Proposal not found' });
+        const row = await getEngagementProposal(
+          database,
+          identity.workspaceId,
+          params.data.proposalId,
+        );
+        if (row?.provider !== 'facebook_page' || row.kind !== 'dm')
+          return reply.code(404).send({ data: null, error: 'Page conversation not found' });
+        await setPageConversationNoGo(database, {
+          workspaceId: identity.workspaceId,
+          accountId: row.accountId,
+          conversationId: row.targetId,
+          displayName:
+            typeof row.sourceContext === 'object' &&
+            row.sourceContext !== null &&
+            'authorLabel' in row.sourceContext &&
+            typeof row.sourceContext.authorLabel === 'string'
+              ? row.sourceContext.authorLabel
+              : undefined,
+          blocked,
+        });
+        return { data: { noGo: blocked }, error: null };
+      },
+    });
 
   application.post('/api/engagement-proposals', async (request, reply) => {
     void reply.header('Cache-Control', 'no-store');

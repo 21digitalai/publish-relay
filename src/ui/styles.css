@@ -3211,7 +3211,34 @@ textarea:focus-visible {
   margin-top: 16px;
 }
 .engagement-proposal-actions button {
-  min-height: 40px;
+  min-height: 44px;
+}
+.engagement-no-go-list {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border, #2c3140);
+  border-radius: 12px;
+  background: var(--surface-1, #11131a);
+}
+.engagement-no-go-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.engagement-no-go-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, #2c3140);
+}
+.engagement-no-go-entry small {
+  color: var(--text-muted, #a7adbd);
+}
+.engagement-no-go-entry button {
+  min-height: 44px;
+  margin-left: auto;
 }
 @media (max-width: 767px) {
   .engagement-proposals-page {

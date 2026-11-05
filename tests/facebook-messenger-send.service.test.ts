@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   settle: vi.fn(),
   tenant: vi.fn(),
   policy: vi.fn(),
+  noGo: vi.fn(),
 }));
 vi.mock('../src/modules/providers/facebook-page-read-context.service.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -18,6 +19,9 @@ vi.mock('../src/modules/providers/facebook-dm-action.repository.js', () => ({
   findFacebookDmAction: mocks.find,
   reserveFacebookDmAction: mocks.reserve,
   settleFacebookDmAction: mocks.settle,
+}));
+vi.mock('../src/modules/providers/facebook-dm-no-go.repository.js', () => ({
+  isPageConversationNoGo: mocks.noGo,
 }));
 vi.mock('../src/database/tenant-transaction.js', () => ({ withTenantTransaction: mocks.tenant }));
 vi.mock('../src/modules/policy/action-policy.js', () => ({ enforceWorkspaceAction: mocks.policy }));
@@ -57,6 +61,7 @@ beforeEach(() => {
     ) => callback('123', 'server-token'),
   );
   mocks.find.mockResolvedValue(null);
+  mocks.noGo.mockResolvedValue(false);
   mocks.reserve.mockResolvedValue({ kind: 'new', id: '00000000-0000-4000-8000-000000000005' });
 });
 
@@ -87,6 +92,16 @@ describe('Facebook inbound-only send command', () => {
     ]);
     await expect(sendAccountPageConversationMessage(client as never, input)).rejects.toThrow(
       'No recent inbound',
+    );
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not reserve or call Meta for a no-go conversation', async () => {
+    mocks.noGo.mockResolvedValue(true);
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    await expect(sendAccountPageConversationMessage(client as never, input)).rejects.toThrow(
+      'no-go list',
     );
     expect(mocks.reserve).not.toHaveBeenCalled();
     expect(client.client.sendPageMessage).not.toHaveBeenCalled();

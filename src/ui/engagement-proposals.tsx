@@ -26,6 +26,15 @@ interface ProposalDetail {
   revision: number;
   status: string;
   canApprove: boolean;
+  noGo: boolean;
+}
+
+interface NoGoEntry {
+  accountId: string;
+  conversationId: string;
+  displayName: string | null;
+  accountDisplayName: string;
+  createdAt: string;
 }
 
 async function readApi<T>(url: string, init?: RequestInit): Promise<T> {
@@ -47,6 +56,9 @@ function proposalLabel(proposal: { provider: string; kind: 'dm' | 'comment' }): 
 
 export function EngagementProposalsPage() {
   const [items, setItems] = useState<ProposalSummary[]>([]);
+  const [noGoEntries, setNoGoEntries] = useState<NoGoEntry[]>([]);
+  const [canManageNoGo, setCanManageNoGo] = useState(false);
+  const [noGoFailed, setNoGoFailed] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
@@ -59,6 +71,7 @@ export function EngagementProposalsPage() {
   const [saving, setSaving] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
+  const [confirmNoGo, setConfirmNoGo] = useState(false);
   const [sendUncertain, setSendUncertain] = useState(false);
   const [mediaStates, setMediaStates] = useState<Record<string, string>>({});
   const [mediaPending, setMediaPending] = useState<string | null>(null);
@@ -66,6 +79,7 @@ export function EngagementProposalsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const dismissTrigger = useRef<HTMLButtonElement>(null);
   const approveTrigger = useRef<HTMLButtonElement>(null);
+  const noGoTrigger = useRef<HTMLButtonElement>(null);
   const activeProposalRef = useRef<string | null>(null);
 
   const loadPage = useCallback(async (cursor?: string) => {
@@ -75,6 +89,47 @@ export function EngagementProposalsPage() {
     setItems((current) => (cursor ? [...current, ...page.items] : page.items));
     setNextCursor(page.nextCursor);
   }, []);
+
+  const loadNoGo = useCallback(async () => {
+    const result = await readApi<{ items: NoGoEntry[]; canManage: boolean }>(
+      '/api/facebook-page-dm-no-go',
+    );
+    setNoGoEntries(result.items);
+    setCanManageNoGo(result.canManage);
+    setNoGoFailed(false);
+  }, []);
+
+  useEffect(() => {
+    void loadNoGo().catch(() => {
+      setNoGoFailed(true);
+    });
+  }, [loadNoGo]);
+
+  const changeNoGo = async () => {
+    if (!detail) return;
+    const blocked = !detail.noGo;
+    setSaving(true);
+    setError(null);
+    try {
+      await readApi<{ noGo: boolean }>(`/api/engagement-proposals/${detail.id}/no-go`, {
+        method: blocked ? 'POST' : 'DELETE',
+        headers: { 'x-csrf-token': getCsrfToken() },
+      });
+      setNotice(
+        blocked
+          ? 'Conversation added to the no-go list. Pending replies were dismissed.'
+          : 'Conversation removed from the no-go list.',
+      );
+      setDetailReload((current) => current + 1);
+      await loadPage();
+      await loadNoGo();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Could not update the no-go list');
+    } finally {
+      setSaving(false);
+      setConfirmNoGo(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -290,6 +345,7 @@ export function EngagementProposalsPage() {
     selectedId === detail.id &&
     activeProposalRef.current === `${detail.id}:${String(detail.revision)}` &&
     detail.canApprove &&
+    !detail.noGo &&
     (facebookReady || fanvueReady) &&
     draft.trim() === detail.content.text &&
     !sendUncertain;
@@ -428,6 +484,13 @@ export function EngagementProposalsPage() {
                   )}
                   {detail.sourceContext.text ?? 'No source text was supplied.'}
                 </blockquote>
+                {detail.provider === 'facebook_page' && detail.kind === 'dm' && (
+                  <p className={detail.noGo ? 'form-error' : 'muted'} role="status">
+                    {detail.noGo
+                      ? 'No-go conversation: new proposals and sends are blocked.'
+                      : 'This conversation is not on the no-go list.'}
+                  </p>
+                )}
                 <label className="field-label" htmlFor="engagement-proposal-draft">
                   Suggested reply
                 </label>
@@ -499,9 +562,11 @@ export function EngagementProposalsPage() {
                   <p className="form-success" role="status">
                     {detail.status === 'sent'
                       ? 'Sent'
-                      : detail.status === 'failed'
-                        ? 'Provider rejected this send'
-                        : 'Send outcome is unknown; do not send again'}
+                      : detail.status === 'dismissed'
+                        ? 'Dismissed without sending'
+                        : detail.status === 'failed'
+                          ? 'Provider rejected this send'
+                          : 'Send outcome is unknown; do not send again'}
                   </p>
                 )}
                 <div className="engagement-proposal-actions">
@@ -544,6 +609,25 @@ export function EngagementProposalsPage() {
                   >
                     Dismiss proposal
                   </button>
+                  {detail.provider === 'facebook_page' &&
+                    detail.kind === 'dm' &&
+                    detail.canApprove && (
+                      <button
+                        ref={noGoTrigger}
+                        className={
+                          detail.noGo
+                            ? 'secondary-button engagement-proposal-no-go'
+                            : 'danger-button engagement-proposal-no-go'
+                        }
+                        type="button"
+                        disabled={saving || sendUncertain}
+                        onClick={() => {
+                          setConfirmNoGo(true);
+                        }}
+                      >
+                        {detail.noGo ? 'Remove from no-go list' : 'Do not message this person'}
+                      </button>
+                    )}
                 </div>
                 {detail.status === 'pending' && !canApprove && (
                   <p className="muted">
@@ -573,6 +657,71 @@ export function EngagementProposalsPage() {
             )}
           </section>
         </div>
+        <section className="engagement-no-go-list" aria-labelledby="engagement-no-go-title">
+          <h2 id="engagement-no-go-title">Page DM no-go list</h2>
+          {noGoFailed ? (
+            <button
+              className="secondary-button engagement-no-go-retry"
+              type="button"
+              onClick={() => {
+                void loadNoGo().catch(() => {
+                  setNoGoFailed(true);
+                });
+              }}
+            >
+              Retry loading no-go list
+            </button>
+          ) : noGoEntries.length === 0 ? (
+            <p className="muted">No Page conversations are blocked.</p>
+          ) : (
+            <ul className="engagement-no-go-entries">
+              {noGoEntries.map((entry) => (
+                <li
+                  className="engagement-no-go-entry"
+                  key={`${entry.accountId}:${entry.conversationId}`}
+                >
+                  <span>
+                    {entry.displayName ?? 'Page conversation'} · {entry.accountDisplayName}
+                  </span>
+                  <small>Blocked {new Date(entry.createdAt).toLocaleString()}</small>
+                  {canManageNoGo && (
+                    <button
+                      className="secondary-button engagement-no-go-remove"
+                      type="button"
+                      disabled={saving}
+                      onClick={() => {
+                        setSaving(true);
+                        setError(null);
+                        void readApi<{ noGo: boolean }>(
+                          `/api/facebook-page-dm-no-go/${encodeURIComponent(entry.accountId)}/${encodeURIComponent(entry.conversationId)}`,
+                          {
+                            method: 'DELETE',
+                            headers: { 'x-csrf-token': getCsrfToken() },
+                          },
+                        )
+                          .then(async () => {
+                            setNotice('Conversation removed from the no-go list.');
+                            await loadNoGo();
+                            setDetailReload((current) => current + 1);
+                          })
+                          .catch((failure: unknown) => {
+                            setError(
+                              failure instanceof Error ? failure.message : 'Could not remove block',
+                            );
+                          })
+                          .finally(() => {
+                            setSaving(false);
+                          });
+                      }}
+                    >
+                      Allow messages
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </section>
       {confirmDismiss && (
         <ConfirmationDialog
@@ -589,6 +738,30 @@ export function EngagementProposalsPage() {
           }}
           onConfirm={() => {
             void mutate('dismiss');
+          }}
+        />
+      )}
+      {confirmNoGo && detail && (
+        <ConfirmationDialog
+          titleId="engagement-no-go-title"
+          title={
+            detail.noGo ? 'Allow messages to this person again?' : 'Stop messaging this person?'
+          }
+          description={
+            detail.noGo
+              ? 'New proposals and sends will be allowed again. Dismissed replies stay dismissed.'
+              : 'New proposals and sends to this Page conversation will be blocked. Pending replies will be dismissed.'
+          }
+          cancelLabel="Cancel"
+          confirmLabel={saving ? 'Updating…' : detail.noGo ? 'Remove block' : 'Block and dismiss'}
+          confirmTone={detail.noGo ? 'primary' : 'danger'}
+          disabled={saving}
+          returnFocusTo={noGoTrigger.current}
+          onCancel={() => {
+            setConfirmNoGo(false);
+          }}
+          onConfirm={() => {
+            void changeNoGo();
           }}
         />
       )}

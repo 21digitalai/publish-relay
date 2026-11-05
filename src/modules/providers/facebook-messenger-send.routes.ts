@@ -15,6 +15,7 @@ import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-pol
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
 import {
   FacebookDmActionConflictError,
+  FacebookDmNoGoError,
   FacebookDmWindowClosedError,
   sendAccountPageConversationMessage,
 } from './facebook-messenger-send.service.js';
@@ -95,6 +96,8 @@ export function registerFacebookPageDmSendRoute(
           return reply
             .code(409)
             .send(errorEnvelope('messaging_window_unproven', error.message, request.id));
+        if (error instanceof FacebookDmNoGoError)
+          return reply.code(409).send(errorEnvelope('page_dm_no_go', error.message, request.id));
         if (error instanceof PageReadUnavailableError)
           return reply
             .code(409)

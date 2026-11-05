@@ -125,6 +125,7 @@ const projection = {
   actorId: facebookPageDmPendingIntents.actorId,
   text: facebookPageDmPendingIntents.textBody,
   dueAt: facebookPageDmPendingIntents.dueAt,
+  preSendAttempts: facebookPageDmPendingIntents.preSendAttempts,
   status: facebookPageDmPendingIntents.status,
 };
 
@@ -446,6 +447,28 @@ export async function claimDuePageDms(
   });
 }
 
+/** Keep an active provider call owned while it exceeds the initial lease. */
+export async function renewClaimedPageDm(
+  database: NodePgDatabase,
+  input: { workspaceId: string; id: string; workerId: string; leaseMs: number },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [renewed] = await tx
+      .update(facebookPageDmPendingIntents)
+      .set({ leaseUntil: new Date(Date.now() + input.leaseMs), updatedAt: new Date() })
+      .where(
+        and(
+          eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageDmPendingIntents.id, input.id),
+          eq(facebookPageDmPendingIntents.status, 'claimed'),
+          eq(facebookPageDmPendingIntents.leaseOwner, input.workerId),
+        ),
+      )
+      .returning({ id: facebookPageDmPendingIntents.id });
+    return Boolean(renewed);
+  });
+}
+
 /** A released lease is retryable only if the provider action ledger was never reserved. */
 export async function finishClaimedPageDm(
   database: NodePgDatabase,
@@ -458,7 +481,10 @@ export async function finishClaimedPageDm(
 ) {
   return withTenantTransaction(database, input, async (tx) => {
     const [intent] = await tx
-      .select({ clientActionId: facebookPageDmPendingIntents.clientActionId })
+      .select({
+        clientActionId: facebookPageDmPendingIntents.clientActionId,
+        preSendAttempts: facebookPageDmPendingIntents.preSendAttempts,
+      })
       .from(facebookPageDmPendingIntents)
       .where(
         and(
@@ -483,19 +509,25 @@ export async function finishClaimedPageDm(
         .limit(1);
       if (action) throw new Error('Cannot retry a Page DM with a reserved provider action');
     }
+    const attempts = intent.preSendAttempts + (input.state === 'pending' ? 1 : 0);
+    const state = input.state === 'pending' && attempts >= 3 ? 'failed' : input.state;
     await tx
       .update(facebookPageDmPendingIntents)
       .set({
-        status: input.state,
+        status: state,
+        preSendAttempts: attempts,
+        ...(state === 'pending'
+          ? { dueAt: new Date(Date.now() + 30_000 * 2 ** (attempts - 1)) }
+          : {}),
         leaseOwner: null,
         leaseUntil: null,
         updatedAt: new Date(),
       })
       .where(eq(facebookPageDmPendingIntents.id, input.id));
-    if (input.state !== 'pending')
+    if (state !== 'pending')
       await tx
         .update(engagementProposals)
-        .set({ status: input.state === 'confirmed' ? 'sent' : input.state, updatedAt: new Date() })
+        .set({ status: state === 'confirmed' ? 'sent' : state, updatedAt: new Date() })
         .where(
           and(
             eq(engagementProposals.workspaceId, input.workspaceId),

@@ -709,6 +709,7 @@ export const facebookPageDmPendingIntents = pgTable(
     actorId: uuid('actor_id').notNull(),
     textBody: text('text_body').notNull(),
     dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    preSendAttempts: integer('pre_send_attempts').notNull().default(0),
     status: text('status').notNull().default('pending'),
     leaseOwner: text('lease_owner'),
     leaseUntil: timestamp('lease_until', { withTimezone: true }),

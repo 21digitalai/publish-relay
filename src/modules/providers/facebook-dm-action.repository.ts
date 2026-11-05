@@ -9,6 +9,7 @@ export interface FacebookDmActionKey {
   accountId: string;
   clientActionId: string;
   conversationId: string;
+  receiverLabel?: string | null;
   requestFingerprint: string;
   actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
 }
@@ -85,6 +86,7 @@ export async function reserveFacebookDmAction(
         accountId: input.accountId,
         clientActionId: input.clientActionId,
         conversationId: input.conversationId,
+        receiverLabel: input.receiverLabel?.trim().slice(0, 200) ?? null,
         requestFingerprint: input.requestFingerprint,
         actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
         actorId: input.actor.id,

@@ -69,6 +69,7 @@ export async function listPageDmHistory(database: NodePgDatabase, input: PageDmH
         id: facebookPageDmActions.id,
         accountId: facebookPageDmActions.accountId,
         conversationId: facebookPageDmActions.conversationId,
+        receiverLabel: facebookPageDmActions.receiverLabel,
         status: facebookPageDmActions.state,
         createdAt: facebookPageDmActions.createdAt,
         updatedAt: facebookPageDmActions.updatedAt,
@@ -122,7 +123,7 @@ export async function listPageDmHistory(database: NodePgDatabase, input: PageDmH
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       })),
-      ...actions.map((row) => ({ ...row, kind: 'send' as const, receiverLabel: null })),
+      ...actions.map((row) => ({ ...row, kind: 'send' as const })),
     ]
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
       .slice(0, input.limit);

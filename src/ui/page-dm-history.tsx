@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface HistoryRow {
   id: string;
@@ -19,9 +19,13 @@ export function PageDmHistory() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const generationRef = useRef(0);
+  const filterKey = `${accountId ?? ''}:${conversationId ?? ''}`;
+  const filterKeyRef = useRef(filterKey);
+  filterKeyRef.current = filterKey;
 
   const load = useCallback(
-    async (next?: string) => {
+    async (generation: number, next?: string) => {
       const params = new URLSearchParams();
       if (accountId) params.set('accountId', accountId);
       if (conversationId) params.set('conversationId', conversationId);
@@ -33,28 +37,32 @@ export function PageDmHistory() {
       };
       const result = body.data;
       if (!response.ok || !result) throw new Error(body.error ?? 'Could not load DM history');
+      if (generationRef.current !== generation || filterKeyRef.current !== filterKey) return;
       setRows((current) => (next ? [...current, ...result.items] : result.items));
       setCursor(result.nextCursor);
     },
-    [accountId, conversationId],
+    [accountId, conversationId, filterKey],
   );
 
   useEffect(() => {
-    let active = true;
+    const generation = ++generationRef.current;
+    setRows([]);
+    setCursor(null);
     setLoading(true);
     setError(null);
-    void load()
+    void load(generation)
       .catch((failure: unknown) => {
-        if (active)
+        if (generationRef.current === generation && filterKeyRef.current === filterKey)
           setError(failure instanceof Error ? failure.message : 'Could not load DM history');
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (generationRef.current === generation && filterKeyRef.current === filterKey)
+          setLoading(false);
       });
     return () => {
-      active = false;
+      generationRef.current += 1;
     };
-  }, [load]);
+  }, [filterKey, load]);
 
   return (
     <section className="page-dm-history" aria-labelledby="page-dm-history-title">
@@ -82,18 +90,22 @@ export function PageDmHistory() {
             className="secondary-button page-dm-history-retry"
             type="button"
             onClick={() => {
+              const generation = ++generationRef.current;
               setLoading(true);
-              void load()
+              void load(generation)
                 .then(() => {
-                  setError(null);
+                  if (generationRef.current === generation && filterKeyRef.current === filterKey)
+                    setError(null);
                 })
                 .catch((failure: unknown) => {
-                  setError(
-                    failure instanceof Error ? failure.message : 'Could not load DM history',
-                  );
+                  if (generationRef.current === generation && filterKeyRef.current === filterKey)
+                    setError(
+                      failure instanceof Error ? failure.message : 'Could not load DM history',
+                    );
                 })
                 .finally(() => {
-                  setLoading(false);
+                  if (generationRef.current === generation && filterKeyRef.current === filterKey)
+                    setLoading(false);
                 });
             }}
           >
@@ -131,7 +143,16 @@ export function PageDmHistory() {
               <span className="page-dm-history-state">
                 {row.kind === 'proposal' ? 'Proposal' : 'Send'} · {row.status}
               </span>
-              <time dateTime={row.createdAt}>{new Date(row.createdAt).toLocaleString()}</time>
+              <span className="page-dm-history-timestamps">
+                <time dateTime={row.createdAt}>
+                  Started{' '}
+                  {new Date(row.createdAt).toLocaleString(undefined, { timeZoneName: 'short' })}
+                </time>
+                <time dateTime={row.updatedAt}>
+                  Updated{' '}
+                  {new Date(row.updatedAt).toLocaleString(undefined, { timeZoneName: 'short' })}
+                </time>
+              </span>
             </li>
           ))}
         </ul>
@@ -141,15 +162,18 @@ export function PageDmHistory() {
           className="secondary-button page-dm-history-more"
           type="button"
           onClick={() => {
+            const generation = generationRef.current;
             setLoading(true);
-            void load(cursor)
+            void load(generation, cursor)
               .catch((failure: unknown) => {
-                setError(
-                  failure instanceof Error ? failure.message : 'Could not load more history',
-                );
+                if (generationRef.current === generation && filterKeyRef.current === filterKey)
+                  setError(
+                    failure instanceof Error ? failure.message : 'Could not load more history',
+                  );
               })
               .finally(() => {
-                setLoading(false);
+                if (generationRef.current === generation && filterKeyRef.current === filterKey)
+                  setLoading(false);
               });
           }}
         >

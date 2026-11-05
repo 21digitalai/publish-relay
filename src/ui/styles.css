@@ -3236,8 +3236,10 @@ textarea:focus-visible {
 .page-dm-history-row button {
   min-height: 44px;
 }
-.page-dm-history-row time {
+.page-dm-history-timestamps {
   margin-left: auto;
+  display: grid;
+  gap: 2px;
   color: var(--text-muted, #a7adbd);
 }
 @media (max-width: 767px) {

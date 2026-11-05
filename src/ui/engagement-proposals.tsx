@@ -57,6 +57,8 @@ function proposalLabel(proposal: { provider: string; kind: 'dm' | 'comment' }): 
 export function EngagementProposalsPage() {
   const [items, setItems] = useState<ProposalSummary[]>([]);
   const [noGoEntries, setNoGoEntries] = useState<NoGoEntry[]>([]);
+  const [noGoCursor, setNoGoCursor] = useState<string | null>(null);
+  const [noGoLoadingMore, setNoGoLoadingMore] = useState(false);
   const [canManageNoGo, setCanManageNoGo] = useState(false);
   const [noGoFailed, setNoGoFailed] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -90,11 +92,14 @@ export function EngagementProposalsPage() {
     setNextCursor(page.nextCursor);
   }, []);
 
-  const loadNoGo = useCallback(async () => {
-    const result = await readApi<{ items: NoGoEntry[]; canManage: boolean }>(
-      '/api/facebook-page-dm-no-go',
-    );
-    setNoGoEntries(result.items);
+  const loadNoGo = useCallback(async (cursor?: string) => {
+    const result = await readApi<{
+      items: NoGoEntry[];
+      canManage: boolean;
+      nextCursor: string | null;
+    }>(`/api/facebook-page-dm-no-go${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+    setNoGoEntries((current) => (cursor ? [...current, ...result.items] : result.items));
+    setNoGoCursor(result.nextCursor);
     setCanManageNoGo(result.canManage);
     setNoGoFailed(false);
   }, []);
@@ -674,52 +679,75 @@ export function EngagementProposalsPage() {
           ) : noGoEntries.length === 0 ? (
             <p className="muted">No Page conversations are blocked.</p>
           ) : (
-            <ul className="engagement-no-go-entries">
-              {noGoEntries.map((entry) => (
-                <li
-                  className="engagement-no-go-entry"
-                  key={`${entry.accountId}:${entry.conversationId}`}
+            <>
+              <ul className="engagement-no-go-entries">
+                {noGoEntries.map((entry) => (
+                  <li
+                    className="engagement-no-go-entry"
+                    key={`${entry.accountId}:${entry.conversationId}`}
+                  >
+                    <span>
+                      {entry.displayName ?? 'Page conversation'} · {entry.accountDisplayName}
+                    </span>
+                    <small>Blocked {new Date(entry.createdAt).toLocaleString()}</small>
+                    {canManageNoGo && (
+                      <button
+                        className="secondary-button engagement-no-go-remove"
+                        type="button"
+                        disabled={saving}
+                        onClick={() => {
+                          setSaving(true);
+                          setError(null);
+                          void readApi<{ noGo: boolean }>(
+                            `/api/facebook-page-dm-no-go/${encodeURIComponent(entry.accountId)}/${encodeURIComponent(entry.conversationId)}`,
+                            {
+                              method: 'DELETE',
+                              headers: { 'x-csrf-token': getCsrfToken() },
+                            },
+                          )
+                            .then(async () => {
+                              setNotice('Conversation removed from the no-go list.');
+                              await loadNoGo();
+                              setDetailReload((current) => current + 1);
+                            })
+                            .catch((failure: unknown) => {
+                              setError(
+                                failure instanceof Error
+                                  ? failure.message
+                                  : 'Could not remove block',
+                              );
+                            })
+                            .finally(() => {
+                              setSaving(false);
+                            });
+                        }}
+                      >
+                        Allow messages
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {noGoCursor && (
+                <button
+                  className="secondary-button engagement-no-go-more"
+                  type="button"
+                  disabled={noGoLoadingMore}
+                  onClick={() => {
+                    setNoGoLoadingMore(true);
+                    void loadNoGo(noGoCursor)
+                      .catch(() => {
+                        setNoGoFailed(true);
+                      })
+                      .finally(() => {
+                        setNoGoLoadingMore(false);
+                      });
+                  }}
                 >
-                  <span>
-                    {entry.displayName ?? 'Page conversation'} · {entry.accountDisplayName}
-                  </span>
-                  <small>Blocked {new Date(entry.createdAt).toLocaleString()}</small>
-                  {canManageNoGo && (
-                    <button
-                      className="secondary-button engagement-no-go-remove"
-                      type="button"
-                      disabled={saving}
-                      onClick={() => {
-                        setSaving(true);
-                        setError(null);
-                        void readApi<{ noGo: boolean }>(
-                          `/api/facebook-page-dm-no-go/${encodeURIComponent(entry.accountId)}/${encodeURIComponent(entry.conversationId)}`,
-                          {
-                            method: 'DELETE',
-                            headers: { 'x-csrf-token': getCsrfToken() },
-                          },
-                        )
-                          .then(async () => {
-                            setNotice('Conversation removed from the no-go list.');
-                            await loadNoGo();
-                            setDetailReload((current) => current + 1);
-                          })
-                          .catch((failure: unknown) => {
-                            setError(
-                              failure instanceof Error ? failure.message : 'Could not remove block',
-                            );
-                          })
-                          .finally(() => {
-                            setSaving(false);
-                          });
-                      }}
-                    >
-                      Allow messages
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+                  {noGoLoadingMore ? 'Loading…' : 'Load more blocked conversations'}
+                </button>
+              )}
+            </>
           )}
         </section>
       </section>

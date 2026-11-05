@@ -211,11 +211,54 @@ export function registerEngagementProposalRoutes(
     void reply.header('Cache-Control', 'no-store');
     const identity = await authorizeRequest(request, auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
-    const rows = await listWorkspacePageNoGo(database, identity.workspaceId);
+    const query = z
+      .strictObject({ cursor: z.string().max(512).optional() })
+      .safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ data: null, error: 'Invalid no-go cursor' });
+    let cursor: { createdAt: string; accountId: string; conversationId: string } | null = null;
+    try {
+      if (query.data.cursor)
+        cursor = z
+          .strictObject({
+            createdAt: z.iso.datetime(),
+            accountId: z.uuid(),
+            conversationId: z
+              .string()
+              .regex(/^[A-Za-z0-9_]+$/)
+              .max(256),
+          })
+          .parse(JSON.parse(Buffer.from(query.data.cursor, 'base64url').toString('utf8')));
+    } catch {
+      return reply.code(400).send({ data: null, error: 'Invalid no-go cursor' });
+    }
+    const rows = await listWorkspacePageNoGo(database, {
+      workspaceId: identity.workspaceId,
+      limit: PAGE_SIZE + 1,
+      ...(cursor
+        ? {
+            beforeCreatedAt: new Date(cursor.createdAt),
+            beforeAccountId: cursor.accountId,
+            beforeConversationId: cursor.conversationId,
+          }
+        : {}),
+    });
+    const page = rows.slice(0, PAGE_SIZE);
+    const last = page.at(-1);
+    const nextCursor =
+      rows.length > PAGE_SIZE && last
+        ? Buffer.from(
+            JSON.stringify({
+              createdAt: last.createdAt.toISOString(),
+              accountId: last.accountId,
+              conversationId: last.conversationId,
+            }),
+          ).toString('base64url')
+        : null;
     return {
       data: {
         canManage: identity.role === 'owner' || identity.role === 'admin',
-        items: rows.map((row) => ({
+        nextCursor,
+        items: page.map((row) => ({
           accountId: row.accountId,
           conversationId: row.conversationId,
           displayName: row.displayName,

@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -15,20 +15,43 @@ interface Key {
 }
 
 export async function isPageConversationNoGo(database: NodePgDatabase, key: Key): Promise<boolean> {
-  return withTenantTransaction(database, key, async (tx) => {
-    const [row] = await tx
-      .select({ conversationId: facebookPageDmNoGo.conversationId })
-      .from(facebookPageDmNoGo)
-      .where(
-        and(
-          eq(facebookPageDmNoGo.workspaceId, key.workspaceId),
-          eq(facebookPageDmNoGo.accountId, key.accountId),
-          eq(facebookPageDmNoGo.conversationId, key.conversationId),
-        ),
-      )
-      .limit(1);
-    return Boolean(row);
-  });
+  return withTenantTransaction(database, key, (tx) => isPageConversationNoGoInTransaction(tx, key));
+}
+
+export async function isPageConversationNoGoInTransaction(
+  tx: NodePgDatabase,
+  key: Key,
+): Promise<boolean> {
+  const [row] = await tx
+    .select({ conversationId: facebookPageDmNoGo.conversationId })
+    .from(facebookPageDmNoGo)
+    .where(
+      and(
+        eq(facebookPageDmNoGo.workspaceId, key.workspaceId),
+        eq(facebookPageDmNoGo.accountId, key.accountId),
+        eq(facebookPageDmNoGo.conversationId, key.conversationId),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function lockPageDmAccount(
+  tx: NodePgDatabase,
+  key: Pick<Key, 'workspaceId' | 'accountId'>,
+) {
+  const [account] = await tx
+    .select({ provider: providerAccounts.destinationProvider })
+    .from(providerAccounts)
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, key.workspaceId),
+        eq(providerAccounts.id, key.accountId),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  if (account?.provider !== 'facebook_page') throw new Error('Facebook Page account unavailable');
 }
 
 export async function listPageNoGo(
@@ -54,8 +77,17 @@ export async function listPageNoGo(
   );
 }
 
-export async function listWorkspacePageNoGo(database: NodePgDatabase, workspaceId: string) {
-  return withTenantTransaction(database, { workspaceId }, (tx) =>
+export async function listWorkspacePageNoGo(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    beforeCreatedAt?: Date;
+    beforeAccountId?: string;
+    beforeConversationId?: string;
+    limit: number;
+  },
+) {
+  return withTenantTransaction(database, input, (tx) =>
     tx
       .select({
         accountId: facebookPageDmNoGo.accountId,
@@ -72,9 +104,33 @@ export async function listWorkspacePageNoGo(database: NodePgDatabase, workspaceI
           eq(providerAccounts.id, facebookPageDmNoGo.accountId),
         ),
       )
-      .where(eq(facebookPageDmNoGo.workspaceId, workspaceId))
-      .orderBy(facebookPageDmNoGo.createdAt)
-      .limit(500),
+      .where(
+        and(
+          eq(facebookPageDmNoGo.workspaceId, input.workspaceId),
+          ...(input.beforeCreatedAt && input.beforeAccountId && input.beforeConversationId
+            ? [
+                or(
+                  lt(facebookPageDmNoGo.createdAt, input.beforeCreatedAt),
+                  and(
+                    eq(facebookPageDmNoGo.createdAt, input.beforeCreatedAt),
+                    lt(facebookPageDmNoGo.accountId, input.beforeAccountId),
+                  ),
+                  and(
+                    eq(facebookPageDmNoGo.createdAt, input.beforeCreatedAt),
+                    eq(facebookPageDmNoGo.accountId, input.beforeAccountId),
+                    lt(facebookPageDmNoGo.conversationId, input.beforeConversationId),
+                  ),
+                ),
+              ]
+            : []),
+        ),
+      )
+      .orderBy(
+        desc(facebookPageDmNoGo.createdAt),
+        desc(facebookPageDmNoGo.accountId),
+        desc(facebookPageDmNoGo.conversationId),
+      )
+      .limit(input.limit),
   );
 }
 
@@ -103,17 +159,7 @@ export async function setPageConversationNoGo(
   input: Key & { blocked: boolean; displayName?: string | undefined },
 ) {
   return withTenantTransaction(database, input, async (tx) => {
-    const [account] = await tx
-      .select({ provider: providerAccounts.destinationProvider })
-      .from(providerAccounts)
-      .where(
-        and(
-          eq(providerAccounts.workspaceId, input.workspaceId),
-          eq(providerAccounts.id, input.accountId),
-        ),
-      )
-      .limit(1);
-    if (account?.provider !== 'facebook_page') throw new Error('Facebook Page account unavailable');
+    await lockPageDmAccount(tx, input);
     if (!input.blocked) {
       await tx
         .delete(facebookPageDmNoGo)

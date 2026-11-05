@@ -9,7 +9,7 @@ import {
   providerConnections,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import { isPageConversationNoGo } from './facebook-dm-no-go.repository.js';
+import { isPageConversationNoGoInTransaction } from './facebook-dm-no-go.repository.js';
 
 export type ProposalKind = 'dm' | 'comment';
 export interface ProposalContent {
@@ -62,16 +62,6 @@ export async function createEngagementProposal(
 ) {
   if (!input.targetId.trim() || !input.content.text.trim())
     throw new EngagementProposalError('Proposal target and text are required', 400);
-  if (
-    input.provider === 'facebook_page' &&
-    input.kind === 'dm' &&
-    (await isPageConversationNoGo(database, {
-      workspaceId: input.workspaceId,
-      accountId: input.accountId,
-      conversationId: input.targetId.trim(),
-    }))
-  )
-    throw new EngagementProposalError('This Page conversation is on the no-go list', 409);
   return withTenantTransaction(database, { workspaceId: input.workspaceId }, async (tx) => {
     const [prior] = await tx
       .select()
@@ -125,6 +115,16 @@ export async function createEngagementProposal(
     ) {
       throw new EngagementProposalError('Proposal destination is unavailable', 409);
     }
+    if (
+      input.provider === 'facebook_page' &&
+      input.kind === 'dm' &&
+      (await isPageConversationNoGoInTransaction(tx, {
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        conversationId: input.targetId.trim(),
+      }))
+    )
+      throw new EngagementProposalError('This Page conversation is on the no-go list', 409);
     const [created] = await tx
       .insert(engagementProposals)
       .values({

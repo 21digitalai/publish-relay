@@ -16,7 +16,10 @@ import { registerEngagementApprovalRoutes } from '../src/modules/providers/engag
 import { registerEngagementDmMediaRoutes } from '../src/modules/providers/engagement-dm-media.routes.js';
 import { markFanvuePreSendError } from '../src/modules/providers/fanvue-pre-send-error.js';
 import { PageReadUnavailableError } from '../src/modules/providers/facebook-page-read-context.service.js';
-import { setPageConversationNoGo } from '../src/modules/providers/facebook-dm-no-go.repository.js';
+import {
+  isPageConversationNoGo,
+  setPageConversationNoGo,
+} from '../src/modules/providers/facebook-dm-no-go.repository.js';
 
 import {
   claimEngagementProposal,
@@ -89,6 +92,38 @@ describe('engagement proposal foundation', () => {
           proposerId: proposer,
         }),
       ).rejects.toThrow('no-go list');
+      const raceConversation = 't_race';
+      await Promise.allSettled([
+        createEngagementProposal(database, {
+          workspaceId: workspace,
+          accountId: account,
+          clientActionId: '00000000-0000-4000-8000-000000000612',
+          provider: 'facebook_page',
+          kind: 'dm',
+          targetId: raceConversation,
+          content: { text: 'Concurrent draft' },
+          proposerType: 'api_key',
+          proposerId: proposer,
+        }),
+        setPageConversationNoGo(database, {
+          workspaceId: workspace,
+          accountId: account,
+          conversationId: raceConversation,
+          blocked: true,
+        }),
+      ]);
+      expect(
+        await isPageConversationNoGo(database, {
+          workspaceId: workspace,
+          accountId: account,
+          conversationId: raceConversation,
+        }),
+      ).toBe(true);
+      const raced = await client.query(
+        `SELECT status FROM engagement_proposals WHERE target_id = '${raceConversation}'`,
+      );
+      expect(JSON.stringify(raced.rows)).not.toContain('"pending"');
+      await client.exec(`DELETE FROM engagement_proposals WHERE target_id = '${raceConversation}'`);
       const app = Fastify();
       await app.register(cookie);
       const auth = {

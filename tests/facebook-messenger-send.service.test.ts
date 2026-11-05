@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   tenant: vi.fn(),
   policy: vi.fn(),
   noGo: vi.fn(),
+  noGoInTransaction: vi.fn(),
+  lock: vi.fn(),
 }));
 vi.mock('../src/modules/providers/facebook-page-read-context.service.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -22,6 +24,8 @@ vi.mock('../src/modules/providers/facebook-dm-action.repository.js', () => ({
 }));
 vi.mock('../src/modules/providers/facebook-dm-no-go.repository.js', () => ({
   isPageConversationNoGo: mocks.noGo,
+  isPageConversationNoGoInTransaction: mocks.noGoInTransaction,
+  lockPageDmAccount: mocks.lock,
 }));
 vi.mock('../src/database/tenant-transaction.js', () => ({ withTenantTransaction: mocks.tenant }));
 vi.mock('../src/modules/policy/action-policy.js', () => ({ enforceWorkspaceAction: mocks.policy }));
@@ -62,6 +66,7 @@ beforeEach(() => {
   );
   mocks.find.mockResolvedValue(null);
   mocks.noGo.mockResolvedValue(false);
+  mocks.noGoInTransaction.mockResolvedValue(false);
   mocks.reserve.mockResolvedValue({ kind: 'new', id: '00000000-0000-4000-8000-000000000005' });
 });
 
@@ -105,6 +110,23 @@ describe('Facebook inbound-only send command', () => {
     );
     expect(mocks.reserve).not.toHaveBeenCalled();
     expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+  });
+
+  it('rechecks no-go under the dispatch lock after durable reservation', async () => {
+    mocks.noGoInTransaction.mockResolvedValue(true);
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    await expect(sendAccountPageConversationMessage(client as never, input)).rejects.toThrow(
+      'no-go list',
+    );
+    expect(mocks.reserve).toHaveBeenCalledOnce();
+    expect(mocks.lock).toHaveBeenCalledOnce();
+    expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+    expect(mocks.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        outcome: { state: 'failed', failureStatus: 403 },
+      }),
+    );
   });
 
   it('denies a sibling Page conversation before reserving', async () => {

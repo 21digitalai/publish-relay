@@ -4,7 +4,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
-import { isPageConversationNoGo } from './facebook-dm-no-go.repository.js';
+import {
+  isPageConversationNoGo,
+  isPageConversationNoGoInTransaction,
+  lockPageDmAccount,
+} from './facebook-dm-no-go.repository.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { enforceWorkspaceAction, type ActionPolicy } from '../policy/action-policy.js';
 import {
@@ -137,29 +141,35 @@ export async function sendAccountPageConversationMessage(
     if (await isPageConversationNoGo(runtime.database, command)) throw new FacebookDmNoGoError();
     const reservation = await reserveFacebookDmAction(runtime.database, action);
     if (reservation.kind !== 'new') return replay(reservation);
-    let outcome: FacebookDmOutcome;
-    try {
-      const messageId = await runtime.client.sendPageMessage({
-        pageId,
-        recipientId,
-        text: command.text,
-        accessToken: token,
-      });
-      outcome = { state: 'confirmed', messageId };
-    } catch (error) {
-      outcome =
-        error instanceof FacebookRequestError &&
-        !error.outcomeUnknown &&
-        error.evidence.status >= 400 &&
-        error.evidence.status < 500
-          ? { state: 'failed', failureStatus: error.evidence.status }
-          : { state: 'unknown' };
-    }
+    // The intent has committed before provider I/O. The shared account lock orders
+    // a block against the actual dispatch, not merely against an earlier preflight.
+    const dispatch = await withTenantTransaction(runtime.database, command, async (tx) => {
+      await lockPageDmAccount(tx, command);
+      if (await isPageConversationNoGoInTransaction(tx, command)) return null;
+      try {
+        const messageId = await runtime.client.sendPageMessage({
+          pageId,
+          recipientId,
+          text: command.text,
+          accessToken: token,
+        });
+        return { state: 'confirmed', messageId } as const;
+      } catch (error) {
+        return error instanceof FacebookRequestError &&
+          !error.outcomeUnknown &&
+          error.evidence.status >= 400 &&
+          error.evidence.status < 500
+          ? ({ state: 'failed', failureStatus: error.evidence.status } as const)
+          : ({ state: 'unknown' } as const);
+      }
+    });
+    const outcome: FacebookDmOutcome = dispatch ?? { state: 'failed', failureStatus: 403 };
     await settleFacebookDmAction(runtime.database, {
       ...action,
       reservationId: reservation.id,
       outcome,
     });
+    if (!dispatch) throw new FacebookDmNoGoError();
     return outcome;
   });
 }

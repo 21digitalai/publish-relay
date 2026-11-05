@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isPageConversationNoGo,
   listPageNoGo,
+  listWorkspacePageNoGo,
   setPageConversationNoGo,
 } from '../src/modules/providers/facebook-dm-no-go.repository.js';
 
@@ -22,7 +23,7 @@ describe('Page DM no-go list', () => {
     try {
       await pg.exec(`
         CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL,
-          destination_provider text NOT NULL, PRIMARY KEY (workspace_id, id));
+          destination_provider text NOT NULL, display_name text NOT NULL DEFAULT 'Page', PRIMARY KEY (workspace_id, id));
         CREATE TABLE engagement_proposals (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
           account_id uuid NOT NULL, provider text NOT NULL, kind text NOT NULL,
           target_id text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
@@ -52,6 +53,28 @@ describe('Page DM no-go list', () => {
       expect(statuses.rows).toMatchObject([{ status: 'dismissed' }, { status: 'pending' }]);
       await setPageConversationNoGo(db, { ...key, blocked: false });
       expect(await isPageConversationNoGo(db, key)).toBe(false);
+      for (let index = 0; index < 55; index += 1) {
+        await setPageConversationNoGo(db, {
+          ...key,
+          conversationId: `t_${String(index)}`,
+          blocked: true,
+        });
+      }
+      const first = await listWorkspacePageNoGo(db, { workspaceId, limit: 51 });
+      expect(first).toHaveLength(51);
+      const last = first[49];
+      if (!last) throw new Error('Missing page cursor');
+      const second = await listWorkspacePageNoGo(db, {
+        workspaceId,
+        limit: 51,
+        beforeCreatedAt: last.createdAt,
+        beforeAccountId: last.accountId,
+        beforeConversationId: last.conversationId,
+      });
+      expect(second).toHaveLength(5);
+      expect(
+        new Set([...first.slice(0, 50), ...second].map((row) => row.conversationId)).size,
+      ).toBe(55);
     } finally {
       await pg.close();
     }

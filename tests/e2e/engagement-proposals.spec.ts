@@ -1,5 +1,56 @@
 import { expect, test } from '@playwright/test';
 
+test('Page DM history filters by recipient without showing raw conversation IDs', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'History Owner',
+      email: `history-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'History Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const queries: string[] = [];
+  await page.route('**/api/facebook-page-dm-history**', async (route) => {
+    const url = new URL(route.request().url());
+    queries.push(url.search);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: '00000000-0000-4000-8000-000000000701',
+              kind: 'send',
+              accountId: '00000000-0000-4000-8000-000000000702',
+              accountDisplayName: 'Eli Page',
+              conversationId: 't_900',
+              receiverLabel: 'Alexandra',
+              status: 'confirmed',
+              createdAt: '2026-11-05T09:00:00Z',
+              updatedAt: '2026-11-05T09:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
+  await page.getByRole('button', { name: 'Alexandra', exact: true }).click();
+  await expect.poll(() => queries.at(-1)).toContain('conversationId=t_900');
+  await expect(page.getByText('t_900')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect.poll(() => queries.at(-1)).not.toContain('conversationId');
+});
+
 test('Facebook Page proposals use the shared review panel on desktop and mobile', async ({
   page,
 }, testInfo) => {

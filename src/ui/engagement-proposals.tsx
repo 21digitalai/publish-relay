@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConfirmationDialog } from './confirmation-dialog.js';
 import { getCsrfToken } from './posting-adapter-connection.js';
 import { WorkspaceLayout } from './workflow.js';
+import { PageDmHistory } from './page-dm-history.js';
 
 interface ProposalSummary {
   id: string;
@@ -573,6 +574,7 @@ export function EngagementProposalsPage() {
             )}
           </section>
         </div>
+        <PageDmHistory />
       </section>
       {confirmDismiss && (
         <ConfirmationDialog

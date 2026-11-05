@@ -19,6 +19,7 @@ import {
   type ProposalContent,
 } from './engagement-proposal.repository.js';
 import { authorizePageEngagement } from './facebook-page-engagement.service.js';
+import { listPageDmHistory } from './facebook-dm-history.repository.js';
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1).max(5000),
@@ -202,6 +203,69 @@ export function registerEngagementProposalRoutes(
     });
 
   if (!auth) return;
+  application.get('/api/facebook-page-dm-history', async (request, reply) => {
+    void reply.header('Cache-Control', 'no-store');
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const query = z
+      .strictObject({
+        accountId: z.uuid().optional(),
+        conversationId: z
+          .string()
+          .regex(/^[A-Za-z0-9_]+$/)
+          .max(256)
+          .optional(),
+        cursor: z.string().max(512).optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success)
+      return reply.code(400).send({ data: null, error: 'Invalid DM history filter' });
+    let cursor: { createdAt: Date; id: string } | null = null;
+    if (query.data.cursor) {
+      try {
+        const parsed: unknown = JSON.parse(
+          Buffer.from(query.data.cursor, 'base64url').toString('utf8'),
+        );
+        const value = cursorSchema.parse(parsed);
+        cursor = { createdAt: new Date(value.createdAt), id: value.id };
+      } catch {
+        return reply.code(400).send({ data: null, error: 'Invalid DM history cursor' });
+      }
+    }
+    const rows = await listPageDmHistory(database, {
+      workspaceId: identity.workspaceId,
+      accountId: query.data.accountId,
+      conversationId: query.data.conversationId,
+      beforeCreatedAt: cursor?.createdAt,
+      beforeId: cursor?.id,
+      limit: PAGE_SIZE + 1,
+    });
+    const page = rows.slice(0, PAGE_SIZE);
+    const last = page.at(-1);
+    const nextCursor =
+      rows.length > PAGE_SIZE && last
+        ? Buffer.from(
+            JSON.stringify({ createdAt: last.createdAt.toISOString(), id: last.id }),
+          ).toString('base64url')
+        : null;
+    return {
+      data: {
+        items: page.map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          accountId: row.accountId,
+          accountDisplayName: row.accountDisplayName,
+          conversationId: row.conversationId,
+          receiverLabel: row.receiverLabel,
+          status: row.status,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+        })),
+        nextCursor,
+      },
+      error: null,
+    };
+  });
   application.get('/api/engagement-proposals', async (request, reply) => {
     void reply.header('Cache-Control', 'no-store');
     const identity = await authorizeRequest(request, auth, 'content:read');

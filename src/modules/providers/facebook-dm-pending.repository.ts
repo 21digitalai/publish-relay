@@ -7,7 +7,9 @@ import { z } from 'zod';
 import {
   engagementProposals,
   facebookPageDmActions,
+  facebookPageDmDelaySettings,
   facebookPageDmPendingIntents,
+  providerAccounts,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
@@ -36,6 +38,80 @@ export class PendingDmNoGoError extends Error {
   constructor() {
     super('This Page conversation is on the no-go list');
   }
+}
+
+export async function getPageDmDelayWindow(
+  database: NodePgDatabase,
+  input: { workspaceId: string; accountId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [account] = await tx
+      .select({ provider: providerAccounts.destinationProvider })
+      .from(providerAccounts)
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerAccounts.id, input.accountId),
+        ),
+      )
+      .limit(1);
+    if (account?.provider !== 'facebook_page') return null;
+    const [settings] = await tx
+      .select({
+        earliestDelaySeconds: facebookPageDmDelaySettings.earliestDelaySeconds,
+        latestDelaySeconds: facebookPageDmDelaySettings.latestDelaySeconds,
+      })
+      .from(facebookPageDmDelaySettings)
+      .where(
+        and(
+          eq(facebookPageDmDelaySettings.workspaceId, input.workspaceId),
+          eq(facebookPageDmDelaySettings.accountId, input.accountId),
+        ),
+      )
+      .limit(1);
+    return settings ?? { earliestDelaySeconds: 300, latestDelaySeconds: 2700 };
+  });
+}
+
+export async function setPageDmDelayWindow(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    accountId: string;
+    earliestDelaySeconds: number;
+    latestDelaySeconds: number;
+  },
+) {
+  if (
+    !Number.isInteger(input.earliestDelaySeconds) ||
+    !Number.isInteger(input.latestDelaySeconds) ||
+    input.earliestDelaySeconds < 0 ||
+    input.latestDelaySeconds > 82_800 ||
+    input.latestDelaySeconds < input.earliestDelaySeconds
+  )
+    throw new PendingDmConflictError();
+  return withTenantTransaction(database, input, async (tx) => {
+    await lockPageDmAccount(tx, input);
+    await tx
+      .insert(facebookPageDmDelaySettings)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        earliestDelaySeconds: input.earliestDelaySeconds,
+        latestDelaySeconds: input.latestDelaySeconds,
+      })
+      .onConflictDoUpdate({
+        target: [facebookPageDmDelaySettings.workspaceId, facebookPageDmDelaySettings.accountId],
+        set: {
+          earliestDelaySeconds: input.earliestDelaySeconds,
+          latestDelaySeconds: input.latestDelaySeconds,
+        },
+      });
+    return {
+      earliestDelaySeconds: input.earliestDelaySeconds,
+      latestDelaySeconds: input.latestDelaySeconds,
+    };
+  });
 }
 
 const projection = {
@@ -231,6 +307,80 @@ export async function cancelPendingPageDm(
           ),
         );
     return Boolean(row);
+  });
+}
+
+/** Browser cancellation resolves the exact proposal; no raw intent or recipient ID is needed. */
+export async function cancelScheduledProposalPageDm(
+  database: NodePgDatabase,
+  input: { workspaceId: string; proposalId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [proposal] = await tx
+      .select({
+        accountId: engagementProposals.accountId,
+        conversationId: engagementProposals.targetId,
+        clientActionId: engagementProposals.clientActionId,
+        status: engagementProposals.status,
+      })
+      .from(engagementProposals)
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.proposalId),
+          eq(engagementProposals.provider, 'facebook_page'),
+          eq(engagementProposals.kind, 'dm'),
+        ),
+      )
+      .limit(1);
+    if (proposal?.status !== 'scheduled') return false;
+    const [intent] = await tx
+      .update(facebookPageDmPendingIntents)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageDmPendingIntents.accountId, proposal.accountId),
+          eq(facebookPageDmPendingIntents.conversationId, proposal.conversationId),
+          eq(facebookPageDmPendingIntents.clientActionId, proposal.clientActionId),
+          eq(facebookPageDmPendingIntents.status, 'pending'),
+        ),
+      )
+      .returning({ id: facebookPageDmPendingIntents.id });
+    if (!intent) return false;
+    await tx
+      .update(engagementProposals)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.proposalId),
+          eq(engagementProposals.status, 'scheduled'),
+        ),
+      );
+    return true;
+  });
+}
+
+export async function getScheduledProposalPageDm(
+  database: NodePgDatabase,
+  input: { workspaceId: string; clientActionId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [intent] = await tx
+      .select({
+        dueAt: facebookPageDmPendingIntents.dueAt,
+        status: facebookPageDmPendingIntents.status,
+      })
+      .from(facebookPageDmPendingIntents)
+      .where(
+        and(
+          eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageDmPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    return intent ? { dueAt: intent.dueAt.toISOString(), status: intent.status } : null;
   });
 }
 

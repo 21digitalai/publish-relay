@@ -24,6 +24,21 @@ CREATE TABLE facebook_page_dm_pending_intents (
   CONSTRAINT facebook_page_dm_pending_intents_lease_check
     CHECK ((status = 'claimed') = (lease_owner IS NOT NULL AND lease_until IS NOT NULL))
 );
+CREATE TABLE facebook_page_dm_delay_settings (
+  workspace_id uuid NOT NULL,
+  account_id uuid NOT NULL,
+  earliest_delay_seconds integer NOT NULL DEFAULT 300,
+  latest_delay_seconds integer NOT NULL DEFAULT 2700,
+  PRIMARY KEY (workspace_id, account_id),
+  FOREIGN KEY (workspace_id, account_id) REFERENCES provider_accounts(workspace_id, id) ON DELETE CASCADE,
+  CHECK (earliest_delay_seconds BETWEEN 0 AND 82800
+    AND latest_delay_seconds BETWEEN earliest_delay_seconds AND 82800)
+);
+ALTER TABLE facebook_page_dm_delay_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE facebook_page_dm_delay_settings FORCE ROW LEVEL SECURITY;
+CREATE POLICY facebook_page_dm_delay_settings_workspace_policy ON facebook_page_dm_delay_settings
+  USING (workspace_id = nullif(current_setting('app.workspace_id', true), '')::uuid)
+  WITH CHECK (workspace_id = nullif(current_setting('app.workspace_id', true), '')::uuid);
 CREATE INDEX facebook_page_dm_pending_intents_due_idx
   ON facebook_page_dm_pending_intents(due_at, id)
   WHERE status IN ('pending', 'claimed');

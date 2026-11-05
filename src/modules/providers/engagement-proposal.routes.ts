@@ -24,6 +24,11 @@ import {
   listWorkspacePageNoGo,
   setPageConversationNoGo,
 } from './facebook-dm-no-go.repository.js';
+import {
+  getPageDmDelayWindow,
+  getScheduledProposalPageDm,
+  setPageDmDelayWindow,
+} from './facebook-dm-pending.repository.js';
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1).max(5000),
@@ -344,15 +349,68 @@ export function registerEngagementProposalRoutes(
             conversationId: row.targetId,
           })
         : false;
+    const schedule =
+      row.provider === 'facebook_page' && row.kind === 'dm' && row.status === 'scheduled'
+        ? await getScheduledProposalPageDm(database, {
+            workspaceId: identity.workspaceId,
+            clientActionId: row.clientActionId,
+          })
+        : null;
+    const scheduleWindow =
+      row.provider === 'facebook_page' && row.kind === 'dm'
+        ? await getPageDmDelayWindow(database, {
+            workspaceId: identity.workspaceId,
+            accountId: row.accountId,
+          })
+        : null;
     return {
       data: {
         ...representation(row),
         canApprove: identity.role === 'owner' || identity.role === 'admin',
         noGo,
+        schedule,
+        scheduleWindow,
       },
       error: null,
     };
   });
+
+  application.put(
+    '/api/engagement-proposals/:proposalId/schedule-default',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const identity = await authorizeRequest(request, auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (!validCsrf(request))
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = paramsSchema.safeParse(request.params);
+      const window = z
+        .strictObject({
+          earliestDelaySeconds: z.number().int().min(0).max(82_800),
+          latestDelaySeconds: z.number().int().min(0).max(82_800),
+        })
+        .safeParse(request.body);
+      if (
+        !params.success ||
+        !window.success ||
+        window.data.latestDelaySeconds < window.data.earliestDelaySeconds
+      )
+        return reply.code(400).send({ data: null, error: 'Invalid Page delay window' });
+      const proposal = await getEngagementProposal(
+        database,
+        identity.workspaceId,
+        params.data.proposalId,
+      );
+      if (proposal?.provider !== 'facebook_page' || proposal.kind !== 'dm')
+        return reply.code(404).send({ data: null, error: 'Page proposal not found' });
+      const updated = await setPageDmDelayWindow(database, {
+        workspaceId: identity.workspaceId,
+        accountId: proposal.accountId,
+        ...window.data,
+      });
+      return { data: updated, error: null };
+    },
+  );
 
   for (const blocked of [true, false])
     application.route({

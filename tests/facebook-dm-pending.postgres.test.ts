@@ -7,11 +7,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   cancelPendingPageDm,
+  cancelScheduledProposalPageDm,
   claimDuePageDms,
   finishClaimedPageDm,
+  getPageDmDelayWindow,
   PendingDmConflictError,
   PendingDmNoGoError,
   schedulePageDm,
+  setPageDmDelayWindow,
 } from '../src/modules/providers/facebook-dm-pending.repository.js';
 import { setPageConversationNoGo } from '../src/modules/providers/facebook-dm-no-go.repository.js';
 import { dispatchDuePageDms } from '../src/modules/providers/facebook-dm-pending.worker.js';
@@ -28,7 +31,8 @@ async function setup() {
     CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated', 'system');
     CREATE TABLE workspaces (id uuid PRIMARY KEY);
     CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL,
-      destination_provider text NOT NULL, PRIMARY KEY (workspace_id, id));
+      destination_provider text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (workspace_id, id));
     CREATE TABLE memberships (workspace_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL);
     CREATE TABLE engagement_proposals (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
       account_id uuid NOT NULL, client_action_id uuid NOT NULL DEFAULT gen_random_uuid(), provider text NOT NULL, kind text NOT NULL,
@@ -49,6 +53,94 @@ async function setup() {
 }
 
 describe('Page DM pending intent', () => {
+  it('persists a selected Page delay default and cancels only its pending proposal', async () => {
+    const { pg, database } = await setup();
+    try {
+      expect(await getPageDmDelayWindow(database, { workspaceId, accountId })).toEqual({
+        earliestDelaySeconds: 300,
+        latestDelaySeconds: 2700,
+      });
+      await setPageDmDelayWindow(database, {
+        workspaceId,
+        accountId,
+        earliestDelaySeconds: 600,
+        latestDelaySeconds: 5400,
+      });
+      expect(await getPageDmDelayWindow(database, { workspaceId, accountId })).toEqual({
+        earliestDelaySeconds: 600,
+        latestDelaySeconds: 5400,
+      });
+      const intent = await schedulePageDm(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'test',
+        actor: { type: 'user', id: actorId },
+        text: 'Later',
+        dueAt: new Date('2026-11-05T12:00:00.000Z'),
+      });
+      const proposalId = '00000000-0000-4000-8000-000000000006';
+      await pg.exec(`INSERT INTO engagement_proposals (id, workspace_id, account_id, client_action_id, provider, kind, target_id, status)
+        VALUES ('${proposalId}', '${workspaceId}', '${accountId}', '${actionId}', 'facebook_page', 'dm', 't_123', 'scheduled')`);
+      expect(
+        await cancelScheduledProposalPageDm(database, {
+          workspaceId: otherWorkspaceId,
+          proposalId,
+        }),
+      ).toBe(false);
+      expect(await cancelScheduledProposalPageDm(database, { workspaceId, proposalId })).toBe(true);
+      expect(await cancelScheduledProposalPageDm(database, { workspaceId, proposalId })).toBe(
+        false,
+      );
+      const rows = await pg.query<{ status: string }>(
+        `SELECT status FROM facebook_page_dm_pending_intents WHERE id = '${intent.id}'`,
+      );
+      expect(rows.rows[0]?.status).toBe('cancelled');
+      const proposals = await pg.query<{ status: string }>(
+        `SELECT status FROM engagement_proposals WHERE id = '${proposalId}'`,
+      );
+      expect(proposals.rows[0]?.status).toBe('cancelled');
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('settles a previously reserved provider action as unknown without any Meta call', async () => {
+    const { pg, database } = await setup();
+    try {
+      const dueAt = new Date('2026-11-05T10:00:00.000Z');
+      await schedulePageDm(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'scheduled-request',
+        actor: { type: 'user', id: actorId },
+        text: 'Once',
+        dueAt,
+      });
+      await pg.exec(`INSERT INTO facebook_page_dm_actions (workspace_id, client_action_id)
+        VALUES ('${workspaceId}', '${actionId}')`);
+      const counts = await dispatchDuePageDms(
+        {
+          database,
+          keys: {} as never,
+          client: {} as never,
+          workerId: 'worker-a',
+          leaseMs: 30_000,
+        },
+        dueAt,
+      );
+      expect(counts).toEqual({ confirmed: 0, failed: 0, unknown: 1 });
+      const rows = await pg.query<{ status: string }>(
+        'SELECT status FROM facebook_page_dm_pending_intents',
+      );
+      expect(rows.rows[0]?.status).toBe('unknown');
+    } finally {
+      await pg.close();
+    }
+  });
   it('rechecks actor membership at due time and never calls Meta after revocation', async () => {
     const { pg, database } = await setup();
     try {

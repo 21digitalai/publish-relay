@@ -9,6 +9,7 @@ import { EngagementProposalError } from './engagement-proposal.repository.js';
 import {
   PendingDmConflictError,
   PendingDmNoGoError,
+  cancelScheduledProposalPageDm,
   scheduleApprovedPageDm,
 } from './facebook-dm-pending.repository.js';
 import {
@@ -34,6 +35,33 @@ export function registerEngagementApprovalRoutes(
     auth: AuthService;
   } & EngagementSendCommands,
 ): void {
+  application.post(
+    '/api/engagement-proposals/:proposalId/cancel-scheduled',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (
+        !verifyCsrfToken(
+          request.cookies[CSRF_COOKIE],
+          request.headers['x-csrf-token'] as string | undefined,
+        )
+      )
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = paramsSchema.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid proposal' });
+      const cancelled = await cancelScheduledProposalPageDm(dependencies.database, {
+        workspaceId: identity.workspaceId,
+        proposalId: params.data.proposalId,
+      });
+      if (!cancelled)
+        return reply
+          .code(409)
+          .send({ data: null, error: 'Reply is no longer pending cancellation' });
+      return { data: { status: 'cancelled' }, error: null };
+    },
+  );
+
   application.post('/api/engagement-proposals/:proposalId/approve', async (request, reply) => {
     void reply.header('Cache-Control', 'no-store');
     const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');

@@ -102,6 +102,7 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
   await expect(page.getByText('Reply sent through Facebook Page.')).toBeVisible();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await page.getByRole('button', { name: 'Send immediately' }).click();
   await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Approve and send', exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
@@ -111,6 +112,122 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0);
   expect(approvals).toBe(2);
+});
+
+test('Page DM timing persists per Page and scheduled approval can be cancelled before dispatch', async ({
+  page,
+}, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Scheduling Owner',
+      email: `page-schedule-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Page Scheduling Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const id = '00000000-0000-4000-8000-000000000721';
+  const dueAt = '2026-11-05T14:20:00.000Z';
+  let status = 'pending';
+  let earliestDelaySeconds = 300;
+  let latestDelaySeconds = 2700;
+  let approvals = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    let data: unknown;
+    if (path.endsWith('/schedule-default') && request.method() === 'PUT') {
+      const input = request.postDataJSON() as {
+        earliestDelaySeconds: number;
+        latestDelaySeconds: number;
+      };
+      earliestDelaySeconds = input.earliestDelaySeconds;
+      latestDelaySeconds = input.latestDelaySeconds;
+      data = input;
+    } else if (path.endsWith('/approve')) {
+      approvals += 1;
+      expect(request.postDataJSON()).toEqual({
+        expectedRevision: 1,
+        schedule: { earliestDelaySeconds: 600, latestDelaySeconds: 5400 },
+      });
+      status = 'scheduled';
+      data = { id, status, dueAt };
+    } else if (path.endsWith('/cancel-scheduled')) {
+      status = 'cancelled';
+      data = { status };
+    } else if (path.endsWith('/api/engagement-proposals')) {
+      data = {
+        items:
+          status === 'cancelled'
+            ? []
+            : [
+                {
+                  id,
+                  accountDisplayName: 'Eli Page',
+                  provider: 'facebook_page',
+                  kind: 'dm',
+                  status,
+                  sourcePreview: 'Hello',
+                  contentPreview: 'A reply',
+                  createdAt: '2026-11-05T12:00:00Z',
+                },
+              ],
+        nextCursor: null,
+      };
+    } else {
+      data = {
+        id,
+        accountDisplayName: 'Eli Page',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_900',
+        sourceContext: { authorLabel: 'Ivan', text: 'Hello' },
+        content: { text: 'A reply' },
+        revision: 1,
+        status,
+        canApprove: true,
+        noGo: false,
+        scheduleWindow: { earliestDelaySeconds, latestDelaySeconds },
+        schedule: status === 'scheduled' ? { dueAt, status: 'pending' } : null,
+      };
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByText('Default for this Page: 5–45 minutes.')).toBeVisible();
+  await page.locator('#engagement-delay-min').selectOption('10');
+  await page.locator('#engagement-delay-max').selectOption('90');
+  await page.getByRole('button', { name: 'Save Page timing' }).click();
+  await page.reload();
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByText('Default for this Page: 10–90 minutes.')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('page-dm-scheduled-ready.png') });
+  await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Ivan');
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await expect(page.getByText(/Scheduled for/).first()).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByRole('button', { name: 'Cancel scheduled reply' })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('page-dm-scheduled-pending.png') });
+  await page.getByRole('button', { name: 'Cancel scheduled reply' }).click();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Cancel scheduled reply' })
+    .click();
+  await expect(
+    page.getByText('Scheduled reply cancelled before dispatch. No message was sent.'),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('No replies await review or reconciliation.')).toBeVisible();
+  expect(approvals).toBe(1);
 });
 
 test('Page DM no-go block survives reload and can be removed from the list', async ({ page }) => {

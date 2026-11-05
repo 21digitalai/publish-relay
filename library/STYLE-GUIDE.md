@@ -397,3 +397,7 @@ LinkedIn member video reuses the destination-first Composer sheet and its existi
 - The canonical publication composer in `src/ui/workflow.tsx` switches to a single-channel YouTube video flow only when exactly one YouTube destination is selected.
 - Successful YouTube receipts render an allowlisted definition list with friendly visibility, Made for Kids, and subscriber-notification labels; internal settings keys and raw JSON never appear.
 - It uploads one MP4 through the authenticated browser media endpoint before creating the post, exposes sparse per-publication overrides, and displays the returned effective settings snapshot in the receipt.
+
+# Page DM scheduling on Proposed replies
+
+The existing proposal detail owns Page DM timing. Its semantic `.engagement-proposal-timing` fieldset presents natural delay versus immediate send, and `.engagement-page-delay-settings` edits the selected Page's persisted default window. Use the existing confirmation dialog for approval and cancellation. A scheduled proposal shows the sampled local send time and a pending-only cancellation action; do not expose intent IDs or a separate scheduling panel.

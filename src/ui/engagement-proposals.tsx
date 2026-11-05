@@ -27,6 +27,8 @@ interface ProposalDetail {
   status: string;
   canApprove: boolean;
   noGo: boolean;
+  schedule?: { dueAt: string; status: string } | null;
+  scheduleWindow?: { earliestDelaySeconds: number; latestDelaySeconds: number } | null;
 }
 
 interface NoGoEntry {
@@ -74,6 +76,10 @@ export function EngagementProposalsPage() {
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmNoGo, setConfirmNoGo] = useState(false);
+  const [confirmCancelSchedule, setConfirmCancelSchedule] = useState(false);
+  const [dmTiming, setDmTiming] = useState<'scheduled' | 'immediate'>('scheduled');
+  const [delayMinMinutes, setDelayMinMinutes] = useState(5);
+  const [delayMaxMinutes, setDelayMaxMinutes] = useState(45);
   const [sendUncertain, setSendUncertain] = useState(false);
   const [mediaStates, setMediaStates] = useState<Record<string, string>>({});
   const [mediaPending, setMediaPending] = useState<string | null>(null);
@@ -82,6 +88,7 @@ export function EngagementProposalsPage() {
   const dismissTrigger = useRef<HTMLButtonElement>(null);
   const approveTrigger = useRef<HTMLButtonElement>(null);
   const noGoTrigger = useRef<HTMLButtonElement>(null);
+  const cancelScheduleTrigger = useRef<HTMLButtonElement>(null);
   const activeProposalRef = useRef<string | null>(null);
 
   const loadPage = useCallback(async (cursor?: string) => {
@@ -179,6 +186,9 @@ export function EngagementProposalsPage() {
         activeProposalRef.current = `${proposal.id}:${String(proposal.revision)}`;
         setDraft(proposal.content.text);
         setSendUncertain(false);
+        setDmTiming('scheduled');
+        setDelayMinMinutes((proposal.scheduleWindow?.earliestDelaySeconds ?? 300) / 60);
+        setDelayMaxMinutes((proposal.scheduleWindow?.latestDelaySeconds ?? 2700) / 60);
       })
       .catch((failure: unknown) => {
         if (active) {
@@ -252,15 +262,33 @@ export function EngagementProposalsPage() {
     setError(null);
     setNotice(null);
     try {
-      const outcome = await readApi<{ id: string; status: string }>(
+      const outcome = await readApi<{ id: string; status: string; dueAt?: string }>(
         `/api/engagement-proposals/${detail.id}/approve`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
-          body: JSON.stringify({ expectedRevision: detail.revision }),
+          body: JSON.stringify({
+            expectedRevision: detail.revision,
+            ...(detail.provider === 'facebook_page' &&
+            detail.kind === 'dm' &&
+            dmTiming === 'scheduled'
+              ? {
+                  schedule: detail.scheduleWindow ?? {
+                    earliestDelaySeconds: 300,
+                    latestDelaySeconds: 2700,
+                  },
+                }
+              : {}),
+          }),
         },
       );
-      setDetail({ ...detail, status: outcome.status });
+      setDetail({
+        ...detail,
+        status: outcome.status,
+        schedule: outcome.dueAt
+          ? { dueAt: outcome.dueAt, status: 'pending' }
+          : (detail.schedule ?? null),
+      });
       setItems((current) =>
         outcome.status === 'sent'
           ? current.filter((item) => item.id !== detail.id)
@@ -271,9 +299,11 @@ export function EngagementProposalsPage() {
       setNotice(
         outcome.status === 'sent'
           ? `Reply sent through ${detail.provider === 'facebook_page' ? 'Facebook Page' : 'Fanvue'}.`
-          : outcome.status === 'failed'
-            ? 'The provider rejected the send. No reply was sent.'
-            : 'Send outcome is unknown. Do not submit this reply again until it is reconciled.',
+          : outcome.status === 'scheduled'
+            ? `Reply scheduled for ${outcome.dueAt ? new Date(outcome.dueAt).toLocaleString() : 'the selected window'}; you can cancel before dispatch.`
+            : outcome.status === 'failed'
+              ? 'The provider rejected the send. No reply was sent.'
+              : 'Send outcome is unknown. Do not submit this reply again until it is reconciled.',
       );
     } catch (failure) {
       setSendUncertain(true);
@@ -285,6 +315,60 @@ export function EngagementProposalsPage() {
     } finally {
       setSaving(false);
       setConfirmApprove(false);
+    }
+  };
+
+  const cancelSchedule = async () => {
+    if (!detail || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await readApi<{ status: string }>(`/api/engagement-proposals/${detail.id}/cancel-scheduled`, {
+        method: 'POST',
+        headers: { 'x-csrf-token': getCsrfToken() },
+      });
+      setDetailReload((current) => current + 1);
+      setItems((current) => current.filter((item) => item.id !== detail.id));
+      setNotice('Scheduled reply cancelled before dispatch. No message was sent.');
+    } catch (failure) {
+      setError(
+        failure instanceof Error ? failure.message : 'Could not cancel this scheduled reply',
+      );
+      setDetailReload((current) => current + 1);
+    } finally {
+      setSaving(false);
+      setConfirmCancelSchedule(false);
+    }
+  };
+
+  const savePageTiming = async () => {
+    if (!detail || saving) return;
+    if (delayMaxMinutes < delayMinMinutes) {
+      setError('Latest delay must not be earlier than earliest delay.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const scheduleWindow = await readApi<{
+        earliestDelaySeconds: number;
+        latestDelaySeconds: number;
+      }>(`/api/engagement-proposals/${detail.id}/schedule-default`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({
+          earliestDelaySeconds: delayMinMinutes * 60,
+          latestDelaySeconds: delayMaxMinutes * 60,
+        }),
+      });
+      setDetail({ ...detail, scheduleWindow });
+      setNotice(
+        `Default Page reply delay saved: ${String(delayMinMinutes)}–${String(delayMaxMinutes)} minutes.`,
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Could not save Page reply timing');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -345,6 +429,12 @@ export function EngagementProposalsPage() {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(detail.targetId) &&
     detail.content.text.length <= (detail.kind === 'comment' ? 600 : 5000);
 
+  const pageTimingDirty =
+    detail?.provider === 'facebook_page' &&
+    detail.kind === 'dm' &&
+    ((detail.scheduleWindow?.earliestDelaySeconds ?? 300) !== delayMinMinutes * 60 ||
+      (detail.scheduleWindow?.latestDelaySeconds ?? 2700) !== delayMaxMinutes * 60);
+
   const canApprove =
     detail?.status === 'pending' &&
     selectedId === detail.id &&
@@ -353,6 +443,7 @@ export function EngagementProposalsPage() {
     !detail.noGo &&
     (facebookReady || fanvueReady) &&
     draft.trim() === detail.content.text &&
+    !(dmTiming === 'scheduled' && pageTimingDirty) &&
     !sendUncertain;
 
   return (
@@ -425,9 +516,11 @@ export function EngagementProposalsPage() {
                   <strong>{proposalLabel(item)}</strong>
                   {item.status !== 'pending' && (
                     <span>
-                      {item.status === 'unknown' || item.status === 'sending'
-                        ? 'Send outcome unknown'
-                        : 'Provider rejected send'}
+                      {item.status === 'scheduled'
+                        ? 'Scheduled'
+                        : item.status === 'unknown' || item.status === 'sending'
+                          ? 'Send outcome unknown'
+                          : 'Provider rejected send'}
                     </span>
                   )}
                   <span>{item.accountDisplayName}</span>
@@ -567,14 +660,108 @@ export function EngagementProposalsPage() {
                   <p className="form-success" role="status">
                     {detail.status === 'sent'
                       ? 'Sent'
-                      : detail.status === 'dismissed'
-                        ? 'Dismissed without sending'
-                        : detail.status === 'failed'
-                          ? 'Provider rejected this send'
-                          : 'Send outcome is unknown; do not send again'}
+                      : detail.status === 'scheduled'
+                        ? detail.schedule
+                          ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
+                          : 'Scheduled; refresh to see the send time.'
+                        : detail.status === 'cancelled'
+                          ? 'Cancelled before dispatch'
+                          : detail.status === 'dismissed'
+                            ? 'Dismissed without sending'
+                            : detail.status === 'failed'
+                              ? 'Provider rejected this send'
+                              : 'Send outcome is unknown; do not send again'}
                   </p>
                 )}
                 <div className="engagement-proposal-actions">
+                  {detail.status === 'pending' &&
+                    detail.provider === 'facebook_page' &&
+                    detail.kind === 'dm' && (
+                      <fieldset className="engagement-proposal-timing">
+                        <legend>When to send after approval</legend>
+                        <p className="muted">
+                          Default for this Page:{' '}
+                          {Math.round((detail.scheduleWindow?.earliestDelaySeconds ?? 300) / 60)}–
+                          {Math.round((detail.scheduleWindow?.latestDelaySeconds ?? 2700) / 60)}{' '}
+                          minutes.
+                        </p>
+                        <button
+                          type="button"
+                          className={`secondary-button engagement-timing-scheduled ${dmTiming === 'scheduled' ? 'selected' : ''}`}
+                          aria-pressed={dmTiming === 'scheduled'}
+                          onClick={() => {
+                            setDmTiming('scheduled');
+                          }}
+                        >
+                          Natural delay
+                        </button>
+                        <button
+                          type="button"
+                          className={`secondary-button engagement-timing-immediate ${dmTiming === 'immediate' ? 'selected' : ''}`}
+                          aria-pressed={dmTiming === 'immediate'}
+                          onClick={() => {
+                            setDmTiming('immediate');
+                          }}
+                        >
+                          Send immediately
+                        </button>
+                        {detail.canApprove && (
+                          <div className="engagement-page-delay-settings">
+                            <label className="field-label" htmlFor="engagement-delay-min">
+                              Earliest delay (minutes)
+                            </label>
+                            <select
+                              id="engagement-delay-min"
+                              className="engagement-delay-min text-input"
+                              value={delayMinMinutes}
+                              onChange={(event) => {
+                                setDelayMinMinutes(Number(event.target.value));
+                              }}
+                            >
+                              {[0, 5, 10, 15, 30, 45, 60, 90].map((minutes) => (
+                                <option key={minutes} value={minutes}>
+                                  {minutes}
+                                </option>
+                              ))}
+                            </select>
+                            <label className="field-label" htmlFor="engagement-delay-max">
+                              Latest delay (minutes)
+                            </label>
+                            <select
+                              id="engagement-delay-max"
+                              className="engagement-delay-max text-input"
+                              value={delayMaxMinutes}
+                              onChange={(event) => {
+                                setDelayMaxMinutes(Number(event.target.value));
+                              }}
+                            >
+                              {[0, 5, 10, 15, 30, 45, 60, 90].map((minutes) => (
+                                <option key={minutes} value={minutes}>
+                                  {minutes}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              className="secondary-button engagement-delay-save"
+                              disabled={
+                                saving ||
+                                delayMaxMinutes < delayMinMinutes ||
+                                ((detail.scheduleWindow?.earliestDelaySeconds ?? 300) ===
+                                  delayMinMinutes * 60 &&
+                                  (detail.scheduleWindow?.latestDelaySeconds ?? 2700) ===
+                                    delayMaxMinutes * 60)
+                              }
+                              onClick={() => {
+                                void savePageTiming();
+                              }}
+                            >
+                              Save Page timing
+                            </button>
+                          </div>
+                        )}
+                      </fieldset>
+                    )}
                   {detail.status === 'pending' && (
                     <button
                       ref={approveTrigger}
@@ -585,7 +772,24 @@ export function EngagementProposalsPage() {
                         setConfirmApprove(true);
                       }}
                     >
-                      Approve and send
+                      {detail.provider === 'facebook_page' &&
+                      detail.kind === 'dm' &&
+                      dmTiming === 'scheduled'
+                        ? 'Approve and schedule'
+                        : 'Approve and send'}
+                    </button>
+                  )}
+                  {detail.status === 'scheduled' && detail.canApprove && (
+                    <button
+                      ref={cancelScheduleTrigger}
+                      className="danger-button engagement-proposal-cancel-schedule"
+                      type="button"
+                      disabled={saving || detail.schedule?.status !== 'pending'}
+                      onClick={() => {
+                        setConfirmCancelSchedule(true);
+                      }}
+                    >
+                      Cancel scheduled reply
                     </button>
                   )}
                   <button
@@ -638,13 +842,15 @@ export function EngagementProposalsPage() {
                   <p className="muted">
                     {sendUncertain
                       ? 'Refresh to verify the latest send state before continuing.'
-                      : !detail.canApprove
-                        ? 'Only a workspace owner or admin can approve and send.'
-                        : draft.trim() !== detail.content.text
-                          ? 'Save the edited draft before approving.'
-                          : !mediaReady
-                            ? 'Prepare every attachment and confirm it is ready before approving.'
-                            : 'Sending is not available for this provider or proposal shape.'}
+                      : pageTimingDirty && dmTiming === 'scheduled'
+                        ? 'Save this Page timing before scheduling.'
+                        : !detail.canApprove
+                          ? 'Only a workspace owner or admin can approve and send.'
+                          : draft.trim() !== detail.content.text
+                            ? 'Save the edited draft before approving.'
+                            : !mediaReady
+                              ? 'Prepare every attachment and confirm it is ready before approving.'
+                              : 'Sending is not available for this provider or proposal shape.'}
                   </p>
                 )}
                 {sendUncertain && (
@@ -796,10 +1002,26 @@ export function EngagementProposalsPage() {
       {confirmApprove && detail && (
         <ConfirmationDialog
           titleId="engagement-approve-title"
-          title="Approve and send this reply?"
-          description={`Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`}
+          title={
+            dmTiming === 'scheduled' && detail.provider === 'facebook_page' && detail.kind === 'dm'
+              ? 'Approve and schedule this reply?'
+              : 'Approve and send this reply?'
+          }
+          description={
+            dmTiming === 'scheduled' && detail.provider === 'facebook_page' && detail.kind === 'dm'
+              ? `Schedule the reviewed reply to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for a sampled time ${String(Math.round((detail.scheduleWindow?.earliestDelaySeconds ?? 300) / 60))}–${String(Math.round((detail.scheduleWindow?.latestDelaySeconds ?? 2700) / 60))} minutes from now. You can cancel before dispatch.`
+              : `Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`
+          }
           cancelLabel="Keep reviewing"
-          confirmLabel={saving ? 'Sending…' : 'Approve and send'}
+          confirmLabel={
+            saving
+              ? 'Submitting…'
+              : dmTiming === 'scheduled' &&
+                  detail.provider === 'facebook_page' &&
+                  detail.kind === 'dm'
+                ? 'Approve and schedule'
+                : 'Approve and send'
+          }
           confirmTone="primary"
           disabled={saving}
           returnFocusTo={approveTrigger.current}
@@ -808,6 +1030,24 @@ export function EngagementProposalsPage() {
           }}
           onConfirm={() => {
             void approve();
+          }}
+        />
+      )}
+      {confirmCancelSchedule && detail && (
+        <ConfirmationDialog
+          titleId="engagement-cancel-schedule-title"
+          title="Cancel this scheduled reply?"
+          description="Cancellation works only before dispatch begins. Nothing will be sent if cancellation succeeds."
+          cancelLabel="Keep scheduled"
+          confirmLabel={saving ? 'Cancelling…' : 'Cancel scheduled reply'}
+          confirmTone="danger"
+          disabled={saving}
+          returnFocusTo={cancelScheduleTrigger.current}
+          onCancel={() => {
+            setConfirmCancelSchedule(false);
+          }}
+          onConfirm={() => {
+            void cancelSchedule();
           }}
         />
       )}

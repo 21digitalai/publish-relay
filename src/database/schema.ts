@@ -545,6 +545,24 @@ export const providerAccounts = pgTable(
   ],
 );
 
+export const facebookPageDmDelaySettings = pgTable(
+  'facebook_page_dm_delay_settings',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    earliestDelaySeconds: integer('earliest_delay_seconds').notNull().default(300),
+    latestDelaySeconds: integer('latest_delay_seconds').notNull().default(2700),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_delay_settings_account_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
 export const facebookPageEngagementModules = pgTable(
   'facebook_page_engagement_modules',
   {

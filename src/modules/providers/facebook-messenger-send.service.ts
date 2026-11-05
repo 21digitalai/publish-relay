@@ -34,6 +34,7 @@ const commandSchema = z.strictObject({
     .max(256),
   clientActionId: z.uuid(),
   text: z.string().trim().min(1).max(2000),
+  expectedLatestInboundMessageId: z.string().trim().min(1).max(256).optional(),
   actor: z.strictObject({
     type: z.enum(['user', 'api-key', 'delegated']),
     id: z.uuid(),
@@ -61,6 +62,12 @@ export class FacebookDmNoGoError extends Error {
   }
 }
 
+export class FacebookDmConversationChangedError extends Error {
+  constructor() {
+    super('A newer inbound message arrived; review the conversation before sending');
+  }
+}
+
 function replay(reservation: FacebookDmReservation): FacebookDmOutcome {
   if (reservation.kind === 'conflict') throw new FacebookDmActionConflictError();
   if (reservation.kind === 'new') throw new Error('Expected an existing Facebook DM action');
@@ -73,6 +80,7 @@ async function findEligibleRecipient(
   pageId: string,
   accessToken: string,
   now: number,
+  expectedLatestInboundMessageId?: string,
 ): Promise<{ id: string; label: string | null }> {
   const participants = await client.getConversationParticipants(conversationId, accessToken);
   const fans = participants.filter((person) => person.id !== pageId);
@@ -93,6 +101,15 @@ async function findEligibleRecipient(
     );
   });
   if (!recentInbound) throw new FacebookDmWindowClosedError();
+  if (expectedLatestInboundMessageId) {
+    const inbound = result.messages
+      .filter((message) => message.senderId === recipient.id)
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+    if (!inbound[0]?.id || inbound[0].id !== expectedLatestInboundMessageId)
+      throw new FacebookDmConversationChangedError();
+    if (inbound[1] && Date.parse(inbound[0].createdAt) === Date.parse(inbound[1].createdAt))
+      throw new FacebookDmConversationChangedError();
+  }
   return { id: recipient.id, label: recipient.name?.trim().slice(0, 200) ?? null };
 }
 
@@ -142,6 +159,7 @@ export async function sendAccountPageConversationMessage(
       pageId,
       token,
       Date.now(),
+      command.expectedLatestInboundMessageId,
     );
     if (await isPageConversationNoGo(runtime.database, command)) throw new FacebookDmNoGoError();
     const reservation = await reserveFacebookDmAction(runtime.database, {

@@ -39,7 +39,7 @@ const input = {
   actor: { type: 'api-key' as const, id: '00000000-0000-4000-8000-000000000004' },
 };
 
-function runtime(messages: { senderId: string | null; createdAt: string }[]) {
+function runtime(messages: { id?: string; senderId: string | null; createdAt: string }[]) {
   return {
     database: {} as never,
     keys: {} as never,
@@ -109,6 +109,38 @@ describe('Facebook inbound-only send command', () => {
     );
     expect(mocks.reserve).not.toHaveBeenCalled();
     expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+  });
+
+  it('stops a grouped reply before reservation when a newer inbound arrives', async () => {
+    const client = runtime([
+      {
+        id: 'mid_original',
+        senderId: 'psid_7',
+        createdAt: new Date(Date.now() - 10_000).toISOString(),
+      },
+      { id: 'mid_new', senderId: 'psid_7', createdAt: new Date().toISOString() },
+    ]);
+    await expect(
+      sendAccountPageConversationMessage(client as never, {
+        ...input,
+        expectedLatestInboundMessageId: 'mid_original',
+      }),
+    ).rejects.toThrow('newer inbound');
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+  });
+
+  it('allows a reviewed reply when its expected inbound is still latest', async () => {
+    const client = runtime([
+      { id: 'mid_original', senderId: 'psid_7', createdAt: new Date().toISOString() },
+    ]);
+    await expect(
+      sendAccountPageConversationMessage(client as never, {
+        ...input,
+        expectedLatestInboundMessageId: 'mid_original',
+      }),
+    ).resolves.toMatchObject({ state: 'confirmed' });
+    expect(client.client.sendPageMessage).toHaveBeenCalledOnce();
   });
 
   it('does not reserve or call Meta for a no-go conversation', async () => {

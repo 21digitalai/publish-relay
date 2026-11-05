@@ -132,6 +132,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'nextCursor',
     'updatedAt',
     'displayName',
+    'noGo',
   ]),
   'facebook-dms:messages': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
@@ -653,7 +654,7 @@ async function pollJob(
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.8.0' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.1' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);

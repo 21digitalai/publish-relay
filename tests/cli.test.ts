@@ -163,7 +163,7 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.0' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.1' } });
     },
   );
 
@@ -324,6 +324,10 @@ describe('Publish Relay CLI', () => {
         {
           success: true,
           data: {
+            conversations: [
+              { id: 't_blocked', displayName: 'Alexandra', noGo: true, providerToken: 'private' },
+              { id: 't_allowed', displayName: 'Maya', noGo: false, providerToken: 'private' },
+            ],
             messages: [
               {
                 id: 'm_1',
@@ -363,6 +367,10 @@ describe('Publish Relay CLI', () => {
       );
       expect((JSON.parse(list.stdout) as { data: unknown }).data).toMatchObject({
         displayName: 'Birkan Reyhan',
+        conversations: [
+          { noGo: true, providerToken: '[REDACTED]' },
+          { noGo: false, providerToken: '[REDACTED]' },
+        ],
         providerProfile: '[REDACTED]',
       });
       const result = await cli(

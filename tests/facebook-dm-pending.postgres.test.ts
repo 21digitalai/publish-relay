@@ -1,0 +1,194 @@
+import { readFile } from 'node:fs/promises';
+
+import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { describe, expect, it } from 'vitest';
+
+import {
+  cancelPendingPageDm,
+  claimDuePageDms,
+  finishClaimedPageDm,
+  PendingDmConflictError,
+  PendingDmNoGoError,
+  schedulePageDm,
+} from '../src/modules/providers/facebook-dm-pending.repository.js';
+import { setPageConversationNoGo } from '../src/modules/providers/facebook-dm-no-go.repository.js';
+import { dispatchDuePageDms } from '../src/modules/providers/facebook-dm-pending.worker.js';
+
+const workspaceId = '00000000-0000-4000-8000-000000000001';
+const accountId = '00000000-0000-4000-8000-000000000002';
+const otherWorkspaceId = '00000000-0000-4000-8000-000000000003';
+const actorId = '00000000-0000-4000-8000-000000000004';
+const actionId = '00000000-0000-4000-8000-000000000005';
+
+async function setup() {
+  const pg = new PGlite();
+  await pg.exec(`
+    CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated', 'system');
+    CREATE TABLE workspaces (id uuid PRIMARY KEY);
+    CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL,
+      destination_provider text NOT NULL, PRIMARY KEY (workspace_id, id));
+    CREATE TABLE memberships (workspace_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL);
+    CREATE TABLE engagement_proposals (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
+      account_id uuid NOT NULL, client_action_id uuid NOT NULL DEFAULT gen_random_uuid(), provider text NOT NULL, kind text NOT NULL,
+      target_id text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE facebook_page_dm_actions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id uuid NOT NULL, client_action_id uuid NOT NULL, request_fingerprint text NOT NULL DEFAULT 'other-request',
+      state text NOT NULL DEFAULT 'reserved');
+    INSERT INTO workspaces VALUES ('${workspaceId}'), ('${otherWorkspaceId}');
+    INSERT INTO provider_accounts VALUES ('${accountId}', '${workspaceId}', 'facebook_page');
+  `);
+  for (const migration of [
+    '0095_facebook_page_dm_no_go.sql',
+    '0097_facebook_page_dm_pending_intents.sql',
+  ]) {
+    await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+  }
+  return { pg, database: drizzle(pg) as unknown as NodePgDatabase };
+}
+
+describe('Page DM pending intent', () => {
+  it('rechecks actor membership at due time and never calls Meta after revocation', async () => {
+    const { pg, database } = await setup();
+    try {
+      await schedulePageDm(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'revoked-actor',
+        actor: { type: 'user', id: actorId },
+        text: 'No send',
+        dueAt: new Date('2026-11-05T10:00:00.000Z'),
+      });
+      const counts = await dispatchDuePageDms(
+        {
+          database,
+          keys: {} as never,
+          client: {} as never,
+          workerId: 'worker-a',
+          leaseMs: 30_000,
+        },
+        new Date('2026-11-05T10:00:00.000Z'),
+      );
+      expect(counts).toEqual({ confirmed: 0, failed: 1, unknown: 0 });
+      const rows = await pg.query<{ status: string }>(
+        'SELECT status FROM facebook_page_dm_pending_intents',
+      );
+      expect(rows.rows[0]?.status).toBe('failed');
+    } finally {
+      await pg.close();
+    }
+  });
+  it('keeps one immutable action, isolates cancellation, and claims due work once', async () => {
+    const { pg, database } = await setup();
+    try {
+      const dueAt = new Date('2026-11-05T10:00:00.000Z');
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'same-request',
+        actor: { type: 'user' as const, id: actorId },
+        text: 'Здравей',
+        dueAt,
+      };
+      const first = await schedulePageDm(database, input);
+      expect((await schedulePageDm(database, input)).id).toBe(first.id);
+      await expect(
+        schedulePageDm(database, { ...input, text: 'different' }),
+      ).rejects.toBeInstanceOf(PendingDmConflictError);
+      expect(
+        await cancelPendingPageDm(database, {
+          workspaceId: otherWorkspaceId,
+          accountId,
+          conversationId: input.conversationId,
+          id: first.id,
+        }),
+      ).toBe(false);
+      const claimed = await claimDuePageDms(database, {
+        workerId: 'worker-a',
+        now: dueAt,
+        leaseMs: 30_000,
+        limit: 10,
+      });
+      expect(claimed.map((row) => row.id)).toEqual([first.id]);
+      expect(
+        await cancelPendingPageDm(database, {
+          workspaceId,
+          accountId,
+          conversationId: input.conversationId,
+          id: first.id,
+        }),
+      ).toBe(false);
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'worker-b',
+          now: dueAt,
+          leaseMs: 30_000,
+          limit: 10,
+        }),
+      ).toEqual([]);
+      await pg.exec(`INSERT INTO facebook_page_dm_actions (workspace_id, client_action_id)
+        VALUES ('${workspaceId}', '${actionId}')`);
+      await expect(
+        finishClaimedPageDm(database, {
+          workspaceId,
+          id: first.id,
+          workerId: 'worker-a',
+          state: 'pending',
+        }),
+      ).rejects.toThrow('Cannot retry');
+      expect(
+        await finishClaimedPageDm(database, {
+          workspaceId,
+          id: first.id,
+          workerId: 'worker-a',
+          state: 'unknown',
+        }),
+      ).toBe(true);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('rejects a newly blocked recipient and permits cancellation before claim', async () => {
+    const { pg, database } = await setup();
+    try {
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'same-request',
+        actor: { type: 'user' as const, id: actorId },
+        text: 'Здравей',
+        dueAt: new Date('2026-11-05T10:00:00.000Z'),
+      };
+      await setPageConversationNoGo(database, { ...input, blocked: true });
+      await expect(schedulePageDm(database, input)).rejects.toBeInstanceOf(PendingDmNoGoError);
+      await setPageConversationNoGo(database, { ...input, blocked: false });
+      const row = await schedulePageDm(database, input);
+      expect(
+        await cancelPendingPageDm(database, {
+          workspaceId,
+          accountId,
+          conversationId: input.conversationId,
+          id: row.id,
+        }),
+      ).toBe(true);
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'worker-a',
+          now: input.dueAt,
+          leaseMs: 30_000,
+          limit: 10,
+        }),
+      ).toEqual([]);
+    } finally {
+      await pg.close();
+    }
+  });
+});

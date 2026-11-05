@@ -43,6 +43,7 @@ import {
   reconcileYouTubeJobs,
 } from '../modules/providers/youtube-media-dispatch.service.js';
 import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
+import { dispatchDuePageDms } from '../modules/providers/facebook-dm-pending.worker.js';
 import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
 import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
 import { FanvuePostClient } from '../modules/providers/fanvue-post-client.js';
@@ -289,6 +290,23 @@ while (!shutdownController.signal.aborted) {
   const destinationFailures = await runDestinationDispatchCycle(destinationDispatchAdapters);
   for (const failure of destinationFailures)
     process.stderr.write(`${JSON.stringify({ event: 'destination_cycle_failed', ...failure })}\n`);
+  if (facebookRuntime) {
+    try {
+      const pageDms = await dispatchDuePageDms({
+        ...facebookRuntime,
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      });
+      if (pageDms.confirmed || pageDms.failed || pageDms.unknown)
+        process.stdout.write(
+          `${JSON.stringify({ event: 'facebook_page_dm_cycle', ...pageDms })}\n`,
+        );
+    } catch (error) {
+      process.stderr.write(
+        `${JSON.stringify({ event: 'facebook_page_dm_cycle_failed', error: String(error) })}\n`,
+      );
+    }
+  }
   const now = new Date();
   const deletedStagingObjects = await reconcileMediaStaging(now);
   if (deletedStagingObjects !== undefined) {

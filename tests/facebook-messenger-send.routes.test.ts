@@ -4,7 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
 import { registerFacebookPageDmSendRoute } from '../src/modules/providers/facebook-messenger-send.routes.js';
 
-const mocks = vi.hoisted(() => ({ authorize: vi.fn(), send: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  authorize: vi.fn(),
+  send: vi.fn(),
+  scheduled: vi.fn(),
+  cancel: vi.fn(),
+  hasPending: vi.fn(),
+}));
+vi.mock('../src/modules/providers/facebook-dm-pending.repository.js', async (loadOriginal) => ({
+  ...(await loadOriginal<object>()),
+  schedulePageDm: mocks.scheduled,
+  cancelPendingPageDm: mocks.cancel,
+  hasPendingPageDmAction: mocks.hasPending,
+}));
 vi.mock('../src/modules/identity/machine-auth.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
   authorizePageEngagementRequest: mocks.authorize,
@@ -19,7 +31,10 @@ const accountId = '00000000-0000-4000-8000-000000000002';
 const clientActionId = '00000000-0000-4000-8000-000000000003';
 const path = `/api/v1/destinations/${accountId}/facebook-conversations/t_123/messages`;
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.hasPending.mockResolvedValue(false);
+});
 
 async function appForTest() {
   const app = Fastify();
@@ -40,6 +55,44 @@ async function appForTest() {
 }
 
 describe('Facebook Page DM send machine route', () => {
+  it('persists a jittered intent without sending and exposes bounded cancellation', async () => {
+    const app = await appForTest();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: clientActionId, kind: 'api-key' });
+      mocks.scheduled.mockResolvedValue({
+        id: '00000000-0000-4000-8000-000000000006',
+        status: 'pending',
+        dueAt: new Date('2026-11-05T11:00:00.000Z'),
+      });
+      const response = await app.inject({
+        method: 'POST',
+        url: path,
+        payload: {
+          clientActionId,
+          text: 'Hello',
+          schedule: { earliestDelaySeconds: 300, latestDelaySeconds: 300 },
+        },
+      });
+      expect(response.statusCode).toBe(202);
+      expect(mocks.send).not.toHaveBeenCalled();
+      expect(mocks.scheduled).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ clientActionId }),
+      );
+      mocks.cancel.mockResolvedValue(true);
+      const cancelled = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/destinations/${accountId}/facebook-conversations/t_123/scheduled/00000000-0000-4000-8000-000000000006`,
+      });
+      expect(cancelled.statusCode).toBe(200);
+      expect(mocks.cancel).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ workspaceId, conversationId: 't_123' }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
   it('requires exact dms:send and projects only an outcome receipt', async () => {
     const app = await appForTest();
     try {

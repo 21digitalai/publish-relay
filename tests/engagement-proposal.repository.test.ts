@@ -20,6 +20,10 @@ import {
   isPageConversationNoGo,
   setPageConversationNoGo,
 } from '../src/modules/providers/facebook-dm-no-go.repository.js';
+import {
+  cancelPendingPageDm,
+  scheduleApprovedPageDm,
+} from '../src/modules/providers/facebook-dm-pending.repository.js';
 
 import {
   claimEngagementProposal,
@@ -882,6 +886,45 @@ describe('engagement proposal foundation', () => {
           status: 'sent',
         }),
       ).rejects.toThrow('stale');
+      const scheduledProposal = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000699',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_scheduled',
+        content: { text: 'Later, not now' },
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const scheduled = await scheduleApprovedPageDm(database, {
+        workspaceId: workspace,
+        userId: proposer,
+        proposalId: scheduledProposal.id,
+        expectedRevision: 1,
+        earliestDelaySeconds: 300,
+        latestDelaySeconds: 300,
+      });
+      expect(scheduled.status).toBe('scheduled');
+      expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
+        'scheduled',
+      );
+      const intent = await client.query<{ id: string }>(
+        `SELECT id FROM facebook_page_dm_pending_intents WHERE workspace_id = '${workspace}' AND client_action_id = '${scheduledProposal.clientActionId}'`,
+      );
+      expect(intent.rows).toHaveLength(1);
+      if (!intent.rows[0]) throw new Error('Scheduled intent missing');
+      expect(
+        await cancelPendingPageDm(database, {
+          workspaceId: workspace,
+          accountId: account,
+          conversationId: 't_scheduled',
+          id: intent.rows[0].id,
+        }),
+      ).toBe(true);
+      expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
+        'cancelled',
+      );
       await client.exec(`
         CREATE ROLE proposal_reader NOLOGIN NOBYPASSRLS;
         GRANT USAGE ON SCHEMA public TO proposal_reader;
@@ -904,7 +947,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('12');
+      ).toBe('13');
     } finally {
       await client.close();
     }

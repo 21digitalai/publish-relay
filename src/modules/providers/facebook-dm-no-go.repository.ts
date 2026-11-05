@@ -3,6 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   engagementProposals,
+  facebookPageDmPendingIntents,
   facebookPageDmNoGo,
   providerAccounts,
 } from '../../database/schema.js';
@@ -194,5 +195,31 @@ export async function setPageConversationNoGo(
           eq(engagementProposals.status, 'pending'),
         ),
       );
+    const cancelled = await tx
+      .update(facebookPageDmPendingIntents)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageDmPendingIntents.accountId, input.accountId),
+          eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+          eq(facebookPageDmPendingIntents.status, 'pending'),
+        ),
+      )
+      .returning({ clientActionId: facebookPageDmPendingIntents.clientActionId });
+    if (cancelled.length)
+      await tx
+        .update(engagementProposals)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            eq(engagementProposals.workspaceId, input.workspaceId),
+            inArray(
+              engagementProposals.clientActionId,
+              cancelled.map((row) => row.clientActionId),
+            ),
+            eq(engagementProposals.status, 'scheduled'),
+          ),
+        );
   });
 }

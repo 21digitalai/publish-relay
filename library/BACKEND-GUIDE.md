@@ -1,5 +1,11 @@
 # Publish Relay Backend Guide
 
+## Pending Facebook Page DM intents
+
+`facebook_page_dm_pending_intents` owns delayed Page DM dispatch, independently of publication jobs and the provider action ledger. A schedule records one immutable `clientActionId`, request fingerprint, actor, text, and sampled `dueAt`; the due worker claims it with a lease and invokes `sendAccountPageConversationMessage` with that same action ID. The canonical send command remains the sole Meta sender and rechecks current Page grant, recipient, no-go status, and reply window. A reserved or unknown action is never blindly retried with a fresh ID. Cancellation is a pending-only compare-and-set; blocking a Page conversation cancels its pending intents. Browser-approved proposals enter `scheduled` atomically with intent insertion; worker settlement updates that proposal to sent, failed, or unknown.
+
+The machine send route accepts an optional explicit delay window, while omitting it preserves immediate send. The approval route likewise supports optional scheduling. Neither route exposes the stored message body in its schedule receipt. The worker reads across tenants only to claim due rows, then uses tenant-scoped transactions for authority and action checks. A lease expiry may reclaim an intent, but a prior provider action resolves from the ledger before any new provider call.
+
 Fanvue account-scoped reads use the selected connected account and its workspace-bound creator grant. Credential refresh failures are typed as reconnect-required and become a safe 409 read response; pending single-use refresh may be awaited, but a read must recheck that the exact account and connection remain active before sending the provider GET. An invalid or ambiguous refresh never replays the quarantined refresh token or becomes an unclassified 500.
 
 ## Fanvue publishing connection foundation

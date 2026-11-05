@@ -677,6 +677,50 @@ export const facebookPageDmActions = pgTable(
   ],
 );
 
+export const facebookPageDmPendingIntents = pgTable(
+  'facebook_page_dm_pending_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    actorType: actorType('actor_type').notNull(),
+    actorId: uuid('actor_id').notNull(),
+    textBody: text('text_body').notNull(),
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    status: text('status').notNull().default('pending'),
+    leaseOwner: text('lease_owner'),
+    leaseUntil: timestamp('lease_until', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('facebook_page_dm_pending_intents_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
+    index('facebook_page_dm_pending_intents_due_idx').on(table.dueAt, table.id),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_pending_intents_account_fk',
+    }).onDelete('restrict'),
+    check(
+      'facebook_page_dm_pending_intents_status_check',
+      sql`${table.status} IN ('pending', 'claimed', 'cancelled', 'confirmed', 'failed', 'unknown')`,
+    ),
+    check(
+      'facebook_page_dm_pending_intents_text_check',
+      sql`length(trim(${table.textBody})) BETWEEN 1 AND 2000`,
+    ),
+    check(
+      'facebook_page_dm_pending_intents_lease_check',
+      sql`(${table.status} = 'claimed') = (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`,
+    ),
+  ],
+);
+
 export const facebookPageDmNoGo = pgTable(
   'facebook_page_dm_no_go',
   {

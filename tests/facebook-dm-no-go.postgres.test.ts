@@ -22,6 +22,7 @@ describe('Page DM no-go list', () => {
     const pg = new PGlite();
     try {
       await pg.exec(`
+        CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated', 'system');
         CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL,
           destination_provider text NOT NULL, display_name text NOT NULL DEFAULT 'Page', PRIMARY KEY (workspace_id, id));
         CREATE TABLE engagement_proposals (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
@@ -37,6 +38,12 @@ describe('Page DM no-go list', () => {
       await pg.exec(
         await readFile(
           new URL('../migrations/0095_facebook_page_dm_no_go.sql', import.meta.url),
+          'utf8',
+        ),
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0097_facebook_page_dm_pending_intents.sql', import.meta.url),
           'utf8',
         ),
       );

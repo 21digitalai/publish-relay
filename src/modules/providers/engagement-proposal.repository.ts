@@ -188,7 +188,14 @@ export async function listEngagementReviewQueue(
       .where(
         and(
           eq(engagementProposals.workspaceId, workspaceId),
-          inArray(engagementProposals.status, ['pending', 'sending', 'unknown', 'failed']),
+          inArray(engagementProposals.status, [
+            'pending',
+            'sending',
+            'scheduled',
+            'cancelled',
+            'unknown',
+            'failed',
+          ]),
           ...(page?.beforeCreatedAt && page.beforeId
             ? [
                 or(

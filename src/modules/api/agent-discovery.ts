@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.9.1';
-const CLI_VERSION = '1.8.1';
+const CONTRACT_VERSION = '1.9.2';
+const CLI_VERSION = '1.8.2';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -90,6 +90,7 @@ Use destinations list to choose the connected Facebook Page account ID. Run face
 
 ## Facebook Page Messages
 For review-first mode, use proposals create with provider=facebook_page, kind=dm, accountId as the selected Page, targetId as the existing conversation ID, sourceContext.text/authorLabel/sourceMessageId, content.text, a future plannedDueAt chosen once before review, and matching clientActionId/idempotency flag. For a three-bubble reply, add content.followUps as exactly two text strings (each 1–2000 characters); this is one proposal and one human approval, not three proposals. The reviewed sourceMessageId is required for the group so a new inbound stops remaining sends. Approval schedules bubble 1 for plannedDueAt and later bubbles 4–10 seconds after each preceding confirmed send. Human approval rechecks the Page grant, selected conversation and recent inbound reply window through the direct send command; a pending proposal does not guarantee later send eligibility.
+For a recorded Page DM proposal, use proposals status <proposal-id> before deciding whether to draft again. It returns only the proposal ID, status, and original plannedDueAt after workspace and selected-Page proposal authorization. Pending, scheduled, sending, unknown, and sent never authorize a new draft. A definite expired, dismissed, or failed status permits considering a new draft only after ruling out a scheduled/unknown send and checking a current recipient-authored inbound, no-go state, and the Meta reply window. A re-draft uses a fresh clientActionId and future plannedDueAt; never silently turn the old proposal into an immediate send.
 
 Use destinations list to choose the connected Facebook Page account ID, then facebook-dms list <account-id> --limit 25. Follow data.nextCursor with --after <cursor>; the server limits pages to 100. Each Page-scoped conversation projects displayName when Meta supplies the sole non-Page participant's name, and noGo true/false from the Page-local suppression list. Never draft, propose, or send to a conversation with noGo true. Read one conversation with facebook-dms messages <account-id> --conversation-id <id> --limit 25 and page it with --after. Its displayName is the same selected conversation participant identity; read text, senderId, createdAt and participantId in that Page context. A null displayName means identity is unknown, not that the opaque participantId is a person's name. Do not infer identity from IDs or search another Page to locate a conversation. If a named-person match matters, do not send until the name is actually verified.
 

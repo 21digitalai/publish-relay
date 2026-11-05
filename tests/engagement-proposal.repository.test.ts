@@ -316,6 +316,79 @@ describe('engagement proposal foundation', () => {
       expect((await getEngagementProposal(database, workspace, expiringId))?.status).toBe(
         'expired',
       );
+      const machineStatus = await app.inject({
+        method: 'GET',
+        url: `/api/v1/engagement-proposals/${expiringId}/status`,
+        headers,
+      });
+      expect(machineStatus.statusCode).toBe(200);
+      const statusData = machineStatus.json<{
+        data: { id: string; status: string; plannedDueAt: string };
+        error: null;
+      }>();
+      expect(statusData.data).toMatchObject({ id: expiringId, status: 'expired' });
+      expect(Date.parse(statusData.data.plannedDueAt)).toBeLessThan(Date.now());
+      expect(Object.keys(statusData.data).sort()).toEqual(['id', 'plannedDueAt', 'status']);
+      expect(statusData.error).toBeNull();
+      expect(Buffer.byteLength(machineStatus.body)).toBeLessThan(300);
+      for (const absent of ['content', 'targetId', 'sourceContext', 'proposerId', 'accountId'])
+        expect(machineStatus.body).not.toContain(absent);
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/v1/engagement-proposals/${expiringId}/status`,
+            headers: { ...headers, authorization: 'Bearer blocked-key' },
+          })
+        ).statusCode,
+      ).toBe(403);
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/api/v1/engagement-proposals/00000000-0000-4000-8000-000000000999/status',
+            headers,
+          })
+        ).statusCode,
+      ).toBe(404);
+      await client.exec(
+        `DELETE FROM facebook_page_engagement_grants WHERE workspace_id = '${workspace}' AND account_id = '${account}'`,
+      );
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/v1/engagement-proposals/${expiringId}/status`,
+            headers,
+          })
+        ).statusCode,
+      ).toBe(403);
+      await client.exec(
+        `INSERT INTO facebook_page_engagement_grants (workspace_id, account_id, api_key_id, capability)
+         VALUES ('${workspace}', '${account}', '${proposer}', 'dms:propose')`,
+      );
+      const foreignProposal = await createEngagementProposal(database, {
+        workspaceId: otherWorkspace,
+        accountId: otherAccount,
+        clientActionId: '00000000-0000-4000-8000-000000000613',
+        provider: 'facebook_page',
+        kind: 'dm',
+        targetId: 't_foreign',
+        content: { text: 'Other workspace' },
+        plannedDueAt: new Date(Date.now() + 600_000),
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/v1/engagement-proposals/${foreignProposal.id}/status`,
+            headers,
+          })
+        ).statusCode,
+      ).toBe(404);
+      await client.exec(`DELETE FROM engagement_proposals WHERE id = '${foreignProposal.id}'`);
       await expect(
         claimEngagementProposal(database, {
           workspaceId: workspace,
@@ -1020,6 +1093,13 @@ describe('engagement proposal foundation', () => {
       });
       expect(scheduled.status).toBe('scheduled');
       expect(scheduled.dueAt.toISOString()).toBe(scheduledProposal.plannedDueAt?.toISOString());
+      expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
+        'scheduled',
+      );
+      await client.exec(
+        `UPDATE engagement_proposals SET planned_due_at = now() - interval '1 minute' WHERE id = '${scheduled.id}'`,
+      );
+      expect(await expireScheduledEngagementProposals(database)).toBe(0);
       expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
         'scheduled',
       );

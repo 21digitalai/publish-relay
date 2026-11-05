@@ -182,6 +182,11 @@ const engagementProposalSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
+const pageDmProposalStatusSchema = z.object({
+  id: z.uuid(),
+  status: z.string(),
+  plannedDueAt: z.iso.datetime().optional(),
+});
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
   return {
@@ -775,6 +780,36 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '403': { description: 'Missing engagement:propose capability' },
             '409': { description: 'Account unavailable or action ID conflict' },
             '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/engagement-proposals/{proposalId}/status': {
+        get: {
+          operationId: 'getFacebookPageDmProposalStatus',
+          description:
+            'Read only the current status and planned time of a recorded Page DM proposal.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'proposalId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Tenant- and Page-authorized proposal status',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(pageDmProposalStatusSchema)),
+                },
+              },
+            },
+            '400': { description: 'Invalid proposal ID' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing engagement or Page DM proposal authority' },
+            '404': { description: 'Proposal not found in this workspace' },
           },
         },
       },

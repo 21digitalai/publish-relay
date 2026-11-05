@@ -50,6 +50,9 @@ describe('agent discovery', () => {
     expect(paths['/api/v1/destinations/{accountId}/facebook-posts']?.get?.operationId).toBe(
       'listFacebookPagePosts',
     );
+    expect(paths['/api/v1/engagement-proposals/{proposalId}/status']?.get?.operationId).toBe(
+      'getFacebookPageDmProposalStatus',
+    );
     expect(
       paths['/api/v1/destinations/{accountId}/facebook-posts/{postId}/comments']?.get?.operationId,
     ).toBe('listFacebookPagePostComments');
@@ -89,10 +92,11 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.9.1');
-    expect(manifest.data.cliVersion).toBe('1.8.1');
+    expect(manifest.data.contractVersion).toBe('1.9.2');
+    expect(manifest.data.cliVersion).toBe('1.8.2');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('proposals create --body-file');
+    expect(skill.body).toContain('proposals status <proposal-id>');
     expect(skill.body).toContain('destinations list');
     expect(skill.body).toContain('publishes retry <job-id>');
     expect(skill.body).toContain('facebook-comments posts <account-id>');

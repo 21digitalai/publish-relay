@@ -163,7 +163,44 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.1' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.2' } });
+    },
+  );
+
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'reads a recorded proposal status without exposing draft data in %s',
+    async (entrypoint) => {
+      const proposalId = '00000000-0000-4000-8000-000000000404';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        200,
+        {
+          data: {
+            id: proposalId,
+            status: 'expired',
+            plannedDueAt: '2026-11-05T14:05:00.000Z',
+            content: { text: 'Private draft' },
+          },
+          error: null,
+        },
+        undefined,
+        paths,
+      );
+      const result = await cli(
+        ['proposals', 'status', proposalId, '--base-url', baseUrl],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(result.code).toBe(0);
+      expect(paths).toEqual([`/api/v1/engagement-proposals/${proposalId}/status`]);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        data: {
+          id: proposalId,
+          status: 'expired',
+          plannedDueAt: '2026-11-05T14:05:00.000Z',
+          content: '[REDACTED]',
+        },
+      });
     },
   );
 

@@ -27,6 +27,7 @@ const MUTATIONS = new Set([
 const ROUTES = {
   'account:current': { method: 'GET', path: '/api/v1/account' },
   'proposals:create': { method: 'POST', path: '/api/v1/engagement-proposals', body: true },
+  'proposals:status': { method: 'GET', path: '/api/v1/engagement-proposals/:id/status' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
   'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
   'facebook-comments:list': {
@@ -99,6 +100,7 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ];
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
+  'proposals:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'plannedDueAt']),
   'facebook-comments:posts': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'posts',
@@ -606,7 +608,7 @@ async function pollJob(profile, key, workspace, path, jobId, flags) {
 async function run() {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.8.1' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.2' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);

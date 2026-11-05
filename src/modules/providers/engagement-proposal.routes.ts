@@ -275,6 +275,57 @@ export function registerEngagementProposalRoutes(
       }
     });
 
+  if (apiKeys)
+    application.get('/api/v1/engagement-proposals/:proposalId/status', async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      try {
+        const principal = await authorizeMachineRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          'engagement:propose',
+        );
+        if (!principal)
+          return await reply.code(401).send({ data: null, error: 'Authentication required' });
+        const params = paramsSchema.safeParse(request.params);
+        if (!params.success)
+          return await reply.code(400).send({ data: null, error: 'Invalid proposal' });
+        const row = await getEngagementProposal(
+          database,
+          principal.workspaceId,
+          params.data.proposalId,
+        );
+        if (row?.provider !== 'facebook_page' || row.kind !== 'dm')
+          return await reply.code(404).send({ data: null, error: 'Proposal not found' });
+        const allowed = await authorizePageEngagement(database, {
+          workspaceId: principal.workspaceId,
+          accountId: row.accountId,
+          principal: {
+            kind: principal.kind,
+            actorId: principal.actorId,
+            workspaceId: principal.workspaceId,
+          },
+          capability: 'dms:propose',
+        });
+        if (!allowed)
+          return await reply
+            .code(403)
+            .send({ data: null, error: 'Page proposal access is unavailable' });
+        return {
+          data: {
+            id: row.id,
+            status: row.status,
+            ...(row.plannedDueAt ? { plannedDueAt: row.plannedDueAt.toISOString() } : {}),
+          },
+          error: null,
+        };
+      } catch (error) {
+        const known = proposalError(error);
+        if (known) return await reply.code(known.status).send({ data: null, error: known.message });
+        throw error;
+      }
+    });
+
   if (!auth) return;
   application.get('/api/facebook-page-dm-history', async (request, reply) => {
     void reply.header('Cache-Control', 'no-store');

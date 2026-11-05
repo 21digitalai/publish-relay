@@ -1,4 +1,4 @@
-import { createHash, randomInt } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import { and, eq, inArray, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -29,8 +29,8 @@ export interface PendingDmInput {
 }
 
 export class PendingDmConflictError extends Error {
-  constructor() {
-    super('Scheduled Page message action ID conflicts with a prior request');
+  constructor(message = 'Scheduled Page message action ID conflicts with a prior request') {
+    super(message);
   }
 }
 
@@ -196,8 +196,6 @@ export async function scheduleApprovedPageDm(
     userId: string;
     proposalId: string;
     expectedRevision: number;
-    earliestDelaySeconds: number;
-    latestDelaySeconds: number;
   },
 ) {
   return withTenantTransaction(database, input, async (tx) => {
@@ -238,18 +236,20 @@ export async function scheduleApprovedPageDm(
       !content.success
     )
       throw new PendingDmConflictError();
+    if (!proposal.plannedDueAt || proposal.plannedDueAt.getTime() <= Date.now())
+      throw new PendingDmConflictError(
+        'Bot-selected send time is missing or has passed; request a new proposal',
+      );
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify({
           proposalId: proposal.id,
           revision: proposal.revision,
           text: content.data.text,
-          earliestDelaySeconds: input.earliestDelaySeconds,
-          latestDelaySeconds: input.latestDelaySeconds,
+          plannedDueAt: proposal.plannedDueAt.toISOString(),
         }),
       )
       .digest('hex');
-    const delay = randomInt(input.earliestDelaySeconds, input.latestDelaySeconds + 1);
     const intent = await schedulePageDmInTransaction(tx, {
       workspaceId: input.workspaceId,
       accountId: proposal.accountId,
@@ -258,7 +258,7 @@ export async function scheduleApprovedPageDm(
       requestFingerprint: fingerprint,
       actor: { type: 'user', id: input.userId },
       text: content.data.text,
-      dueAt: new Date(Date.now() + delay * 1000),
+      dueAt: proposal.plannedDueAt,
     });
     await tx
       .update(engagementProposals)

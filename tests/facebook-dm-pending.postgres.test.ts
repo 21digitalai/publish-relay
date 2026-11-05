@@ -46,6 +46,7 @@ async function setup() {
   for (const migration of [
     '0095_facebook_page_dm_no_go.sql',
     '0097_facebook_page_dm_pending_intents.sql',
+    '0098_engagement_proposal_planned_due_at.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }

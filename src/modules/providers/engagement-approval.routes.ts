@@ -5,7 +5,10 @@ import { z } from 'zod';
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
-import { EngagementProposalError } from './engagement-proposal.repository.js';
+import {
+  EngagementProposalError,
+  getEngagementProposal,
+} from './engagement-proposal.repository.js';
 import {
   PendingDmConflictError,
   PendingDmNoGoError,
@@ -20,12 +23,7 @@ import {
 const paramsSchema = z.strictObject({ proposalId: z.uuid() });
 const approvalSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  schedule: z
-    .strictObject({
-      earliestDelaySeconds: z.number().int().min(0).max(82_800),
-      latestDelaySeconds: z.number().int().min(0).max(82_800),
-    })
-    .optional(),
+  sendMode: z.enum(['scheduled', 'immediate']).optional(),
 });
 
 export function registerEngagementApprovalRoutes(
@@ -79,17 +77,21 @@ export function registerEngagementApprovalRoutes(
       return reply.code(400).send({ data: null, error: 'Invalid proposal approval' });
 
     try {
-      if (body.data.schedule) {
-        const { earliestDelaySeconds, latestDelaySeconds } = body.data.schedule;
-        if (latestDelaySeconds < earliestDelaySeconds)
-          return await reply.code(400).send({ data: null, error: 'Invalid delay window' });
+      const proposal = await getEngagementProposal(
+        dependencies.database,
+        identity.workspaceId,
+        params.data.proposalId,
+      );
+      if (
+        proposal?.provider === 'facebook_page' &&
+        proposal.kind === 'dm' &&
+        body.data.sendMode !== 'immediate'
+      ) {
         const scheduled = await scheduleApprovedPageDm(dependencies.database, {
           workspaceId: identity.workspaceId,
           userId: identity.userId,
           proposalId: params.data.proposalId,
           expectedRevision: body.data.expectedRevision,
-          earliestDelaySeconds,
-          latestDelaySeconds,
         });
         return await reply.code(202).send({ data: scheduled, error: null });
       }

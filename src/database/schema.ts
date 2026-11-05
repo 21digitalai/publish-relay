@@ -807,6 +807,7 @@ export const engagementProposals = pgTable(
     targetId: text('target_id').notNull(),
     sourceContext: jsonb('source_context').notNull().default({}),
     content: jsonb('content').notNull(),
+    plannedDueAt: timestamp('planned_due_at', { withTimezone: true }),
     proposerType: text('proposer_type').notNull(),
     proposerId: uuid('proposer_id').notNull(),
     status: text('status').notNull().default('pending'),

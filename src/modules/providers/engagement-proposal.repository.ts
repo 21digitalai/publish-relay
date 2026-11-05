@@ -27,6 +27,7 @@ export interface CreateEngagementProposal {
   targetId: string;
   sourceContext?: Record<string, unknown>;
   content: ProposalContent;
+  plannedDueAt?: Date | undefined;
   proposerType: 'user' | 'api_key' | 'delegated';
   proposerId: string;
 }
@@ -52,6 +53,8 @@ function matchesProposal(
     existing.proposerType === input.proposerType &&
     existing.proposerId === input.proposerId &&
     isDeepStrictEqual(existing.content, input.content) &&
+    (existing.plannedDueAt?.toISOString() ?? null) ===
+      (input.plannedDueAt?.toISOString() ?? null) &&
     isDeepStrictEqual(existing.sourceContext, input.sourceContext ?? {})
   );
 }
@@ -136,6 +139,7 @@ export async function createEngagementProposal(
         targetId: input.targetId.trim(),
         sourceContext: input.sourceContext ?? {},
         content: input.content,
+        plannedDueAt: input.plannedDueAt,
         proposerType: input.proposerType,
         proposerId: input.proposerId,
       })

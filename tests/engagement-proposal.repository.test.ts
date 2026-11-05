@@ -76,6 +76,19 @@ describe('engagement proposal foundation', () => {
           ('${otherAccount}', '${otherWorkspace}', '${otherConnection}', 'page-b', 'facebook_page', 'page-b', 'Page B');
       `);
       const database = drizzle(client) as unknown as NodePgDatabase;
+      await client.exec(`
+        INSERT INTO users (id, email, display_name, password_hash) VALUES ('${proposer}', 'proposer@example.test', 'Agent', 'test');
+        INSERT INTO api_keys (id, workspace_id, created_by_user_id, label, prefix, secret_hash, capabilities)
+          VALUES ('${proposer}', '${workspace}', '${proposer}', 'Agent', 'agent', 'test',
+            ARRAY['engagement:propose', 'dms:propose']);
+        UPDATE provider_accounts SET credential_id = '${credential}' WHERE id = '${account}';
+        INSERT INTO facebook_page_engagement_modules
+          (workspace_id, account_id, dms_enabled, dms_provider_grant, dms_verified_at, dms_credential_id)
+          VALUES ('${workspace}', '${account}', true, 'verified', now(), '${credential}');
+        INSERT INTO facebook_page_engagement_grants
+          (workspace_id, account_id, api_key_id, capability)
+          VALUES ('${workspace}', '${account}', '${proposer}', 'dms:propose');
+      `);
       await setPageConversationNoGo(database, {
         workspaceId: workspace,
         accountId: account,
@@ -255,6 +268,60 @@ describe('engagement proposal foundation', () => {
           })
         ).statusCode,
       ).toBe(403);
+      const delayDefault = await app.inject({
+        method: 'GET',
+        url: `/api/v1/facebook-page-dm-delay-default/${account}`,
+        headers,
+      });
+      expect(delayDefault.statusCode).toBe(200);
+      expect(delayDefault.json<{ data: unknown }>().data).toEqual({
+        earliestDelaySeconds: 300,
+        latestDelaySeconds: 2700,
+      });
+      const plannedDueAt = new Date(Date.now() + 900_000).toISOString();
+      const pageDmBody = {
+        ...pageProposalBody,
+        clientActionId: '00000000-0000-4000-8000-000000000230',
+        kind: 'dm',
+        targetId: 't_900',
+        sourceContext: { text: 'Inbound Page message' },
+      };
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/v1/engagement-proposals',
+            headers,
+            payload: pageDmBody,
+          })
+        ).statusCode,
+      ).toBe(400);
+      const proposedPageDm = await app.inject({
+        method: 'POST',
+        url: '/api/v1/engagement-proposals',
+        headers,
+        payload: { ...pageDmBody, plannedDueAt },
+      });
+      expect(proposedPageDm.statusCode).toBe(201);
+      expect(proposedPageDm.json<{ data: { plannedDueAt: string } }>().data.plannedDueAt).toBe(
+        plannedDueAt,
+      );
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/v1/engagement-proposals',
+            headers,
+            payload: {
+              ...pageDmBody,
+              plannedDueAt: new Date(Date.now() + 1_200_000).toISOString(),
+            },
+          })
+        ).statusCode,
+      ).toBe(409);
+      await client.exec(
+        `DELETE FROM engagement_proposals WHERE client_action_id = '${pageDmBody.clientActionId}'`,
+      );
       const browserHeaders = { cookie: `publish_relay_session=${workspace}.test-token` };
       const listResponse = await app.inject({
         method: 'GET',
@@ -668,7 +735,6 @@ describe('engagement proposal foundation', () => {
         proposerId: proposer,
       });
       const pageDmUrl = `/api/engagement-proposals/${pageDm.id}/approve`;
-      sendPageDm.mockRejectedValueOnce(new PageReadUnavailableError());
       expect(
         (
           await app.inject({
@@ -679,6 +745,18 @@ describe('engagement proposal foundation', () => {
           })
         ).statusCode,
       ).toBe(409);
+      expect(sendPageDm).not.toHaveBeenCalled();
+      sendPageDm.mockRejectedValueOnce(new PageReadUnavailableError());
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: pageDmUrl,
+            headers: approvedHeaders,
+            payload: { ...approvalPayload, sendMode: 'immediate' },
+          })
+        ).statusCode,
+      ).toBe(409);
       expect((await getEngagementProposal(database, workspace, pageDm.id))?.status).toBe('pending');
       expect(
         (
@@ -686,7 +764,7 @@ describe('engagement proposal foundation', () => {
             method: 'POST',
             url: pageDmUrl,
             headers: approvedHeaders,
-            payload: approvalPayload,
+            payload: { ...approvalPayload, sendMode: 'immediate' },
           })
         ).statusCode,
       ).toBe(200);
@@ -720,7 +798,7 @@ describe('engagement proposal foundation', () => {
             method: 'POST',
             url: uncertainUrl,
             headers: approvedHeaders,
-            payload: approvalPayload,
+            payload: { ...approvalPayload, sendMode: 'immediate' },
           })
         ).statusCode,
       ).toBe(202);
@@ -733,7 +811,7 @@ describe('engagement proposal foundation', () => {
             method: 'POST',
             url: uncertainUrl,
             headers: approvedHeaders,
-            payload: approvalPayload,
+            payload: { ...approvalPayload, sendMode: 'immediate' },
           })
         ).statusCode,
       ).toBe(409);
@@ -894,6 +972,7 @@ describe('engagement proposal foundation', () => {
         kind: 'dm',
         targetId: 't_scheduled',
         content: { text: 'Later, not now' },
+        plannedDueAt: new Date(Date.now() + 600_000),
         proposerType: 'api_key',
         proposerId: proposer,
       });
@@ -902,10 +981,9 @@ describe('engagement proposal foundation', () => {
         userId: proposer,
         proposalId: scheduledProposal.id,
         expectedRevision: 1,
-        earliestDelaySeconds: 300,
-        latestDelaySeconds: 300,
       });
       expect(scheduled.status).toBe('scheduled');
+      expect(scheduled.dueAt.toISOString()).toBe(scheduledProposal.plannedDueAt?.toISOString());
       expect((await getEngagementProposal(database, workspace, scheduled.id))?.status).toBe(
         'scheduled',
       );

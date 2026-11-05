@@ -156,7 +156,11 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
     const path = new URL(request.url()).pathname;
     if (path.endsWith('/approve')) {
       approvals += 1;
-      expect(request.postDataJSON()).toEqual({ expectedRevision: 1 });
+      expect(request.postDataJSON()).toEqual(
+        path.includes(commentId)
+          ? { expectedRevision: 1 }
+          : { expectedRevision: 1, sendMode: 'immediate' },
+      );
       if (path.includes(commentId)) sentComment = true;
       else dmUnknown = true;
       await route.fulfill({
@@ -261,7 +265,7 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
     data: { slug: string };
   };
   const id = '00000000-0000-4000-8000-000000000721';
-  const dueAt = '2026-11-05T14:20:00.000Z';
+  const dueAt = new Date(Date.now() + 3_600_000).toISOString();
   let status = 'pending';
   let earliestDelaySeconds = 300;
   let latestDelaySeconds = 2700;
@@ -282,7 +286,7 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
       approvals += 1;
       expect(request.postDataJSON()).toEqual({
         expectedRevision: 1,
-        schedule: { earliestDelaySeconds: 600, latestDelaySeconds: 5400 },
+        sendMode: 'scheduled',
       });
       status = 'scheduled';
       data = { id, status, dueAt };
@@ -321,6 +325,7 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
         status,
         canApprove: true,
         noGo: false,
+        plannedDueAt: dueAt,
         scheduleWindow: { earliestDelaySeconds, latestDelaySeconds },
         schedule: status === 'scheduled' ? { dueAt, status: 'pending' } : null,
       };
@@ -332,6 +337,9 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.locator('.engagement-planned-due-at')).toContainText(
+    new Date(dueAt).toLocaleString(),
+  );
   await expect(page.getByText('Default for this Page: 5–45 minutes.')).toBeVisible();
   await page.locator('#engagement-delay-min').selectOption('10');
   await page.locator('#engagement-delay-max').selectOption('90');

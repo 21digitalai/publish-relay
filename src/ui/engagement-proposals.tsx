@@ -24,6 +24,7 @@ interface ProposalDetail {
   targetId: string;
   sourceContext: { text?: string; authorLabel?: string; postId?: string; sourceMessageId?: string };
   content: { text: string; mediaIds?: string[]; priceCents?: number };
+  plannedDueAt?: string;
   revision: number;
   status: string;
   canApprove: boolean;
@@ -270,15 +271,8 @@ export function EngagementProposalsPage() {
           headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrfToken() },
           body: JSON.stringify({
             expectedRevision: detail.revision,
-            ...(detail.provider === 'facebook_page' &&
-            detail.kind === 'dm' &&
-            dmTiming === 'scheduled'
-              ? {
-                  schedule: detail.scheduleWindow ?? {
-                    earliestDelaySeconds: 300,
-                    latestDelaySeconds: 2700,
-                  },
-                }
+            ...(detail.provider === 'facebook_page' && detail.kind === 'dm'
+              ? { sendMode: dmTiming }
               : {}),
           }),
         },
@@ -430,12 +424,6 @@ export function EngagementProposalsPage() {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(detail.targetId) &&
     detail.content.text.length <= (detail.kind === 'comment' ? 600 : 5000);
 
-  const pageTimingDirty =
-    detail?.provider === 'facebook_page' &&
-    detail.kind === 'dm' &&
-    ((detail.scheduleWindow?.earliestDelaySeconds ?? 300) !== delayMinMinutes * 60 ||
-      (detail.scheduleWindow?.latestDelaySeconds ?? 2700) !== delayMaxMinutes * 60);
-
   const canApprove =
     detail?.status === 'pending' &&
     selectedId === detail.id &&
@@ -444,7 +432,12 @@ export function EngagementProposalsPage() {
     !detail.noGo &&
     (facebookReady || fanvueReady) &&
     draft.trim() === detail.content.text &&
-    !(dmTiming === 'scheduled' && pageTimingDirty) &&
+    !(
+      detail.provider === 'facebook_page' &&
+      detail.kind === 'dm' &&
+      dmTiming === 'scheduled' &&
+      (!detail.plannedDueAt || Date.parse(detail.plannedDueAt) <= Date.now())
+    ) &&
     !sendUncertain;
 
   return (
@@ -679,7 +672,14 @@ export function EngagementProposalsPage() {
                     detail.provider === 'facebook_page' &&
                     detail.kind === 'dm' && (
                       <fieldset className="engagement-proposal-timing">
-                        <legend>When to send after approval</legend>
+                        <legend>Bot-selected send plan</legend>
+                        <p className="muted engagement-planned-due-at">
+                          {detail.plannedDueAt
+                            ? Date.parse(detail.plannedDueAt) <= Date.now()
+                              ? `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()} has passed. Request a new proposal before scheduling.`
+                              : `Scheduled for ${new Date(detail.plannedDueAt).toLocaleString()} after approval.`
+                            : 'This proposal has no bot-selected time. Scheduling is unavailable; request a new proposal.'}
+                        </p>
                         <p className="muted">
                           Default for this Page:{' '}
                           {Math.round((detail.scheduleWindow?.earliestDelaySeconds ?? 300) / 60)}–
@@ -694,7 +694,7 @@ export function EngagementProposalsPage() {
                             setDmTiming('scheduled');
                           }}
                         >
-                          Natural delay
+                          Approve scheduled time
                         </button>
                         <button
                           type="button"
@@ -843,8 +843,11 @@ export function EngagementProposalsPage() {
                   <p className="muted">
                     {sendUncertain
                       ? 'Refresh to verify the latest send state before continuing.'
-                      : pageTimingDirty && dmTiming === 'scheduled'
-                        ? 'Save this Page timing before scheduling.'
+                      : dmTiming === 'scheduled' &&
+                          detail.provider === 'facebook_page' &&
+                          detail.kind === 'dm' &&
+                          !detail.plannedDueAt
+                        ? 'A future bot-selected send time is required before approval.'
                         : !detail.canApprove
                           ? 'Only a workspace owner or admin can approve and send.'
                           : draft.trim() !== detail.content.text
@@ -1011,7 +1014,7 @@ export function EngagementProposalsPage() {
           }
           description={
             dmTiming === 'scheduled' && detail.provider === 'facebook_page' && detail.kind === 'dm'
-              ? `Schedule the reviewed reply to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for a sampled time ${String(Math.round((detail.scheduleWindow?.earliestDelaySeconds ?? 300) / 60))}–${String(Math.round((detail.scheduleWindow?.latestDelaySeconds ?? 2700) / 60))} minutes from now. You can cancel before dispatch.`
+              ? `Schedule the reviewed reply to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for ${detail.plannedDueAt ? new Date(detail.plannedDueAt).toLocaleString() : 'an unavailable time'}. You can cancel before dispatch.`
               : `Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`
           }
           cancelLabel="Keep reviewing"

@@ -175,6 +175,7 @@ const engagementProposalSchema = z.object({
   targetId: z.string(),
   sourceContext: z.record(z.string(), z.unknown()),
   content: z.record(z.string(), z.unknown()),
+  plannedDueAt: z.iso.datetime().optional(),
   proposerType: z.enum(['user', 'api_key', 'delegated']),
   status: z.string(),
   revision: z.number().int(),
@@ -774,6 +775,42 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '403': { description: 'Missing engagement:propose capability' },
             '409': { description: 'Account unavailable or action ID conflict' },
             '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/facebook-page-dm-delay-default/{accountId}': {
+        get: {
+          operationId: 'getFacebookPageDmDelayDefault',
+          description:
+            'Read the selected Page delay bounds before the agent chooses an exact proposal due time.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Page delay bounds in seconds',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(
+                    successResponseSchema(
+                      z.strictObject({
+                        earliestDelaySeconds: z.number().int(),
+                        latestDelaySeconds: z.number().int(),
+                      }),
+                    ),
+                  ),
+                },
+              },
+            },
+            '400': { description: 'Invalid Page account' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page DM proposal authority' },
           },
         },
       },

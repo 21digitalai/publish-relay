@@ -55,6 +55,7 @@ export const createEngagementProposalSchema = z.strictObject({
     })
     .optional(),
   content: contentSchema,
+  plannedDueAt: z.iso.datetime({ offset: true }).optional(),
 });
 const paramsSchema = z.strictObject({ proposalId: z.uuid() });
 const reviseSchema = z.strictObject({
@@ -75,7 +76,11 @@ function validFacebookProposal(input: z.infer<typeof createEngagementProposalSch
     return false;
   if (input.kind === 'comment')
     return /^[0-9]+(?:_[0-9]+)*$/.test(input.targetId) && Boolean(input.sourceContext?.postId);
-  return /^[A-Za-z0-9_]+$/.test(input.targetId);
+  return (
+    /^[A-Za-z0-9_]+$/.test(input.targetId) &&
+    Boolean(input.plannedDueAt) &&
+    Date.parse(input.plannedDueAt ?? '') > Date.now()
+  );
 }
 
 function parseCursor(value: string | undefined): z.infer<typeof cursorSchema> | null {
@@ -115,6 +120,7 @@ function representation(
     targetId: row.targetId,
     sourceContext: row.sourceContext,
     content: row.content,
+    ...(row.plannedDueAt ? { plannedDueAt: row.plannedDueAt.toISOString() } : {}),
     proposerType: row.proposerType,
     status: row.status,
     revision: row.revision,
@@ -166,6 +172,45 @@ export function registerEngagementProposalRoutes(
   const { database, auth, apiKeys, rateLimiter, delegatedAuthorization } = dependencies;
 
   if (apiKeys)
+    application.get('/api/v1/facebook-page-dm-delay-default/:accountId', async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      try {
+        const principal = await authorizeMachineRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          'engagement:propose',
+        );
+        if (!principal)
+          return await reply.code(401).send({ data: null, error: 'Authentication required' });
+        const params = z.strictObject({ accountId: z.uuid() }).safeParse(request.params);
+        if (!params.success)
+          return await reply.code(400).send({ data: null, error: 'Invalid Page account' });
+        const allowed = await authorizePageEngagement(database, {
+          workspaceId: principal.workspaceId,
+          accountId: params.data.accountId,
+          principal: {
+            kind: principal.kind,
+            actorId: principal.actorId,
+            workspaceId: principal.workspaceId,
+          },
+          capability: 'dms:propose',
+        });
+        if (!allowed)
+          return await reply.code(403).send({ data: null, error: 'Page proposal access is unavailable' });
+        const window = await getPageDmDelayWindow(database, {
+          workspaceId: principal.workspaceId,
+          accountId: params.data.accountId,
+        });
+        return { data: window, error: null };
+      } catch (error) {
+        const known = proposalError(error);
+        if (known) return reply.code(known.status).send({ data: null, error: known.message });
+        throw error;
+      }
+    });
+
+  if (apiKeys)
     application.post('/api/v1/engagement-proposals', async (request, reply) => {
       void reply.header('Cache-Control', 'no-store');
       try {
@@ -198,7 +243,9 @@ export function registerEngagementProposalRoutes(
         }
         const row = await createEngagementProposal(database, {
           ...input.data,
+          plannedDueAt: undefined,
           content: normalizeContent(input.data.content),
+          ...(input.data.plannedDueAt ? { plannedDueAt: new Date(input.data.plannedDueAt) } : {}),
           sourceContext: input.data.sourceContext ?? {},
           workspaceId: principal.workspaceId,
           proposerType: principal.kind === 'api-key' ? 'api_key' : 'delegated',
@@ -528,7 +575,9 @@ export function registerEngagementProposalRoutes(
     try {
       const row = await createEngagementProposal(database, {
         ...input.data,
+        plannedDueAt: undefined,
         content: normalizeContent(input.data.content),
+        ...(input.data.plannedDueAt ? { plannedDueAt: new Date(input.data.plannedDueAt) } : {}),
         sourceContext: input.data.sourceContext ?? {},
         workspaceId: identity.workspaceId,
         proposerType: 'user',

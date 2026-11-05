@@ -73,22 +73,27 @@ async function findEligibleRecipient(
   pageId: string,
   accessToken: string,
   now: number,
-): Promise<string> {
-  const participants = await client.getConversationParticipantIds(conversationId, accessToken);
-  const fans = participants.filter((id) => id !== pageId);
-  if (participants.filter((id) => id === pageId).length !== 1 || fans.length !== 1 || !fans[0])
+): Promise<{ id: string; label: string | null }> {
+  const participants = await client.getConversationParticipants(conversationId, accessToken);
+  const fans = participants.filter((person) => person.id !== pageId);
+  if (
+    participants.filter((person) => person.id === pageId).length !== 1 ||
+    fans.length !== 1 ||
+    !fans[0]
+  )
     throw new PageReadUnavailableError();
+  const recipient = fans[0];
   const result = await client.listConversationMessages({ conversationId, accessToken, limit: 100 });
   const recentInbound = result.messages.some((message) => {
     const timestamp = Date.parse(message.createdAt);
     return (
-      message.senderId === fans[0] &&
+      message.senderId === recipient.id &&
       timestamp <= now &&
       timestamp >= now - STANDARD_WINDOW_MS + WINDOW_SAFETY_MS
     );
   });
   if (!recentInbound) throw new FacebookDmWindowClosedError();
-  return fans[0];
+  return { id: recipient.id, label: recipient.name?.trim().slice(0, 200) ?? null };
 }
 
 /** One Page-local text RESPONSE, never a new conversation or an automatic retry. */
@@ -131,7 +136,7 @@ export async function sendAccountPageConversationMessage(
   if (existing) return replay(existing);
   if (await isPageConversationNoGo(runtime.database, command)) throw new FacebookDmNoGoError();
   return withPageReadToken(runtime, { ...command, module: 'dms' }, async (pageId, token) => {
-    const recipientId = await findEligibleRecipient(
+    const recipient = await findEligibleRecipient(
       runtime.client,
       command.conversationId,
       pageId,
@@ -139,7 +144,10 @@ export async function sendAccountPageConversationMessage(
       Date.now(),
     );
     if (await isPageConversationNoGo(runtime.database, command)) throw new FacebookDmNoGoError();
-    const reservation = await reserveFacebookDmAction(runtime.database, action);
+    const reservation = await reserveFacebookDmAction(runtime.database, {
+      ...action,
+      receiverLabel: recipient.label,
+    });
     if (reservation.kind !== 'new') return replay(reservation);
     // The intent has committed before provider I/O. The shared account lock orders
     // a block against the actual dispatch, not merely against an earlier preflight.
@@ -149,7 +157,7 @@ export async function sendAccountPageConversationMessage(
       try {
         const messageId = await runtime.client.sendPageMessage({
           pageId,
-          recipientId,
+          recipientId: recipient.id,
           text: command.text,
           accessToken: token,
         });

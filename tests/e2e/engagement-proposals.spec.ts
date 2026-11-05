@@ -1,5 +1,136 @@
 import { expect, test } from '@playwright/test';
 
+test('Page DM history filters by recipient without showing raw conversation IDs', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'History Owner',
+      email: `history-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'History Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const queries: string[] = [];
+  await page.route('**/api/facebook-page-dm-history**', async (route) => {
+    const url = new URL(route.request().url());
+    queries.push(url.search);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: '00000000-0000-4000-8000-000000000701',
+              kind: 'send',
+              accountId: '00000000-0000-4000-8000-000000000702',
+              accountDisplayName: 'Eli Page',
+              conversationId: 't_900',
+              receiverLabel: 'Alexandra',
+              status: 'confirmed',
+              createdAt: '2026-11-05T09:00:00Z',
+              updatedAt: '2026-11-05T09:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
+  await page.getByRole('button', { name: 'Alexandra', exact: true }).click();
+  await expect.poll(() => queries.at(-1)).toContain('conversationId=t_900');
+  await expect(page.getByText('t_900')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect.poll(() => queries.at(-1)).not.toContain('conversationId');
+});
+
+test('Page DM history ignores stale filter and load-more responses', async ({ page }) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'History Race Owner',
+      email: `history-race-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'History Race Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  let releaseFilter: (() => void) | undefined;
+  let releaseMore: (() => void) | undefined;
+  let filterStarted: (() => void) | undefined;
+  let moreStarted: (() => void) | undefined;
+  const filterSeen = new Promise<void>((resolve) => {
+    filterStarted = resolve;
+  });
+  const moreSeen = new Promise<void>((resolve) => {
+    moreStarted = resolve;
+  });
+  let requests = 0;
+  const row = (label: string) => ({
+    id:
+      label === 'Alexandra'
+        ? '00000000-0000-4000-8000-000000000701'
+        : '00000000-0000-4000-8000-000000000703',
+    kind: 'send',
+    accountId: '00000000-0000-4000-8000-000000000702',
+    accountDisplayName: 'Eli Page',
+    conversationId: 't_900',
+    receiverLabel: label,
+    status: 'confirmed',
+    createdAt: '2026-11-05T09:00:00Z',
+    updatedAt: '2026-11-05T09:07:00Z',
+  });
+  await page.route('**/api/facebook-page-dm-history**', async (route) => {
+    requests += 1;
+    const current = requests;
+    if (current === 2) {
+      filterStarted?.();
+      await new Promise<void>((resolve) => {
+        releaseFilter = resolve;
+      });
+    }
+    if (current === 4) {
+      moreStarted?.();
+      await new Promise<void>((resolve) => {
+        releaseMore = resolve;
+      });
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [row(current === 2 || current === 4 ? 'Stale person' : 'Alexandra')],
+          nextCursor: current === 1 || current === 3 ? 'more' : null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: 'Alexandra', exact: true }).click();
+  await filterSeen;
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect.poll(() => requests).toBe(3);
+  releaseFilter?.();
+  await expect(page.getByText('Stale person')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Load more' }).click();
+  await moreSeen;
+  await page.getByRole('button', { name: 'Alexandra', exact: true }).click();
+  await expect.poll(() => requests).toBe(5);
+  releaseMore?.();
+  await expect(page.getByText('Stale person')).toHaveCount(0);
+  await expect(page.getByText(/Updated .*/)).toBeVisible();
+});
+
 test('Facebook Page proposals use the shared review panel on desktop and mobile', async ({
   page,
 }, testInfo) => {

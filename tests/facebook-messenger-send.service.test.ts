@@ -45,7 +45,10 @@ function runtime(messages: { senderId: string | null; createdAt: string }[]) {
     keys: {} as never,
     policy: {} as never,
     client: {
-      getConversationParticipantIds: vi.fn().mockResolvedValue(['123', 'psid_7']),
+      getConversationParticipants: vi.fn().mockResolvedValue([
+        { id: '123', name: 'Eli Page' },
+        { id: 'psid_7', name: 'Alexandra' },
+      ]),
       listConversationMessages: vi.fn().mockResolvedValue({ messages, nextCursor: null }),
       sendPageMessage: vi.fn().mockResolvedValue('mid_9'),
     },
@@ -83,6 +86,12 @@ describe('Facebook inbound-only send command', () => {
       text: 'Hello',
       accessToken: 'server-token',
     });
+    expect(mocks.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        receiverLabel: 'Alexandra',
+      }),
+    );
     expect(mocks.settle).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -131,7 +140,10 @@ describe('Facebook inbound-only send command', () => {
 
   it('denies a sibling Page conversation before reserving', async () => {
     const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
-    vi.mocked(client.client.getConversationParticipantIds).mockResolvedValue(['999', 'psid_7']);
+    vi.mocked(client.client.getConversationParticipants).mockResolvedValue([
+      { id: '999', name: 'Other Page' },
+      { id: 'psid_7', name: 'Alexandra' },
+    ]);
     await expect(sendAccountPageConversationMessage(client as never, input)).rejects.toThrow(
       'unavailable',
     );

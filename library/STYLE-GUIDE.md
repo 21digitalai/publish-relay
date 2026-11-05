@@ -400,4 +400,6 @@ LinkedIn member video reuses the destination-first Composer sheet and its existi
 
 # Page DM scheduling on Proposed replies
 
+`.page-dm-history` sits below the review inbox and uses server-side Page/receiver filters, friendly recipient labels, separate started/updated timezone timestamps, and bounded load-more. It is distinct from the proposal editing lifecycle; it reuses the workspace shell and existing secondary controls.
+
 The existing proposal detail owns Page DM timing. Its semantic `.engagement-proposal-timing` fieldset presents natural delay versus immediate send, and `.engagement-page-delay-settings` edits the selected Page's persisted default window. Use the existing confirmation dialog for approval and cancellation. A scheduled proposal shows the sampled local send time and a pending-only cancellation action; do not expose intent IDs or a separate scheduling panel.

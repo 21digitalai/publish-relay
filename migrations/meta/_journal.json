@@ -675,6 +675,13 @@
       "breakpoints": true
     },
     {
+      "idx": 96,
+      "version": "7",
+      "when": 1793872500000,
+      "tag": "0096_facebook_page_dm_receiver_label",
+      "breakpoints": true
+    },
+    {
       "idx": 97,
       "version": "7",
       "when": 1793876000000,

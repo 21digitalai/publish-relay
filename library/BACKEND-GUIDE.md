@@ -548,6 +548,8 @@ Production releases install production dependencies without building on the host
 
 # Engagement proposal account label
 
+`GET /api/facebook-page-dm-history` is the tenant-bound bounded Page DM proposal/send timeline. Its repository filters by Page and receiver before a descending cursor merge, projects only kind, friendly labels, status and timestamps, and never returns message text or actor/provider secrets. The canonical sender resolves and stores the exact recipient label with its action reservation (migration 0096); older send rows remain explicitly unnamed.
+
 Pending proposal summaries and exact browser detail join the workspace-bound provider
 account to project only its friendly display name. The page does not download all
 accounts or expose a raw account ID as its destination label. Create/edit/dismiss keep

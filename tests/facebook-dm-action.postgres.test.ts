@@ -46,6 +46,12 @@ beforeEach(async () => {
       'utf8',
     ),
   );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0096_facebook_page_dm_receiver_label.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   await postgres.exec(`
     CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
@@ -59,7 +65,7 @@ afterEach(async () => postgres.close());
 
 describe('Facebook DM action PostgreSQL ledger', () => {
   it('reserves once, replays confirmed evidence and rejects changed input', async () => {
-    const first = await reserveFacebookDmAction(database, key);
+    const first = await reserveFacebookDmAction(database, { ...key, receiverLabel: 'Alexandra' });
     expect(first.kind).toBe('new');
     if (first.kind !== 'new') throw new Error('Expected new action');
     await settleFacebookDmAction(database, {
@@ -71,6 +77,9 @@ describe('Facebook DM action PostgreSQL ledger', () => {
       kind: 'existing',
       outcome: { state: 'confirmed', messageId: 'mid_9' },
     });
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    const labels = await postgres.query('SELECT receiver_label FROM facebook_page_dm_actions');
+    expect(labels.rows).toEqual([{ receiver_label: 'Alexandra' }]);
     expect(await reserveFacebookDmAction(database, { ...key, conversationId: 't_other' })).toEqual({
       kind: 'conflict',
     });

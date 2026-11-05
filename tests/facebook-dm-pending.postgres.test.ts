@@ -175,13 +175,17 @@ describe('Page DM pending intent', () => {
       );
       const [firstRow, secondRow] = rows.rows;
       if (!firstRow || !secondRow) throw new Error('Grouped intents were not created');
-      expect(
-        await claimDuePageDms(database, { workerId: 'w', now: dueAt, leaseMs: 30_000, limit: 3 }),
-      ).toHaveLength(1);
+      const firstClaim = await claimDuePageDms(database, {
+        workerId: 'w',
+        now: dueAt,
+        leaseMs: 30_000,
+        limit: 3,
+      });
+      expect(firstClaim).toHaveLength(1);
       await finishClaimedPageDm(database, {
         workspaceId,
         id: firstRow.id,
-        workerId: 'w',
+        workerId: firstClaim[0]?.leaseOwner ?? '',
         state: 'confirmed',
       });
       const second = await pg.query<{ status: string; due_at: Date }>(
@@ -202,7 +206,7 @@ describe('Page DM pending intent', () => {
       await finishClaimedPageDm(database, {
         workspaceId,
         id: secondRow.id,
-        workerId: 'w',
+        workerId: nextClaim[0]?.leaseOwner ?? '',
         state: 'unknown',
       });
       const stopped = await pg.query<{ status: string }>(
@@ -214,6 +218,77 @@ describe('Page DM pending intent', () => {
         [proposalId],
       );
       expect(proposal.rows[0]?.status).toBe('unknown');
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('fences a stale claim when the same configured worker ID reclaims it', async () => {
+    const { pg, database } = await setup();
+    try {
+      const dueAt = new Date(Date.now() - 5000);
+      const intent = await schedulePageDm(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'fenced',
+        actor: { type: 'user', id: actorId },
+        text: 'Only once',
+        dueAt,
+      });
+      const [oldClaim] = await claimDuePageDms(database, {
+        workerId: 'same-worker',
+        now: dueAt,
+        leaseMs: 1000,
+        limit: 1,
+      });
+      const [newClaim] = await claimDuePageDms(database, {
+        workerId: 'same-worker',
+        now: new Date(dueAt.getTime() + 1001),
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      expect(oldClaim?.leaseOwner).toBeTruthy();
+      expect(newClaim?.leaseOwner).toBeTruthy();
+      expect(newClaim?.leaseOwner).not.toBe(oldClaim?.leaseOwner);
+      expect(
+        await renewClaimedPageDm(database, {
+          workspaceId,
+          id: intent.id,
+          workerId: oldClaim?.leaseOwner ?? '',
+          leaseMs: 30_000,
+        }),
+      ).toBe(false);
+      expect(
+        await finishClaimedPageDm(database, {
+          workspaceId,
+          id: intent.id,
+          workerId: oldClaim?.leaseOwner ?? '',
+          state: 'pending',
+        }),
+      ).toBe(false);
+      const rows = await pg.query<{
+        status: string;
+        lease_owner: string;
+        pre_send_attempts: number;
+      }>(
+        'SELECT status, lease_owner, pre_send_attempts FROM facebook_page_dm_pending_intents WHERE id = $1',
+        [intent.id],
+      );
+      expect(rows.rows[0]).toMatchObject({
+        status: 'claimed',
+        lease_owner: newClaim?.leaseOwner,
+        pre_send_attempts: 0,
+      });
+      expect(
+        await finishClaimedPageDm(database, {
+          workspaceId,
+          id: intent.id,
+          workerId: newClaim?.leaseOwner ?? '',
+          state: 'failed',
+        }),
+      ).toBe(true);
     } finally {
       await pg.close();
     }
@@ -395,7 +470,7 @@ describe('Page DM pending intent', () => {
         finishClaimedPageDm(database, {
           workspaceId,
           id: first.id,
-          workerId: 'worker-a',
+          workerId: claimed[0]?.leaseOwner ?? '',
           state: 'pending',
         }),
       ).rejects.toThrow('Cannot retry');
@@ -403,7 +478,7 @@ describe('Page DM pending intent', () => {
         await finishClaimedPageDm(database, {
           workspaceId,
           id: first.id,
-          workerId: 'worker-a',
+          workerId: claimed[0]?.leaseOwner ?? '',
           state: 'unknown',
         }),
       ).toBe(true);
@@ -440,7 +515,7 @@ describe('Page DM pending intent', () => {
             await renewClaimedPageDm(database, {
               workspaceId,
               id: first.id,
-              workerId: 'worker-a',
+              workerId: claim?.leaseOwner ?? '',
               leaseMs: 60_000,
             }),
           ).toBe(true);
@@ -457,7 +532,7 @@ describe('Page DM pending intent', () => {
           await finishClaimedPageDm(database, {
             workspaceId,
             id: first.id,
-            workerId: 'worker-a',
+            workerId: claim?.leaseOwner ?? '',
             state: 'pending',
           }),
         ).toBe(true);

@@ -130,6 +130,7 @@ const projection = {
   groupId: facebookPageDmPendingIntents.groupId,
   sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
   expectedLatestInboundMessageId: facebookPageDmPendingIntents.expectedLatestInboundMessageId,
+  leaseOwner: facebookPageDmPendingIntents.leaseOwner,
 };
 
 /** Schedule once. The action ID remains the provider idempotency key at dispatch. */
@@ -525,7 +526,7 @@ export async function claimDuePageDms(
       .update(facebookPageDmPendingIntents)
       .set({
         status: 'claimed',
-        leaseOwner: input.workerId,
+        leaseOwner: `${input.workerId}:${randomUUID()}`,
         leaseUntil: new Date(input.now.getTime() + input.leaseMs),
         updatedAt: input.now,
       })

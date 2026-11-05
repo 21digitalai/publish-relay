@@ -1,5 +1,83 @@
 import { expect, test } from '@playwright/test';
 
+test('expired Page DM plan explains approval without sending', async ({ page }) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Expired Review Owner',
+      email: `expired-review-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Expired Review Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const id = '00000000-0000-4000-8000-000000000413';
+  const plannedDueAt = new Date(Date.now() - 60_000).toISOString();
+  let approvals = 0;
+  let status = 'pending';
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('/approve')) {
+      approvals += 1;
+      await route.fulfill({ status: 409, body: JSON.stringify({ data: null, error: 'Expired' }) });
+      return;
+    }
+    const list = path.endsWith('/api/engagement-proposals');
+    const data = list
+      ? {
+          items: [
+            {
+              id,
+              accountDisplayName: 'Eli Page',
+              provider: 'facebook_page',
+              kind: 'dm',
+              status,
+              plannedDueAt,
+              sourcePreview: 'Hello',
+              contentPreview: 'Draft',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          nextCursor: null,
+        }
+      : {
+          id,
+          accountDisplayName: 'Eli Page',
+          provider: 'facebook_page',
+          kind: 'dm',
+          targetId: 't_123',
+          sourceContext: { text: 'Hello' },
+          content: { text: 'Draft' },
+          plannedDueAt,
+          revision: 1,
+          status,
+          canApprove: true,
+          noGo: false,
+        };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await expect(page.getByText('Expired · new draft required')).toBeVisible();
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByText(/This planned send time has passed/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send immediately' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Approval unavailable · time expired' }).click();
+  await expect(page.getByRole('alert')).toContainText('Nothing was sent');
+  status = 'expired';
+  await page.reload();
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.getByText('Expired · new draft required')).toBeVisible();
+  await page.getByRole('button', { name: 'Approval unavailable · time expired' }).click();
+  await expect(page.getByRole('alert')).toContainText('Nothing was sent');
+  expect(approvals).toBe(0);
+});
+
 test('one Page DM approval reviews and edits all three scheduled bubbles', async ({ page }) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {

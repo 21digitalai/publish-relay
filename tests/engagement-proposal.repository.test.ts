@@ -29,6 +29,7 @@ import {
   claimEngagementProposal,
   createEngagementProposal,
   dismissEngagementProposal,
+  expireScheduledEngagementProposals,
   getEngagementProposal,
   listEngagementReviewQueue,
   reviseEngagementProposal,
@@ -305,6 +306,41 @@ describe('engagement proposal foundation', () => {
       expect(proposedPageDm.statusCode).toBe(201);
       expect(proposedPageDm.json<{ data: { plannedDueAt: string } }>().data.plannedDueAt).toBe(
         plannedDueAt,
+      );
+      const expiringId = proposedPageDm.json<{ data: { id: string } }>().data.id;
+      await client.exec(
+        `UPDATE engagement_proposals SET planned_due_at = now() - interval '1 minute' WHERE id = '${expiringId}'`,
+      );
+      expect(await expireScheduledEngagementProposals(database)).toBe(1);
+      expect(await expireScheduledEngagementProposals(database)).toBe(0);
+      expect((await getEngagementProposal(database, workspace, expiringId))?.status).toBe(
+        'expired',
+      );
+      await expect(
+        claimEngagementProposal(database, {
+          workspaceId: workspace,
+          id: expiringId,
+          expectedRevision: 1,
+        }),
+      ).rejects.toThrow('stale or unavailable');
+      expect(
+        (await listEngagementReviewQueue(database, workspace)).find(
+          (item) => item.id === expiringId,
+        )?.status,
+      ).toBe('expired');
+      await expect(
+        reviseEngagementProposal(database, {
+          workspaceId: workspace,
+          id: expiringId,
+          expectedRevision: 1,
+          content: { text: 'Too late' },
+        }),
+      ).rejects.toThrow('stale or unavailable');
+      await client.exec(
+        `UPDATE engagement_proposals SET status = 'pending' WHERE id = '${expiringId}'`,
+      );
+      expect((await getEngagementProposal(database, workspace, expiringId))?.status).toBe(
+        'expired',
       );
       expect(
         (

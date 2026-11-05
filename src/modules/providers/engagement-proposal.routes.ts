@@ -156,6 +156,7 @@ function summary(
     kind: row.kind,
     status: row.status,
     sourcePreview: previewText(row.sourceContext),
+    ...(row.plannedDueAt ? { plannedDueAt: row.plannedDueAt.toISOString() } : {}),
     contentPreview: previewText(row.content),
     bubbleCount:
       row.provider === 'facebook_page' && row.kind === 'dm' ? bubbleCount(row.content) : 1,

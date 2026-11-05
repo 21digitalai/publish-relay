@@ -44,6 +44,7 @@ import {
 } from '../modules/providers/youtube-media-dispatch.service.js';
 import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { dispatchDuePageDms } from '../modules/providers/facebook-dm-pending.worker.js';
+import { expireScheduledEngagementProposals } from '../modules/providers/engagement-proposal.repository.js';
 import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
 import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
 import { FanvuePostClient } from '../modules/providers/fanvue-post-client.js';
@@ -279,6 +280,17 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 while (!shutdownController.signal.aborted) {
+  try {
+    const expired = await expireScheduledEngagementProposals(database);
+    if (expired)
+      process.stdout.write(
+        `${JSON.stringify({ event: 'engagement_proposals_expired', count: expired })}\n`,
+      );
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify({ event: 'engagement_proposal_expiry_failed', error: String(error) })}\n`,
+    );
+  }
   if (authEmailDelivery) {
     const authEmail = await dispatchAuthEmailOutbox(database, keys, authEmailDelivery, {
       workerId: config.WORKER_ID ?? 'publish-relay-worker',

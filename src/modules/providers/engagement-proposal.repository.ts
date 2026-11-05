@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, lte, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -40,6 +40,35 @@ export class EngagementProposalError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Expiry never touches an approved schedule or a send already in progress. */
+async function expirePendingScheduledProposals(
+  database: NodePgDatabase,
+  now: Date,
+  workspaceId?: string,
+): Promise<number> {
+  const rows = await database
+    .update(engagementProposals)
+    .set({ status: 'expired', updatedAt: now })
+    .where(
+      and(
+        eq(engagementProposals.status, 'pending'),
+        eq(engagementProposals.provider, 'facebook_page'),
+        eq(engagementProposals.kind, 'dm'),
+        lte(engagementProposals.plannedDueAt, now),
+        ...(workspaceId ? [eq(engagementProposals.workspaceId, workspaceId)] : []),
+      ),
+    )
+    .returning({ id: engagementProposals.id });
+  return rows.length;
+}
+
+export async function expireScheduledEngagementProposals(
+  database: NodePgDatabase,
+  now = new Date(),
+): Promise<number> {
+  return expirePendingScheduledProposals(database, now);
 }
 
 function matchesProposal(
@@ -180,6 +209,7 @@ export async function listEngagementReviewQueue(
   page?: { beforeCreatedAt?: Date; beforeId?: string; limit: number },
 ) {
   return withTenantTransaction(database, { workspaceId }, async (tx) => {
+    await expirePendingScheduledProposals(tx, new Date(), workspaceId);
     const rows = await tx
       .select({ proposal: engagementProposals, accountDisplayName: providerAccounts.displayName })
       .from(engagementProposals)
@@ -200,6 +230,7 @@ export async function listEngagementReviewQueue(
             'cancelled',
             'unknown',
             'failed',
+            'expired',
           ]),
           ...(page?.beforeCreatedAt && page.beforeId
             ? [
@@ -226,6 +257,7 @@ export async function getEngagementProposal(
   id: string,
 ) {
   return withTenantTransaction(database, { workspaceId }, async (tx) => {
+    await expirePendingScheduledProposals(tx, new Date(), workspaceId);
     const [row] = await tx
       .select({ proposal: engagementProposals, accountDisplayName: providerAccounts.displayName })
       .from(engagementProposals)

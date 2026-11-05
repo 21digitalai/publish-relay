@@ -708,6 +708,13 @@
       "when": 1793880000000,
       "tag": "0100_page_dm_grouped_approval",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1793890800000,
+      "tag": "0101_engagement_proposal_expiry",
+      "breakpoints": true
     }
   ]
 }

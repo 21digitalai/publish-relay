@@ -1,5 +1,84 @@
 import { expect, test } from '@playwright/test';
 
+test('closed Page DM window hides approval on desktop and mobile', async ({ page }) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Closed Window Owner',
+      email: `closed-window-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Closed Window Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const id = '00000000-0000-4000-8000-000000000414';
+  const plannedDueAt = new Date(Date.now() - 60_000).toISOString();
+  let status = 'expired';
+  let approvals = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/approve') || path.endsWith('/approve-preview')) approvals += 1;
+    const data = path.endsWith('/reply-window')
+      ? { state: 'closed' }
+      : path.endsWith('/api/engagement-proposals')
+        ? {
+            items: [
+              {
+                id,
+                accountDisplayName: 'Eli Page',
+                provider: 'facebook_page',
+                kind: 'dm',
+                status,
+                plannedDueAt,
+                sourcePreview: 'Hello',
+                contentPreview: 'Draft',
+                createdAt: new Date().toISOString(),
+              },
+            ],
+            nextCursor: null,
+          }
+        : {
+            id,
+            accountDisplayName: 'Eli Page',
+            provider: 'facebook_page',
+            kind: 'dm',
+            targetId: 't_123',
+            sourceContext: { text: 'Hello' },
+            content: { text: 'Draft', followUps: ['Second', 'Third'] },
+            plannedDueAt,
+            revision: 1,
+            status,
+            canApprove: true,
+            noGo: false,
+          };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  for (const size of [
+    { width: 1280, height: 800 },
+    { width: 390, height: 844 },
+  ]) {
+    status = size.width < 500 ? 'pending' : 'expired';
+    await page.setViewportSize(size);
+    await page.goto(`/w/${workspace.data.slug}/proposals`);
+    await page.getByRole('button', { name: /Facebook Page message/ }).click();
+    await expect(
+      page.getByText('Reply window closed · waiting for their next message'),
+    ).toHaveCount(2);
+    await expect(page.getByRole('button', { name: 'Approve and schedule 3 bubbles' })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
+    await expect(page.getByText(/approval re-anchors|Approval schedules from now/)).toHaveCount(0);
+  }
+  expect(approvals).toBe(0);
+});
+
 test('expired Page DM plan previews a re-anchored send time before approval', async ({ page }) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {
@@ -23,6 +102,13 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
   await page.route('**/api/engagement-proposals**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path.endsWith('/reply-window')) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { state: 'open', windowDeadline: dueAt }, error: null }),
+      });
+      return;
+    }
     if (path.endsWith('/approve-preview')) {
       await route.fulfill({
         contentType: 'application/json',
@@ -87,7 +173,7 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
     });
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
-  await expect(page.getByText('Planned time passed · approval re-anchors')).toBeVisible();
+  await expect(page.getByText('Planned time passed · check reply window')).toBeVisible();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(page.getByText(/Approval schedules from now plus the Page delay/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send immediately' })).toHaveCount(0);
@@ -129,6 +215,13 @@ test('one Page DM approval reviews and edits all three scheduled bubbles', async
   await page.route('**/api/engagement-proposals**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path.endsWith('/reply-window')) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { state: 'open', windowDeadline: dueAt }, error: null }),
+      });
+      return;
+    }
     if (path.endsWith('/approve-preview')) {
       expect(request.postDataJSON()).toEqual({ expectedRevision: 2 });
       await route.fulfill({
@@ -368,6 +461,16 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
   await page.route('**/api/engagement-proposals**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path.endsWith('/reply-window')) {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { state: 'open', windowDeadline: new Date(Date.now() + 3_600_000).toISOString() },
+          error: null,
+        }),
+      });
+      return;
+    }
     if (path.endsWith('/approve')) {
       approvals += 1;
       expect(request.postDataJSON()).toEqual(
@@ -490,7 +593,9 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
     const request = route.request();
     const path = new URL(request.url()).pathname;
     let data: unknown;
-    if (path.endsWith('/schedule-default') && request.method() === 'PUT') {
+    if (path.endsWith('/reply-window')) {
+      data = { state: 'open', windowDeadline: new Date(Date.now() + 3_600_000).toISOString() };
+    } else if (path.endsWith('/schedule-default') && request.method() === 'PUT') {
       const input = request.postDataJSON() as {
         earliestDelaySeconds: number;
         latestDelaySeconds: number;

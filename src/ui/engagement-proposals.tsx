@@ -43,6 +43,8 @@ interface NoGoEntry {
   createdAt: string;
 }
 
+type ReplyWindow = { state: 'open'; windowDeadline: string } | { state: 'closed' | 'unavailable' };
+
 async function readApi<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const body = (await response.json()) as { data: T | null; error: string | null };
@@ -71,6 +73,7 @@ export function EngagementProposalsPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
+  const [replyWindow, setReplyWindow] = useState<ReplyWindow | null>(null);
   const [draft, setDraft] = useState('');
   const [draftFollowUps, setDraftFollowUps] = useState<[string, string]>(['', '']);
   const [loading, setLoading] = useState(true);
@@ -196,6 +199,7 @@ export function EngagementProposalsPage() {
     let active = true;
     activeProposalRef.current = null;
     setDetail(null);
+    setReplyWindow(null);
     setMediaStates({});
     setDetailFailed(false);
     setError(null);
@@ -221,6 +225,26 @@ export function EngagementProposalsPage() {
       active = false;
     };
   }, [selectedId, detailReload]);
+
+  useEffect(() => {
+    if (
+      detail?.provider !== 'facebook_page' ||
+      detail.kind !== 'dm' ||
+      !['pending', 'expired'].includes(detail.status)
+    )
+      return;
+    let active = true;
+    void readApi<ReplyWindow>(`/api/engagement-proposals/${detail.id}/reply-window`)
+      .then((window) => {
+        if (active) setReplyWindow(window);
+      })
+      .catch(() => {
+        if (active) setReplyWindow({ state: 'unavailable' });
+      });
+    return () => {
+      active = false;
+    };
+  }, [detail]);
 
   const mutate = async (action: 'edit' | 'dismiss') => {
     if (!detail || saving) return;
@@ -499,6 +523,11 @@ export function EngagementProposalsPage() {
       detail.provider === 'facebook_page' &&
       detail.kind === 'dm' &&
       Boolean(detail.plannedDueAt && Date.parse(detail.plannedDueAt) <= now));
+  const pageDmWindowClosed =
+    detail?.id === selectedId &&
+    (replyWindow?.state === 'closed' ||
+      (replyWindow?.state === 'open' && Date.parse(replyWindow.windowDeadline) <= now));
+  const pageDmWindowReady = replyWindow?.state === 'open' && !pageDmWindowClosed;
   const canApprove =
     (detail?.status === 'pending' ||
       (detail?.status === 'expired' &&
@@ -507,6 +536,7 @@ export function EngagementProposalsPage() {
     selectedId === detail.id &&
     activeProposalRef.current === `${detail.id}:${String(detail.revision)}` &&
     detail.canApprove &&
+    (detail.provider !== 'facebook_page' || detail.kind !== 'dm' || pageDmWindowReady) &&
     !detail.noGo &&
     (facebookReady || fanvueReady) &&
     draft.trim() === detail.content.text &&
@@ -592,21 +622,26 @@ export function EngagementProposalsPage() {
                   {(item.status !== 'pending' ||
                     (item.provider === 'facebook_page' &&
                       item.kind === 'dm' &&
-                      item.plannedDueAt &&
-                      Date.parse(item.plannedDueAt) <= now)) && (
+                      Boolean(item.plannedDueAt) &&
+                      Date.parse(item.plannedDueAt ?? '') <= now) ||
+                    (selectedId === item.id && pageDmWindowClosed)) && (
                     <span>
-                      {item.status === 'scheduled'
-                        ? 'Scheduled'
-                        : item.status === 'expired' ||
-                            (item.status === 'pending' &&
-                              item.plannedDueAt &&
-                              Date.parse(item.plannedDueAt) <= now)
-                          ? 'Planned time passed · approval re-anchors'
-                          : item.status === 'superseded'
-                            ? 'Superseded by a newer draft'
-                            : item.status === 'unknown' || item.status === 'sending'
-                              ? 'Send outcome unknown'
-                              : 'Provider rejected send'}
+                      {selectedId === item.id &&
+                      pageDmWindowClosed &&
+                      ['pending', 'expired'].includes(item.status)
+                        ? 'Reply window closed · waiting for their next message'
+                        : item.status === 'scheduled'
+                          ? 'Scheduled'
+                          : item.status === 'expired' ||
+                              (item.status === 'pending' &&
+                                item.plannedDueAt &&
+                                Date.parse(item.plannedDueAt) <= now)
+                            ? 'Planned time passed · check reply window'
+                            : item.status === 'superseded'
+                              ? 'Superseded by a newer draft'
+                              : item.status === 'unknown' || item.status === 'sending'
+                                ? 'Send outcome unknown'
+                                : 'Provider rejected send'}
                     </span>
                   )}
                   <span>{item.accountDisplayName}</span>
@@ -762,37 +797,56 @@ export function EngagementProposalsPage() {
                       : ''}
                   </p>
                 )}
-                {(detail.status !== 'pending' || expiredScheduled) && (
-                  <p className={expiredScheduled ? 'form-error' : 'form-success'} role="status">
-                    {detail.status === 'sent'
-                      ? 'Sent'
-                      : detail.status === 'superseded'
-                        ? 'A newer draft replaced this one. This proposal cannot be approved or sent.'
-                        : expiredScheduled
-                          ? 'The agent-selected time has passed. Approval schedules from now plus the Page delay, if no newer draft exists and the Messenger reply window still fits.'
-                          : detail.status === 'scheduled'
-                            ? detail.schedule
-                              ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
-                              : 'Scheduled; refresh to see the send time.'
-                            : detail.status === 'cancelled'
-                              ? 'Cancelled before dispatch'
-                              : detail.status === 'dismissed'
-                                ? 'Dismissed without sending'
-                                : detail.status === 'failed'
-                                  ? 'Provider rejected this send'
-                                  : 'Send outcome is unknown; do not send again'}
-                  </p>
-                )}
+                {detail.provider === 'facebook_page' &&
+                  detail.kind === 'dm' &&
+                  ['pending', 'expired'].includes(detail.status) &&
+                  (pageDmWindowClosed || !replyWindow || replyWindow.state === 'unavailable') && (
+                    <p className="form-error" role="status">
+                      {pageDmWindowClosed
+                        ? 'Reply window closed · waiting for their next message'
+                        : !replyWindow
+                          ? 'Checking the Messenger reply window…'
+                          : 'Reply window could not be verified. Approval is unavailable.'}
+                    </p>
+                  )}
+                {(detail.status !== 'pending' || expiredScheduled) &&
+                  !(
+                    detail.provider === 'facebook_page' &&
+                    detail.kind === 'dm' &&
+                    ['pending', 'expired'].includes(detail.status) &&
+                    !pageDmWindowReady
+                  ) && (
+                    <p className={expiredScheduled ? 'form-error' : 'form-success'} role="status">
+                      {detail.status === 'sent'
+                        ? 'Sent'
+                        : detail.status === 'superseded'
+                          ? 'A newer draft replaced this one. This proposal cannot be approved or sent.'
+                          : expiredScheduled
+                            ? 'The agent-selected time has passed. Approval schedules from now plus the Page delay, if no newer draft exists and the Messenger reply window still fits.'
+                            : detail.status === 'scheduled'
+                              ? detail.schedule
+                                ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
+                                : 'Scheduled; refresh to see the send time.'
+                              : detail.status === 'cancelled'
+                                ? 'Cancelled before dispatch'
+                                : detail.status === 'dismissed'
+                                  ? 'Dismissed without sending'
+                                  : detail.status === 'failed'
+                                    ? 'Provider rejected this send'
+                                    : 'Send outcome is unknown; do not send again'}
+                    </p>
+                  )}
                 <div className="engagement-proposal-actions">
                   {detail.status === 'pending' &&
                     detail.provider === 'facebook_page' &&
-                    detail.kind === 'dm' && (
+                    detail.kind === 'dm' &&
+                    pageDmWindowReady && (
                       <fieldset className="engagement-proposal-timing">
                         <legend>Bot-selected send plan</legend>
                         <p className="muted engagement-planned-due-at">
                           {detail.plannedDueAt
                             ? Date.parse(detail.plannedDueAt) <= Date.now()
-                              ? `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()} has passed. Approval starts a new Page delay from now.`
+                              ? `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()} has passed. A fresh reply-window check is required.`
                               : `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()}; approval adds the Page delay on top.`
                             : 'This proposal has no bot-selected time. Scheduling is unavailable; request a new proposal.'}
                         </p>
@@ -886,27 +940,33 @@ export function EngagementProposalsPage() {
                         )}
                       </fieldset>
                     )}
-                  {['pending', 'expired', 'superseded'].includes(detail.status) && (
-                    <button
-                      ref={approveTrigger}
-                      className="primary-button engagement-proposal-approve"
-                      type="button"
-                      disabled={saving || !canApprove}
-                      onClick={() => {
-                        void openApprovalConfirmation();
-                      }}
-                    >
-                      {detail.status === 'superseded'
-                        ? 'Approval unavailable · newer draft'
-                        : detail.provider === 'facebook_page' &&
-                            detail.kind === 'dm' &&
-                            dmTiming === 'scheduled'
-                          ? detail.content.followUps
-                            ? 'Approve and schedule 3 bubbles'
-                            : 'Approve and schedule'
-                          : 'Approve and send'}
-                    </button>
-                  )}
+                  {['pending', 'expired', 'superseded'].includes(detail.status) &&
+                    !(
+                      detail.provider === 'facebook_page' &&
+                      detail.kind === 'dm' &&
+                      !pageDmWindowReady &&
+                      detail.status !== 'superseded'
+                    ) && (
+                      <button
+                        ref={approveTrigger}
+                        className="primary-button engagement-proposal-approve"
+                        type="button"
+                        disabled={saving || !canApprove}
+                        onClick={() => {
+                          void openApprovalConfirmation();
+                        }}
+                      >
+                        {detail.status === 'superseded'
+                          ? 'Approval unavailable · newer draft'
+                          : detail.provider === 'facebook_page' &&
+                              detail.kind === 'dm' &&
+                              dmTiming === 'scheduled'
+                            ? detail.content.followUps
+                              ? 'Approve and schedule 3 bubbles'
+                              : 'Approve and schedule'
+                            : 'Approve and send'}
+                      </button>
+                    )}
                   {detail.status === 'scheduled' && detail.canApprove && (
                     <button
                       ref={cancelScheduleTrigger}

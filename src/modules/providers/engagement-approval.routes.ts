@@ -46,6 +46,38 @@ export function registerEngagementApprovalRoutes(
     auth: AuthService;
   } & EngagementSendCommands,
 ): void {
+  application.get('/api/engagement-proposals/:proposalId/reply-window', async (request, reply) => {
+    void reply.header('Cache-Control', 'no-store');
+    const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const params = paramsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ data: null, error: 'Proposal not found' });
+    const proposal = await getEngagementProposal(
+      dependencies.database,
+      identity.workspaceId,
+      params.data.proposalId,
+    );
+    if (proposal?.provider !== 'facebook_page' || proposal.kind !== 'dm')
+      return reply.code(404).send({ data: null, error: 'Proposal not found' });
+    if (!dependencies.facebook) return { data: { state: 'unavailable' }, error: null };
+    try {
+      const window = await dependencies.facebook.previewDmWindow({
+        workspaceId: identity.workspaceId,
+        accountId: proposal.accountId,
+        conversationId: proposal.targetId,
+      });
+      return {
+        data: { state: 'open', windowDeadline: window.windowDeadline.toISOString() },
+        error: null,
+      };
+    } catch (error) {
+      if (error instanceof FacebookDmWindowClosedError)
+        return { data: { state: 'closed' }, error: null };
+      if (error instanceof PageReadUnavailableError)
+        return { data: { state: 'unavailable' }, error: null };
+      throw error;
+    }
+  });
   application.post(
     '/api/engagement-proposals/:proposalId/approve-preview',
     async (request, reply) => {

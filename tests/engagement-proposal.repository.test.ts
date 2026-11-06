@@ -16,6 +16,7 @@ import { registerEngagementApprovalRoutes } from '../src/modules/providers/engag
 import { registerEngagementDmMediaRoutes } from '../src/modules/providers/engagement-dm-media.routes.js';
 import { markFanvuePreSendError } from '../src/modules/providers/fanvue-pre-send-error.js';
 import { PageReadUnavailableError } from '../src/modules/providers/facebook-page-read-context.service.js';
+import { FacebookDmWindowClosedError } from '../src/modules/providers/facebook-messenger-send.service.js';
 import {
   isPageConversationNoGo,
   setPageConversationNoGo,
@@ -1149,19 +1150,57 @@ describe('engagement proposal foundation', () => {
       expect((await getEngagementProposal(database, workspace, late.id))?.status).toBe('expired');
       const lateApp = Fastify();
       await lateApp.register(cookie);
+      const previewDmWindow = vi.fn().mockResolvedValue({
+        latestInboundMessageId: 'mid_1',
+        windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
+      });
       registerEngagementApprovalRoutes(lateApp, {
         database,
         auth,
         facebook: {
           sendComment: sendPageComment,
           sendDm: sendPageDm,
-          previewDmWindow: vi.fn().mockResolvedValue({
-            latestInboundMessageId: 'mid_1',
-            windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
-          }),
+          previewDmWindow,
         },
       });
       const lateUrl = `/api/engagement-proposals/${late.id}`;
+      const windowUrl = `${lateUrl}/reply-window`;
+      const openWindow = await lateApp.inject({
+        method: 'GET',
+        url: windowUrl,
+        headers: browserHeaders,
+      });
+      expect(openWindow.statusCode).toBe(200);
+      expect(Object.keys(openWindow.json<{ data: object }>().data).sort()).toEqual([
+        'state',
+        'windowDeadline',
+      ]);
+      expect(JSON.stringify(openWindow.json())).not.toContain('mid_1');
+      previewDmWindow.mockRejectedValueOnce(new FacebookDmWindowClosedError());
+      const closedWindow = await lateApp.inject({
+        method: 'GET',
+        url: windowUrl,
+        headers: browserHeaders,
+      });
+      expect(closedWindow.json<{ data: { state: string } }>().data).toEqual({ state: 'closed' });
+      previewDmWindow.mockRejectedValueOnce(new PageReadUnavailableError());
+      const unavailableWindow = await lateApp.inject({
+        method: 'GET',
+        url: windowUrl,
+        headers: browserHeaders,
+      });
+      expect(unavailableWindow.json<{ data: { state: string } }>().data).toEqual({
+        state: 'unavailable',
+      });
+      expect(
+        (
+          await lateApp.inject({
+            method: 'GET',
+            url: `/api/engagement-proposals/${fanvuePost}/reply-window`,
+            headers: browserHeaders,
+          })
+        ).statusCode,
+      ).toBe(404);
       const previewResponse = await lateApp.inject({
         method: 'POST',
         url: `${lateUrl}/approve-preview`,

@@ -85,6 +85,7 @@ function proposalLabel(proposal: { provider: string; kind: 'dm' | 'comment' }): 
 }
 
 export function EngagementProposalsPage() {
+  const terminalWindowKey = `page-dm-terminal-windows:${window.location.pathname.split('/')[2] ?? ''}`;
   const [now, setNow] = useState(Date.now());
   const [items, setItems] = useState<ProposalSummary[]>([]);
   const [noGoEntries, setNoGoEntries] = useState<NoGoEntry[]>([]);
@@ -96,6 +97,16 @@ export function EngagementProposalsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
   const [replyWindow, setReplyWindow] = useState<ReplyWindow | null>(null);
+  const [terminalWindows, setTerminalWindows] = useState<Record<string, 'closed' | 'stale'>>(() => {
+    try {
+      return JSON.parse(window.sessionStorage.getItem(terminalWindowKey) ?? '{}') as Record<
+        string,
+        'closed' | 'stale'
+      >;
+    } catch {
+      return {};
+    }
+  });
   const [draft, setDraft] = useState('');
   const [draftFollowUps, setDraftFollowUps] = useState<[string, string]>(['', '']);
   const [loading, setLoading] = useState(true);
@@ -135,6 +146,10 @@ export function EngagementProposalsPage() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(terminalWindowKey, JSON.stringify(terminalWindows));
+  }, [terminalWindowKey, terminalWindows]);
 
   const loadPage = useCallback(async (cursor?: string) => {
     const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
@@ -254,7 +269,15 @@ export function EngagementProposalsPage() {
     let active = true;
     void readApi<ReplyWindow>(`/api/engagement-proposals/${detail.id}/reply-window`)
       .then((window) => {
-        if (active) setReplyWindow(window);
+        if (!active) return;
+        setReplyWindow(window);
+        if (window.state === 'closed' || window.state === 'stale') {
+          setTerminalWindows((current) => ({ ...current, [detail.id]: window.state }));
+        } else if (window.state === 'open') {
+          setTerminalWindows((current) =>
+            Object.fromEntries(Object.entries(current).filter(([id]) => id !== detail.id)),
+          );
+        }
       })
       .catch(() => {
         if (active) setReplyWindow({ state: 'unavailable' });
@@ -263,6 +286,14 @@ export function EngagementProposalsPage() {
       active = false;
     };
   }, [detail]);
+
+  useEffect(() => {
+    if (detail?.id !== selectedId || replyWindow?.state !== 'open') return;
+    if (Date.parse(replyWindow.windowDeadline) > now) return;
+    setTerminalWindows((current) =>
+      current[detail.id] === 'closed' ? current : { ...current, [detail.id]: 'closed' },
+    );
+  }, [detail, now, replyWindow, selectedId]);
 
   const mutate = async (action: 'edit' | 'dismiss') => {
     if (!detail || saving) return;
@@ -569,11 +600,11 @@ export function EngagementProposalsPage() {
     if (item.status === 'expired' || item.status === 'superseded') return true;
     if (item.status !== 'pending' || item.provider !== 'facebook_page' || item.kind !== 'dm')
       return false;
+    if (terminalWindows[item.id]) return true;
     if (selectedId !== item.id || detail?.id !== item.id) return false;
     return (
       replyWindow?.state === 'closed' ||
       replyWindow?.state === 'stale' ||
-      replyWindow?.state === 'unavailable' ||
       (replyWindow?.state === 'open' && Date.parse(replyWindow.windowDeadline) <= now)
     );
   };
@@ -595,10 +626,17 @@ export function EngagementProposalsPage() {
       <strong>{proposalLabel(item)}</strong>
       {item.bubbleCount === 3 && <span>3-bubble group · one approval</span>}
       {item.provider === 'facebook_page' && item.kind === 'dm' && item.status === 'pending' && (
-        <span className={`engagement-reply-window-badge ${inactiveDraft(item) ? 'danger' : ''}`}>
+        <span
+          className={`engagement-reply-window-badge ${inactiveDraft(item) || (selectedId === item.id && replyWindow?.state === 'unavailable') ? 'danger' : ''}`}
+        >
           {selectedId === item.id && detail?.id === item.id
             ? replyWindowLabel(replyWindow, now)
-            : 'Reply window: select to check'}
+            : terminalWindows[item.id]
+              ? replyWindowLabel(
+                  { state: terminalWindows[item.id] === 'stale' ? 'stale' : 'closed' },
+                  now,
+                )
+              : 'Reply window: select to check'}
         </span>
       )}
       {item.status === 'expired' && (
@@ -769,6 +807,17 @@ export function EngagementProposalsPage() {
                           Last message from recipient:{' '}
                           {new Date(replyWindow.latestInboundAt).toLocaleString()}
                         </p>
+                      )}
+                      {replyWindow?.state === 'unavailable' && (
+                        <button
+                          className="secondary-button engagement-reply-window-retry"
+                          type="button"
+                          onClick={() => {
+                            setDetailReload((current) => current + 1);
+                          }}
+                        >
+                          Retry reply-window check
+                        </button>
                       )}
                     </div>
                   )}

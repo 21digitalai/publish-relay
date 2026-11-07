@@ -101,6 +101,95 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
   expect(approvals).toBe(0);
 });
 
+test('verified inactive Page DM stays outside approval after switching rows and reload', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Window Switch Owner',
+      email: `window-switch-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Window Switch Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const first = '00000000-0000-4000-8000-000000000451';
+  const second = '00000000-0000-4000-8000-000000000452';
+  let failSecond = true;
+  const checked: string[] = [];
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const id = path.includes(first) ? first : second;
+    if (path.endsWith('/reply-window')) checked.push(id);
+    const data = path.endsWith('/reply-window')
+      ? id === first
+        ? { state: 'closed' }
+        : failSecond
+          ? { state: 'unavailable' }
+          : {
+              state: 'open',
+              latestInboundAt: new Date().toISOString(),
+              windowDeadline: new Date(Date.now() + 3_600_000).toISOString(),
+            }
+      : path.endsWith('/api/engagement-proposals')
+        ? {
+            items: [first, second].map((rowId, index) => ({
+              id: rowId,
+              accountDisplayName: 'Eli Page',
+              provider: 'facebook_page',
+              kind: 'dm',
+              status: 'pending',
+              sourcePreview: `Message ${String(index + 1)}`,
+              contentPreview: `Draft ${String(index + 1)}`,
+              createdAt: new Date().toISOString(),
+            })),
+            nextCursor: null,
+          }
+        : {
+            id,
+            accountDisplayName: 'Eli Page',
+            provider: 'facebook_page',
+            kind: 'dm',
+            targetId: 't_123',
+            sourceContext: { text: 'Hello' },
+            content: { text: 'Draft' },
+            plannedDueAt: new Date(Date.now() + 3_600_000).toISOString(),
+            revision: 1,
+            status: 'pending',
+            canApprove: true,
+            noGo: false,
+          };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  for (const size of [
+    { width: 1280, height: 800 },
+    { width: 390, height: 844 },
+  ]) {
+    failSecond = true;
+    await page.setViewportSize(size);
+    await page.goto(`/w/${workspace.data.slug}/proposals`);
+    await page.getByRole('button', { name: /Draft 1/ }).click();
+    await expect(page.getByLabel('Inactive drafts')).toContainText('Draft 1');
+    await page.getByRole('button', { name: /Draft 2/ }).click();
+    await expect(page.getByLabel('Inactive drafts')).toContainText('Draft 1');
+    await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
+    await expect(page.getByRole('button', { name: 'Retry reply-window check' })).toBeVisible();
+    failSecond = false;
+    await page.getByRole('button', { name: 'Retry reply-window check' }).click();
+    await expect(page.locator('.engagement-reply-window-detail')).toContainText('left');
+    await page.reload();
+    await expect(page.getByLabel('Inactive drafts')).toContainText('Draft 1');
+    await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
+    expect(checked).toContain(first);
+  }
+});
+
 test('Page DM plan shows the verified window before approval', async ({ page }, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {

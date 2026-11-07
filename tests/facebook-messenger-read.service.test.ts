@@ -19,7 +19,7 @@ const input = {
 };
 
 describe('Facebook selected-conversation message read', () => {
-  it('uses the exact link, then only the selected Page username as fallback', async () => {
+  it('uses only the exact Graph conversation link and leaves a missing link absent', async () => {
     mocks.tokenBoundary.mockImplementation(
       async (
         _runtime: unknown,
@@ -34,18 +34,15 @@ describe('Facebook selected-conversation message read', () => {
         link: 'https://www.facebook.com/messages/t/123',
       })
       .mockResolvedValue({ participants: [{ id: '123' }, { id: 'psid_7' }], link: null });
-    const getPageUsername = vi.fn().mockResolvedValue('eli.page');
     const runtime = {
       database: {} as never,
       keys: {} as never,
-      client: { getConversationDetails, getPageUsername } as never,
+      client: { getConversationDetails } as never,
     };
     await expect(getAccountConversationLink(runtime, input)).resolves.toBe(
       'https://www.facebook.com/messages/t/123',
     );
-    expect(getPageUsername).not.toHaveBeenCalled();
-    await expect(getAccountConversationLink(runtime, input)).resolves.toBe('https://m.me/eli.page');
-    expect(getPageUsername).toHaveBeenCalledWith('123', 'server-held-token');
+    await expect(getAccountConversationLink(runtime, input)).resolves.toBeNull();
     getConversationDetails.mockResolvedValue({
       participants: [{ id: '999' }, { id: 'psid_7' }],
       link: null,

@@ -403,7 +403,7 @@ LinkedIn member video reuses the destination-first Composer sheet and its existi
 
 # Page DM scheduling on Proposed replies
 
-The shared `PageDmConversationLink` component (`.page-dm-open-link` secondary anchor) appears on active/inactive proposal entries and Page DM history rows. It opens the workspace-authorized row link resolver in a new tab; the server resolves the Graph conversation link on click and falls back only to the selected Page's `m.me` inbox username. `.engagement-proposal-entry` groups the selection button and separate link so interactive controls are never nested.
+The shared `PageDmConversationLink` component (`.page-dm-open-link`) appears on active/inactive proposal entries and Page DM history rows. Its on-click check uses the workspace-authorized row resolver; an exact Graph link opens in a new tab and becomes the anchor destination. If Graph omits the link, the control becomes a non-interactive grey "Link unavailable" state with an explanation, never a misleading Page inbox fallback. `.engagement-proposal-entry` groups the selection button and separate control so interactive controls are never nested.
 
 `.page-dm-history` sits below the review inbox and uses server-side Page/receiver filters, friendly recipient labels, separate started/updated timezone timestamps, and bounded load-more. It is distinct from the proposal editing lifecycle; it reuses the workspace shell and existing secondary controls.
 

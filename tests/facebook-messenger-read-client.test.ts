@@ -9,24 +9,6 @@ const clientWith = (request: typeof fetch) =>
   new FacebookHttpClient({ graphVersion: 'v26.0', fetch: request });
 
 describe('Facebook Messenger read transport', () => {
-  it('reads only a validated selected Page username for untargeted inbox fallback', async () => {
-    const request = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        Response.json({ id: '123', username: 'eli.page', access_token: 'hidden' }),
-      )
-      .mockResolvedValueOnce(Response.json({ id: '999', username: 'wrong.page' }))
-      .mockResolvedValueOnce(Response.json({ id: '123', username: 'bad/path' }))
-      .mockResolvedValueOnce(Response.json({ id: '123', username: null }));
-    const client = clientWith(request);
-    await expect(client.getPageUsername('123', 'token')).resolves.toBe('eli.page');
-    await expect(client.getPageUsername('123', 'token')).resolves.toBeNull();
-    await expect(client.getPageUsername('123', 'token')).resolves.toBeNull();
-    await expect(client.getPageUsername('123', 'token')).resolves.toBeNull();
-    const target = request.mock.calls[0]?.[0];
-    if (!(target instanceof URL)) throw new Error('Expected Graph URL');
-    expect(target.searchParams.get('fields')).toBe('id,username');
-  });
   it('loads bounded participant identity without returning provider contact fields', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({

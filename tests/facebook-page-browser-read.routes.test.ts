@@ -52,7 +52,7 @@ async function createApp() {
 afterEach(() => vi.clearAllMocks());
 
 describe('Facebook browser Page reads', () => {
-  it('opens exact Graph link through tenant-owned proposal and send rows without exposing Graph IDs', async () => {
+  it('returns exact Graph link through tenant-owned proposal and send rows without exposing Graph IDs', async () => {
     const app = await createApp();
     try {
       mocks.authorize.mockResolvedValue({ workspaceId });
@@ -65,16 +65,20 @@ describe('Facebook browser Page reads', () => {
       mocks.action.mockResolvedValue({ accountId, conversationId: 't_456' });
       mocks.link
         .mockResolvedValueOnce('https://www.facebook.com/messages/t/123')
-        .mockResolvedValueOnce('https://m.me/eli.page');
+        .mockResolvedValueOnce(null);
       const proposal = await app.inject(
         '/api/facebook-page-dm-link/proposal/00000000-0000-4000-8000-000000000003',
       );
       const send = await app.inject(
         '/api/facebook-page-dm-link/send/00000000-0000-4000-8000-000000000004',
       );
-      expect(proposal.statusCode).toBe(302);
-      expect(proposal.headers.location).toBe('https://www.facebook.com/messages/t/123');
-      expect(send.headers.location).toBe('https://m.me/eli.page');
+      expect(proposal.statusCode).toBe(200);
+      expect(proposal.json()).toEqual({
+        data: { link: 'https://www.facebook.com/messages/t/123' },
+        error: null,
+      });
+      expect(send.statusCode).toBe(200);
+      expect(send.json()).toEqual({ data: { link: null }, error: null });
       expect(mocks.link).toHaveBeenNthCalledWith(2, expect.anything(), {
         workspaceId,
         accountId,
@@ -114,7 +118,7 @@ describe('Facebook browser Page reads', () => {
       mocks.action.mockResolvedValue({ accountId, conversationId: 't_456' });
       const path = '/api/facebook-page-dm-link/send/00000000-0000-4000-8000-000000000004';
       mocks.link.mockResolvedValueOnce(null).mockRejectedValueOnce(new PageReadUnavailableError());
-      expect((await app.inject(path)).statusCode).toBe(404);
+      expect((await app.inject(path)).json()).toEqual({ data: { link: null }, error: null });
       const denied = await app.inject(path);
       expect(denied.statusCode).toBe(404);
       expect(denied.body).not.toMatch(/t_456|token|credential/);

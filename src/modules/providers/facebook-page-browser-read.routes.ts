@@ -58,9 +58,7 @@ export function registerFacebookPageBrowserReadRoutes(
         accountId: row.accountId,
         conversationId: 'targetId' in row ? row.targetId : row.conversationId,
       });
-      if (!link)
-        return await reply.code(404).send({ data: null, error: 'Page inbox link unavailable' });
-      return await reply.redirect(link);
+      return { data: { link }, error: null };
     } catch (error) {
       if (error instanceof PageReadUnavailableError)
         return await reply.code(404).send({ data: null, error: 'Owned Page read is unavailable' });

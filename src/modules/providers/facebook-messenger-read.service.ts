@@ -84,8 +84,6 @@ export async function getAccountConversationLink(
       participants.filter((person) => person.id !== pageId).length !== 1
     )
       throw new PageReadUnavailableError();
-    if (conversation.link) return conversation.link;
-    const username = await runtime.client.getPageUsername(pageId, accessToken);
-    return username ? `https://m.me/${username}` : null;
+    return conversation.link;
   });
 }

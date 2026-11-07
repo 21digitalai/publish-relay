@@ -17,6 +17,7 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
   const plannedDueAt = new Date(Date.now() - 60_000).toISOString();
   let status = 'expired';
   let windowState: 'closed' | 'stale' = 'closed';
+  let graphLink: string | null = 'https://www.facebook.com/messages/t/123';
   let approvals = 0;
   await page.route('**/api/engagement-proposals**', async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -61,6 +62,12 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
   });
   await page.context().route('**/api/facebook-page-dm-link/**', async (route) => {
     await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { link: graphLink }, error: null }),
+    });
+  });
+  await page.context().route('https://www.facebook.com/messages/**', async (route) => {
+    await route.fulfill({
       contentType: 'text/html',
       body: '<title>Facebook conversation opened</title>',
     });
@@ -72,6 +79,7 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
   ]) {
     status = 'pending';
     windowState = size.state;
+    graphLink = size.width === 390 ? null : 'https://www.facebook.com/messages/t/123';
     await page.setViewportSize(size);
     await page.goto(`/w/${workspace.data.slug}/proposals`);
     await page.getByRole('button', { name: /Facebook Page message/ }).click();
@@ -88,17 +96,26 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
     await expect(page.getByLabel('Inactive drafts')).toContainText('Facebook Page message');
-    await expect(
-      page.getByLabel('Inactive drafts').getByRole('link', { name: 'Open Facebook conversation' }),
-    ).toHaveAttribute('href', `/api/facebook-page-dm-link/proposal/${id}`);
-    const popupPromise = page.waitForEvent('popup');
-    await page
+    const openControl = page
       .getByLabel('Inactive drafts')
-      .getByRole('link', { name: 'Open Facebook conversation' })
-      .click();
+      .getByRole('button', { name: 'Open conversation on Facebook' });
+    await expect(openControl).toBeVisible();
+    const popupPromise = page.waitForEvent('popup');
+    await openControl.click();
     const popup = await popupPromise;
-    await expect(popup).toHaveTitle('Facebook conversation opened');
-    await popup.close();
+    if (graphLink) {
+      await expect(popup).toHaveTitle('Facebook conversation opened');
+      await expect(
+        page
+          .getByLabel('Inactive drafts')
+          .getByRole('link', { name: 'Open conversation on Facebook' }),
+      ).toHaveAttribute('href', graphLink);
+      await popup.close();
+    } else {
+      await expect(page.getByLabel('Inactive drafts').getByText('Link unavailable')).toBeVisible();
+      await expect(page.getByLabel('Inactive drafts').getByRole('link')).toHaveCount(0);
+      await expect.poll(() => popup.isClosed()).toBe(true);
+    }
     await expect(page.locator('.engagement-reply-window-badge.danger')).toBeVisible();
     await expect(page.getByText(/approval re-anchors|Approval schedules from now/)).toHaveCount(0);
     await page.screenshot({
@@ -478,6 +495,21 @@ test('Page DM history filters by recipient without showing raw conversation IDs'
     data: { slug: string };
   };
   const queries: string[] = [];
+  await page.context().route('**/api/facebook-page-dm-link/send/**', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { link: 'https://www.facebook.com/messages/t/900' },
+        error: null,
+      }),
+    });
+  });
+  await page.context().route('https://www.facebook.com/messages/**', async (route) => {
+    await route.fulfill({
+      contentType: 'text/html',
+      body: '<title>Facebook conversation opened</title>',
+    });
+  });
   await page.route('**/api/facebook-page-dm-history**', async (route) => {
     const url = new URL(route.request().url());
     queries.push(url.search);
@@ -507,8 +539,19 @@ test('Page DM history filters by recipient without showing raw conversation IDs'
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
   await expect(
-    page.locator('.page-dm-history').getByRole('link', { name: 'Open Facebook conversation' }),
-  ).toHaveAttribute('href', '/api/facebook-page-dm-link/send/00000000-0000-4000-8000-000000000701');
+    page.locator('.page-dm-history').getByRole('button', { name: 'Open conversation on Facebook' }),
+  ).toBeVisible();
+  const popupPromise = page.waitForEvent('popup');
+  await page
+    .locator('.page-dm-history')
+    .getByRole('button', { name: 'Open conversation on Facebook' })
+    .click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveTitle('Facebook conversation opened');
+  await popup.close();
+  await expect(
+    page.locator('.page-dm-history').getByRole('link', { name: 'Open conversation on Facebook' }),
+  ).toHaveAttribute('href', 'https://www.facebook.com/messages/t/900');
   await page.getByRole('button', { name: 'Alexandra', exact: true }).click();
   await expect.poll(() => queries.at(-1)).toContain('conversationId=t_900');
   await expect(page.getByText('t_900')).toHaveCount(0);

@@ -3152,6 +3152,23 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 8px;
 }
+.engagement-proposals-active,
+.engagement-proposals-inactive,
+.engagement-proposals-outcomes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.engagement-proposals-inactive,
+.engagement-proposals-outcomes {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border, #2c3140);
+}
+.engagement-proposals-list h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
 .engagement-proposal-row {
   display: flex;
   flex-direction: column;
@@ -3174,6 +3191,11 @@ textarea:focus-visible {
 .engagement-reply-window-badge {
   color: var(--warning, #ffc857);
   font-variant-numeric: tabular-nums;
+}
+.engagement-reply-window-badge.danger,
+.engagement-reply-window-detail.danger,
+.engagement-proposal-warning {
+  color: var(--danger, #ff6b7a);
 }
 .engagement-reply-window-detail {
   margin: 12px 0;

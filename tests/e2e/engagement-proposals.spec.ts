@@ -64,7 +64,7 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     { width: 390, height: 844, state: 'closed' as const },
     { width: 390, height: 844, state: 'stale' as const },
   ]) {
-    status = size.width < 500 ? 'pending' : 'expired';
+    status = 'pending';
     windowState = size.state;
     await page.setViewportSize(size);
     await page.goto(`/w/${workspace.data.slug}/proposals`);
@@ -81,18 +81,27 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     );
     await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
+    await expect(page.getByLabel('Inactive drafts')).toContainText('Facebook Page message');
+    await expect(page.locator('.engagement-reply-window-badge.danger')).toBeVisible();
     await expect(page.getByText(/approval re-anchors|Approval schedules from now/)).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath(`page-dm-${size.state}-${String(size.width)}.png`),
       fullPage: true,
     });
   }
+  status = 'expired';
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await expect(page.getByLabel('Inactive drafts')).toContainText('Expired draft');
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(
+    page.getByText('Expired draft. Dismiss it or wait for a fresh draft.'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /Approve and schedule/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
   expect(approvals).toBe(0);
 });
 
-test('expired Page DM plan previews a re-anchored send time before approval', async ({
-  page,
-}, testInfo) => {
+test('Page DM plan shows the verified window before approval', async ({ page }, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Expired Review Owner',
@@ -106,9 +115,9 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
     data: { slug: string };
   };
   const id = '00000000-0000-4000-8000-000000000413';
-  const plannedDueAt = new Date(Date.now() - 60_000).toISOString();
+  const plannedDueAt = new Date(Date.now() + 300_000).toISOString();
   let approvals = 0;
-  let status = 'expired';
+  let status = 'pending';
   const dueAt = new Date(Date.now() + 600_000).toISOString();
   const latestInboundAt = new Date(Date.now() - 3_600_000).toISOString();
   const previewedAt = new Date().toISOString();
@@ -209,8 +218,8 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
   await expect(page.locator('.engagement-reply-window-badge')).toBeVisible();
   await expect(page.locator('.engagement-reply-window-detail')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('page-dm-window-mobile.png'), fullPage: true });
-  await expect(page.getByText(/Approval schedules from now plus the Page delay/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Send immediately' })).toHaveCount(0);
+  await expect(page.getByText(/approval adds the Page delay on top/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send immediately' })).toBeVisible();
   await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
   await expect(page.getByRole('alertdialog')).toContainText(new Date(dueAt).toLocaleString());
   expect(approvals).toBe(0);
@@ -221,9 +230,12 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
   await page.reload();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(page.getByText(/A newer draft replaced this one/)).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Approval unavailable · newer draft' }),
-  ).toBeDisabled();
+  await expect(page.getByLabel('Inactive drafts')).toContainText('Superseded by a newer draft');
+  await expect(page.getByRole('button', { name: /Approve and schedule/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
+  await page.getByRole('button', { name: 'Dismiss proposal' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Dismiss proposal' }).click();
+  await expect(page.getByText('No replies await review or reconciliation.')).toBeVisible();
 });
 
 test('one Page DM approval reviews and edits all three scheduled bubbles', async ({ page }) => {

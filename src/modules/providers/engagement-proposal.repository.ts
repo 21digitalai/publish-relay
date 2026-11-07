@@ -369,7 +369,7 @@ export async function dismissEngagementProposal(
           eq(engagementProposals.workspaceId, input.workspaceId),
           eq(engagementProposals.id, input.id),
           eq(engagementProposals.revision, input.expectedRevision),
-          inArray(engagementProposals.status, ['pending', 'expired']),
+          inArray(engagementProposals.status, ['pending', 'expired', 'superseded']),
         ),
       )
       .returning();

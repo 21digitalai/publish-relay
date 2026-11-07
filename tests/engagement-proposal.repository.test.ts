@@ -1312,6 +1312,13 @@ describe('engagement proposal foundation', () => {
           latestInboundMessageId: 'mid_1',
         }),
       ).rejects.toThrow();
+      await dismissEngagementProposal(database, {
+        workspaceId: workspace,
+        id: old.id,
+        expectedRevision: old.revision,
+      });
+      expect((await getEngagementProposal(database, workspace, old.id))?.status).toBe('dismissed');
+      expect((await getEngagementProposal(database, workspace, fresh.id))?.status).toBe('pending');
       await client.exec(`
         CREATE ROLE proposal_reader NOLOGIN NOBYPASSRLS;
         GRANT USAGE ON SCHEMA public TO proposal_reader;

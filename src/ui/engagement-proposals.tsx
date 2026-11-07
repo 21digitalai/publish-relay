@@ -249,11 +249,7 @@ export function EngagementProposalsPage() {
   }, [selectedId, detailReload]);
 
   useEffect(() => {
-    if (
-      detail?.provider !== 'facebook_page' ||
-      detail.kind !== 'dm' ||
-      !['pending', 'expired'].includes(detail.status)
-    )
+    if (detail?.provider !== 'facebook_page' || detail.kind !== 'dm' || detail.status !== 'pending')
       return;
     let active = true;
     void readApi<ReplyWindow>(`/api/engagement-proposals/${detail.id}/reply-window`)
@@ -551,10 +547,7 @@ export function EngagementProposalsPage() {
       (replyWindow?.state === 'open' && Date.parse(replyWindow.windowDeadline) <= now));
   const pageDmWindowReady = replyWindow?.state === 'open' && !pageDmWindowClosed;
   const canApprove =
-    (detail?.status === 'pending' ||
-      (detail?.status === 'expired' &&
-        detail.provider === 'facebook_page' &&
-        detail.kind === 'dm')) &&
+    detail?.status === 'pending' &&
     selectedId === detail.id &&
     activeProposalRef.current === `${detail.id}:${String(detail.revision)}` &&
     detail.canApprove &&
@@ -571,6 +564,65 @@ export function EngagementProposalsPage() {
       !detail.plannedDueAt
     ) &&
     !sendUncertain;
+
+  const inactiveDraft = (item: ProposalSummary): boolean => {
+    if (item.status === 'expired' || item.status === 'superseded') return true;
+    if (item.status !== 'pending' || item.provider !== 'facebook_page' || item.kind !== 'dm')
+      return false;
+    if (selectedId !== item.id || detail?.id !== item.id) return false;
+    return (
+      replyWindow?.state === 'closed' ||
+      replyWindow?.state === 'stale' ||
+      replyWindow?.state === 'unavailable' ||
+      (replyWindow?.state === 'open' && Date.parse(replyWindow.windowDeadline) <= now)
+    );
+  };
+  const activeItems = items.filter((item) => item.status === 'pending' && !inactiveDraft(item));
+  const inactiveItems = items.filter(inactiveDraft);
+  const outcomeItems = items.filter((item) => item.status !== 'pending' && !inactiveDraft(item));
+
+  const renderProposalRow = (item: ProposalSummary) => (
+    <button
+      key={item.id}
+      className={`engagement-proposal-row ${selectedId === item.id ? 'selected' : ''}`}
+      type="button"
+      aria-pressed={selectedId === item.id}
+      onClick={() => {
+        if (selectedId !== item.id) activeProposalRef.current = null;
+        setSelectedId(item.id);
+      }}
+    >
+      <strong>{proposalLabel(item)}</strong>
+      {item.bubbleCount === 3 && <span>3-bubble group · one approval</span>}
+      {item.provider === 'facebook_page' && item.kind === 'dm' && item.status === 'pending' && (
+        <span className={`engagement-reply-window-badge ${inactiveDraft(item) ? 'danger' : ''}`}>
+          {selectedId === item.id && detail?.id === item.id
+            ? replyWindowLabel(replyWindow, now)
+            : 'Reply window: select to check'}
+        </span>
+      )}
+      {item.status === 'expired' && (
+        <span className="engagement-proposal-warning">
+          Expired draft · dismiss or wait for a fresh draft
+        </span>
+      )}
+      {item.status === 'superseded' && (
+        <span className="engagement-proposal-warning">Superseded by a newer draft</span>
+      )}
+      {item.status !== 'pending' && !inactiveDraft(item) && (
+        <span>
+          {item.status === 'scheduled'
+            ? 'Scheduled'
+            : item.status === 'unknown' || item.status === 'sending'
+              ? 'Send outcome unknown'
+              : 'Provider rejected send'}
+        </span>
+      )}
+      <span>{item.accountDisplayName}</span>
+      <span>{item.contentPreview}</span>
+      <small>{new Date(item.createdAt).toLocaleString()}</small>
+    </button>
+  );
 
   return (
     <WorkspaceLayout active="proposals">
@@ -628,51 +680,28 @@ export function EngagementProposalsPage() {
             ) : items.length === 0 ? (
               <p>No replies await review or reconciliation.</p>
             ) : (
-              items.map((item) => (
-                <button
-                  key={item.id}
-                  className={`engagement-proposal-row ${selectedId === item.id ? 'selected' : ''}`}
-                  type="button"
-                  aria-pressed={selectedId === item.id}
-                  onClick={() => {
-                    if (selectedId !== item.id) activeProposalRef.current = null;
-                    setSelectedId(item.id);
-                  }}
-                >
-                  <strong>{proposalLabel(item)}</strong>
-                  {item.bubbleCount === 3 && <span>3-bubble group · one approval</span>}
-                  {item.provider === 'facebook_page' &&
-                    item.kind === 'dm' &&
-                    ['pending', 'expired'].includes(item.status) && (
-                      <span className="engagement-reply-window-badge">
-                        {selectedId === item.id && detail?.id === item.id
-                          ? replyWindowLabel(replyWindow, now)
-                          : 'Reply window: select to check'}
-                      </span>
-                    )}
-                  {item.status !== 'pending' &&
-                    !(
-                      item.provider === 'facebook_page' &&
-                      item.kind === 'dm' &&
-                      ['pending', 'expired'].includes(item.status)
-                    ) && (
-                      <span>
-                        {item.status === 'scheduled'
-                          ? 'Scheduled'
-                          : item.status === 'expired'
-                            ? 'Planned time passed · check reply window'
-                            : item.status === 'superseded'
-                              ? 'Superseded by a newer draft'
-                              : item.status === 'unknown' || item.status === 'sending'
-                                ? 'Send outcome unknown'
-                                : 'Provider rejected send'}
-                      </span>
-                    )}
-                  <span>{item.accountDisplayName}</span>
-                  <span>{item.contentPreview}</span>
-                  <small>{new Date(item.createdAt).toLocaleString()}</small>
-                </button>
-              ))
+              <>
+                <div className="engagement-proposals-active" aria-label="Awaiting approval">
+                  <h2>Awaiting approval</h2>
+                  {activeItems.length ? (
+                    activeItems.map(renderProposalRow)
+                  ) : (
+                    <p>No drafts await approval.</p>
+                  )}
+                </div>
+                {inactiveItems.length > 0 && (
+                  <div className="engagement-proposals-inactive" aria-label="Inactive drafts">
+                    <h2>Inactive drafts</h2>
+                    {inactiveItems.map(renderProposalRow)}
+                  </div>
+                )}
+                {outcomeItems.length > 0 && (
+                  <div className="engagement-proposals-outcomes" aria-label="Send outcomes">
+                    <h2>Send outcomes</h2>
+                    {outcomeItems.map(renderProposalRow)}
+                  </div>
+                )}
+              </>
             )}
             {nextCursor && (
               <button
@@ -729,8 +758,11 @@ export function EngagementProposalsPage() {
                 </blockquote>
                 {detail.provider === 'facebook_page' &&
                   detail.kind === 'dm' &&
-                  ['pending', 'expired'].includes(detail.status) && (
-                    <div className="engagement-reply-window-detail" role="status">
+                  detail.status === 'pending' && (
+                    <div
+                      className={`engagement-reply-window-detail ${pageDmWindowClosed || replyWindow?.state === 'stale' || replyWindow?.state === 'unavailable' ? 'danger' : ''}`}
+                      role="status"
+                    >
                       <p>{replyWindowLabel(replyWindow, now)}</p>
                       {replyWindow?.state === 'open' && (
                         <p className="muted">
@@ -841,16 +873,23 @@ export function EngagementProposalsPage() {
                   !(
                     detail.provider === 'facebook_page' &&
                     detail.kind === 'dm' &&
-                    ['pending', 'expired'].includes(detail.status) &&
+                    detail.status === 'pending' &&
                     !pageDmWindowReady
                   ) && (
-                    <p className={expiredScheduled ? 'form-error' : 'form-success'} role="status">
+                    <p
+                      className={
+                        expiredScheduled || detail.status === 'superseded'
+                          ? 'form-error'
+                          : 'form-success'
+                      }
+                      role="status"
+                    >
                       {detail.status === 'sent'
                         ? 'Sent'
                         : detail.status === 'superseded'
                           ? 'A newer draft replaced this one. This proposal cannot be approved or sent.'
                           : expiredScheduled
-                            ? 'The agent-selected time has passed. Approval schedules from now plus the Page delay, if no newer draft exists and the Messenger reply window still fits.'
+                            ? 'Expired draft. Dismiss it or wait for a fresh draft.'
                             : detail.status === 'scheduled'
                               ? detail.schedule
                                 ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
@@ -968,12 +1007,11 @@ export function EngagementProposalsPage() {
                         )}
                       </fieldset>
                     )}
-                  {['pending', 'expired', 'superseded'].includes(detail.status) &&
+                  {detail.status === 'pending' &&
                     !(
                       detail.provider === 'facebook_page' &&
                       detail.kind === 'dm' &&
-                      !pageDmWindowReady &&
-                      detail.status !== 'superseded'
+                      !pageDmWindowReady
                     ) && (
                       <button
                         ref={approveTrigger}
@@ -984,15 +1022,13 @@ export function EngagementProposalsPage() {
                           void openApprovalConfirmation();
                         }}
                       >
-                        {detail.status === 'superseded'
-                          ? 'Approval unavailable · newer draft'
-                          : detail.provider === 'facebook_page' &&
-                              detail.kind === 'dm' &&
-                              dmTiming === 'scheduled'
-                            ? detail.content.followUps
-                              ? 'Approve and schedule 3 bubbles'
-                              : 'Approve and schedule'
-                            : 'Approve and send'}
+                        {detail.provider === 'facebook_page' &&
+                        detail.kind === 'dm' &&
+                        dmTiming === 'scheduled'
+                          ? detail.content.followUps
+                            ? 'Approve and schedule 3 bubbles'
+                            : 'Approve and schedule'
+                          : 'Approve and send'}
                       </button>
                     )}
                   {detail.status === 'scheduled' && detail.canApprove && (
@@ -1008,31 +1044,37 @@ export function EngagementProposalsPage() {
                       Cancel scheduled reply
                     </button>
                   )}
-                  <button
-                    className="secondary-button engagement-proposal-save"
-                    type="button"
-                    disabled={
-                      saving ||
-                      detail.status !== 'pending' ||
-                      !draft.trim() ||
-                      (draft.trim() === detail.content.text &&
-                        (!detail.content.followUps ||
-                          detail.content.followUps.every(
-                            (text, index) => draftFollowUps[index]?.trim() === text,
-                          )))
-                    }
-                    onClick={() => {
-                      void mutate('edit');
-                    }}
-                  >
-                    {saving ? 'Saving…' : 'Save edits'}
-                  </button>
+                  {detail.status === 'pending' &&
+                    (detail.provider !== 'facebook_page' ||
+                      detail.kind !== 'dm' ||
+                      pageDmWindowReady) && (
+                      <button
+                        className="secondary-button engagement-proposal-save"
+                        type="button"
+                        disabled={
+                          saving ||
+                          !draft.trim() ||
+                          (draft.trim() === detail.content.text &&
+                            (!detail.content.followUps ||
+                              detail.content.followUps.every(
+                                (text, index) => draftFollowUps[index]?.trim() === text,
+                              )))
+                        }
+                        onClick={() => {
+                          void mutate('edit');
+                        }}
+                      >
+                        {saving ? 'Saving…' : 'Save edits'}
+                      </button>
+                    )}
                   <button
                     ref={dismissTrigger}
                     className="danger-button engagement-proposal-dismiss"
                     type="button"
                     disabled={
-                      saving || !['pending', 'expired'].includes(detail.status) || sendUncertain
+                      saving ||
+                      !['pending', 'expired', 'superseded'].includes(detail.status) ||
+                      sendUncertain
                     }
                     onClick={() => {
                       setConfirmDismiss(true);
@@ -1060,27 +1102,33 @@ export function EngagementProposalsPage() {
                       </button>
                     )}
                 </div>
-                {(detail.status === 'pending' || detail.status === 'expired') && !canApprove && (
-                  <p className="muted">
-                    {sendUncertain
-                      ? 'Refresh to verify the latest send state before continuing.'
-                      : dmTiming === 'scheduled' &&
-                          detail.provider === 'facebook_page' &&
-                          detail.kind === 'dm' &&
-                          !detail.plannedDueAt
-                        ? 'A future bot-selected send time is required before approval.'
-                        : !detail.canApprove
-                          ? 'Only a workspace owner or admin can approve and send.'
-                          : draft.trim() !== detail.content.text ||
-                              detail.content.followUps?.some(
-                                (text, index) => draftFollowUps[index]?.trim() !== text,
-                              )
-                            ? 'Save the edited draft before approving.'
-                            : !mediaReady
-                              ? 'Prepare every attachment and confirm it is ready before approving.'
-                              : 'Sending is not available for this provider or proposal shape.'}
-                  </p>
-                )}
+                {detail.status === 'pending' &&
+                  !canApprove &&
+                  !(
+                    detail.provider === 'facebook_page' &&
+                    detail.kind === 'dm' &&
+                    !pageDmWindowReady
+                  ) && (
+                    <p className="muted">
+                      {sendUncertain
+                        ? 'Refresh to verify the latest send state before continuing.'
+                        : dmTiming === 'scheduled' &&
+                            detail.provider === 'facebook_page' &&
+                            detail.kind === 'dm' &&
+                            !detail.plannedDueAt
+                          ? 'A future bot-selected send time is required before approval.'
+                          : !detail.canApprove
+                            ? 'Only a workspace owner or admin can approve and send.'
+                            : draft.trim() !== detail.content.text ||
+                                detail.content.followUps?.some(
+                                  (text, index) => draftFollowUps[index]?.trim() !== text,
+                                )
+                              ? 'Save the edited draft before approving.'
+                              : !mediaReady
+                                ? 'Prepare every attachment and confirm it is ready before approving.'
+                                : 'Sending is not available for this provider or proposal shape.'}
+                    </p>
+                  )}
                 {sendUncertain && (
                   <button
                     className="secondary-button engagement-proposal-refresh"

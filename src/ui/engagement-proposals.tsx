@@ -782,7 +782,7 @@ export function EngagementProposalsPage() {
                 <label className="field-label" htmlFor="engagement-proposal-draft">
                   {detail.content.followUps ? 'Bubble 1' : 'Suggested reply'}
                 </label>
-                <p className="muted engagement-proposal-edit-help">
+                <p className="engagement-proposal-edit-help muted">
                   Edit the bubbles, then approve.
                 </p>
                 <textarea

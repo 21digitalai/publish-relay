@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConfirmationDialog } from './confirmation-dialog.js';
+import { PageDmConversationLink } from './page-dm-conversation-link.js';
 import { PageDmHistory } from './page-dm-history.js';
 import { getCsrfToken } from './posting-adapter-connection.js';
 import { WorkspaceLayout } from './workflow.js';
@@ -613,53 +614,57 @@ export function EngagementProposalsPage() {
   const outcomeItems = items.filter((item) => item.status !== 'pending' && !inactiveDraft(item));
 
   const renderProposalRow = (item: ProposalSummary) => (
-    <button
-      key={item.id}
-      className={`engagement-proposal-row ${selectedId === item.id ? 'selected' : ''}`}
-      type="button"
-      aria-pressed={selectedId === item.id}
-      onClick={() => {
-        if (selectedId !== item.id) activeProposalRef.current = null;
-        setSelectedId(item.id);
-      }}
-    >
-      <strong>{proposalLabel(item)}</strong>
-      {item.bubbleCount === 3 && <span>3-bubble group · one approval</span>}
-      {item.provider === 'facebook_page' && item.kind === 'dm' && item.status === 'pending' && (
-        <span
-          className={`engagement-reply-window-badge ${inactiveDraft(item) || (selectedId === item.id && replyWindow?.state === 'unavailable') ? 'danger' : ''}`}
-        >
-          {selectedId === item.id && detail?.id === item.id
-            ? replyWindowLabel(replyWindow, now)
-            : terminalWindows[item.id]
-              ? replyWindowLabel(
-                  { state: terminalWindows[item.id] === 'stale' ? 'stale' : 'closed' },
-                  now,
-                )
-              : 'Reply window: select to check'}
-        </span>
+    <div className="engagement-proposal-entry" key={item.id}>
+      <button
+        className={`engagement-proposal-row ${selectedId === item.id ? 'selected' : ''}`}
+        type="button"
+        aria-pressed={selectedId === item.id}
+        onClick={() => {
+          if (selectedId !== item.id) activeProposalRef.current = null;
+          setSelectedId(item.id);
+        }}
+      >
+        <strong>{proposalLabel(item)}</strong>
+        {item.bubbleCount === 3 && <span>3-bubble group · one approval</span>}
+        {item.provider === 'facebook_page' && item.kind === 'dm' && item.status === 'pending' && (
+          <span
+            className={`engagement-reply-window-badge ${inactiveDraft(item) || (selectedId === item.id && replyWindow?.state === 'unavailable') ? 'danger' : ''}`}
+          >
+            {selectedId === item.id && detail?.id === item.id
+              ? replyWindowLabel(replyWindow, now)
+              : terminalWindows[item.id]
+                ? replyWindowLabel(
+                    { state: terminalWindows[item.id] === 'stale' ? 'stale' : 'closed' },
+                    now,
+                  )
+                : 'Reply window: select to check'}
+          </span>
+        )}
+        {item.status === 'expired' && (
+          <span className="engagement-proposal-warning">
+            Expired draft · dismiss or wait for a fresh draft
+          </span>
+        )}
+        {item.status === 'superseded' && (
+          <span className="engagement-proposal-warning">Superseded by a newer draft</span>
+        )}
+        {item.status !== 'pending' && !inactiveDraft(item) && (
+          <span>
+            {item.status === 'scheduled'
+              ? 'Scheduled'
+              : item.status === 'unknown' || item.status === 'sending'
+                ? 'Send outcome unknown'
+                : 'Provider rejected send'}
+          </span>
+        )}
+        <span>{item.accountDisplayName}</span>
+        <span>{item.contentPreview}</span>
+        <small>{new Date(item.createdAt).toLocaleString()}</small>
+      </button>
+      {item.provider === 'facebook_page' && item.kind === 'dm' && (
+        <PageDmConversationLink kind="proposal" rowId={item.id} />
       )}
-      {item.status === 'expired' && (
-        <span className="engagement-proposal-warning">
-          Expired draft · dismiss or wait for a fresh draft
-        </span>
-      )}
-      {item.status === 'superseded' && (
-        <span className="engagement-proposal-warning">Superseded by a newer draft</span>
-      )}
-      {item.status !== 'pending' && !inactiveDraft(item) && (
-        <span>
-          {item.status === 'scheduled'
-            ? 'Scheduled'
-            : item.status === 'unknown' || item.status === 'sending'
-              ? 'Send outcome unknown'
-              : 'Provider rejected send'}
-        </span>
-      )}
-      <span>{item.accountDisplayName}</span>
-      <span>{item.contentPreview}</span>
-      <small>{new Date(item.createdAt).toLocaleString()}</small>
-    </button>
+    </div>
   );
 
   return (

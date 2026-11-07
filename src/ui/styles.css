@@ -3185,6 +3185,16 @@ textarea:focus-visible {
 .engagement-proposal-row.selected {
   border-color: var(--focus, #a98bff);
 }
+.engagement-proposal-entry {
+  display: grid;
+  gap: 6px;
+}
+.page-dm-open-link {
+  justify-self: start;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
 .engagement-proposal-row span {
   overflow-wrap: anywhere;
 }

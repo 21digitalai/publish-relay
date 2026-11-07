@@ -68,3 +68,24 @@ export async function listAccountConversationMessages(
     };
   });
 }
+
+export async function getAccountConversationLink(
+  runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
+  input: { workspaceId: string; accountId: string; conversationId: string },
+): Promise<string | null> {
+  return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, accessToken) => {
+    const conversation = await runtime.client.getConversationDetails(
+      input.conversationId,
+      accessToken,
+    );
+    const participants = conversation.participants;
+    if (
+      participants.filter((person) => person.id === pageId).length !== 1 ||
+      participants.filter((person) => person.id !== pageId).length !== 1
+    )
+      throw new PageReadUnavailableError();
+    if (conversation.link) return conversation.link;
+    const username = await runtime.client.getPageUsername(pageId, accessToken);
+    return username ? `https://m.me/${username}` : null;
+  });
+}

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { PageDmConversationLink } from './page-dm-conversation-link.js';
+
 interface HistoryRow {
   id: string;
   kind: 'proposal' | 'send';
@@ -143,6 +145,7 @@ export function PageDmHistory() {
               <span className="page-dm-history-state">
                 {row.kind === 'proposal' ? 'Proposal' : 'Send'} · {row.status}
               </span>
+              <PageDmConversationLink kind={row.kind} rowId={row.id} />
               <span className="page-dm-history-timestamps">
                 <time dateTime={row.createdAt}>
                   Started{' '}

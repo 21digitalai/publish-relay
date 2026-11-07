@@ -59,6 +59,12 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
       body: JSON.stringify({ data, error: null }),
     });
   });
+  await page.context().route('**/api/facebook-page-dm-link/**', async (route) => {
+    await route.fulfill({
+      contentType: 'text/html',
+      body: '<title>Facebook conversation opened</title>',
+    });
+  });
   for (const size of [
     { width: 1280, height: 800, state: 'closed' as const },
     { width: 390, height: 844, state: 'closed' as const },
@@ -82,6 +88,17 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
     await expect(page.getByLabel('Inactive drafts')).toContainText('Facebook Page message');
+    await expect(
+      page.getByLabel('Inactive drafts').getByRole('link', { name: 'Open Facebook conversation' }),
+    ).toHaveAttribute('href', `/api/facebook-page-dm-link/proposal/${id}`);
+    const popupPromise = page.waitForEvent('popup');
+    await page
+      .getByLabel('Inactive drafts')
+      .getByRole('link', { name: 'Open Facebook conversation' })
+      .click();
+    const popup = await popupPromise;
+    await expect(popup).toHaveTitle('Facebook conversation opened');
+    await popup.close();
     await expect(page.locator('.engagement-reply-window-badge.danger')).toBeVisible();
     await expect(page.getByText(/approval re-anchors|Approval schedules from now/)).toHaveCount(0);
     await page.screenshot({
@@ -489,6 +506,9 @@ test('Page DM history filters by recipient without showing raw conversation IDs'
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
+  await expect(
+    page.locator('.page-dm-history').getByRole('link', { name: 'Open Facebook conversation' }),
+  ).toHaveAttribute('href', '/api/facebook-page-dm-link/send/00000000-0000-4000-8000-000000000701');
   await page.getByRole('button', { name: 'Alexandra', exact: true }).click();
   await expect.poll(() => queries.at(-1)).toContain('conversationId=t_900');
   await expect(page.getByText('t_900')).toHaveCount(0);

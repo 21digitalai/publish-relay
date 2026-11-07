@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   comments: vi.fn(),
   conversations: vi.fn(),
   messages: vi.fn(),
+  proposal: vi.fn(),
+  action: vi.fn(),
+  link: vi.fn(),
 }));
 vi.mock('../src/modules/identity/auth.routes.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -22,6 +25,13 @@ vi.mock('../src/modules/providers/facebook-comments-read.service.js', () => ({
 vi.mock('../src/modules/providers/facebook-messenger-read.service.js', () => ({
   listAccountPageConversations: mocks.conversations,
   listAccountConversationMessages: mocks.messages,
+  getAccountConversationLink: mocks.link,
+}));
+vi.mock('../src/modules/providers/engagement-proposal.repository.js', () => ({
+  getEngagementProposal: mocks.proposal,
+}));
+vi.mock('../src/modules/providers/facebook-dm-history.repository.js', () => ({
+  getPageDmSendAction: mocks.action,
 }));
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
@@ -42,6 +52,76 @@ async function createApp() {
 afterEach(() => vi.clearAllMocks());
 
 describe('Facebook browser Page reads', () => {
+  it('opens exact Graph link through tenant-owned proposal and send rows without exposing Graph IDs', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId });
+      mocks.proposal.mockResolvedValue({
+        provider: 'facebook_page',
+        kind: 'dm',
+        accountId,
+        targetId: 't_123',
+      });
+      mocks.action.mockResolvedValue({ accountId, conversationId: 't_456' });
+      mocks.link
+        .mockResolvedValueOnce('https://www.facebook.com/messages/t/123')
+        .mockResolvedValueOnce('https://m.me/eli.page');
+      const proposal = await app.inject(
+        '/api/facebook-page-dm-link/proposal/00000000-0000-4000-8000-000000000003',
+      );
+      const send = await app.inject(
+        '/api/facebook-page-dm-link/send/00000000-0000-4000-8000-000000000004',
+      );
+      expect(proposal.statusCode).toBe(302);
+      expect(proposal.headers.location).toBe('https://www.facebook.com/messages/t/123');
+      expect(send.headers.location).toBe('https://m.me/eli.page');
+      expect(mocks.link).toHaveBeenNthCalledWith(2, expect.anything(), {
+        workspaceId,
+        accountId,
+        conversationId: 't_456',
+      });
+      expect(proposal.headers['cache-control']).toBe('no-store');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('denies unauthenticated and foreign rows before Graph access', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValueOnce(null).mockResolvedValue({ workspaceId });
+      const path = '/api/facebook-page-dm-link/proposal/00000000-0000-4000-8000-000000000003';
+      expect((await app.inject(path)).statusCode).toBe(401);
+      mocks.proposal.mockResolvedValue(null);
+      expect((await app.inject(path)).statusCode).toBe(404);
+      mocks.proposal.mockResolvedValue({
+        provider: 'fanvue',
+        kind: 'dm',
+        accountId,
+        targetId: 't_123',
+      });
+      expect((await app.inject(path)).statusCode).toBe(404);
+      expect(mocks.link).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('fails closed when a selected Page grant or safe destination is unavailable', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId });
+      mocks.action.mockResolvedValue({ accountId, conversationId: 't_456' });
+      const path = '/api/facebook-page-dm-link/send/00000000-0000-4000-8000-000000000004';
+      mocks.link.mockResolvedValueOnce(null).mockRejectedValueOnce(new PageReadUnavailableError());
+      expect((await app.inject(path)).statusCode).toBe(404);
+      const denied = await app.inject(path);
+      expect(denied.statusCode).toBe(404);
+      expect(denied.body).not.toMatch(/t_456|token|credential/);
+    } finally {
+      await app.close();
+    }
+  });
   it('requires authenticated content read and validates the bounded query', async () => {
     const app = await createApp();
     try {

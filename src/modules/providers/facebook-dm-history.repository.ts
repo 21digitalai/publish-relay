@@ -17,6 +17,26 @@ export interface PageDmHistoryQuery {
   limit: number;
 }
 
+export async function getPageDmSendAction(
+  database: NodePgDatabase,
+  workspaceId: string,
+  id: string,
+) {
+  return withTenantTransaction(database, { workspaceId }, async (tx) => {
+    const [row] = await tx
+      .select({
+        accountId: facebookPageDmActions.accountId,
+        conversationId: facebookPageDmActions.conversationId,
+      })
+      .from(facebookPageDmActions)
+      .where(
+        and(eq(facebookPageDmActions.workspaceId, workspaceId), eq(facebookPageDmActions.id, id)),
+      )
+      .limit(1);
+    return row ?? null;
+  });
+}
+
 export async function listPageDmHistory(database: NodePgDatabase, input: PageDmHistoryQuery) {
   return withTenantTransaction(database, input, async (tx) => {
     const cursor =

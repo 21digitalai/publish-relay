@@ -403,6 +403,8 @@ LinkedIn member video reuses the destination-first Composer sheet and its existi
 
 # Page DM scheduling on Proposed replies
 
+The shared `PageDmConversationLink` component (`.page-dm-open-link` secondary anchor) appears on active/inactive proposal entries and Page DM history rows. It opens the workspace-authorized row link resolver in a new tab; the server resolves the Graph conversation link on click and falls back only to the selected Page's `m.me` inbox username. `.engagement-proposal-entry` groups the selection button and separate link so interactive controls are never nested.
+
 `.page-dm-history` sits below the review inbox and uses server-side Page/receiver filters, friendly recipient labels, separate started/updated timezone timestamps, and bounded load-more. It is distinct from the proposal editing lifecycle; it reuses the workspace shell and existing secondary controls.
 
 The existing proposal detail owns Page DM timing. Its semantic `.engagement-proposal-timing` fieldset shows the bot-selected exact local base time before approval, with scheduled approval as the ordinary choice and an explicitly labelled immediate-send override only for eligible non-group, non-expired drafts. `.engagement-page-delay-settings` edits the selected Page's delay window. A past-due base time remains scheduled-approvable from now plus delay; a missing base time cannot schedule. The confirmation dialog shows the exact sampled final time after fresh Messenger window proof; the scheduled receipt shows the same time. A scheduled proposal shows its local send time and a pending-only cancellation action; do not expose intent IDs or a separate scheduling panel.

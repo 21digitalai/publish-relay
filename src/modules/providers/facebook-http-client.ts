@@ -392,6 +392,15 @@ export class FacebookHttpClient {
     };
   }
 
+  /** Only used when Graph omits a conversation link; never guess a thread URL. */
+  public async getPageUsername(pageId: string, accessToken: string): Promise<string | null> {
+    const id = graphIdSchema.parse(pageId);
+    const body = await this.get(`/${id}`, { fields: 'id,username' }, accessToken);
+    const page = z.object({ id: graphIdSchema, username: z.string().optional() }).parse(body);
+    if (page.id !== id || !page.username || !/^[A-Za-z0-9.]+$/.test(page.username)) return null;
+    return page.username;
+  }
+
   public async getConversationParticipants(conversationId: string, accessToken: string) {
     const id = conversationIdSchema.parse(conversationId);
     const body = await this.get(`/${id}`, { fields: 'id,participants{id,name}' }, accessToken);

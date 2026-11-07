@@ -1,5 +1,9 @@
 # Publish Relay Backend Guide
 
+## Page DM conversation links
+
+The browser-only `GET /api/facebook-page-dm-link/:kind/:id` resolves a tenant-owned proposal or send-action row ID after `content:read` authorization. It reuses the enabled Page DMs grant and verifies the exact Graph conversation participants contain the selected Page and one recipient before redirecting to Graph's validated `link`. Only when Graph omits that link does it read the selected Page's username and redirect to `https://m.me/<username>` without per-thread targeting. No provider conversation ID or token is exposed in the browser link URL; absent grant, foreign row, or missing safe destination fails closed. This on-click read avoids Graph polling per list row.
+
 ## Pending Facebook Page DM intents
 
 The browser inbox allows owner dismissal of a superseded proposal as well as pending/expired drafts. This changes only the proposal review state to dismissed; it never cancels or edits the newer draft or any send intent. The browser UI does not offer approval for expired proposals, although the existing approval service still has its independently checked expired-proposal recovery contract for non-browser callers.

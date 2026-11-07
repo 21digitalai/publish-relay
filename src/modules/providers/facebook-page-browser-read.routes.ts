@@ -6,10 +6,13 @@ import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { authorizeRequest } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { listAccountPagePosts, listAccountPostComments } from './facebook-comments-read.service.js';
+import { getEngagementProposal } from './engagement-proposal.repository.js';
+import { getPageDmSendAction } from './facebook-dm-history.repository.js';
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
 import {
   listAccountConversationMessages,
   listAccountPageConversations,
+  getAccountConversationLink,
 } from './facebook-messenger-read.service.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 
@@ -35,6 +38,37 @@ export function registerFacebookPageBrowserReadRoutes(
   runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
   auth: AuthService,
 ): void {
+  application.get('/api/facebook-page-dm-link/:kind/:id', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const params = z
+      .object({ kind: z.enum(['proposal', 'send']), id: z.uuid() })
+      .safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ data: null, error: 'Page DM not found' });
+    void reply.header('Cache-Control', 'no-store');
+    const row =
+      params.data.kind === 'proposal'
+        ? await getEngagementProposal(runtime.database, identity.workspaceId, params.data.id)
+        : await getPageDmSendAction(runtime.database, identity.workspaceId, params.data.id);
+    if (!row || ('provider' in row && (row.provider !== 'facebook_page' || row.kind !== 'dm')))
+      return reply.code(404).send({ data: null, error: 'Page DM not found' });
+    try {
+      const link = await getAccountConversationLink(runtime, {
+        workspaceId: identity.workspaceId,
+        accountId: row.accountId,
+        conversationId: 'targetId' in row ? row.targetId : row.conversationId,
+      });
+      if (!link)
+        return await reply.code(404).send({ data: null, error: 'Page inbox link unavailable' });
+      return await reply.redirect(link);
+    } catch (error) {
+      if (error instanceof PageReadUnavailableError)
+        return await reply.code(404).send({ data: null, error: 'Owned Page read is unavailable' });
+      if (error instanceof FacebookRequestError)
+        return await reply.code(502).send({ data: null, error: 'Facebook Page read failed' });
+      throw error;
+    }
+  });
   for (const endpoint of [
     { path: 'posts', kind: 'posts' as const },
     { path: 'posts/:postId/comments', kind: 'comments' as const },

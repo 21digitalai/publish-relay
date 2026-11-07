@@ -85,6 +85,7 @@ async function findEligibleRecipient(
   id: string;
   label: string | null;
   latestInboundMessageId: string | null;
+  latestInboundAt: Date;
   windowDeadline: Date;
 }> {
   const participants = await client.getConversationParticipants(conversationId, accessToken);
@@ -122,6 +123,7 @@ async function findEligibleRecipient(
     id: recipient.id,
     label: recipient.name?.trim().slice(0, 200) ?? null,
     latestInboundMessageId: latest?.id ?? null,
+    latestInboundAt: new Date(latestTime),
     windowDeadline: new Date(latestTime + STANDARD_WINDOW_MS - WINDOW_SAFETY_MS),
   };
 }
@@ -130,7 +132,7 @@ async function findEligibleRecipient(
 export async function getPageDmApprovalWindow(
   runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
   input: { workspaceId: string; accountId: string; conversationId: string },
-): Promise<{ latestInboundMessageId: string; windowDeadline: Date }> {
+): Promise<{ latestInboundMessageId: string; latestInboundAt: Date; windowDeadline: Date }> {
   return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, token) => {
     const proof = await findEligibleRecipient(
       runtime.client,
@@ -142,6 +144,7 @@ export async function getPageDmApprovalWindow(
     if (!proof.latestInboundMessageId) throw new PageReadUnavailableError();
     return {
       latestInboundMessageId: proof.latestInboundMessageId,
+      latestInboundAt: proof.latestInboundAt,
       windowDeadline: proof.windowDeadline,
     };
   });

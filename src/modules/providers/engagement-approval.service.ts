@@ -41,7 +41,7 @@ export interface EngagementSendCommands {
       workspaceId: string;
       accountId: string;
       conversationId: string;
-    }) => Promise<{ latestInboundMessageId: string; windowDeadline: Date }>;
+    }) => Promise<{ latestInboundMessageId: string; latestInboundAt: Date; windowDeadline: Date }>;
   };
 }
 

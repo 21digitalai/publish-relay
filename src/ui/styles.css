@@ -3171,6 +3171,21 @@ textarea:focus-visible {
 .engagement-proposal-row span {
   overflow-wrap: anywhere;
 }
+.engagement-reply-window-badge {
+  color: var(--warning, #ffc857);
+  font-variant-numeric: tabular-nums;
+}
+.engagement-reply-window-detail {
+  margin: 12px 0;
+  color: var(--warning, #ffc857);
+  font-variant-numeric: tabular-nums;
+}
+.engagement-reply-window-detail p {
+  margin: 4px 0;
+}
+.engagement-proposal-edit-help {
+  margin: 4px 0 8px;
+}
 .engagement-proposal-row small {
   color: var(--text-muted, #a7adbd);
 }

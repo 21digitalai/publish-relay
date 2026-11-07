@@ -43,7 +43,29 @@ interface NoGoEntry {
   createdAt: string;
 }
 
-type ReplyWindow = { state: 'open'; windowDeadline: string } | { state: 'closed' | 'unavailable' };
+type ReplyWindow =
+  | { state: 'open'; latestInboundAt: string; windowDeadline: string }
+  | { state: 'closed' }
+  | { state: 'stale' }
+  | { state: 'unavailable' };
+
+function replyWindowLabel(window: ReplyWindow | null, now: number): string {
+  if (!window) return 'Checking the Messenger reply window…';
+  if (window.state === 'stale') return 'Newer message arrived · fresh draft coming';
+  if (window.state === 'closed') return 'Reply window closed · waiting for their next message';
+  if (window.state === 'unavailable')
+    return 'Reply window could not be verified. Approval is unavailable.';
+  if (Date.parse(window.windowDeadline) <= now)
+    return 'Reply window closed · waiting for their next message';
+  const minutesLeft = Math.ceil((Date.parse(window.windowDeadline) - now) / 60_000);
+  const hours = Math.floor(minutesLeft / 60);
+  const minutes = minutesLeft % 60;
+  const closes = new Date(window.windowDeadline).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `Reply window: ${String(hours)}h ${String(minutes).padStart(2, '0')}m left (closes ${closes})`;
+}
 
 async function readApi<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -619,31 +641,33 @@ export function EngagementProposalsPage() {
                 >
                   <strong>{proposalLabel(item)}</strong>
                   {item.bubbleCount === 3 && <span>3-bubble group · one approval</span>}
-                  {(item.status !== 'pending' ||
-                    (item.provider === 'facebook_page' &&
+                  {item.provider === 'facebook_page' &&
+                    item.kind === 'dm' &&
+                    ['pending', 'expired'].includes(item.status) && (
+                      <span className="engagement-reply-window-badge">
+                        {selectedId === item.id && detail?.id === item.id
+                          ? replyWindowLabel(replyWindow, now)
+                          : 'Reply window: select to check'}
+                      </span>
+                    )}
+                  {item.status !== 'pending' &&
+                    !(
+                      item.provider === 'facebook_page' &&
                       item.kind === 'dm' &&
-                      Boolean(item.plannedDueAt) &&
-                      Date.parse(item.plannedDueAt ?? '') <= now) ||
-                    (selectedId === item.id && pageDmWindowClosed)) && (
-                    <span>
-                      {selectedId === item.id &&
-                      pageDmWindowClosed &&
                       ['pending', 'expired'].includes(item.status)
-                        ? 'Reply window closed · waiting for their next message'
-                        : item.status === 'scheduled'
+                    ) && (
+                      <span>
+                        {item.status === 'scheduled'
                           ? 'Scheduled'
-                          : item.status === 'expired' ||
-                              (item.status === 'pending' &&
-                                item.plannedDueAt &&
-                                Date.parse(item.plannedDueAt) <= now)
+                          : item.status === 'expired'
                             ? 'Planned time passed · check reply window'
                             : item.status === 'superseded'
                               ? 'Superseded by a newer draft'
                               : item.status === 'unknown' || item.status === 'sending'
                                 ? 'Send outcome unknown'
                                 : 'Provider rejected send'}
-                    </span>
-                  )}
+                      </span>
+                    )}
                   <span>{item.accountDisplayName}</span>
                   <span>{item.contentPreview}</span>
                   <small>{new Date(item.createdAt).toLocaleString()}</small>
@@ -703,6 +727,19 @@ export function EngagementProposalsPage() {
                   )}
                   {detail.sourceContext.text ?? 'No source text was supplied.'}
                 </blockquote>
+                {detail.provider === 'facebook_page' &&
+                  detail.kind === 'dm' &&
+                  ['pending', 'expired'].includes(detail.status) && (
+                    <div className="engagement-reply-window-detail" role="status">
+                      <p>{replyWindowLabel(replyWindow, now)}</p>
+                      {replyWindow?.state === 'open' && (
+                        <p className="muted">
+                          Last message from recipient:{' '}
+                          {new Date(replyWindow.latestInboundAt).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 {detail.provider === 'facebook_page' && detail.kind === 'dm' && (
                   <p className={detail.noGo ? 'form-error' : 'muted'} role="status">
                     {detail.noGo
@@ -713,6 +750,9 @@ export function EngagementProposalsPage() {
                 <label className="field-label" htmlFor="engagement-proposal-draft">
                   {detail.content.followUps ? 'Bubble 1' : 'Suggested reply'}
                 </label>
+                <p className="muted engagement-proposal-edit-help">
+                  Edit the bubbles, then approve.
+                </p>
                 <textarea
                   id="engagement-proposal-draft"
                   className="engagement-proposal-draft text-input"
@@ -797,18 +837,6 @@ export function EngagementProposalsPage() {
                       : ''}
                   </p>
                 )}
-                {detail.provider === 'facebook_page' &&
-                  detail.kind === 'dm' &&
-                  ['pending', 'expired'].includes(detail.status) &&
-                  (pageDmWindowClosed || !replyWindow || replyWindow.state === 'unavailable') && (
-                    <p className="form-error" role="status">
-                      {pageDmWindowClosed
-                        ? 'Reply window closed · waiting for their next message'
-                        : !replyWindow
-                          ? 'Checking the Messenger reply window…'
-                          : 'Reply window could not be verified. Approval is unavailable.'}
-                    </p>
-                  )}
                 {(detail.status !== 'pending' || expiredScheduled) &&
                   !(
                     detail.provider === 'facebook_page' &&
@@ -997,7 +1025,7 @@ export function EngagementProposalsPage() {
                       void mutate('edit');
                     }}
                   >
-                    {saving ? 'Saving…' : 'Save draft'}
+                    {saving ? 'Saving…' : 'Save edits'}
                   </button>
                   <button
                     ref={dismissTrigger}

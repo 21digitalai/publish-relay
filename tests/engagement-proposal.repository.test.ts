@@ -184,6 +184,7 @@ describe('engagement proposal foundation', () => {
           sendDm: sendPageDm,
           previewDmWindow: vi.fn().mockResolvedValue({
             latestInboundMessageId: 'mid_1',
+            latestInboundAt: new Date(Date.now() - 60 * 60 * 1000),
             windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
           }),
         },
@@ -1142,6 +1143,7 @@ describe('engagement proposal foundation', () => {
         provider: 'facebook_page',
         kind: 'dm',
         targetId: 't_late',
+        sourceContext: { sourceMessageId: 'mid_1' },
         content: { text: 'Late approved reply' },
         plannedDueAt: new Date(Date.now() - 60_000),
         proposerType: 'api_key',
@@ -1152,6 +1154,7 @@ describe('engagement proposal foundation', () => {
       await lateApp.register(cookie);
       const previewDmWindow = vi.fn().mockResolvedValue({
         latestInboundMessageId: 'mid_1',
+        latestInboundAt: new Date(Date.now() - 60 * 60 * 1000),
         windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
       });
       registerEngagementApprovalRoutes(lateApp, {
@@ -1172,10 +1175,25 @@ describe('engagement proposal foundation', () => {
       });
       expect(openWindow.statusCode).toBe(200);
       expect(Object.keys(openWindow.json<{ data: object }>().data).sort()).toEqual([
+        'latestInboundAt',
         'state',
         'windowDeadline',
       ]);
+      expect(
+        openWindow.json<{ data: { latestInboundAt: string } }>().data.latestInboundAt,
+      ).toBeTruthy();
       expect(JSON.stringify(openWindow.json())).not.toContain('mid_1');
+      previewDmWindow.mockResolvedValueOnce({
+        latestInboundMessageId: 'mid_new',
+        latestInboundAt: new Date(),
+        windowDeadline: new Date(Date.now() + 60 * 60 * 1000),
+      });
+      const staleWindow = await lateApp.inject({
+        method: 'GET',
+        url: windowUrl,
+        headers: browserHeaders,
+      });
+      expect(staleWindow.json<{ data: { state: string } }>().data).toEqual({ state: 'stale' });
       previewDmWindow.mockRejectedValueOnce(new FacebookDmWindowClosedError());
       const closedWindow = await lateApp.inject({
         method: 'GET',

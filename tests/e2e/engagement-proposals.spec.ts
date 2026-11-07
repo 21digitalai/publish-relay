@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('closed Page DM window hides approval on desktop and mobile', async ({ page }) => {
+test('closed Page DM window hides approval on desktop and mobile', async ({ page }, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Closed Window Owner',
@@ -16,12 +16,13 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
   const id = '00000000-0000-4000-8000-000000000414';
   const plannedDueAt = new Date(Date.now() - 60_000).toISOString();
   let status = 'expired';
+  let windowState: 'closed' | 'stale' = 'closed';
   let approvals = 0;
   await page.route('**/api/engagement-proposals**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/approve') || path.endsWith('/approve-preview')) approvals += 1;
     const data = path.endsWith('/reply-window')
-      ? { state: 'closed' }
+      ? { state: windowState }
       : path.endsWith('/api/engagement-proposals')
         ? {
             items: [
@@ -59,15 +60,21 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     });
   });
   for (const size of [
-    { width: 1280, height: 800 },
-    { width: 390, height: 844 },
+    { width: 1280, height: 800, state: 'closed' as const },
+    { width: 390, height: 844, state: 'closed' as const },
+    { width: 390, height: 844, state: 'stale' as const },
   ]) {
     status = size.width < 500 ? 'pending' : 'expired';
+    windowState = size.state;
     await page.setViewportSize(size);
     await page.goto(`/w/${workspace.data.slug}/proposals`);
     await page.getByRole('button', { name: /Facebook Page message/ }).click();
     await expect(
-      page.getByText('Reply window closed · waiting for their next message'),
+      page.getByText(
+        size.state === 'stale'
+          ? 'Newer message arrived · fresh draft coming'
+          : 'Reply window closed · waiting for their next message',
+      ),
     ).toHaveCount(2);
     await expect(page.getByRole('button', { name: 'Approve and schedule 3 bubbles' })).toHaveCount(
       0,
@@ -75,11 +82,17 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
     await expect(page.getByText(/approval re-anchors|Approval schedules from now/)).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath(`page-dm-${size.state}-${String(size.width)}.png`),
+      fullPage: true,
+    });
   }
   expect(approvals).toBe(0);
 });
 
-test('expired Page DM plan previews a re-anchored send time before approval', async ({ page }) => {
+test('expired Page DM plan previews a re-anchored send time before approval', async ({
+  page,
+}, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Expired Review Owner',
@@ -97,6 +110,7 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
   let approvals = 0;
   let status = 'expired';
   const dueAt = new Date(Date.now() + 600_000).toISOString();
+  const latestInboundAt = new Date(Date.now() - 3_600_000).toISOString();
   const previewedAt = new Date().toISOString();
   const latestInboundFingerprint = 'a'.repeat(64);
   await page.route('**/api/engagement-proposals**', async (route) => {
@@ -105,7 +119,10 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
     if (path.endsWith('/reply-window')) {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ data: { state: 'open', windowDeadline: dueAt }, error: null }),
+        body: JSON.stringify({
+          data: { state: 'open', latestInboundAt, windowDeadline: dueAt },
+          error: null,
+        }),
       });
       return;
     }
@@ -173,8 +190,25 @@ test('expired Page DM plan previews a re-anchored send time before approval', as
     });
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
-  await expect(page.getByText('Planned time passed · check reply window')).toBeVisible();
+  await expect(page.getByText('Reply window: select to check')).toBeVisible();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.locator('.engagement-reply-window-badge')).toContainText(
+    /Reply window: \d+h \d{2}m left/,
+  );
+  await expect(page.locator('.engagement-reply-window-detail')).toContainText(
+    `Last message from recipient: ${new Date(latestInboundAt).toLocaleString()}`,
+  );
+  await expect(page.getByText('Edit the bubbles, then approve.')).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('page-dm-window-desktop.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await expect(page.locator('.engagement-reply-window-badge')).toBeVisible();
+  await expect(page.locator('.engagement-reply-window-detail')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('page-dm-window-mobile.png'), fullPage: true });
   await expect(page.getByText(/Approval schedules from now plus the Page delay/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send immediately' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
@@ -218,7 +252,10 @@ test('one Page DM approval reviews and edits all three scheduled bubbles', async
     if (path.endsWith('/reply-window')) {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ data: { state: 'open', windowDeadline: dueAt }, error: null }),
+        body: JSON.stringify({
+          data: { state: 'open', latestInboundAt: new Date().toISOString(), windowDeadline: dueAt },
+          error: null,
+        }),
       });
       return;
     }
@@ -298,7 +335,7 @@ test('one Page DM approval reviews and edits all three scheduled bubbles', async
   await expect(page.getByText(/One approval schedules all three bubbles/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send immediately' })).toHaveCount(0);
   await page.getByLabel('Bubble 2').fill('Добре съм');
-  await page.getByRole('button', { name: 'Save draft' }).click();
+  await page.getByRole('button', { name: 'Save edits' }).click();
   await expect(page.getByLabel('Bubble 2')).toHaveValue('Добре съм');
   await page.getByRole('button', { name: 'Approve and schedule 3 bubbles' }).click();
   await expect(page.getByText('Approve and schedule all three bubbles?')).toBeVisible();
@@ -465,7 +502,11 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          data: { state: 'open', windowDeadline: new Date(Date.now() + 3_600_000).toISOString() },
+          data: {
+            state: 'open',
+            latestInboundAt: new Date().toISOString(),
+            windowDeadline: new Date(Date.now() + 3_600_000).toISOString(),
+          },
           error: null,
         }),
       });
@@ -594,7 +635,11 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
     const path = new URL(request.url()).pathname;
     let data: unknown;
     if (path.endsWith('/reply-window')) {
-      data = { state: 'open', windowDeadline: new Date(Date.now() + 3_600_000).toISOString() };
+      data = {
+        state: 'open',
+        latestInboundAt: new Date().toISOString(),
+        windowDeadline: new Date(Date.now() + 3_600_000).toISOString(),
+      };
     } else if (path.endsWith('/schedule-default') && request.method() === 'PUT') {
       const input = request.postDataJSON() as {
         earliestDelaySeconds: number;
@@ -1055,7 +1100,7 @@ test('review inbox edits and dismisses without a provider send', async ({ page }
   await expect(page.getByText('Hi there')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('proposal-selected.png'), fullPage: true });
   await page.getByLabel('Suggested reply').fill('Revised reply');
-  await page.getByRole('button', { name: 'Save draft' }).click();
+  await page.getByRole('button', { name: 'Save edits' }).click();
   await expect(page.getByText('Draft saved. No message was sent.')).toBeVisible();
   await expect(page.getByText('Destination: Mira Studio')).toBeVisible();
   await page.reload();

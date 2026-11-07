@@ -66,8 +66,18 @@ export function registerEngagementApprovalRoutes(
         accountId: proposal.accountId,
         conversationId: proposal.targetId,
       });
+      const source = proposal.sourceContext as { sourceMessageId?: unknown };
+      if (
+        typeof source.sourceMessageId === 'string' &&
+        source.sourceMessageId !== window.latestInboundMessageId
+      )
+        return { data: { state: 'stale' }, error: null };
       return {
-        data: { state: 'open', windowDeadline: window.windowDeadline.toISOString() },
+        data: {
+          state: 'open',
+          latestInboundAt: window.latestInboundAt.toISOString(),
+          windowDeadline: window.windowDeadline.toISOString(),
+        },
         error: null,
       };
     } catch (error) {

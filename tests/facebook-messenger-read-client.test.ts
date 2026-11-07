@@ -16,9 +16,11 @@ describe('Facebook Messenger read transport', () => {
         Response.json({ id: '123', username: 'eli.page', access_token: 'hidden' }),
       )
       .mockResolvedValueOnce(Response.json({ id: '999', username: 'wrong.page' }))
-      .mockResolvedValueOnce(Response.json({ id: '123', username: 'bad/path' }));
+      .mockResolvedValueOnce(Response.json({ id: '123', username: 'bad/path' }))
+      .mockResolvedValueOnce(Response.json({ id: '123', username: null }));
     const client = clientWith(request);
     await expect(client.getPageUsername('123', 'token')).resolves.toBe('eli.page');
+    await expect(client.getPageUsername('123', 'token')).resolves.toBeNull();
     await expect(client.getPageUsername('123', 'token')).resolves.toBeNull();
     await expect(client.getPageUsername('123', 'token')).resolves.toBeNull();
     const target = request.mock.calls[0]?.[0];

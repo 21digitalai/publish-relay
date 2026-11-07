@@ -396,7 +396,9 @@ export class FacebookHttpClient {
   public async getPageUsername(pageId: string, accessToken: string): Promise<string | null> {
     const id = graphIdSchema.parse(pageId);
     const body = await this.get(`/${id}`, { fields: 'id,username' }, accessToken);
-    const page = z.object({ id: graphIdSchema, username: z.string().optional() }).parse(body);
+    const page = z
+      .object({ id: graphIdSchema, username: z.string().nullable().optional() })
+      .parse(body);
     if (page.id !== id || !page.username || !/^[A-Za-z0-9.]+$/.test(page.username)) return null;
     return page.username;
   }

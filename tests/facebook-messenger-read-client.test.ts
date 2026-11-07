@@ -49,6 +49,13 @@ describe('Facebook Messenger read transport', () => {
           link: 'https://evil.example/thread',
           participants: { data: [{ id: '123' }, { id: 'psid_789' }] },
         }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 't_123',
+          link: '/my-page/manager/messages/?threadid=123&folder=inbox',
+          participants: { data: [{ id: '123' }, { id: 'psid_789' }] },
+        }),
       );
     const client = clientWith(request);
     const first = await client.getConversationDetails('t_123', 'page-token');
@@ -62,6 +69,9 @@ describe('Facebook Messenger read transport', () => {
     expect(target.searchParams.get('fields')).toBe('id,link,participants{id,name}');
     await expect(client.getConversationDetails('t_123', 'page-token')).resolves.toMatchObject({
       link: null,
+    });
+    await expect(client.getConversationDetails('t_123', 'page-token')).resolves.toMatchObject({
+      link: 'https://www.facebook.com/my-page/manager/messages/?threadid=123&folder=inbox',
     });
   });
 

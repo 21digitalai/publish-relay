@@ -64,7 +64,8 @@ const conversationParticipantsSchema = z.object({
 function canonicalMessengerLink(value: string | undefined): string | null {
   if (!value) return null;
   try {
-    const url = new URL(value);
+    if (!value.startsWith('/') && !value.startsWith('https://')) return null;
+    const url = new URL(value, 'https://www.facebook.com');
     const host = url.hostname.toLowerCase();
     if (
       url.protocol !== 'https:' ||

@@ -363,7 +363,13 @@ describe('Publish Relay CLI', () => {
           data: {
             conversations: [
               { id: 't_blocked', displayName: 'Alexandra', noGo: true, providerToken: 'private' },
-              { id: 't_allowed', displayName: 'Maya', noGo: false, providerToken: 'private' },
+              {
+                id: 't_allowed',
+                displayName: 'Maya',
+                noGo: false,
+                link: 'https://www.facebook.com/messages/t/123',
+                providerToken: 'private',
+              },
             ],
             messages: [
               {
@@ -376,6 +382,7 @@ describe('Publish Relay CLI', () => {
             ],
             participantId: 'sender_1',
             displayName: 'Birkan Reyhan',
+            link: 'https://www.facebook.com/messages/t/123',
             providerProfile: { email: 'private@example.test' },
             nextCursor: 'cursor-2',
           },
@@ -406,7 +413,11 @@ describe('Publish Relay CLI', () => {
         displayName: 'Birkan Reyhan',
         conversations: [
           { noGo: true, providerToken: '[REDACTED]' },
-          { noGo: false, providerToken: '[REDACTED]' },
+          {
+            noGo: false,
+            link: 'https://www.facebook.com/messages/t/123',
+            providerToken: '[REDACTED]',
+          },
         ],
         providerProfile: '[REDACTED]',
       });
@@ -433,6 +444,7 @@ describe('Publish Relay CLI', () => {
       ]);
       expect((JSON.parse(result.stdout) as { data: unknown }).data).toMatchObject({
         displayName: 'Birkan Reyhan',
+        link: 'https://www.facebook.com/messages/t/123',
         messages: [{ text: 'Hello', providerToken: '[REDACTED]' }],
         nextCursor: 'cursor-2',
       });

@@ -17,9 +17,9 @@ const input = {
 
 describe('Facebook selected-conversation message read', () => {
   it('denies a foreign Page or ambiguous participants before message retrieval', async () => {
-    const getConversationParticipants = vi
+    const getConversationDetails = vi
       .fn()
-      .mockResolvedValue([{ id: '999' }, { id: 'psid_789' }]);
+      .mockResolvedValue({ participants: [{ id: '999' }, { id: 'psid_789' }], link: null });
     const listConversationMessages = vi.fn();
     mocks.tokenBoundary.mockImplementation(
       async (
@@ -31,14 +31,13 @@ describe('Facebook selected-conversation message read', () => {
     const runtime = {
       database: {} as never,
       keys: {} as never,
-      client: { getConversationParticipants, listConversationMessages } as never,
+      client: { getConversationDetails, listConversationMessages } as never,
     };
     await expect(listAccountConversationMessages(runtime, input)).rejects.toThrow('unavailable');
-    getConversationParticipants.mockResolvedValue([
-      { id: '123' },
-      { id: 'psid_1' },
-      { id: 'psid_2' },
-    ]);
+    getConversationDetails.mockResolvedValue({
+      participants: [{ id: '123' }, { id: 'psid_1' }, { id: 'psid_2' }],
+      link: null,
+    });
     await expect(listAccountConversationMessages(runtime, input)).rejects.toThrow('unavailable');
     expect(listConversationMessages).not.toHaveBeenCalled();
     expect(mocks.tokenBoundary).toHaveBeenCalledWith(
@@ -49,9 +48,10 @@ describe('Facebook selected-conversation message read', () => {
   });
 
   it('reads only after proving the exact selected Page and one fan', async () => {
-    const getConversationParticipants = vi
-      .fn()
-      .mockResolvedValue([{ id: '123' }, { id: 'psid_789', name: 'Birkan Reyhan' }]);
+    const getConversationDetails = vi.fn().mockResolvedValue({
+      participants: [{ id: '123' }, { id: 'psid_789', name: 'Birkan Reyhan' }],
+      link: 'https://www.facebook.com/messages/t/123',
+    });
     const listConversationMessages = vi.fn().mockResolvedValue({ messages: [], nextCursor: null });
     mocks.tokenBoundary.mockImplementation(
       async (
@@ -64,17 +64,18 @@ describe('Facebook selected-conversation message read', () => {
       {
         database: {} as never,
         keys: {} as never,
-        client: { getConversationParticipants, listConversationMessages } as never,
+        client: { getConversationDetails, listConversationMessages } as never,
       },
       input,
     );
     expect(result).toEqual({
       participantId: 'psid_789',
       displayName: 'Birkan Reyhan',
+      link: 'https://www.facebook.com/messages/t/123',
       messages: [],
       nextCursor: null,
     });
-    expect(getConversationParticipants).toHaveBeenCalledWith('t_123', 'server-held-token');
+    expect(getConversationDetails).toHaveBeenCalledWith('t_123', 'server-held-token');
     expect(listConversationMessages).toHaveBeenCalledWith({
       conversationId: 't_123',
       accessToken: 'server-held-token',
@@ -95,9 +96,9 @@ describe('Facebook selected-conversation message read', () => {
         database: {} as never,
         keys: {} as never,
         client: {
-          getConversationParticipants: vi
+          getConversationDetails: vi
             .fn()
-            .mockResolvedValue([{ id: '123' }, { id: 'psid_789' }]),
+            .mockResolvedValue({ participants: [{ id: '123' }, { id: 'psid_789' }], link: null }),
           listConversationMessages: vi.fn().mockResolvedValue({ messages: [], nextCursor: null }),
         } as never,
       },

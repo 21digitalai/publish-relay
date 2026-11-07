@@ -31,6 +31,7 @@ const postCommentSchema = z.object({
 });
 const conversationSchema = z.object({
   id: conversationIdSchema,
+  link: z.string().max(2048).optional(),
   updated_time: graphTimestampSchema.optional(),
   participants: z
     .object({
@@ -47,6 +48,7 @@ const conversationSchema = z.object({
 });
 const conversationParticipantsSchema = z.object({
   id: conversationIdSchema,
+  link: z.string().max(2048).optional(),
   participants: z.object({
     data: z
       .array(
@@ -59,6 +61,23 @@ const conversationParticipantsSchema = z.object({
       .max(10),
   }),
 });
+function canonicalMessengerLink(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (
+      url.protocol !== 'https:' ||
+      !['facebook.com', 'messenger.com', 'm.me'].some(
+        (domain) => host === domain || host.endsWith(`.${domain}`),
+      )
+    )
+      return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
 const conversationMessageSchema = z.object({
   id: z.string().min(1).max(256),
   message: z.string().optional(),
@@ -332,7 +351,7 @@ export class FacebookHttpClient {
     const body = await this.get(
       `/${pageId}/conversations`,
       {
-        fields: 'id,updated_time,participants{id,name}',
+        fields: 'id,link,updated_time,participants{id,name}',
         limit: String(limit),
         ...(after ? { after } : {}),
       },
@@ -342,6 +361,7 @@ export class FacebookHttpClient {
     return {
       conversations: page.data.map((item) => ({
         id: item.id,
+        link: canonicalMessengerLink(item.link),
         updatedAt: item.updated_time ?? null,
         displayName: this.pageParticipantName(item.participants?.data, pageId),
       })),
@@ -359,6 +379,18 @@ export class FacebookHttpClient {
   }
 
   /** Resolve the exact conversation with only bounded participant identity. */
+  public async getConversationDetails(conversationId: string, accessToken: string) {
+    const id = conversationIdSchema.parse(conversationId);
+    const body = await this.get(`/${id}`, { fields: 'id,link,participants{id,name}' }, accessToken);
+    const conversation = conversationParticipantsSchema.safeParse(body);
+    if (!conversation.success || conversation.data.id !== id)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    return {
+      participants: conversation.data.participants.data,
+      link: canonicalMessengerLink(conversation.data.link),
+    };
+  }
+
   public async getConversationParticipants(conversationId: string, accessToken: string) {
     const id = conversationIdSchema.parse(conversationId);
     const body = await this.get(`/${id}`, { fields: 'id,participants{id,name}' }, accessToken);

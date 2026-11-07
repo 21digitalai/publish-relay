@@ -125,11 +125,13 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'updatedAt',
     'displayName',
     'noGo',
+    'link',
   ]),
   'facebook-dms:messages': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'participantId',
     'displayName',
+    'link',
     'messages',
     'nextCursor',
     'text',

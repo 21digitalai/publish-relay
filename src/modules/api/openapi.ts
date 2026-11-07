@@ -481,7 +481,8 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           ],
           responses: {
             '200': {
-              description: 'Page conversation summaries with nullable displayName and nextCursor',
+              description:
+                'Page conversation summaries with nullable displayName, nullable Meta conversation link and nextCursor',
             },
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing Page-local dms:read grant' },
@@ -509,7 +510,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'Selected Page participant ID, nullable displayName, bounded messages and nextCursor',
+                'Selected Page participant ID, nullable displayName, nullable Meta conversation link, bounded messages and nextCursor',
             },
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing Page-local dms:read grant' },

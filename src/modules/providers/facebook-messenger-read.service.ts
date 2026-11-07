@@ -42,10 +42,11 @@ export async function listAccountConversationMessages(
   },
 ) {
   return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, accessToken) => {
-    const participants = await runtime.client.getConversationParticipants(
+    const conversation = await runtime.client.getConversationDetails(
       input.conversationId,
       accessToken,
     );
+    const participants = conversation.participants;
     const fans = participants.filter((person) => person.id !== pageId);
     if (
       participants.filter((person) => person.id === pageId).length !== 1 ||
@@ -59,6 +60,11 @@ export async function listAccountConversationMessages(
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...(input.after === undefined ? {} : { after: input.after }),
     });
-    return { participantId: fans[0].id, displayName: fans[0].name ?? null, ...result };
+    return {
+      participantId: fans[0].id,
+      displayName: fans[0].name ?? null,
+      link: conversation.link,
+      ...result,
+    };
   });
 }

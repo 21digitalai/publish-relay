@@ -56,6 +56,13 @@ describe('Facebook Messenger read transport', () => {
           link: '/my-page/manager/messages/?threadid=123&folder=inbox',
           participants: { data: [{ id: '123' }, { id: 'psid_789' }] },
         }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: 't_123',
+          link: null,
+          participants: { data: [{ id: '123' }, { id: 'psid_789' }] },
+        }),
       );
     const client = clientWith(request);
     const first = await client.getConversationDetails('t_123', 'page-token');
@@ -72,6 +79,9 @@ describe('Facebook Messenger read transport', () => {
     });
     await expect(client.getConversationDetails('t_123', 'page-token')).resolves.toMatchObject({
       link: 'https://www.facebook.com/my-page/manager/messages/?threadid=123&folder=inbox',
+    });
+    await expect(client.getConversationDetails('t_123', 'page-token')).resolves.toMatchObject({
+      link: null,
     });
   });
 
@@ -159,7 +169,7 @@ describe('Facebook Messenger read transport', () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({
         data: [
-          { id: 't_1', participants: { data: [{ id: '123' }, { id: 'psid_1' }] } },
+          { id: 't_1', link: null, participants: { data: [{ id: '123' }, { id: 'psid_1' }] } },
           {
             id: 't_2',
             participants: { data: [{ id: 'other-page' }, { id: 'psid_2', name: 'Other Person' }] },

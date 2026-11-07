@@ -31,7 +31,7 @@ const postCommentSchema = z.object({
 });
 const conversationSchema = z.object({
   id: conversationIdSchema,
-  link: z.string().max(2048).optional(),
+  link: z.string().max(2048).nullish(),
   updated_time: graphTimestampSchema.optional(),
   participants: z
     .object({
@@ -48,7 +48,7 @@ const conversationSchema = z.object({
 });
 const conversationParticipantsSchema = z.object({
   id: conversationIdSchema,
-  link: z.string().max(2048).optional(),
+  link: z.string().max(2048).nullish(),
   participants: z.object({
     data: z
       .array(
@@ -61,7 +61,7 @@ const conversationParticipantsSchema = z.object({
       .max(10),
   }),
 });
-function canonicalMessengerLink(value: string | undefined): string | null {
+function canonicalMessengerLink(value: string | null | undefined): string | null {
   if (!value) return null;
   try {
     if (!value.startsWith('/') && !value.startsWith('https://')) return null;

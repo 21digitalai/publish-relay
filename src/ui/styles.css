@@ -3208,6 +3208,10 @@ textarea:focus-visible {
   color: var(--warning, #ffc857);
   font-variant-numeric: tabular-nums;
 }
+.engagement-reply-window-badge small {
+  display: block;
+  margin-top: 4px;
+}
 .engagement-reply-window-badge.danger,
 .engagement-reply-window-detail.danger,
 .engagement-proposal-warning {

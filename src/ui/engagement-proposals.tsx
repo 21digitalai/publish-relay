@@ -638,6 +638,12 @@ export function EngagementProposalsPage() {
                     now,
                   )
                 : 'Reply window: select to check'}
+            {selectedId === item.id && detail?.id === item.id && replyWindow?.state === 'open' && (
+              <small>
+                Last message from recipient:{' '}
+                {new Date(replyWindow.latestInboundAt).toLocaleString()}
+              </small>
+            )}
           </span>
         )}
         {item.status === 'expired' && (

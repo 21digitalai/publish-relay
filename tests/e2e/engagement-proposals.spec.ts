@@ -327,6 +327,9 @@ test('Page DM plan shows the verified window before approval', async ({ page }, 
   await expect(page.locator('.engagement-reply-window-badge')).toContainText(
     /Reply window: \d+h \d{2}m left/,
   );
+  await expect(page.locator('.engagement-reply-window-badge')).toContainText(
+    `Last message from recipient: ${new Date(latestInboundAt).toLocaleString()}`,
+  );
   await expect(page.locator('.engagement-reply-window-detail')).toContainText(
     `Last message from recipient: ${new Date(latestInboundAt).toLocaleString()}`,
   );

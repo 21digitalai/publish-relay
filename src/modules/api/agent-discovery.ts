@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.9.2';
-const CLI_VERSION = '1.8.2';
+const CONTRACT_VERSION = '1.9.3';
+const CLI_VERSION = '1.8.3';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -45,6 +45,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - facebook-comments posts/list: comments:read on the selected Page, plus its optional Comments module and verified provider grant. Publishing connection alone does not authorize comment reading.
 - facebook-dms list/messages: dms:read on the selected Page, plus its connected Messages module grant. Publishing connection alone does not authorize inbox access.
 - facebook-dms send: dms:send on the selected Page, its Messages grant, and a recent inbound message from that conversation. This replies to an existing person-initiated conversation; it cannot cold-message a Page follower.
+- facebook-dms schedule/cancel: the same selected-Page dms:send authority. Scheduling stores a pending intent for a delayed reply; cancellation works only while that intent is pending. A scheduled receipt is not proof of delivery.
 - proposals create: engagement:propose plus selected-Page comments:propose or dms:propose. This stages a human-reviewed suggestion only; it never sends and does not require send scope.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
 
@@ -95,6 +96,8 @@ For a recorded Page DM proposal, use proposals status <proposal-id> before decid
 Use destinations list to choose the connected Facebook Page account ID, then facebook-dms list <account-id> --limit 25. Follow data.nextCursor with --after <cursor>; the server limits pages to 100. Each Page-scoped conversation projects displayName when Meta supplies the sole non-Page participant's name, noGo true/false from the Page-local suppression list, and a nullable Meta-provided conversation link. Never draft, propose, or send to a conversation with noGo true. Read one conversation with facebook-dms messages <account-id> --conversation-id <id> --limit 25 and page it with --after. Its displayName is the same selected conversation participant identity; read text, senderId, createdAt and participantId in that Page context. A null displayName means identity is unknown, not that the opaque participantId is a person's name. A null link means no verified thread URL was returned; never construct a guessed Business Suite URL. Do not infer identity from IDs or search another Page to locate a conversation. If a named-person match matters, do not send until the name is actually verified.
 
 To respond, write a JSON body containing only clientActionId (a fresh UUID) and text (1–2000 characters). Run facebook-dms send <account-id> --conversation-id <id> --body-file <reply.json> --idempotency-key <same-clientActionId>. Verify the account and intended conversation before sending; send is an external side effect. Keep the UUID and exact request for replay. A confirmed result includes messageId. An unknown result means provider outcome is uncertain: never use a new action ID or resend automatically; inspect the conversation and reconcile before any later action. A definite failed result is not confirmation of delivery. Relay enforces the provider's standard recent-inbound reply window, tenant/account scope, grants and duplicate-send protection; the agent's own instructions decide message content and timing.
+
+To spread direct replies, choose distinct future send slots rather than firing a burst or sleeping through a run. Use facebook-dms schedule <account-id> --conversation-id <id> --body-file <reply.json> --idempotency-key <same-clientActionId>. The JSON contains clientActionId, text, and schedule: { earliestDelaySeconds, latestDelaySeconds }; both delays are integers from 0 to 82800, and the server samples one time in that inclusive window. Set both equal for an exact relative delay, or use a narrow range for jitter. Choose each conversation's window so their due times are staggered; the agent's pacing instructions determine spacing. The 202 receipt returns an intent id, pending status, and dueAt. Save the exact action ID, intent ID, and dueAt; replay only the identical request with the same action ID. A pending intent is not a send receipt: the due worker rechecks the selected Page, no-go state, grant, and recent inbound window, and unknown outcomes never authorize a blind resend. To withdraw before dispatch, run facebook-dms cancel <account-id> --conversation-id <id> --intent-id <intent-id>; not_pending means it was already claimed or settled. Cancellation does not undo a provider send.
 
 401 means the key is unavailable; 403 means the key lacks the Page-local dms:read/dms:send capability or account access. A 409 page_read_unavailable/page_dm_unavailable means the selected Page or Messages grant is unavailable; messaging_window_unproven means no eligible recent inbound message; action_conflict means the action ID was reused for different input. Do not treat these as a prompt to search raw Meta credentials. 429 honors Retry-After. A provider read/preflight failure needs grant/provider diagnosis, not a blind send retry.
 

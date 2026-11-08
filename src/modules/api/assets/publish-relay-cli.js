@@ -22,6 +22,8 @@ const MUTATIONS = new Set([
   'fanvue:create-chat',
   'facebook-comments:reply',
   'facebook-dms:send',
+  'facebook-dms:schedule',
+  'facebook-dms:cancel',
   'proposals:create',
 ]);
 const ROUTES = {
@@ -48,6 +50,15 @@ const ROUTES = {
     method: 'POST',
     path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/messages',
     body: true,
+  },
+  'facebook-dms:schedule': {
+    method: 'POST',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/messages',
+    body: true,
+  },
+  'facebook-dms:cancel': {
+    method: 'DELETE',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/scheduled/:intentId',
   },
   'fanvue:followers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/followers' },
   'fanvue:subscribers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/subscribers' },
@@ -140,6 +151,8 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   ]),
   'facebook-comments:reply': new Set([...ENVELOPE_OUTPUT_KEYS, 'commentId', 'failureStatus']),
   'facebook-dms:send': new Set([...ENVELOPE_OUTPUT_KEYS, 'messageId', 'failureStatus']),
+  'facebook-dms:schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
+  'facebook-dms:cancel': new Set(ENVELOPE_OUTPUT_KEYS),
   'fanvue:followers': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'pagination',
@@ -521,6 +534,12 @@ function routePath(route, command, id, flags) {
   const postId = flags['post-id'];
   if (route.path.includes(':conversationId') && typeof conversationId !== 'string')
     throw new CliError(EXIT.usage, 'Facebook DM command requires --conversation-id');
+  const intentId = flags['intent-id'];
+  if (
+    route.path.includes(':intentId') &&
+    (typeof intentId !== 'string' || !WORKSPACE_ID_PATTERN.test(intentId))
+  )
+    throw new CliError(EXIT.usage, 'Facebook DM cancellation requires UUID --intent-id');
   if (
     route.path.includes(':postId') &&
     (typeof postId !== 'string' || !/^[0-9]+(?:_[0-9]+)*$/.test(postId))
@@ -530,7 +549,8 @@ function routePath(route, command, id, flags) {
     .replace(':id', encodeURIComponent(id ?? ''))
     .replace(':postId', encodeURIComponent(String(postId ?? '')))
     .replace(':commentId', encodeURIComponent(String(flags['comment-id'] ?? '')))
-    .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')));
+    .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')))
+    .replace(':intentId', encodeURIComponent(String(intentId ?? '')));
   if (
     command !== 'posts:list' &&
     command !== 'destinations:list' &&
@@ -683,10 +703,20 @@ async function run() {
     )
       throw new CliError(EXIT.usage, 'Facebook comment reply requires numeric --comment-id');
   }
-  if (parsed.command === 'facebook-dms:send') {
-    const actionId = JSON.parse(String(body)).clientActionId;
+  if (parsed.command === 'facebook-dms:send' || parsed.command === 'facebook-dms:schedule') {
+    const payload = JSON.parse(String(body));
+    const actionId = payload.clientActionId;
     if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])
       throw new CliError(EXIT.usage, 'Facebook DM clientActionId must match --idempotency-key');
+    if (parsed.command === 'facebook-dms:send' && payload.schedule !== undefined)
+      throw new CliError(EXIT.usage, 'Use facebook-dms schedule for a delayed message');
+    if (
+      parsed.command === 'facebook-dms:schedule' &&
+      (!payload.schedule ||
+        !Number.isInteger(payload.schedule.earliestDelaySeconds) ||
+        !Number.isInteger(payload.schedule.latestDelaySeconds))
+    )
+      throw new CliError(EXIT.usage, 'Scheduled Page DM requires integer delay seconds');
   }
   if (parsed.command === 'proposals:create') {
     const actionId = JSON.parse(String(body)).clientActionId;
@@ -694,7 +724,11 @@ async function run() {
       throw new CliError(EXIT.usage, 'Proposal clientActionId must match --idempotency-key');
   }
   const idempotencyKey = parsed.flags['idempotency-key'];
-  if (MUTATIONS.has(parsed.command) && typeof idempotencyKey !== 'string')
+  if (
+    MUTATIONS.has(parsed.command) &&
+    parsed.command !== 'facebook-dms:cancel' &&
+    typeof idempotencyKey !== 'string'
+  )
     throw new CliError(EXIT.usage, 'Mutations require --idempotency-key');
   const requestBody = Buffer.isBuffer(body) ? new Uint8Array(body) : body;
   const response = await request(profile, key, expected || undefined, path, {

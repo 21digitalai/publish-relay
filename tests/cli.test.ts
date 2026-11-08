@@ -497,6 +497,116 @@ describe('Publish Relay CLI', () => {
       expect(paths).toHaveLength(1);
     },
   );
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'schedules and cancels a Page DM through the existing intent routes in %s',
+    async (entrypoint) => {
+      const accountId = '00000000-0000-4000-8000-000000000002';
+      const actionId = '00000000-0000-4000-8000-000000000003';
+      const intentId = '00000000-0000-4000-8000-000000000006';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        202,
+        {
+          success: true,
+          data: {
+            id: intentId,
+            status: 'pending',
+            dueAt: '2026-11-08T21:30:00Z',
+            providerToken: 'private',
+          },
+        },
+        '00000000-0000-4000-8000-000000000201',
+        paths,
+      );
+      const directory = await mkdtemp(join(tmpdir(), 'relay-facebook-dm-schedule-'));
+      const bodyFile = join(directory, 'schedule.json');
+      await writeFile(
+        bodyFile,
+        JSON.stringify({
+          clientActionId: actionId,
+          text: 'Hello',
+          schedule: { earliestDelaySeconds: 1800, latestDelaySeconds: 2100 },
+        }),
+      );
+      const baseArgs = [
+        accountId,
+        '--conversation-id',
+        't_123',
+        '--body-file',
+        bodyFile,
+        '--idempotency-key',
+        actionId,
+        '--base-url',
+        baseUrl,
+      ];
+      const scheduled = await cli(
+        ['facebook-dms', 'schedule', ...baseArgs],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(scheduled.code).toBe(0);
+      expect(paths).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-conversations/t_123/messages`,
+      ]);
+      expect((JSON.parse(scheduled.stdout) as { data: unknown }).data).toEqual({
+        id: intentId,
+        status: 'pending',
+        dueAt: '2026-11-08T21:30:00Z',
+        providerToken: '[REDACTED]',
+      });
+      const direct = await cli(
+        ['facebook-dms', 'send', ...baseArgs],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(direct.code).toBe(2);
+      expect(paths).toHaveLength(1);
+      await writeFile(bodyFile, JSON.stringify({ clientActionId: actionId, text: 'Hello' }));
+      const missingSchedule = await cli(
+        ['facebook-dms', 'schedule', ...baseArgs],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(missingSchedule.code).toBe(2);
+      expect(paths).toHaveLength(1);
+      const cancelled = await cli(
+        [
+          'facebook-dms',
+          'cancel',
+          accountId,
+          '--conversation-id',
+          't_123',
+          '--intent-id',
+          intentId,
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(cancelled.code).toBe(0);
+      expect(paths[1]).toBe(
+        `/api/v1/destinations/${accountId}/facebook-conversations/t_123/scheduled/${intentId}`,
+      );
+      const invalid = await cli(
+        [
+          'facebook-dms',
+          'cancel',
+          accountId,
+          '--conversation-id',
+          't_123',
+          '--intent-id',
+          'bad',
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(invalid.code).toBe(2);
+      expect(paths).toHaveLength(2);
+    },
+  );
   it('routes a selected Fanvue chat creation with workspace preflight and bounded output', async () => {
     const accountId = '00000000-0000-4000-8000-000000000002';
     const fanUuid = '00000000-0000-4000-8000-000000000003';

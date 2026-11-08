@@ -38,6 +38,16 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
                 contentPreview: 'Draft',
                 createdAt: new Date().toISOString(),
               },
+              {
+                id: '00000000-0000-4000-8000-000000000415',
+                accountDisplayName: 'Mira Studio',
+                provider: 'fanvue',
+                kind: 'dm',
+                status: 'failed',
+                sourcePreview: 'Hello',
+                contentPreview: 'Failed send',
+                createdAt: new Date().toISOString(),
+              },
             ],
             nextCursor: null,
           }
@@ -95,9 +105,15 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     );
     await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
-    await expect(page.getByLabel('Inactive drafts')).toContainText('Facebook Page message');
+    await expect(page.getByLabel('Unsent suggestions')).toContainText(
+      'Never sent · kept for context only.',
+    );
+    await expect(page.getByLabel('Unsent suggestions')).toContainText('Facebook Page message');
+    await expect(page.locator('.engagement-proposals-list > div:last-of-type')).toHaveClass(
+      /engagement-proposals-inactive/,
+    );
     const openControl = page
-      .getByLabel('Inactive drafts')
+      .getByLabel('Unsent suggestions')
       .getByRole('button', { name: 'Open conversation on Facebook' });
     await expect(openControl).toBeVisible();
     const popupPromise = page.waitForEvent('popup');
@@ -107,13 +123,15 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
       await expect(popup).toHaveTitle('Facebook conversation opened');
       await expect(
         page
-          .getByLabel('Inactive drafts')
+          .getByLabel('Unsent suggestions')
           .getByRole('link', { name: 'Open conversation on Facebook' }),
       ).toHaveAttribute('href', graphLink);
       await popup.close();
     } else {
-      await expect(page.getByLabel('Inactive drafts').getByText('Link unavailable')).toBeVisible();
-      await expect(page.getByLabel('Inactive drafts').getByRole('link')).toHaveCount(0);
+      await expect(
+        page.getByLabel('Unsent suggestions').getByText('Link unavailable'),
+      ).toBeVisible();
+      await expect(page.getByLabel('Unsent suggestions').getByRole('link')).toHaveCount(0);
       await expect.poll(() => popup.isClosed()).toBe(true);
     }
     await expect(page.locator('.engagement-reply-window-badge.danger')).toBeVisible();
@@ -125,7 +143,7 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
   }
   status = 'expired';
   await page.goto(`/w/${workspace.data.slug}/proposals`);
-  await expect(page.getByLabel('Inactive drafts')).toContainText('Expired draft');
+  await expect(page.getByLabel('Unsent suggestions')).toContainText('Expired draft');
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(
     page.getByText('Expired draft. Dismiss it or wait for a fresh draft.'),
@@ -209,16 +227,16 @@ test('verified inactive Page DM stays outside approval after switching rows and 
     await page.setViewportSize(size);
     await page.goto(`/w/${workspace.data.slug}/proposals`);
     await page.getByRole('button', { name: /Draft 1/ }).click();
-    await expect(page.getByLabel('Inactive drafts')).toContainText('Draft 1');
+    await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
     await page.getByRole('button', { name: /Draft 2/ }).click();
-    await expect(page.getByLabel('Inactive drafts')).toContainText('Draft 1');
+    await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
     await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
     await expect(page.getByRole('button', { name: 'Retry reply-window check' })).toBeVisible();
     failSecond = false;
     await page.getByRole('button', { name: 'Retry reply-window check' }).click();
     await expect(page.locator('.engagement-reply-window-detail')).toContainText('left');
     await page.reload();
-    await expect(page.getByLabel('Inactive drafts')).toContainText('Draft 1');
+    await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
     await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
     expect(checked).toContain(first);
   }
@@ -356,7 +374,7 @@ test('Page DM plan shows the verified window before approval', async ({ page }, 
   await page.reload();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(page.getByText(/A newer draft replaced this one/)).toBeVisible();
-  await expect(page.getByLabel('Inactive drafts')).toContainText('Superseded by a newer draft');
+  await expect(page.getByLabel('Unsent suggestions')).toContainText('Superseded by a newer draft');
   await expect(page.getByRole('button', { name: /Approve and schedule/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
   await page.getByRole('button', { name: 'Dismiss proposal' }).click();

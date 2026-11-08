@@ -738,16 +738,17 @@ export function EngagementProposalsPage() {
                     <p>No drafts await approval.</p>
                   )}
                 </div>
-                {inactiveItems.length > 0 && (
-                  <div className="engagement-proposals-inactive" aria-label="Inactive drafts">
-                    <h2>Inactive drafts</h2>
-                    {inactiveItems.map(renderProposalRow)}
-                  </div>
-                )}
                 {outcomeItems.length > 0 && (
                   <div className="engagement-proposals-outcomes" aria-label="Send outcomes">
                     <h2>Send outcomes</h2>
                     {outcomeItems.map(renderProposalRow)}
+                  </div>
+                )}
+                {inactiveItems.length > 0 && (
+                  <div className="engagement-proposals-inactive" aria-label="Unsent suggestions">
+                    <h2>Unsent suggestions</h2>
+                    <p className="muted">Never sent · kept for context only.</p>
+                    {inactiveItems.map(renderProposalRow)}
                   </div>
                 )}
               </>

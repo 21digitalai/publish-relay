@@ -34,6 +34,7 @@ const MUTATIONS = new Set([
   'facebook-dms:send',
   'facebook-dms:schedule',
   'facebook-dms:cancel',
+  'facebook-dms:memory-upsert',
   'proposals:create',
 ]);
 const ROUTES: Record<string, { method: string; path: string; body?: boolean }> = {
@@ -69,6 +70,16 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   'facebook-dms:cancel': {
     method: 'DELETE',
     path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/scheduled/:intentId',
+  },
+  'facebook-dms:memory-get-many': {
+    method: 'POST',
+    path: '/api/v1/destinations/:id/facebook-conversations/memory/get-many',
+    body: true,
+  },
+  'facebook-dms:memory-upsert': {
+    method: 'PATCH',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/memory',
+    body: true,
   },
   'fanvue:followers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/followers' },
   'fanvue:subscribers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/subscribers' },
@@ -163,6 +174,19 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
   'facebook-dms:send': new Set([...ENVELOPE_OUTPUT_KEYS, 'messageId', 'failureStatus']),
   'facebook-dms:schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
   'facebook-dms:cancel': new Set(ENVELOPE_OUTPUT_KEYS),
+  'facebook-dms:memory-get-many': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'records',
+    'conversationId',
+    'facts',
+    'firstContactAt',
+    'conversationAgeDays',
+    'lastProcessedInboundId',
+    'lastOutboundReceiptRef',
+    'terminal',
+    'unansweredFollowUp',
+  ]),
+  'facebook-dms:memory-upsert': new Set([...ENVELOPE_OUTPUT_KEYS, 'conversationId']),
   'fanvue:followers': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'pagination',
@@ -678,7 +702,7 @@ async function pollJob(
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.8.2' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.4' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);
@@ -778,6 +802,7 @@ async function run(): Promise<Json> {
   if (
     MUTATIONS.has(parsed.command) &&
     parsed.command !== 'facebook-dms:cancel' &&
+    parsed.command !== 'facebook-dms:memory-upsert' &&
     typeof idempotencyKey !== 'string'
   )
     throw new CliError(EXIT.usage, 'Mutations require --idempotency-key');

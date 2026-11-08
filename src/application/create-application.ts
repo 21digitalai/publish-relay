@@ -39,6 +39,7 @@ import { registerLinkedInOauthRoutes } from '../modules/providers/linkedin-oauth
 import type { MetaHttpClient, MetaPermission } from '../modules/providers/meta-http-client.js';
 import type { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-page-read.routes.js';
+import { registerFacebookDmMemoryRoutes } from '../modules/providers/facebook-dm-memory.routes.js';
 import { registerFacebookPageCommentSendRoute } from '../modules/providers/facebook-comment-send.routes.js';
 import { registerFacebookPageDmSendRoute } from '../modules/providers/facebook-messenger-send.routes.js';
 import { sendAccountPageCommentReply } from '../modules/providers/facebook-comment-send.service.js';
@@ -237,6 +238,13 @@ function registerMachineApiRoutes(
   );
   if (options.facebookRead) {
     const facebook = { database, ...options.facebookRead };
+    registerFacebookDmMemoryRoutes(
+      application,
+      database,
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
     registerFacebookPageReadRoutes(
       application,
       facebook,

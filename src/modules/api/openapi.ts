@@ -490,6 +490,97 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/destinations/{accountId}/facebook-conversations/memory/get-many': {
+        post: {
+          operationId: 'getFacebookPageDmMemoryMany',
+          description:
+            'Read up to 100 compact Page-local conversation memories; missing IDs return empty records. Requires Page-local dms:read.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['conversationIds'],
+                  properties: {
+                    conversationIds: {
+                      type: 'array',
+                      minItems: 1,
+                      maxItems: 100,
+                      items: { type: 'string' },
+                    },
+                    terminal: { type: 'string', enum: ['include', 'exclude', 'only'] },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Ordered compact records, with missing IDs represented as empty records',
+            },
+            '400': { description: 'Invalid batch' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page-local dms:read grant' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/memory': {
+        patch: {
+          operationId: 'upsertFacebookPageDmMemory',
+          description:
+            'Idempotently update submitted compact memory fields only. Requires Page-local dms:propose.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  minProperties: 1,
+                  additionalProperties: false,
+                  properties: {
+                    facts: {
+                      type: 'array',
+                      maxItems: 10,
+                      items: { type: 'string', maxLength: 160 },
+                    },
+                    firstContactAt: { type: ['string', 'null'], format: 'date-time' },
+                    lastProcessedInboundId: { type: ['string', 'null'], maxLength: 256 },
+                    lastOutboundReceiptRef: { type: ['string', 'null'], maxLength: 256 },
+                    terminal: { type: 'boolean' },
+                    unansweredFollowUp: { type: 'boolean' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Updated conversation ID' },
+            '400': { description: 'Invalid patch' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing Page-local dms:propose grant' },
+          },
+        },
+      },
       '/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/messages': {
         get: {
           operationId: 'listFacebookPageConversationMessages',

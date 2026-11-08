@@ -99,6 +99,73 @@ async function cli(
 
 describe('Publish Relay CLI', () => {
   it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'batches Page memory and upserts a compact patch in %s',
+    async (entrypoint) => {
+      const accountId = '00000000-0000-4000-8000-000000000402';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        200,
+        {
+          data: {
+            records: [
+              {
+                conversationId: 't_1',
+                facts: ['One fact'],
+                terminal: false,
+                providerToken: 'private',
+              },
+            ],
+          },
+          error: null,
+        },
+        undefined,
+        paths,
+      );
+      const folder = await mkdtemp(join(tmpdir(), 'relay-dm-memory-'));
+      const batchFile = join(folder, 'batch.json');
+      await writeFile(batchFile, JSON.stringify({ conversationIds: ['t_1'], terminal: 'exclude' }));
+      const get = await cli(
+        [
+          'facebook-dms',
+          'memory-get-many',
+          accountId,
+          '--body-file',
+          batchFile,
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(get.code).toBe(0);
+      expect(paths).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-conversations/memory/get-many`,
+      ]);
+      expect(JSON.parse(get.stdout)).toMatchObject({
+        data: { records: [{ facts: ['One fact'], providerToken: '[REDACTED]' }] },
+      });
+      const patchFile = join(folder, 'patch.json');
+      await writeFile(patchFile, JSON.stringify({ facts: ['Updated fact'] }));
+      const upsert = await cli(
+        [
+          'facebook-dms',
+          'memory-upsert',
+          accountId,
+          '--conversation-id',
+          't_1',
+          '--body-file',
+          patchFile,
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(upsert.code).toBe(0);
+      expect(paths[1]).toBe(`/api/v1/destinations/${accountId}/facebook-conversations/t_1/memory`);
+    },
+  );
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
     'stages a Page proposal with an exact action key and redacted receipt in %s',
     async (entrypoint) => {
       const actionId = '00000000-0000-4000-8000-000000000403';
@@ -163,7 +230,7 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.2' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.4' } });
     },
   );
 

@@ -92,8 +92,8 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.9.3');
-    expect(manifest.data.cliVersion).toBe('1.8.3');
+    expect(manifest.data.contractVersion).toBe('1.9.4');
+    expect(manifest.data.cliVersion).toBe('1.8.4');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('proposals create --body-file');
     expect(skill.body).toContain('proposals status <proposal-id>');
@@ -107,6 +107,8 @@ describe('agent discovery', () => {
     expect(skill.body).toContain('facebook-dms send <account-id>');
     expect(skill.body).toContain('facebook-dms schedule <account-id>');
     expect(skill.body).toContain('facebook-dms cancel <account-id>');
+    expect(skill.body).toContain('facebook-dms memory-get-many <account-id>');
+    expect(skill.body).toContain('facebook-dms memory-upsert <account-id>');
     expect(skill.body).toContain('never use a new action ID or resend automatically');
     expect(manifest.data.cli.path).toBe('/publish-relay-skill/publish-relay-cli.js');
     expect(manifest.data.cli.updatePolicy).toBe('warn-only');

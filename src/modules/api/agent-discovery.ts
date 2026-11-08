@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.9.3';
-const CLI_VERSION = '1.8.3';
+const CONTRACT_VERSION = '1.9.4';
+const CLI_VERSION = '1.8.4';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -44,6 +44,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - facebook-comments reply: comments:send on the selected Page plus the optional Comments grant with pages_manage_engagement. Read-only or publishing access cannot send.
 - facebook-comments posts/list: comments:read on the selected Page, plus its optional Comments module and verified provider grant. Publishing connection alone does not authorize comment reading.
 - facebook-dms list/messages: dms:read on the selected Page, plus its connected Messages module grant. Publishing connection alone does not authorize inbox access.
+- facebook-dms memory-get-many: dms:read on the selected Page; memory-upsert: dms:propose on that Page. Both require its connected Messages module grant. Memory is Page-local and contains compact facts, not message transcripts.
 - facebook-dms send: dms:send on the selected Page, its Messages grant, and a recent inbound message from that conversation. This replies to an existing person-initiated conversation; it cannot cold-message a Page follower.
 - facebook-dms schedule/cancel: the same selected-Page dms:send authority. Scheduling stores a pending intent for a delayed reply; cancellation works only while that intent is pending. A scheduled receipt is not proof of delivery.
 - proposals create: engagement:propose plus selected-Page comments:propose or dms:propose. This stages a human-reviewed suggestion only; it never sends and does not require send scope.
@@ -51,7 +52,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 
 For the shipped CLI, set PUBLISH_RELAY_BASE_URL, PUBLISH_RELAY_API_KEY, and PUBLISH_RELAY_WORKSPACE (the workspace UUID, not its display label). Profiles may name the API-key environment variable but must never contain its value. Delegated clients call the same HTTP contract directly with their encrypted token store. Before a mutation, verify the expected workspace through a read endpoint and keep X-Publish-Relay-Workspace explicit. A label is rejected locally because the API key is looked up under the exact workspace UUID; a label would otherwise produce a misleading authentication error.
 
-Use a unique idempotency key for every intended mutation. Reuse it only to replay the same request. Keep all list pagination server-side and follow returned cursors.
+Use a unique idempotency key for every intended send/create mutation. Reuse it only to replay the same request. The Page memory partial upsert is an idempotent state replacement and needs no action key. Keep all list pagination server-side and follow returned cursors.
 
 For accepted or unknown publication outcomes, poll the returned job link with bounded --poll-timeout-ms and --poll-interval-ms values. A timeout leaves the durable job intact: inspect it again before deciding what to do. Reconcile unknown X outcomes through lookup; never retry a publish blindly.
 
@@ -94,6 +95,8 @@ For review-first mode, use proposals create with provider=facebook_page, kind=dm
 For a recorded Page DM proposal, use proposals status <proposal-id> before deciding whether to draft again. It returns only the proposal ID, status, and original plannedDueAt after workspace and selected-Page proposal authorization. Pending, scheduled, sending, unknown, and sent never authorize a new draft. A definite expired, dismissed, or failed status permits considering a new draft only after ruling out a scheduled/unknown send and checking a current recipient-authored inbound, no-go state, and the Meta reply window. A re-draft uses a fresh clientActionId and future plannedDueAt; never silently turn the old proposal into an immediate send.
 
 Use destinations list to choose the connected Facebook Page account ID, then facebook-dms list <account-id> --limit 25. Follow data.nextCursor with --after <cursor>; the server limits pages to 100. Each Page-scoped conversation projects displayName when Meta supplies the sole non-Page participant's name, noGo true/false from the Page-local suppression list, and a nullable Meta-provided conversation link. Never draft, propose, or send to a conversation with noGo true. Read one conversation with facebook-dms messages <account-id> --conversation-id <id> --limit 25 and page it with --after. Its displayName is the same selected conversation participant identity; read text, senderId, createdAt and participantId in that Page context. A null displayName means identity is unknown, not that the opaque participantId is a person's name. A null link means no verified thread URL was returned; never construct a guessed Business Suite URL. Do not infer identity from IDs or search another Page to locate a conversation. If a named-person match matters, do not send until the name is actually verified.
+
+For per-person working memory, take conversation IDs from the selected Page inbox and call facebook-dms memory-get-many <account-id> --body-file <json> with {"conversationIds":["..."],"terminal":"exclude"}. The batch accepts up to 100 unique IDs; missing IDs return empty records. Use terminal include (default), exclude, or only without downloading histories. Each record has a compact facts list, firstContactAt, derived conversationAgeDays, lastProcessedInboundId, lastOutboundReceiptRef, terminal, and unansweredFollowUp. Update only changed fields with facebook-dms memory-upsert <account-id> --conversation-id <id> --body-file <patch.json>; replaying the same patch is safe. facts replaces the bounded list when submitted. Store facts, not message transcripts; the Page DM history remains the source for message text. Terminal is an agent workflow flag, not the Page no-go/send-permission gate.
 
 To respond, write a JSON body containing only clientActionId (a fresh UUID) and text (1–2000 characters). Run facebook-dms send <account-id> --conversation-id <id> --body-file <reply.json> --idempotency-key <same-clientActionId>. Verify the account and intended conversation before sending; send is an external side effect. Keep the UUID and exact request for replay. A confirmed result includes messageId. An unknown result means provider outcome is uncertain: never use a new action ID or resend automatically; inspect the conversation and reconcile before any later action. A definite failed result is not confirmation of delivery. Relay enforces the provider's standard recent-inbound reply window, tenant/account scope, grants and duplicate-send protection; the agent's own instructions decide message content and timing.
 

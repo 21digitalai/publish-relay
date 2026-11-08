@@ -769,6 +769,30 @@ export const facebookPageDmNoGo = pgTable(
   ],
 );
 
+export const facebookPageDmMemory = pgTable(
+  'facebook_page_dm_memory',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    facts: jsonb('facts').$type<string[]>().notNull().default([]),
+    firstContactAt: timestamp('first_contact_at', { withTimezone: true }),
+    lastProcessedInboundId: text('last_processed_inbound_id'),
+    lastOutboundReceiptRef: text('last_outbound_receipt_ref'),
+    terminal: boolean('terminal').notNull().default(false),
+    unansweredFollowUp: boolean('unanswered_follow_up').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId, table.conversationId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_memory_account_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
 export const facebookPageCommentActions = pgTable(
   'facebook_page_comment_actions',
   {

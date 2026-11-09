@@ -23,7 +23,11 @@ import {
   verifyTikTokPublicationConsentInTransaction,
 } from './tiktok-consent.service.js';
 import { getFreshTikTokTokenWithVersion } from './tiktok-credential.service.js';
-import type { TikTokDirectPost, TikTokHttpClient } from './tiktok-http-client.js';
+import {
+  TikTokRequestError,
+  type TikTokDirectPost,
+  type TikTokHttpClient,
+} from './tiktok-http-client.js';
 import type { TikTokMediaGrantService } from './tiktok-media-grant.service.js';
 
 const payloadSchema = z.strictObject({
@@ -64,6 +68,24 @@ export interface TikTokDispatchRuntime {
   leaseMs: number;
   publicOrigin: string;
   verifiedMediaOrigin: string;
+}
+
+function definiteInitRejection(error: unknown): TikTokRequestError | null {
+  if (
+    !(error instanceof TikTokRequestError) ||
+    error.outcomeUnknown ||
+    !error.code ||
+    error.code === 'ok'
+  )
+    return null;
+  // Only a parsed provider error envelope proves that init was rejected. A transport
+  // timeout, server error, or malformed success can still have accepted the post.
+  if (error.status !== 200 && (error.status < 400 || error.status >= 500)) return null;
+  return error;
+}
+
+function redactedInitRejection(error: TikTokRequestError): string {
+  return `TikTok init rejected (${error.kind}, HTTP ${String(error.status)}, code ${String(error.code)}${error.logId ? `, log ${error.logId}` : ''})`;
 }
 
 async function loadClaimedJob(runtime: TikTokDispatchRuntime, job: ClaimedJob) {
@@ -139,7 +161,7 @@ export async function dispatchClaimedTikTokJob(
   runtime: TikTokDispatchRuntime,
   job: ClaimedJob,
   now = new Date(),
-): Promise<'accepted_pending' | 'outcome_unknown'> {
+): Promise<'accepted_pending' | 'outcome_unknown' | 'failed'> {
   const origin = assertVerifiedMediaOrigin(runtime);
   const context = await loadClaimedJob(runtime, job);
   const tokenGrant = await getFreshTikTokTokenWithVersion(
@@ -258,19 +280,22 @@ export async function dispatchClaimedTikTokJob(
   try {
     publishId = (await runtime.client.initDirectPost(tokenGrant.token.access_token, request))
       .publishId;
-  } catch {
+  } catch (error) {
+    const rejection = definiteInitRejection(error);
     const stored = await finishDispatchAttempt(runtime.database, {
       workspaceId: job.workspaceId,
       jobId: job.id,
       attemptId: attempt.attemptId,
-      outcome: 'unknown',
-      tiktokInitPhase: 'outcome_unknown',
-      reconciliationKey: `tiktok:${job.id}`,
-      redactedError: 'TikTok init outcome is unknown; manual attention required',
+      outcome: rejection?.kind ?? 'unknown',
+      tiktokInitPhase: rejection ? 'failed' : 'outcome_unknown',
+      ...(rejection ? {} : { reconciliationKey: `tiktok:${job.id}` }),
+      redactedError: rejection
+        ? redactedInitRejection(rejection)
+        : 'TikTok init outcome is unknown; manual attention required',
       now: new Date(),
     });
-    if (!stored) throw new Error('TikTok unknown init receipt could not be persisted');
-    return 'outcome_unknown';
+    if (!stored) throw new Error('TikTok init receipt could not be persisted');
+    return rejection ? 'failed' : 'outcome_unknown';
   }
   const stored = await finishDispatchAttempt(runtime.database, {
     workspaceId: job.workspaceId,

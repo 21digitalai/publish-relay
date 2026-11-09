@@ -276,6 +276,81 @@ it('treats lost init response as unknown and never re-inits after lease recovery
   await expect(recoverExpiredDispatches(db, new Date(Date.now() + 120_000))).resolves.toEqual([]);
 });
 
+it.each([
+  { status: 400, code: 'invalid_param', outcome: 'validation' },
+  { status: 401, code: 'access_token_invalid', outcome: 'auth' },
+  { status: 429, code: 'rate_limit_exceeded', outcome: 'rate_limit' },
+  { status: 200, code: 'invalid_param', outcome: 'validation' },
+])(
+  'records an explicit TikTok init rejection ($status) as $outcome',
+  async ({ status, code, outcome }) => {
+    const calls = vi.fn<typeof fetch>((url) =>
+      Promise.resolve(
+        requestUrl(url).endsWith('/creator_info/query/')
+          ? creatorResponse()
+          : new Response(JSON.stringify({ data: {}, error: { code, log_id: 'safe-log-123' } }), {
+              status,
+            }),
+      ),
+    );
+    expect(await dispatchClaimedTikTokJob(runtime(calls), await claimReady())).toBe('failed');
+    const rows = await pg.query<{
+      state: string;
+      reconciliation_required: boolean;
+      outcome: string;
+      tiktok_init_phase: string;
+      redacted_error: string;
+      reconciliation_key: string | null;
+    }>(
+      `select job.state, job.reconciliation_required, attempt.outcome,
+      attempt.tiktok_init_phase, attempt.redacted_error, attempt.reconciliation_key
+      from publication_jobs job join publication_attempts attempt on attempt.job_id = job.id
+      where job.id = $1`,
+      [jobId],
+    );
+    expect(rows.rows[0]).toEqual({
+      state: 'failed',
+      reconciliation_required: false,
+      outcome,
+      tiktok_init_phase: 'failed',
+      redacted_error: `TikTok init rejected (${outcome}, HTTP ${String(status)}, code ${code}, log safe-log-123)`,
+      reconciliation_key: null,
+    });
+    expect(await claim(new Date(Date.now() + 120_000))).toBeNull();
+    expect(calls).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each([
+  { status: 500, body: { data: {}, error: { code: 'internal_error', log_id: 'safe-log' } } },
+  { status: 200, body: { data: {}, error: { code: 'ok', log_id: 'safe-log' } } },
+  { status: 400, body: { data: {}, error: { code: 'ok', log_id: 'safe-log' } } },
+])('keeps ambiguous TikTok init response ($status) frozen', async ({ status, body }) => {
+  const calls = vi.fn<typeof fetch>((url) =>
+    Promise.resolve(
+      requestUrl(url).endsWith('/creator_info/query/')
+        ? creatorResponse()
+        : new Response(JSON.stringify(body), { status }),
+    ),
+  );
+  expect(await dispatchClaimedTikTokJob(runtime(calls), await claimReady())).toBe(
+    'outcome_unknown',
+  );
+  const rows = await pg.query<{ state: string; reconciliation_required: boolean; outcome: string }>(
+    `select job.state, job.reconciliation_required, attempt.outcome
+      from publication_jobs job join publication_attempts attempt on attempt.job_id = job.id
+      where job.id = $1`,
+    [jobId],
+  );
+  expect(rows.rows[0]).toEqual({
+    state: 'dispatching',
+    reconciliation_required: true,
+    outcome: 'unknown',
+  });
+  expect(await claim(new Date(Date.now() + 120_000))).toBeNull();
+  expect(calls).toHaveBeenCalledTimes(2);
+});
+
 it('refuses an unverified media property before provider calls or attempt reservation', async () => {
   const calls = vi.fn<typeof fetch>();
   const claimed = await claimReady();

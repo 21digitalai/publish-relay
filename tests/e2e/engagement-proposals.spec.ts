@@ -94,11 +94,14 @@ test('shared Proposed replies filters provider queue and relevant histories on d
     data: { slug: string };
   };
   const requestedProviders: string[] = [];
+  const requestedKinds: string[] = [];
   await page.route('**/api/engagement-proposals*', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname !== '/api/engagement-proposals') return route.continue();
     const provider = url.searchParams.get('provider') ?? 'all';
+    const kind = url.searchParams.get('kind') ?? 'all';
     requestedProviders.push(provider);
+    requestedKinds.push(kind);
     const providers = provider === 'all' ? ['facebook_page', 'fanvue'] : [provider];
     await route.fulfill({
       contentType: 'application/json',
@@ -108,7 +111,7 @@ test('shared Proposed replies filters provider queue and relevant histories on d
             id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
             accountDisplayName: value === 'fanvue' ? 'Fanvue creator' : 'Facebook Page',
             provider: value,
-            kind: 'comment',
+            kind: kind === 'dm' ? 'dm' : 'comment',
             status: 'pending',
             sourcePreview: 'Original comment',
             contentPreview: 'Suggested reply',
@@ -130,11 +133,23 @@ test('shared Proposed replies filters provider queue and relevant histories on d
   await expect(list.getByRole('button', { name: /Facebook Page comment/ })).toBeVisible();
   await expect(list.getByRole('button', { name: /Fanvue comment/ })).toBeVisible();
   await page
+    .getByRole('group', { name: 'Filter by action kind' })
+    .getByRole('button', { name: 'DMs' })
+    .click();
+  await expect.poll(() => requestedKinds.at(-1)).toBe('dm');
+  await expect(list.getByRole('button', { name: /Facebook Page message/ })).toBeVisible();
+  await expect(page).toHaveURL(/kind=dm/);
+  await page
+    .getByRole('group', { name: 'Filter by action kind' })
+    .getByRole('button', { name: 'All actions' })
+    .click();
+  await page
     .getByRole('group', { name: 'Filter proposals by provider' })
     .getByRole('button', { name: 'Fanvue' })
     .click();
   await expect.poll(() => requestedProviders.at(-1)).toBe('fanvue');
   await expect(list.getByRole('button', { name: /Facebook Page comment/ })).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
   await expect(page.getByRole('heading', { name: 'Fanvue engagement history' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeHidden();
   await page.locator('.fanvue-action-history-filters').getByRole('button', { name: 'DMs' }).click();
@@ -143,7 +158,6 @@ test('shared Proposed replies filters provider queue and relevant histories on d
     .getByRole('button', { name: 'Facebook Page' })
     .click();
   await expect.poll(() => requestedProviders.at(-1)).toBe('facebook_page');
-  await expect(list.getByRole('button', { name: /Fanvue comment/ })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Fanvue engagement history' })).toBeHidden();
   await page
@@ -239,7 +253,7 @@ test('Fanvue direct action history shows exact text, safe media and price with n
       }),
     });
   });
-  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.goto(`/w/${workspace.data.slug}/proposals?view=history`);
   const history = page.locator('.fanvue-action-history');
   await expect(history.getByText('Exact direct agent DM')).toBeVisible();
   await expect(history.getByText('To: @alexandra')).toBeVisible();
@@ -370,14 +384,17 @@ test('reviewed Fanvue DM appears in action history on schedule and cancellation 
   await page.getByRole('button', { name: /Fanvue message/ }).click();
   await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
   await expect(history.getByText('DM · Scheduled')).toBeVisible();
   await expect(history.getByText('Reviewed DM')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('fanvue-scheduled-history.png') });
+  await page.getByRole('tab', { name: 'Review' }).click();
   await page.getByRole('button', { name: 'Cancel scheduled reply' }).click();
   await page
     .getByRole('alertdialog')
     .getByRole('button', { name: 'Cancel scheduled reply' })
     .click();
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
   await expect(history.getByText('DM · Cancelled')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('fanvue-cancelled-history.png') });
   await page.reload();
@@ -453,6 +470,7 @@ test('Page comment history shows direct and scheduled truth with filters and saf
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   const history = page.locator('.page-comment-history');
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
   await expect(history.getByText('Exact direct reply')).toBeVisible();
   await expect(history.getByText('Exact future reply')).toBeVisible();
   const settled = history.locator('li').filter({ hasText: 'Exact sent scheduled reply' });
@@ -556,7 +574,8 @@ test('Page comment proposal schedules at its planned time and can be cancelled a
   await expect(page.getByRole('alertdialog')).toContainText('Christina Page');
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
   await page.reload();
-  await page.getByRole('button', { name: /Facebook Page comment/ }).click();
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
+  await page.getByRole('button', { name: /Manage scheduled Facebook Page comment/ }).click();
   await expect(page.getByRole('button', { name: 'Cancel scheduled reply' })).toBeEnabled();
   await expect(page.getByText(/Scheduled for/).first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('comment-schedule-pending.png') });
@@ -662,6 +681,10 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     graphLink = size.width === 390 ? null : 'https://www.facebook.com/messages/t/123';
     await page.setViewportSize(size);
     await page.goto(`/w/${workspace.data.slug}/proposals`);
+    await page.evaluate(() => {
+      window.sessionStorage.clear();
+    });
+    await page.reload();
     await page.getByRole('button', { name: /Facebook Page message/ }).click();
     await expect(
       page.getByText(
@@ -669,12 +692,14 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
           ? 'Newer message arrived · fresh draft coming'
           : 'Reply window closed · waiting for their next message',
       ),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     await expect(page.getByRole('button', { name: 'Approve and schedule 3 bubbles' })).toHaveCount(
       0,
     );
     await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
+    if (size.width === 390) await page.getByRole('button', { name: 'Back to Review' }).click();
+    await page.getByRole('tab', { name: 'Needs attention' }).click();
     await expect(page.getByLabel('Unsent suggestions')).toContainText(
       'Never sent · kept for context only.',
     );
@@ -713,6 +738,7 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
   }
   status = 'expired';
   await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('tab', { name: 'Needs attention' }).click();
   await expect(page.getByLabel('Unsent suggestions')).toContainText('Expired draft');
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(
@@ -796,17 +822,27 @@ test('verified inactive Page DM stays outside approval after switching rows and 
     failSecond = true;
     await page.setViewportSize(size);
     await page.goto(`/w/${workspace.data.slug}/proposals`);
+    await page.evaluate(() => {
+      window.sessionStorage.clear();
+    });
+    await page.reload();
     await page.getByRole('button', { name: /Draft 1/ }).click();
+    if (size.width === 390) await page.getByRole('button', { name: 'Back to Review' }).click();
+    await page.getByRole('tab', { name: 'Needs attention' }).click();
     await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
+    await page.getByRole('tab', { name: 'Review' }).click();
     await page.getByRole('button', { name: /Draft 2/ }).click();
-    await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
+    if (size.width === 390) await page.getByRole('button', { name: 'Back to Review' }).click();
     await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
+    await page.getByRole('button', { name: /Draft 2/ }).click();
     await expect(page.getByRole('button', { name: 'Retry reply-window check' })).toBeVisible();
     failSecond = false;
     await page.getByRole('button', { name: 'Retry reply-window check' }).click();
     await expect(page.locator('.engagement-reply-window-detail')).toContainText('left');
     await page.reload();
+    await page.getByRole('tab', { name: 'Needs attention' }).click();
     await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
+    await page.getByRole('tab', { name: 'Review' }).click();
     await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
     expect(checked).toContain(first);
   }
@@ -929,7 +965,7 @@ test('Page DM plan shows the verified window before approval', async ({ page }, 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
-  await expect(page.locator('.engagement-reply-window-badge')).toBeVisible();
+  await expect(page.locator('.engagement-reply-window-badge')).toContainText(/Reply window:/);
   await expect(page.locator('.engagement-reply-window-detail')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('page-dm-window-mobile.png'), fullPage: true });
   await expect(page.getByText(/approval adds the Page delay on top/)).toBeVisible();
@@ -1129,6 +1165,7 @@ test('Page DM history filters by recipient without showing raw conversation IDs'
     });
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
   await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
   await expect(page.locator('.page-dm-history-text')).toHaveText('Exact direct agent reply');
   await expect(
@@ -1217,6 +1254,7 @@ test('Page DM history ignores stale filter and load-more responses', async ({ pa
     });
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
   await page.getByRole('button', { name: 'Alexandra', exact: true }).click();
   await filterSeen;
   await page.getByRole('button', { name: 'Clear filters' }).click();
@@ -1478,7 +1516,8 @@ test('Page DM timing persists per Page and scheduled approval can be cancelled b
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
   await expect(page.getByText(/Scheduled for/).first()).toBeVisible();
   await page.reload();
-  await page.getByRole('button', { name: /Facebook Page message/ }).click();
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
+  await page.getByRole('button', { name: /Manage scheduled Facebook Page message/ }).click();
   await expect(page.getByRole('button', { name: 'Cancel scheduled reply' })).toBeEnabled();
   await page.screenshot({ path: testInfo.outputPath('page-dm-scheduled-pending.png') });
   await page.getByRole('button', { name: 'Cancel scheduled reply' }).click();
@@ -1584,6 +1623,7 @@ test('Page DM no-go block survives reload and can be removed from the list', asy
     page.getByText('No-go conversation: new proposals and sends are blocked.'),
   ).toBeVisible();
   await page.reload();
+  await page.getByRole('tab', { name: 'Needs attention' }).click();
   await expect(page.getByText('Alexandra · Eli Page')).toBeVisible();
   await page.getByRole('button', { name: 'Allow messages' }).click();
   await expect(page.getByText('No Page conversations are blocked.')).toBeVisible();

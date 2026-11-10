@@ -110,6 +110,23 @@ Normal text must meet 4.5:1 contrast and large text/UI boundaries 3:1. Semantic 
 
 ## Information architecture
 
+### Engagement and account density
+
+The existing `/w/:workspace/proposals` route uses three task tabs: Review, Scheduled & sent,
+and Needs attention. Review owns pending proposal list/detail and independent server-backed
+provider and action-kind filters. Scheduled & sent presents the existing provider histories in
+compact sections; it does not claim a merged chronology. Needs attention contains unresolved
+proposal outcomes and the Page DM no-go list. The task view and filters remain linkable in the
+query string. Keep history off the default Review viewport. Preserve each provider's approval,
+permission, pagination, and receipt semantics.
+
+Accounts start as compact identity/health rows with an explicit Manage disclosure. Existing
+provider actions and settings live in its expanded detail, without changing their data or
+permission contracts. The Page guidance dialog presents one of three section tabs at a time;
+the entire three-field draft is still saved atomically. Its section tabs use arrow/Home/End
+navigation, and the mobile dialog fills the viewport with a safe-area footer. Fanvue's separate
+single-field editor remains unchanged.
+
 The optional engagement review inbox is `/w/:workspace/proposals` in the existing rail and
 `WorkspaceLayout`. `src/ui/engagement-proposals.tsx` owns a bounded pending list, selected
 detail, text draft edit, and dismiss confirmation using the shared confirmation dialog.

@@ -251,6 +251,7 @@ export async function listEngagementReviewQueue(
     beforeCreatedAt?: Date;
     beforeId?: string;
     provider?: 'facebook_page' | 'fanvue';
+    kind?: 'dm' | 'comment';
     limit: number;
   },
 ) {
@@ -280,6 +281,7 @@ export async function listEngagementReviewQueue(
             'superseded',
           ]),
           ...(page?.provider ? [eq(engagementProposals.provider, page.provider)] : []),
+          ...(page?.kind ? [eq(engagementProposals.kind, page.kind)] : []),
           ...(page?.beforeCreatedAt && page.beforeId
             ? [
                 or(

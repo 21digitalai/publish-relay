@@ -1074,6 +1074,7 @@ function AccountRow({
   const [xLongPostsAnnouncement, setXLongPostsAnnouncement] = useState<string | null>(null);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [defaultsAnnouncement, setDefaultsAnnouncement] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [privacyStatus, setPrivacyStatus] = useState(
     account.adapterDefaults.privacyStatus ?? 'public',
   );
@@ -1086,7 +1087,7 @@ function AccountRow({
   const [tags, setTags] = useState(account.adapterDefaults.tags?.join(', ') ?? '');
   const [categoryId, setCategoryId] = useState(account.adapterDefaults.categoryId ?? '');
   return (
-    <article className="account-row">
+    <article className={`account-row ${expanded ? 'is-expanded' : ''}`}>
       <div className="account-identity">
         <span className="account-avatar">{account.name.slice(0, 2).toUpperCase()}</span>
         <div>
@@ -1133,6 +1134,17 @@ function AccountRow({
         </span>
       </div>
       <div className="account-actions">
+        <button
+          type="button"
+          className="secondary-button account-manage"
+          aria-expanded={expanded}
+          aria-controls={`account-details-${account.id}`}
+          onClick={() => {
+            setExpanded((current) => !current);
+          }}
+        >
+          {expanded ? 'Hide details' : 'Manage'}
+        </button>
         {!account.isExposed && (needsReconnect || linkedinExpiringSoon) && (
           <button className="secondary-button reconnect" onClick={onReconnect}>
             Reconnect
@@ -1200,264 +1212,275 @@ function AccountRow({
             </button>
           ))}
       </div>
-      {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && !needsReconnect && (
-        <p className="account-module-note">
-          {account.fanvueModules?.chatSend
-            ? 'Fanvue message reading and sending are enabled for this account.'
-            : account.fanvueModules?.chatRead
-              ? 'Message reading is enabled. Message sending requires separate permission.'
-              : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
-        </p>
-      )}
-      {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && canManageAccount && (
-        <FanvueGuidanceControl accountId={account.id} accountName={account.name} />
-      )}
-      {!account.isExposed &&
-        account.provider.toLowerCase() === 'fanvue' &&
-        account.fanvueModules?.audienceRead && <FanvueAudienceControl accountId={account.id} />}
-      {!account.isExposed &&
-        account.destinationProvider === 'facebook_page' &&
-        originWorkspaceId && <FacebookEngagementControl key={account.id} accountId={account.id} />}
-      {!account.isExposed &&
-        account.destinationProvider === 'facebook_page' &&
-        canManageAccount && (
-          <FacebookPageGuidanceControl accountId={account.id} accountName={account.name} />
+      <div className="account-details" id={`account-details-${account.id}`} hidden={!expanded}>
+        {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && !needsReconnect && (
+          <p className="account-module-note">
+            {account.fanvueModules?.chatSend
+              ? 'Fanvue message reading and sending are enabled for this account.'
+              : account.fanvueModules?.chatRead
+                ? 'Message reading is enabled. Message sending requires separate permission.'
+                : 'Optional, read-only Fanvue permission for this account. It does not allow sending messages.'}
+          </p>
         )}
-      {!account.isExposed &&
-        account.destinationProvider === 'facebook_page' &&
-        originWorkspaceId && (
-          <FacebookPageExposureControl
-            accountId={account.id}
-            accountName={account.name}
-            originWorkspaceId={originWorkspaceId}
-          />
+        {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && canManageAccount && (
+          <FanvueGuidanceControl accountId={account.id} accountName={account.name} />
         )}
-      {account.destinationProvider === 'facebook_page' && originWorkspaceId && (
-        <div className="account-calendar-visibility x-long-post-setting">
-          <button
-            type="button"
-            className="account-calendar-visibility-toggle defaults-toggle"
-            role="switch"
-            aria-checked={account.showOtherWorkspacePosts !== false}
-            disabled={savingCalendarVisibility}
-            onClick={() => {
-              const showPosts = account.showOtherWorkspacePosts === false;
-              setSavingCalendarVisibility(true);
-              setCalendarVisibilityError(null);
-              setCalendarVisibilityAnnouncement(null);
-              void fetch(`/api/provider-accounts/${account.id}/calendar-visibility`, {
-                method: 'PATCH',
-                headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-                body: JSON.stringify({ showPosts }),
-              })
-                .then(async (response) => {
-                  const result = (await response.json()) as {
-                    data: { showPosts: boolean } | null;
-                    error: string | null;
-                  };
-                  if (!response.ok || !result.data)
-                    throw new Error(result.error ?? 'Calendar setting could not be saved');
-                  onDefaultsSaved({ ...account, showOtherWorkspacePosts: result.data.showPosts });
-                  setCalendarVisibilityAnnouncement(`Calendar setting saved for ${account.name}.`);
-                })
-                .catch((error: unknown) => {
-                  setCalendarVisibilityError(
-                    error instanceof Error ? error.message : 'Calendar setting could not be saved',
-                  );
-                })
-                .finally(() => {
-                  setSavingCalendarVisibility(false);
-                });
-            }}
-          >
-            <span className="toggle-track" aria-hidden="true">
-              <span />
-            </span>
-            Show posts from other workspaces
-          </button>
-          <small>Only hides other workspaces’ posts here. Publishing is unchanged.</small>
-          {calendarVisibilityError && (
-            <span className="field-error" role="alert">
-              {calendarVisibilityError}
-            </span>
+        {!account.isExposed &&
+          account.provider.toLowerCase() === 'fanvue' &&
+          account.fanvueModules?.audienceRead && <FanvueAudienceControl accountId={account.id} />}
+        {!account.isExposed &&
+          account.destinationProvider === 'facebook_page' &&
+          originWorkspaceId && (
+            <FacebookEngagementControl key={account.id} accountId={account.id} />
           )}
-          <LiveRegion message={calendarVisibilityAnnouncement} />
-        </div>
-      )}
-      {account.provider === 'X' && account.xLongPosts && (
-        <div className="x-long-post-setting">
-          <button
-            type="button"
-            className="defaults-toggle x-long-post-toggle"
-            role="switch"
-            aria-checked={account.xLongPosts.allowed}
-            aria-label="Allow longer X posts for this account (self-declared)"
-            disabled={savingXLongPosts || needsReconnect}
-            onClick={() => {
-              const allowed = !account.xLongPosts?.allowed;
-              setSavingXLongPosts(true);
-              setXLongPostsError(null);
-              setXLongPostsAnnouncement(null);
-              void fetch(`/api/provider-accounts/${account.id}/x-long-posts`, {
+        {!account.isExposed &&
+          account.destinationProvider === 'facebook_page' &&
+          canManageAccount && (
+            <FacebookPageGuidanceControl accountId={account.id} accountName={account.name} />
+          )}
+        {!account.isExposed &&
+          account.destinationProvider === 'facebook_page' &&
+          originWorkspaceId && (
+            <FacebookPageExposureControl
+              accountId={account.id}
+              accountName={account.name}
+              originWorkspaceId={originWorkspaceId}
+            />
+          )}
+        {account.destinationProvider === 'facebook_page' && originWorkspaceId && (
+          <div className="account-calendar-visibility x-long-post-setting">
+            <button
+              type="button"
+              className="account-calendar-visibility-toggle defaults-toggle"
+              role="switch"
+              aria-checked={account.showOtherWorkspacePosts !== false}
+              disabled={savingCalendarVisibility}
+              onClick={() => {
+                const showPosts = account.showOtherWorkspacePosts === false;
+                setSavingCalendarVisibility(true);
+                setCalendarVisibilityError(null);
+                setCalendarVisibilityAnnouncement(null);
+                void fetch(`/api/provider-accounts/${account.id}/calendar-visibility`, {
+                  method: 'PATCH',
+                  headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+                  body: JSON.stringify({ showPosts }),
+                })
+                  .then(async (response) => {
+                    const result = (await response.json()) as {
+                      data: { showPosts: boolean } | null;
+                      error: string | null;
+                    };
+                    if (!response.ok || !result.data)
+                      throw new Error(result.error ?? 'Calendar setting could not be saved');
+                    onDefaultsSaved({ ...account, showOtherWorkspacePosts: result.data.showPosts });
+                    setCalendarVisibilityAnnouncement(
+                      `Calendar setting saved for ${account.name}.`,
+                    );
+                  })
+                  .catch((error: unknown) => {
+                    setCalendarVisibilityError(
+                      error instanceof Error
+                        ? error.message
+                        : 'Calendar setting could not be saved',
+                    );
+                  })
+                  .finally(() => {
+                    setSavingCalendarVisibility(false);
+                  });
+              }}
+            >
+              <span className="toggle-track" aria-hidden="true">
+                <span />
+              </span>
+              Show posts from other workspaces
+            </button>
+            <small>Only hides other workspaces’ posts here. Publishing is unchanged.</small>
+            {calendarVisibilityError && (
+              <span className="field-error" role="alert">
+                {calendarVisibilityError}
+              </span>
+            )}
+            <LiveRegion message={calendarVisibilityAnnouncement} />
+          </div>
+        )}
+        {account.provider === 'X' && account.xLongPosts && (
+          <div className="x-long-post-setting">
+            <button
+              type="button"
+              className="defaults-toggle x-long-post-toggle"
+              role="switch"
+              aria-checked={account.xLongPosts.allowed}
+              aria-label="Allow longer X posts for this account (self-declared)"
+              disabled={savingXLongPosts || needsReconnect}
+              onClick={() => {
+                const allowed = !account.xLongPosts?.allowed;
+                setSavingXLongPosts(true);
+                setXLongPostsError(null);
+                setXLongPostsAnnouncement(null);
+                void fetch(`/api/provider-accounts/${account.id}/x-long-posts`, {
+                  method: 'PATCH',
+                  headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+                  body: JSON.stringify({ allowed }),
+                })
+                  .then(async (response) => {
+                    const result = (await response.json()) as {
+                      data: { xLongPosts: Account['xLongPosts'] } | null;
+                      error: string | null;
+                    };
+                    if (!response.ok || !result.data?.xLongPosts)
+                      throw new Error(result.error ?? 'X account setting could not be saved');
+                    onDefaultsSaved({ ...account, xLongPosts: result.data.xLongPosts });
+                    setXLongPostsAnnouncement(`Long-post setting saved for ${account.name}.`);
+                  })
+                  .catch((error: unknown) => {
+                    showAnalyticsError(
+                      setXLongPostsError,
+                      error instanceof Error
+                        ? error.message
+                        : 'X account setting could not be saved',
+                      'connection',
+                      'unknown',
+                    );
+                  })
+                  .finally(() => {
+                    setSavingXLongPosts(false);
+                  });
+              }}
+            >
+              <span className="toggle-track" aria-hidden="true">
+                <span />
+              </span>
+              Allow longer X posts for this account (self-declared)
+            </button>
+            <small>
+              X may reject longer posts even when this is on. This does not verify Premium access.
+            </small>
+            {xLongPostsError && (
+              <span className="field-error" role="alert">
+                {xLongPostsError}
+              </span>
+            )}
+            <LiveRegion message={xLongPostsAnnouncement} />
+          </div>
+        )}
+        {account.provider === 'YouTube' && (
+          <form
+            className="youtube-defaults"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const fields = new FormData(event.currentTarget);
+              const normalizedTags = formText(fields, 'tags')
+                .split(',')
+                .map((tag) => tag.trim())
+                .filter(Boolean);
+              const normalizedCategory = formText(fields, 'categoryId').trim();
+              const defaults = {
+                privacyStatus: formText(fields, 'privacyStatus') as
+                  'public' | 'unlisted' | 'private',
+                madeForKids: formText(fields, 'madeForKids') === 'yes',
+                notifySubscribers: formText(fields, 'notifySubscribers') === 'true',
+                ...(normalizedTags.length > 0 ? { tags: normalizedTags } : {}),
+                ...(normalizedCategory ? { categoryId: normalizedCategory } : {}),
+              };
+              setDefaultsError(null);
+              setDefaultsAnnouncement(null);
+              setSavingDefaults(true);
+              void fetch(`/api/provider-accounts/${account.id}/youtube-defaults`, {
                 method: 'PATCH',
                 headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-                body: JSON.stringify({ allowed }),
+                body: JSON.stringify(defaults),
               })
                 .then(async (response) => {
-                  const result = (await response.json()) as {
-                    data: { xLongPosts: Account['xLongPosts'] } | null;
-                    error: string | null;
-                  };
-                  if (!response.ok || !result.data?.xLongPosts)
-                    throw new Error(result.error ?? 'X account setting could not be saved');
-                  onDefaultsSaved({ ...account, xLongPosts: result.data.xLongPosts });
-                  setXLongPostsAnnouncement(`Long-post setting saved for ${account.name}.`);
+                  const result = (await response.json()) as { error: string | null };
+                  if (!response.ok) throw new Error(result.error ?? 'Defaults could not be saved');
+                  onDefaultsSaved({ ...account, adapterDefaults: defaults });
+                  setDefaultsAnnouncement(`Publishing defaults saved for ${account.name}.`);
                 })
                 .catch((error: unknown) => {
                   showAnalyticsError(
-                    setXLongPostsError,
-                    error instanceof Error ? error.message : 'X account setting could not be saved',
+                    setDefaultsError,
+                    error instanceof Error ? error.message : 'Defaults could not be saved',
                     'connection',
                     'unknown',
                   );
                 })
                 .finally(() => {
-                  setSavingXLongPosts(false);
+                  setSavingDefaults(false);
                 });
             }}
           >
-            <span className="toggle-track" aria-hidden="true">
-              <span />
-            </span>
-            Allow longer X posts for this account (self-declared)
-          </button>
-          <small>
-            X may reject longer posts even when this is on. This does not verify Premium access.
-          </small>
-          {xLongPostsError && (
-            <span className="field-error" role="alert">
-              {xLongPostsError}
-            </span>
-          )}
-          <LiveRegion message={xLongPostsAnnouncement} />
-        </div>
-      )}
-      {account.provider === 'YouTube' && (
-        <form
-          className="youtube-defaults"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const fields = new FormData(event.currentTarget);
-            const normalizedTags = formText(fields, 'tags')
-              .split(',')
-              .map((tag) => tag.trim())
-              .filter(Boolean);
-            const normalizedCategory = formText(fields, 'categoryId').trim();
-            const defaults = {
-              privacyStatus: formText(fields, 'privacyStatus') as 'public' | 'unlisted' | 'private',
-              madeForKids: formText(fields, 'madeForKids') === 'yes',
-              notifySubscribers: formText(fields, 'notifySubscribers') === 'true',
-              ...(normalizedTags.length > 0 ? { tags: normalizedTags } : {}),
-              ...(normalizedCategory ? { categoryId: normalizedCategory } : {}),
-            };
-            setDefaultsError(null);
-            setDefaultsAnnouncement(null);
-            setSavingDefaults(true);
-            void fetch(`/api/provider-accounts/${account.id}/youtube-defaults`, {
-              method: 'PATCH',
-              headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-              body: JSON.stringify(defaults),
-            })
-              .then(async (response) => {
-                const result = (await response.json()) as { error: string | null };
-                if (!response.ok) throw new Error(result.error ?? 'Defaults could not be saved');
-                onDefaultsSaved({ ...account, adapterDefaults: defaults });
-                setDefaultsAnnouncement(`Publishing defaults saved for ${account.name}.`);
-              })
-              .catch((error: unknown) => {
-                showAnalyticsError(
-                  setDefaultsError,
-                  error instanceof Error ? error.message : 'Defaults could not be saved',
-                  'connection',
-                  'unknown',
-                );
-              })
-              .finally(() => {
-                setSavingDefaults(false);
-              });
-          }}
-        >
-          <strong>Publishing defaults</strong>
-          <DefaultsSelect
-            label="Visibility"
-            name="privacyStatus"
-            value={privacyStatus}
-            options={[
-              ['public', 'Public'],
-              ['unlisted', 'Unlisted'],
-              ['private', 'Private'],
-            ]}
-            onChange={(value) => {
-              setPrivacyStatus(value as 'public' | 'unlisted' | 'private');
-            }}
-          />
-          <DefaultsSelect
-            label="Made for kids"
-            name="madeForKids"
-            value={madeForKids}
-            options={[
-              ['no', 'No'],
-              ['yes', 'Yes'],
-            ]}
-            onChange={setMadeForKids}
-          />
-          <input name="notifySubscribers" type="hidden" value={String(notifySubscribers)} />
-          <button
-            type="button"
-            className="defaults-toggle"
-            role="switch"
-            aria-checked={notifySubscribers}
-            onClick={() => {
-              setNotifySubscribers((current) => !current);
-            }}
-          >
-            <span className="toggle-track" aria-hidden="true">
-              <span />
-            </span>
-            Notify subscribers
-          </button>
-          <label className="youtube-defaults-text-field">
-            <span>
-              Tags <small>(optional)</small>
-            </span>
-            <input
-              name="tags"
-              value={tags}
-              placeholder="launch, tutorial"
-              onChange={(event) => {
-                setTags(event.currentTarget.value);
+            <strong>Publishing defaults</strong>
+            <DefaultsSelect
+              label="Visibility"
+              name="privacyStatus"
+              value={privacyStatus}
+              options={[
+                ['public', 'Public'],
+                ['unlisted', 'Unlisted'],
+                ['private', 'Private'],
+              ]}
+              onChange={(value) => {
+                setPrivacyStatus(value as 'public' | 'unlisted' | 'private');
               }}
             />
-            <small>Comma-separated; blank adds nothing.</small>
-          </label>
-          <DefaultsSelect
-            label="Category (optional)"
-            name="categoryId"
-            value={categoryId}
-            options={YOUTUBE_CATEGORIES}
-            onChange={setCategoryId}
-          />
-          <button className="secondary-button" type="submit" disabled={savingDefaults}>
-            {savingDefaults ? 'Saving…' : 'Save defaults'}
-          </button>
-          {defaultsError && (
-            <span className="field-error" role="alert">
-              {defaultsError}
-            </span>
-          )}
-          <LiveRegion message={defaultsAnnouncement} />
-        </form>
-      )}
+            <DefaultsSelect
+              label="Made for kids"
+              name="madeForKids"
+              value={madeForKids}
+              options={[
+                ['no', 'No'],
+                ['yes', 'Yes'],
+              ]}
+              onChange={setMadeForKids}
+            />
+            <input name="notifySubscribers" type="hidden" value={String(notifySubscribers)} />
+            <button
+              type="button"
+              className="defaults-toggle"
+              role="switch"
+              aria-checked={notifySubscribers}
+              onClick={() => {
+                setNotifySubscribers((current) => !current);
+              }}
+            >
+              <span className="toggle-track" aria-hidden="true">
+                <span />
+              </span>
+              Notify subscribers
+            </button>
+            <label className="youtube-defaults-text-field">
+              <span>
+                Tags <small>(optional)</small>
+              </span>
+              <input
+                name="tags"
+                value={tags}
+                placeholder="launch, tutorial"
+                onChange={(event) => {
+                  setTags(event.currentTarget.value);
+                }}
+              />
+              <small>Comma-separated; blank adds nothing.</small>
+            </label>
+            <DefaultsSelect
+              label="Category (optional)"
+              name="categoryId"
+              value={categoryId}
+              options={YOUTUBE_CATEGORIES}
+              onChange={setCategoryId}
+            />
+            <button className="secondary-button" type="submit" disabled={savingDefaults}>
+              {savingDefaults ? 'Saving…' : 'Save defaults'}
+            </button>
+            {defaultsError && (
+              <span className="field-error" role="alert">
+                {defaultsError}
+              </span>
+            )}
+            <LiveRegion message={defaultsAnnouncement} />
+          </form>
+        )}
+      </div>
     </article>
   );
 }

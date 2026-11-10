@@ -534,6 +534,26 @@ describe('engagement proposal foundation', () => {
       expect(
         facebookOnly.json<{ data: { nextCursor: string | null } }>().data.nextCursor,
       ).not.toBeNull();
+      const commentOnly = await app.inject({
+        method: 'GET',
+        url: '/api/engagement-proposals?kind=comment',
+        headers: browserHeaders,
+      });
+      expect(commentOnly.statusCode).toBe(200);
+      expect(
+        commentOnly
+          .json<{ data: { items: { kind: string }[] } }>()
+          .data.items.every((item) => item.kind === 'comment'),
+      ).toBe(true);
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/api/engagement-proposals?kind=unknown',
+            headers: browserHeaders,
+          })
+        ).statusCode,
+      ).toBe(400);
       expect(
         (
           await app.inject({

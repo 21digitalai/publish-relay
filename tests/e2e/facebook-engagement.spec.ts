@@ -75,13 +75,16 @@ test('Page guidance keeps shared facts separate from channel instructions', asyn
     });
   });
   await page.goto(`/w/${workspace.data.slug}/accounts`);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'Page guidance' }).click();
   const dialog = page.getByRole('dialog', { name: /Page guidance/ });
   await expect(dialog).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Shared Page profile' })).toHaveValue(
     saved.profile,
   );
+  await dialog.getByRole('tab', { name: 'DM guidance' }).click();
   await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue('');
+  await dialog.getByRole('tab', { name: 'Public-comment guidance' }).click();
   await expect(page.getByRole('textbox', { name: 'Public-comment guidance' })).toHaveValue('');
   await page
     .getByRole('textbox', { name: 'Public-comment guidance' })
@@ -93,7 +96,9 @@ test('Page guidance keeps shared facts separate from channel instructions', asyn
   await page.screenshot({ path: testInfo.outputPath('facebook-page-guidance-desktop.png') });
   await page.getByRole('button', { name: 'Close Page guidance' }).click();
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'Page guidance' }).click();
+  await dialog.getByRole('tab', { name: 'Public-comment guidance' }).click();
   await expect(page.getByRole('textbox', { name: 'Public-comment guidance' })).toHaveValue(
     'Keep public replies playful.',
   );
@@ -104,6 +109,7 @@ test('Page guidance keeps shared facts separate from channel instructions', asyn
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath('facebook-page-guidance-mobile.png') });
+  await dialog.getByRole('tab', { name: 'DM guidance' }).click();
   await page.getByRole('textbox', { name: 'DM guidance' }).fill('Answer privately.');
   await page.getByRole('button', { name: 'Close Page guidance' }).click();
   await expect(page.getByText('Discard unsaved Page guidance changes?')).toBeVisible();

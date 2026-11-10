@@ -96,10 +96,24 @@ function proposalLabel(proposal: { provider: string; kind: 'dm' | 'comment' }): 
 }
 
 export function EngagementProposalsPage() {
+  const readView = (): 'review' | 'history' | 'attention' => {
+    const view = new URLSearchParams(window.location.search).get('view');
+    return view === 'history' || view === 'attention' ? view : 'review';
+  };
+  const [view, setView] = useState(readView);
+  const [kindFilter, setKindFilter] = useState<'all' | 'dm' | 'comment'>(() => {
+    const kind = new URLSearchParams(window.location.search).get('kind');
+    return kind === 'dm' || kind === 'comment' ? kind : 'all';
+  });
+  const kindFilterRef = useRef(kindFilter);
+  kindFilterRef.current = kindFilter;
   const terminalWindowKey = `page-dm-terminal-windows:${window.location.pathname.split('/')[2] ?? ''}`;
   const [now, setNow] = useState(Date.now());
   const [items, setItems] = useState<ProposalSummary[]>([]);
-  const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all');
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>(() => {
+    const provider = new URLSearchParams(window.location.search).get('provider');
+    return provider === 'facebook_page' || provider === 'fanvue' ? provider : 'all';
+  });
   const providerFilterRef = useRef(providerFilter);
   providerFilterRef.current = providerFilter;
   const listRequestGeneration = useRef(0);
@@ -153,6 +167,35 @@ export function EngagementProposalsPage() {
   const noGoTrigger = useRef<HTMLButtonElement>(null);
   const cancelScheduleTrigger = useRef<HTMLButtonElement>(null);
   const activeProposalRef = useRef<string | null>(null);
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const selectedRowButton = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const restore = () => {
+      const params = new URLSearchParams(window.location.search);
+      const provider = params.get('provider');
+      const kind = params.get('kind');
+      setView(readView());
+      setProviderFilter(provider === 'facebook_page' || provider === 'fanvue' ? provider : 'all');
+      setKindFilter(kind === 'dm' || kind === 'comment' ? kind : 'all');
+    };
+    window.addEventListener('popstate', restore);
+    return () => {
+      window.removeEventListener('popstate', restore);
+    };
+  }, []);
+
+  const changeQuery = (key: 'view' | 'provider' | 'kind', value: string) => {
+    const url = new URL(window.location.href);
+    if (value === 'review' || value === 'all') url.searchParams.delete(key);
+    else url.searchParams.set(key, value);
+    window.history.pushState({}, '', url);
+  };
+
+  useEffect(() => {
+    if (selectedId && window.matchMedia('(max-width: 767px)').matches)
+      window.requestAnimationFrame(() => detailHeading.current?.focus());
+  }, [selectedId, detail]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -172,8 +215,10 @@ export function EngagementProposalsPage() {
       const generation = ++listRequestGeneration.current;
       if (!cursor) setLoadingMore(false);
       const requestedProvider = providerFilter;
+      const requestedKind = kindFilter;
       const params = new URLSearchParams();
       if (requestedProvider !== 'all') params.set('provider', requestedProvider);
+      if (requestedKind !== 'all') params.set('kind', requestedKind);
       if (cursor) params.set('cursor', cursor);
       try {
         const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
@@ -181,7 +226,8 @@ export function EngagementProposalsPage() {
         );
         if (
           generation !== listRequestGeneration.current ||
-          providerFilterRef.current !== requestedProvider
+          providerFilterRef.current !== requestedProvider ||
+          kindFilterRef.current !== requestedKind
         )
           return;
         setItems((current) => (cursor ? [...current, ...page.items] : page.items));
@@ -189,12 +235,13 @@ export function EngagementProposalsPage() {
       } catch (failure) {
         if (
           generation === listRequestGeneration.current &&
-          providerFilterRef.current === requestedProvider
+          providerFilterRef.current === requestedProvider &&
+          kindFilterRef.current === requestedKind
         )
           throw failure;
       }
     },
-    [providerFilter],
+    [providerFilter, kindFilter],
   );
 
   const loadNoGo = useCallback(async (cursor?: string) => {
@@ -655,6 +702,7 @@ export function EngagementProposalsPage() {
   const activeItems = items.filter((item) => item.status === 'pending' && !inactiveDraft(item));
   const inactiveItems = items.filter(inactiveDraft);
   const outcomeItems = items.filter((item) => item.status !== 'pending' && !inactiveDraft(item));
+  const scheduledItems = outcomeItems.filter((item) => item.status === 'scheduled');
 
   const renderProposalRow = (item: ProposalSummary) => (
     <div className="engagement-proposal-entry" key={item.id}>
@@ -663,6 +711,8 @@ export function EngagementProposalsPage() {
         type="button"
         aria-pressed={selectedId === item.id}
         onClick={() => {
+          selectedRowButton.current =
+            document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
           if (selectedId !== item.id) activeProposalRef.current = null;
           setSelectedId(item.id);
         }}
@@ -739,6 +789,47 @@ export function EngagementProposalsPage() {
             {error}
           </p>
         )}
+        <div className="engagement-task-tabs" role="tablist" aria-label="Engagement task view">
+          {(
+            [
+              ['review', 'Review'],
+              ['history', 'Scheduled & sent'],
+              ['attention', 'Needs attention'],
+            ] as const
+          ).map(([key, label], index) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              id={`engagement-tab-${key}`}
+              aria-selected={view === key}
+              aria-controls={`engagement-panel-${key}`}
+              tabIndex={view === key ? 0 : -1}
+              onClick={() => {
+                setView(key);
+                changeQuery('view', key);
+              }}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const keys = ['review', 'history', 'attention'] as const;
+                const next =
+                  event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? 2
+                      : (index + (event.key === 'ArrowRight' ? 1 : -1) + keys.length) % keys.length;
+                const selected = keys[next];
+                if (!selected) return;
+                setView(selected);
+                changeQuery('view', selected);
+                document.getElementById(`engagement-tab-${selected}`)?.focus();
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <div
           className="engagement-provider-filters"
           role="group"
@@ -755,669 +846,775 @@ export function EngagementProposalsPage() {
                 setSelectedId(null);
                 setLoadingMore(false);
                 setProviderFilter(choice.value);
+                changeQuery('provider', choice.value);
               }}
             >
               {choice.label}
             </button>
           ))}
         </div>
-        <div className="engagement-proposals-layout">
-          <section
-            className="engagement-proposals-list"
-            aria-label="Review proposals and unresolved sends"
+        {view !== 'history' && (
+          <div
+            role="tabpanel"
+            id={`engagement-panel-${view}`}
+            aria-labelledby={`engagement-tab-${view}`}
           >
-            {loading ? (
-              <p role="status">Loading proposed replies…</p>
-            ) : listFailed ? (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  const generation = listRequestGeneration.current + 1;
-                  setLoading(true);
-                  setError(null);
-                  void loadPage()
-                    .then(() => {
-                      setListFailed(false);
-                    })
-                    .catch((failure: unknown) => {
-                      setError(
-                        failure instanceof Error ? failure.message : 'Could not load proposals',
-                      );
-                    })
-                    .finally(() => {
-                      if (generation === listRequestGeneration.current) setLoading(false);
-                    });
-                }}
-              >
-                Retry loading proposals
-              </button>
-            ) : items.length === 0 ? (
-              <p>
-                {providerFilter === 'all'
-                  ? 'No replies await review or reconciliation.'
-                  : `No ${providerFilter === 'fanvue' ? 'Fanvue' : 'Facebook Page'} replies match this filter.`}
-              </p>
-            ) : (
-              <>
-                <div className="engagement-proposals-active" aria-label="Awaiting approval">
-                  <h2>Awaiting approval</h2>
-                  {activeItems.length ? (
-                    activeItems.map(renderProposalRow)
-                  ) : (
-                    <p>No drafts await approval.</p>
-                  )}
-                </div>
-                {outcomeItems.length > 0 && (
-                  <div className="engagement-proposals-outcomes" aria-label="Send outcomes">
-                    <h2>Send outcomes</h2>
-                    {outcomeItems.map(renderProposalRow)}
-                  </div>
-                )}
-                {inactiveItems.length > 0 && (
-                  <div className="engagement-proposals-inactive" aria-label="Unsent suggestions">
-                    <h2>Unsent suggestions</h2>
-                    <p className="muted">Never sent · kept for context only.</p>
-                    {inactiveItems.map(renderProposalRow)}
-                  </div>
-                )}
-              </>
-            )}
-            {nextCursor && (
-              <button
-                className="secondary-button engagement-proposals-more"
-                type="button"
-                disabled={loadingMore}
-                onClick={() => {
-                  const generation = listRequestGeneration.current + 1;
-                  setLoadingMore(true);
-                  setError(null);
-                  void loadPage(nextCursor)
-                    .catch((failure: unknown) => {
-                      setError(
-                        failure instanceof Error
-                          ? failure.message
-                          : 'More proposals could not be loaded',
-                      );
-                    })
-                    .finally(() => {
-                      if (generation === listRequestGeneration.current) setLoadingMore(false);
-                    });
-                }}
-              >
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </button>
-            )}
-          </section>
-          <section className="engagement-proposal-detail" aria-label="Proposal detail">
-            {!selectedId ? (
-              <p>Select a proposal to inspect its context and draft.</p>
-            ) : detailFailed ? (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setDetailReload((current) => current + 1);
-                }}
-              >
-                Retry loading proposal
-              </button>
-            ) : !detail ? (
-              <p role="status">Loading proposal…</p>
-            ) : (
-              <>
-                <h2>{proposalLabel(detail)}</h2>
-                <p className="muted">Destination: {detail.accountDisplayName}</p>
-                <p className="muted">
-                  Agent-provided source context; verify it before sending elsewhere.
-                </p>
-                <blockquote className="engagement-proposal-source">
-                  {detail.sourceContext.authorLabel && (
-                    <strong>{detail.sourceContext.authorLabel}: </strong>
-                  )}
-                  {detail.sourceContext.text ?? 'No source text was supplied.'}
-                </blockquote>
-                {detail.provider === 'facebook_page' &&
-                  detail.kind === 'dm' &&
-                  detail.status === 'pending' && (
-                    <div
-                      className={`engagement-reply-window-detail ${pageDmWindowClosed || replyWindow?.state === 'stale' || replyWindow?.state === 'unavailable' ? 'danger' : ''}`}
-                      role="status"
-                    >
-                      <p>{replyWindowLabel(replyWindow, now)}</p>
-                      {replyWindow?.state === 'open' && (
-                        <p className="muted">
-                          Last message from recipient:{' '}
-                          {new Date(replyWindow.latestInboundAt).toLocaleString()}
-                        </p>
-                      )}
-                      {replyWindow?.state === 'unavailable' && (
-                        <button
-                          className="secondary-button engagement-reply-window-retry"
-                          type="button"
-                          onClick={() => {
-                            setDetailReload((current) => current + 1);
-                          }}
-                        >
-                          Retry reply-window check
-                        </button>
-                      )}
-                    </div>
-                  )}
-                {detail.provider === 'facebook_page' && detail.kind === 'dm' && (
-                  <p className={detail.noGo ? 'form-error' : 'muted'} role="status">
-                    {detail.noGo
-                      ? 'No-go conversation: new proposals and sends are blocked.'
-                      : 'This conversation is not on the no-go list.'}
-                  </p>
-                )}
-                <label className="field-label" htmlFor="engagement-proposal-draft">
-                  {detail.content.followUps ? 'Bubble 1' : 'Suggested reply'}
-                </label>
-                <p className="engagement-proposal-edit-help muted">
-                  Edit the bubbles, then approve.
-                </p>
-                <textarea
-                  id="engagement-proposal-draft"
-                  className="engagement-proposal-draft text-input"
-                  value={draft}
-                  maxLength={5000}
-                  onChange={(event) => {
-                    setDraft(event.target.value);
+            <div
+              className="engagement-kind-filters"
+              role="group"
+              aria-label="Filter by action kind"
+            >
+              {(
+                [
+                  ['all', 'All actions'],
+                  ['comment', 'Comments'],
+                  ['dm', 'DMs'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className="secondary-button"
+                  aria-pressed={kindFilter === key}
+                  onClick={() => {
+                    listRequestGeneration.current += 1;
+                    setSelectedId(null);
+                    setKindFilter(key);
+                    changeQuery('kind', key);
                   }}
-                />
-                {detail.provider === 'facebook_page' &&
-                  detail.kind === 'dm' &&
-                  detail.content.followUps?.map((_, index) => (
-                    <label className="field-label" key={index}>
-                      Bubble {index + 2}
-                      <textarea
-                        className="engagement-proposal-draft text-input"
-                        value={draftFollowUps[index]}
-                        maxLength={2000}
-                        onChange={(event) => {
-                          setDraftFollowUps(
-                            (current) =>
-                              current.map((text, itemIndex) =>
-                                itemIndex === index ? event.target.value : text,
-                              ) as [string, string],
-                          );
-                        }}
-                      />
-                    </label>
-                  ))}
-                {detail.content.mediaIds?.length ? (
-                  <section className="engagement-proposal-media" aria-label="Proposed attachments">
-                    <h3>Attachments</h3>
-                    {detail.content.mediaIds.map((mediaId, index) => (
-                      <div className="engagement-proposal-attachment" key={mediaId}>
-                        <a
-                          className="engagement-proposal-media-preview"
-                          href={`/api/workflow/media/${mediaId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Preview attachment {index + 1}
-                        </a>
-                        <span className="engagement-proposal-media-status" role="status">
-                          {mediaStates[mediaId] === 'ready'
-                            ? 'Ready to send'
-                            : mediaStates[mediaId] === 'unknown'
-                              ? 'Outcome unknown; do not retry'
-                              : mediaStates[mediaId] === 'failed'
-                                ? 'Provider preparation failed'
-                                : mediaStates[mediaId] === 'processing'
-                                  ? 'Processing at Fanvue'
-                                  : mediaStates[mediaId] === 'uploading'
-                                    ? 'More preparation needed'
-                                    : 'Not prepared for sending'}
-                        </span>
-                        {detail.status === 'pending' &&
-                          detail.provider === 'fanvue' &&
-                          detail.kind === 'dm' &&
-                          mediaStates[mediaId] !== 'ready' &&
-                          mediaStates[mediaId] !== 'unknown' &&
-                          mediaStates[mediaId] !== 'failed' && (
-                            <button
-                              className="engagement-proposal-stage-media secondary-button"
-                              type="button"
-                              disabled={Boolean(mediaPending) || saving || !detail.canApprove}
-                              onClick={() => {
-                                void stageMedia(mediaId);
-                              }}
-                            >
-                              {mediaPending === mediaId ? 'Preparing…' : 'Prepare attachment'}
-                            </button>
-                          )}
-                      </div>
-                    ))}
-                  </section>
-                ) : null}
-                {detail.content.priceCents !== undefined && (
-                  <p className="muted">
-                    Proposed provider price: ${(detail.content.priceCents / 100).toFixed(2)}.
-                    {detail.content.priceCents > 0 && detail.content.priceCents < 300
-                      ? ' Fanvue requires a minimum price of $3.00.'
-                      : ''}
-                  </p>
-                )}
-                {(detail.status !== 'pending' || expiredScheduled) &&
-                  !(
-                    detail.provider === 'facebook_page' &&
-                    detail.kind === 'dm' &&
-                    detail.status === 'pending' &&
-                    !pageDmWindowReady
-                  ) && (
-                    <p
-                      className={
-                        expiredScheduled || detail.status === 'superseded'
-                          ? 'form-error'
-                          : 'form-success'
-                      }
-                      role="status"
-                    >
-                      {detail.status === 'sent'
-                        ? 'Sent'
-                        : detail.status === 'superseded'
-                          ? 'A newer draft replaced this one. This proposal cannot be approved or sent.'
-                          : expiredScheduled
-                            ? 'Expired draft. Dismiss it or wait for a fresh draft.'
-                            : detail.status === 'scheduled'
-                              ? detail.schedule
-                                ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
-                                : 'Scheduled; refresh to see the send time.'
-                              : detail.status === 'cancelled'
-                                ? 'Cancelled before dispatch'
-                                : detail.status === 'dismissed'
-                                  ? 'Dismissed without sending'
-                                  : detail.status === 'failed'
-                                    ? 'Provider rejected this send'
-                                    : 'Send outcome is unknown; do not send again'}
-                    </p>
-                  )}
-                <div className="engagement-proposal-actions">
-                  {detail.status === 'pending' &&
-                    detail.provider === 'fanvue' &&
-                    detail.kind === 'dm' && (
-                      <fieldset className="engagement-proposal-timing">
-                        <legend>Fanvue message timing</legend>
-                        <p className="muted engagement-planned-due-at">
-                          {detail.plannedDueAt
-                            ? `Planned time ${new Date(detail.plannedDueAt).toLocaleString()}. Approval before then preserves it; approval after then enters paced dispatch.`
-                            : 'Approval enters paced dispatch. The message is not sent by this click.'}
-                        </p>
-                      </fieldset>
-                    )}
-                  {detail.status === 'pending' &&
-                    detail.provider === 'facebook_page' &&
-                    detail.kind === 'comment' && (
-                      <fieldset className="engagement-proposal-timing">
-                        <legend>Comment reply timing</legend>
-                        <p className="muted engagement-planned-due-at">
-                          {detail.plannedDueAt
-                            ? `Suggested send time ${new Date(detail.plannedDueAt).toLocaleString()}; if passed, scheduling starts now with Page-level pacing.`
-                            : 'No suggested time; scheduling starts now with Page-level pacing.'}
-                        </p>
-                        <button
-                          type="button"
-                          className={`secondary-button engagement-timing-scheduled ${dmTiming === 'scheduled' ? 'selected' : ''}`}
-                          aria-pressed={dmTiming === 'scheduled'}
-                          onClick={() => {
-                            setDmTiming('scheduled');
-                          }}
-                        >
-                          Approve scheduled reply
-                        </button>
-                        <button
-                          type="button"
-                          className={`secondary-button engagement-timing-immediate ${dmTiming === 'immediate' ? 'selected' : ''}`}
-                          aria-pressed={dmTiming === 'immediate'}
-                          onClick={() => {
-                            setDmTiming('immediate');
-                          }}
-                        >
-                          Send immediately instead
-                        </button>
-                      </fieldset>
-                    )}
-                  {detail.status === 'pending' &&
-                    detail.provider === 'facebook_page' &&
-                    detail.kind === 'dm' &&
-                    pageDmWindowReady && (
-                      <fieldset className="engagement-proposal-timing">
-                        <legend>Bot-selected send plan</legend>
-                        <p className="muted engagement-planned-due-at">
-                          {detail.plannedDueAt
-                            ? Date.parse(detail.plannedDueAt) <= Date.now()
-                              ? `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()} has passed. A fresh reply-window check is required.`
-                              : `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()}; approval adds the Page delay on top.`
-                            : 'This proposal has no bot-selected time. Scheduling is unavailable; request a new proposal.'}
-                        </p>
-                        <p className="muted">
-                          {detail.content.followUps
-                            ? 'One approval schedules all three bubbles. Bubbles 2 and 3 follow the preceding confirmed send by 4–10 seconds; a changed conversation or failed send stops the rest.'
-                            : ''}
-                        </p>
-                        <p className="muted">
-                          Default for this Page:{' '}
-                          {Math.round((detail.scheduleWindow?.earliestDelaySeconds ?? 300) / 60)}–
-                          {Math.round((detail.scheduleWindow?.latestDelaySeconds ?? 2700) / 60)}{' '}
-                          minutes.
-                        </p>
-                        <button
-                          type="button"
-                          className={`secondary-button engagement-timing-scheduled ${dmTiming === 'scheduled' ? 'selected' : ''}`}
-                          aria-pressed={dmTiming === 'scheduled'}
-                          onClick={() => {
-                            setDmTiming('scheduled');
-                          }}
-                        >
-                          Approve scheduled time
-                        </button>
-                        {!detail.content.followUps && !expiredScheduled && (
-                          <button
-                            type="button"
-                            className={`secondary-button engagement-timing-immediate ${dmTiming === 'immediate' ? 'selected' : ''}`}
-                            aria-pressed={dmTiming === 'immediate'}
-                            onClick={() => {
-                              setDmTiming('immediate');
-                            }}
-                          >
-                            Send immediately
-                          </button>
-                        )}
-                        {detail.canApprove && (
-                          <div className="engagement-page-delay-settings">
-                            <label className="field-label" htmlFor="engagement-delay-min">
-                              Earliest delay (minutes)
-                            </label>
-                            <select
-                              id="engagement-delay-min"
-                              className="engagement-delay-min text-input"
-                              value={delayMinMinutes}
-                              onChange={(event) => {
-                                setDelayMinMinutes(Number(event.target.value));
-                              }}
-                            >
-                              {[0, 5, 10, 15, 30, 45, 60, 90].map((minutes) => (
-                                <option key={minutes} value={minutes}>
-                                  {minutes}
-                                </option>
-                              ))}
-                            </select>
-                            <label className="field-label" htmlFor="engagement-delay-max">
-                              Latest delay (minutes)
-                            </label>
-                            <select
-                              id="engagement-delay-max"
-                              className="engagement-delay-max text-input"
-                              value={delayMaxMinutes}
-                              onChange={(event) => {
-                                setDelayMaxMinutes(Number(event.target.value));
-                              }}
-                            >
-                              {[0, 5, 10, 15, 30, 45, 60, 90].map((minutes) => (
-                                <option key={minutes} value={minutes}>
-                                  {minutes}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              className="secondary-button engagement-delay-save"
-                              disabled={
-                                saving ||
-                                delayMaxMinutes < delayMinMinutes ||
-                                ((detail.scheduleWindow?.earliestDelaySeconds ?? 300) ===
-                                  delayMinMinutes * 60 &&
-                                  (detail.scheduleWindow?.latestDelaySeconds ?? 2700) ===
-                                    delayMaxMinutes * 60)
-                              }
-                              onClick={() => {
-                                void savePageTiming();
-                              }}
-                            >
-                              Save Page timing
-                            </button>
-                          </div>
-                        )}
-                      </fieldset>
-                    )}
-                  {detail.status === 'pending' &&
-                    !(
-                      detail.provider === 'facebook_page' &&
-                      detail.kind === 'dm' &&
-                      !pageDmWindowReady
-                    ) && (
-                      <button
-                        ref={approveTrigger}
-                        className="primary-button engagement-proposal-approve"
-                        type="button"
-                        disabled={saving || !canApprove}
-                        onClick={() => {
-                          void openApprovalConfirmation();
-                        }}
-                      >
-                        {(detail.provider === 'facebook_page' && dmTiming === 'scheduled') ||
-                        detail.provider === 'fanvue'
-                          ? detail.content.followUps
-                            ? 'Approve and schedule 3 bubbles'
-                            : 'Approve and schedule'
-                          : 'Approve and send'}
-                      </button>
-                    )}
-                  {detail.status === 'scheduled' && detail.canApprove && (
-                    <button
-                      ref={cancelScheduleTrigger}
-                      className="danger-button engagement-proposal-cancel-schedule"
-                      type="button"
-                      disabled={saving || detail.schedule?.status !== 'pending'}
-                      onClick={() => {
-                        setConfirmCancelSchedule(true);
-                      }}
-                    >
-                      Cancel scheduled reply
-                    </button>
-                  )}
-                  {detail.status === 'pending' &&
-                    (detail.provider !== 'facebook_page' ||
-                      detail.kind !== 'dm' ||
-                      pageDmWindowReady) && (
-                      <button
-                        className="secondary-button engagement-proposal-save"
-                        type="button"
-                        disabled={
-                          saving ||
-                          !draft.trim() ||
-                          (draft.trim() === detail.content.text &&
-                            (!detail.content.followUps ||
-                              detail.content.followUps.every(
-                                (text, index) => draftFollowUps[index]?.trim() === text,
-                              )))
-                        }
-                        onClick={() => {
-                          void mutate('edit');
-                        }}
-                      >
-                        {saving ? 'Saving…' : 'Save edits'}
-                      </button>
-                    )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="muted" role="status">
+              {items.length} loaded{' '}
+              {kindFilter === 'all'
+                ? 'proposals'
+                : kindFilter === 'dm'
+                  ? 'DM proposals'
+                  : 'comment proposals'}
+              {nextCursor ? '; more available' : ''}.
+            </p>
+            <div className={`engagement-proposals-layout ${selectedId ? 'has-selection' : ''}`}>
+              <section
+                className="engagement-proposals-list"
+                aria-label="Review proposals and unresolved sends"
+              >
+                {loading ? (
+                  <p role="status">Loading proposed replies…</p>
+                ) : listFailed ? (
                   <button
-                    ref={dismissTrigger}
-                    className="danger-button engagement-proposal-dismiss"
                     type="button"
-                    disabled={
-                      saving ||
-                      !['pending', 'expired', 'superseded'].includes(detail.status) ||
-                      sendUncertain
-                    }
+                    className="secondary-button"
                     onClick={() => {
-                      setConfirmDismiss(true);
+                      const generation = listRequestGeneration.current + 1;
+                      setLoading(true);
+                      setError(null);
+                      void loadPage()
+                        .then(() => {
+                          setListFailed(false);
+                        })
+                        .catch((failure: unknown) => {
+                          setError(
+                            failure instanceof Error ? failure.message : 'Could not load proposals',
+                          );
+                        })
+                        .finally(() => {
+                          if (generation === listRequestGeneration.current) setLoading(false);
+                        });
                     }}
                   >
-                    Dismiss proposal
+                    Retry loading proposals
                   </button>
-                  {detail.provider === 'facebook_page' &&
-                    detail.kind === 'dm' &&
-                    detail.canApprove && (
-                      <button
-                        ref={noGoTrigger}
-                        className={
-                          detail.noGo
-                            ? 'secondary-button engagement-proposal-no-go'
-                            : 'danger-button engagement-proposal-no-go'
-                        }
-                        type="button"
-                        disabled={saving || sendUncertain}
-                        onClick={() => {
-                          setConfirmNoGo(true);
-                        }}
-                      >
-                        {detail.noGo ? 'Remove from no-go list' : 'Do not message this person'}
-                      </button>
+                ) : items.length === 0 ? (
+                  <p>
+                    {providerFilter === 'all'
+                      ? 'No replies await review or reconciliation.'
+                      : `No ${providerFilter === 'fanvue' ? 'Fanvue' : 'Facebook Page'} replies match this filter.`}
+                  </p>
+                ) : (
+                  <>
+                    {view === 'review' && (
+                      <div className="engagement-proposals-active" aria-label="Awaiting approval">
+                        <h2>Awaiting approval</h2>
+                        {activeItems.length ? (
+                          activeItems.map(renderProposalRow)
+                        ) : (
+                          <p>No drafts await approval.</p>
+                        )}
+                      </div>
                     )}
-                </div>
-                {detail.status === 'pending' &&
-                  !canApprove &&
-                  !(
-                    detail.provider === 'facebook_page' &&
-                    detail.kind === 'dm' &&
-                    !pageDmWindowReady
-                  ) && (
-                    <p className="muted">
-                      {sendUncertain
-                        ? 'Refresh to verify the latest send state before continuing.'
-                        : dmTiming === 'scheduled' &&
-                            detail.provider === 'facebook_page' &&
-                            detail.kind === 'dm' &&
-                            !detail.plannedDueAt
-                          ? 'A future bot-selected send time is required before approval.'
-                          : !detail.canApprove
-                            ? 'Only a workspace owner or admin can approve and send.'
-                            : draft.trim() !== detail.content.text ||
-                                detail.content.followUps?.some(
-                                  (text, index) => draftFollowUps[index]?.trim() !== text,
-                                )
-                              ? 'Save the edited draft before approving.'
-                              : !mediaReady
-                                ? 'Prepare every attachment and confirm it is ready before approving.'
-                                : 'Sending is not available for this provider or proposal shape.'}
-                    </p>
-                  )}
-                {sendUncertain && (
+                    {view === 'attention' &&
+                      outcomeItems.filter((item) => item.status !== 'scheduled').length > 0 && (
+                        <div className="engagement-proposals-outcomes" aria-label="Send outcomes">
+                          <h2>Send outcomes</h2>
+                          {outcomeItems
+                            .filter((item) => item.status !== 'scheduled')
+                            .map(renderProposalRow)}
+                        </div>
+                      )}
+                    {view === 'attention' && inactiveItems.length > 0 && (
+                      <div
+                        className="engagement-proposals-inactive"
+                        aria-label="Unsent suggestions"
+                      >
+                        <h2>Unsent suggestions</h2>
+                        <p className="muted">Never sent · kept for context only.</p>
+                        {inactiveItems.map(renderProposalRow)}
+                      </div>
+                    )}
+                  </>
+                )}
+                {nextCursor && (
                   <button
-                    className="secondary-button engagement-proposal-refresh"
+                    className="secondary-button engagement-proposals-more"
                     type="button"
+                    disabled={loadingMore}
+                    onClick={() => {
+                      const generation = listRequestGeneration.current + 1;
+                      setLoadingMore(true);
+                      setError(null);
+                      void loadPage(nextCursor)
+                        .catch((failure: unknown) => {
+                          setError(
+                            failure instanceof Error
+                              ? failure.message
+                              : 'More proposals could not be loaded',
+                          );
+                        })
+                        .finally(() => {
+                          if (generation === listRequestGeneration.current) setLoadingMore(false);
+                        });
+                    }}
+                  >
+                    {loadingMore ? 'Loading…' : 'Load more'}
+                  </button>
+                )}
+              </section>
+              <section className="engagement-proposal-detail" aria-label="Proposal detail">
+                {selectedId && (
+                  <button
+                    className="secondary-button engagement-detail-back"
+                    type="button"
+                    onClick={() => {
+                      setSelectedId(null);
+                      window.requestAnimationFrame(() => selectedRowButton.current?.focus());
+                    }}
+                  >
+                    Back to {view === 'review' ? 'Review' : 'Needs attention'}
+                  </button>
+                )}
+                {!selectedId ? (
+                  <p>Select a proposal to inspect its context and draft.</p>
+                ) : detailFailed ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
                     onClick={() => {
                       setDetailReload((current) => current + 1);
                     }}
                   >
-                    Refresh proposal state
+                    Retry loading proposal
                   </button>
-                )}
-              </>
-            )}
-          </section>
-        </div>
-        <section
-          className="engagement-no-go-list"
-          aria-labelledby="engagement-no-go-title"
-          hidden={providerFilter === 'fanvue'}
-        >
-          <h2 id="engagement-no-go-title">Page DM no-go list</h2>
-          {noGoFailed ? (
-            <button
-              className="secondary-button engagement-no-go-retry"
-              type="button"
-              onClick={() => {
-                void loadNoGo().catch(() => {
-                  setNoGoFailed(true);
-                });
-              }}
-            >
-              Retry loading no-go list
-            </button>
-          ) : noGoEntries.length === 0 ? (
-            <p className="muted">No Page conversations are blocked.</p>
-          ) : (
-            <>
-              <ul className="engagement-no-go-entries">
-                {noGoEntries.map((entry) => (
-                  <li
-                    className="engagement-no-go-entry"
-                    key={`${entry.accountId}:${entry.conversationId}`}
-                  >
-                    <span>
-                      {entry.displayName ?? 'Page conversation'} · {entry.accountDisplayName}
-                    </span>
-                    <small>Blocked {new Date(entry.createdAt).toLocaleString()}</small>
-                    {canManageNoGo && (
-                      <button
-                        className="secondary-button engagement-no-go-remove"
-                        type="button"
-                        disabled={saving}
-                        onClick={() => {
-                          setSaving(true);
-                          setError(null);
-                          void readApi<{ noGo: boolean }>(
-                            `/api/facebook-page-dm-no-go/${encodeURIComponent(entry.accountId)}/${encodeURIComponent(entry.conversationId)}`,
-                            {
-                              method: 'DELETE',
-                              headers: { 'x-csrf-token': getCsrfToken() },
-                            },
-                          )
-                            .then(async () => {
-                              setNotice('Conversation removed from the no-go list.');
-                              await loadNoGo();
-                              setDetailReload((current) => current + 1);
-                            })
-                            .catch((failure: unknown) => {
-                              setError(
-                                failure instanceof Error
-                                  ? failure.message
-                                  : 'Could not remove block',
+                ) : !detail ? (
+                  <p role="status">Loading proposal…</p>
+                ) : (
+                  <>
+                    <h2 ref={detailHeading} tabIndex={-1}>
+                      {proposalLabel(detail)}
+                    </h2>
+                    <p className="muted">Destination: {detail.accountDisplayName}</p>
+                    <p className="muted">
+                      Agent-provided source context; verify it before sending elsewhere.
+                    </p>
+                    <blockquote className="engagement-proposal-source">
+                      {detail.sourceContext.authorLabel && (
+                        <strong>{detail.sourceContext.authorLabel}: </strong>
+                      )}
+                      {detail.sourceContext.text ?? 'No source text was supplied.'}
+                    </blockquote>
+                    {detail.provider === 'facebook_page' &&
+                      detail.kind === 'dm' &&
+                      detail.status === 'pending' && (
+                        <div
+                          className={`engagement-reply-window-detail ${pageDmWindowClosed || replyWindow?.state === 'stale' || replyWindow?.state === 'unavailable' ? 'danger' : ''}`}
+                          role="status"
+                        >
+                          <p>{replyWindowLabel(replyWindow, now)}</p>
+                          {replyWindow?.state === 'open' && (
+                            <p className="muted">
+                              Last message from recipient:{' '}
+                              {new Date(replyWindow.latestInboundAt).toLocaleString()}
+                            </p>
+                          )}
+                          {replyWindow?.state === 'unavailable' && (
+                            <button
+                              className="secondary-button engagement-reply-window-retry"
+                              type="button"
+                              onClick={() => {
+                                setDetailReload((current) => current + 1);
+                              }}
+                            >
+                              Retry reply-window check
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    {detail.provider === 'facebook_page' && detail.kind === 'dm' && (
+                      <p className={detail.noGo ? 'form-error' : 'muted'} role="status">
+                        {detail.noGo
+                          ? 'No-go conversation: new proposals and sends are blocked.'
+                          : 'This conversation is not on the no-go list.'}
+                      </p>
+                    )}
+                    <label className="field-label" htmlFor="engagement-proposal-draft">
+                      {detail.content.followUps ? 'Bubble 1' : 'Suggested reply'}
+                    </label>
+                    <p className="engagement-proposal-edit-help muted">
+                      Edit the bubbles, then approve.
+                    </p>
+                    <textarea
+                      id="engagement-proposal-draft"
+                      className="engagement-proposal-draft text-input"
+                      value={draft}
+                      maxLength={5000}
+                      onChange={(event) => {
+                        setDraft(event.target.value);
+                      }}
+                    />
+                    {detail.provider === 'facebook_page' &&
+                      detail.kind === 'dm' &&
+                      detail.content.followUps?.map((_, index) => (
+                        <label className="field-label" key={index}>
+                          Bubble {index + 2}
+                          <textarea
+                            className="engagement-proposal-draft text-input"
+                            value={draftFollowUps[index]}
+                            maxLength={2000}
+                            onChange={(event) => {
+                              setDraftFollowUps(
+                                (current) =>
+                                  current.map((text, itemIndex) =>
+                                    itemIndex === index ? event.target.value : text,
+                                  ) as [string, string],
                               );
-                            })
-                            .finally(() => {
-                              setSaving(false);
-                            });
+                            }}
+                          />
+                        </label>
+                      ))}
+                    {detail.content.mediaIds?.length ? (
+                      <section
+                        className="engagement-proposal-media"
+                        aria-label="Proposed attachments"
+                      >
+                        <h3>Attachments</h3>
+                        {detail.content.mediaIds.map((mediaId, index) => (
+                          <div className="engagement-proposal-attachment" key={mediaId}>
+                            <a
+                              className="engagement-proposal-media-preview"
+                              href={`/api/workflow/media/${mediaId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Preview attachment {index + 1}
+                            </a>
+                            <span className="engagement-proposal-media-status" role="status">
+                              {mediaStates[mediaId] === 'ready'
+                                ? 'Ready to send'
+                                : mediaStates[mediaId] === 'unknown'
+                                  ? 'Outcome unknown; do not retry'
+                                  : mediaStates[mediaId] === 'failed'
+                                    ? 'Provider preparation failed'
+                                    : mediaStates[mediaId] === 'processing'
+                                      ? 'Processing at Fanvue'
+                                      : mediaStates[mediaId] === 'uploading'
+                                        ? 'More preparation needed'
+                                        : 'Not prepared for sending'}
+                            </span>
+                            {detail.status === 'pending' &&
+                              detail.provider === 'fanvue' &&
+                              detail.kind === 'dm' &&
+                              mediaStates[mediaId] !== 'ready' &&
+                              mediaStates[mediaId] !== 'unknown' &&
+                              mediaStates[mediaId] !== 'failed' && (
+                                <button
+                                  className="engagement-proposal-stage-media secondary-button"
+                                  type="button"
+                                  disabled={Boolean(mediaPending) || saving || !detail.canApprove}
+                                  onClick={() => {
+                                    void stageMedia(mediaId);
+                                  }}
+                                >
+                                  {mediaPending === mediaId ? 'Preparing…' : 'Prepare attachment'}
+                                </button>
+                              )}
+                          </div>
+                        ))}
+                      </section>
+                    ) : null}
+                    {detail.content.priceCents !== undefined && (
+                      <p className="muted">
+                        Proposed provider price: ${(detail.content.priceCents / 100).toFixed(2)}.
+                        {detail.content.priceCents > 0 && detail.content.priceCents < 300
+                          ? ' Fanvue requires a minimum price of $3.00.'
+                          : ''}
+                      </p>
+                    )}
+                    {(detail.status !== 'pending' || expiredScheduled) &&
+                      !(
+                        detail.provider === 'facebook_page' &&
+                        detail.kind === 'dm' &&
+                        detail.status === 'pending' &&
+                        !pageDmWindowReady
+                      ) && (
+                        <p
+                          className={
+                            expiredScheduled || detail.status === 'superseded'
+                              ? 'form-error'
+                              : 'form-success'
+                          }
+                          role="status"
+                        >
+                          {detail.status === 'sent'
+                            ? 'Sent'
+                            : detail.status === 'superseded'
+                              ? 'A newer draft replaced this one. This proposal cannot be approved or sent.'
+                              : expiredScheduled
+                                ? 'Expired draft. Dismiss it or wait for a fresh draft.'
+                                : detail.status === 'scheduled'
+                                  ? detail.schedule
+                                    ? `Scheduled for ${new Date(detail.schedule.dueAt).toLocaleString()}. You can cancel before dispatch.`
+                                    : 'Scheduled; refresh to see the send time.'
+                                  : detail.status === 'cancelled'
+                                    ? 'Cancelled before dispatch'
+                                    : detail.status === 'dismissed'
+                                      ? 'Dismissed without sending'
+                                      : detail.status === 'failed'
+                                        ? 'Provider rejected this send'
+                                        : 'Send outcome is unknown; do not send again'}
+                        </p>
+                      )}
+                    <div className="engagement-proposal-actions">
+                      {detail.status === 'pending' &&
+                        detail.provider === 'fanvue' &&
+                        detail.kind === 'dm' && (
+                          <fieldset className="engagement-proposal-timing">
+                            <legend>Fanvue message timing</legend>
+                            <p className="muted engagement-planned-due-at">
+                              {detail.plannedDueAt
+                                ? `Planned time ${new Date(detail.plannedDueAt).toLocaleString()}. Approval before then preserves it; approval after then enters paced dispatch.`
+                                : 'Approval enters paced dispatch. The message is not sent by this click.'}
+                            </p>
+                          </fieldset>
+                        )}
+                      {detail.status === 'pending' &&
+                        detail.provider === 'facebook_page' &&
+                        detail.kind === 'comment' && (
+                          <fieldset className="engagement-proposal-timing">
+                            <legend>Comment reply timing</legend>
+                            <p className="muted engagement-planned-due-at">
+                              {detail.plannedDueAt
+                                ? `Suggested send time ${new Date(detail.plannedDueAt).toLocaleString()}; if passed, scheduling starts now with Page-level pacing.`
+                                : 'No suggested time; scheduling starts now with Page-level pacing.'}
+                            </p>
+                            <button
+                              type="button"
+                              className={`secondary-button engagement-timing-scheduled ${dmTiming === 'scheduled' ? 'selected' : ''}`}
+                              aria-pressed={dmTiming === 'scheduled'}
+                              onClick={() => {
+                                setDmTiming('scheduled');
+                              }}
+                            >
+                              Approve scheduled reply
+                            </button>
+                            <button
+                              type="button"
+                              className={`secondary-button engagement-timing-immediate ${dmTiming === 'immediate' ? 'selected' : ''}`}
+                              aria-pressed={dmTiming === 'immediate'}
+                              onClick={() => {
+                                setDmTiming('immediate');
+                              }}
+                            >
+                              Send immediately instead
+                            </button>
+                          </fieldset>
+                        )}
+                      {detail.status === 'pending' &&
+                        detail.provider === 'facebook_page' &&
+                        detail.kind === 'dm' &&
+                        pageDmWindowReady && (
+                          <fieldset className="engagement-proposal-timing">
+                            <legend>Bot-selected send plan</legend>
+                            <p className="muted engagement-planned-due-at">
+                              {detail.plannedDueAt
+                                ? Date.parse(detail.plannedDueAt) <= Date.now()
+                                  ? `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()} has passed. A fresh reply-window check is required.`
+                                  : `Bot-selected time ${new Date(detail.plannedDueAt).toLocaleString()}; approval adds the Page delay on top.`
+                                : 'This proposal has no bot-selected time. Scheduling is unavailable; request a new proposal.'}
+                            </p>
+                            <p className="muted">
+                              {detail.content.followUps
+                                ? 'One approval schedules all three bubbles. Bubbles 2 and 3 follow the preceding confirmed send by 4–10 seconds; a changed conversation or failed send stops the rest.'
+                                : ''}
+                            </p>
+                            <p className="muted">
+                              Default for this Page:{' '}
+                              {Math.round(
+                                (detail.scheduleWindow?.earliestDelaySeconds ?? 300) / 60,
+                              )}
+                              –
+                              {Math.round((detail.scheduleWindow?.latestDelaySeconds ?? 2700) / 60)}{' '}
+                              minutes.
+                            </p>
+                            <button
+                              type="button"
+                              className={`secondary-button engagement-timing-scheduled ${dmTiming === 'scheduled' ? 'selected' : ''}`}
+                              aria-pressed={dmTiming === 'scheduled'}
+                              onClick={() => {
+                                setDmTiming('scheduled');
+                              }}
+                            >
+                              Approve scheduled time
+                            </button>
+                            {!detail.content.followUps && !expiredScheduled && (
+                              <button
+                                type="button"
+                                className={`secondary-button engagement-timing-immediate ${dmTiming === 'immediate' ? 'selected' : ''}`}
+                                aria-pressed={dmTiming === 'immediate'}
+                                onClick={() => {
+                                  setDmTiming('immediate');
+                                }}
+                              >
+                                Send immediately
+                              </button>
+                            )}
+                            {detail.canApprove && (
+                              <div className="engagement-page-delay-settings">
+                                <label className="field-label" htmlFor="engagement-delay-min">
+                                  Earliest delay (minutes)
+                                </label>
+                                <select
+                                  id="engagement-delay-min"
+                                  className="engagement-delay-min text-input"
+                                  value={delayMinMinutes}
+                                  onChange={(event) => {
+                                    setDelayMinMinutes(Number(event.target.value));
+                                  }}
+                                >
+                                  {[0, 5, 10, 15, 30, 45, 60, 90].map((minutes) => (
+                                    <option key={minutes} value={minutes}>
+                                      {minutes}
+                                    </option>
+                                  ))}
+                                </select>
+                                <label className="field-label" htmlFor="engagement-delay-max">
+                                  Latest delay (minutes)
+                                </label>
+                                <select
+                                  id="engagement-delay-max"
+                                  className="engagement-delay-max text-input"
+                                  value={delayMaxMinutes}
+                                  onChange={(event) => {
+                                    setDelayMaxMinutes(Number(event.target.value));
+                                  }}
+                                >
+                                  {[0, 5, 10, 15, 30, 45, 60, 90].map((minutes) => (
+                                    <option key={minutes} value={minutes}>
+                                      {minutes}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  className="secondary-button engagement-delay-save"
+                                  disabled={
+                                    saving ||
+                                    delayMaxMinutes < delayMinMinutes ||
+                                    ((detail.scheduleWindow?.earliestDelaySeconds ?? 300) ===
+                                      delayMinMinutes * 60 &&
+                                      (detail.scheduleWindow?.latestDelaySeconds ?? 2700) ===
+                                        delayMaxMinutes * 60)
+                                  }
+                                  onClick={() => {
+                                    void savePageTiming();
+                                  }}
+                                >
+                                  Save Page timing
+                                </button>
+                              </div>
+                            )}
+                          </fieldset>
+                        )}
+                      {detail.status === 'pending' &&
+                        !(
+                          detail.provider === 'facebook_page' &&
+                          detail.kind === 'dm' &&
+                          !pageDmWindowReady
+                        ) && (
+                          <button
+                            ref={approveTrigger}
+                            className="primary-button engagement-proposal-approve"
+                            type="button"
+                            disabled={saving || !canApprove}
+                            onClick={() => {
+                              void openApprovalConfirmation();
+                            }}
+                          >
+                            {(detail.provider === 'facebook_page' && dmTiming === 'scheduled') ||
+                            detail.provider === 'fanvue'
+                              ? detail.content.followUps
+                                ? 'Approve and schedule 3 bubbles'
+                                : 'Approve and schedule'
+                              : 'Approve and send'}
+                          </button>
+                        )}
+                      {detail.status === 'scheduled' && detail.canApprove && (
+                        <button
+                          ref={cancelScheduleTrigger}
+                          className="danger-button engagement-proposal-cancel-schedule"
+                          type="button"
+                          disabled={saving || detail.schedule?.status !== 'pending'}
+                          onClick={() => {
+                            setConfirmCancelSchedule(true);
+                          }}
+                        >
+                          Cancel scheduled reply
+                        </button>
+                      )}
+                      {detail.status === 'pending' &&
+                        (detail.provider !== 'facebook_page' ||
+                          detail.kind !== 'dm' ||
+                          pageDmWindowReady) && (
+                          <button
+                            className="secondary-button engagement-proposal-save"
+                            type="button"
+                            disabled={
+                              saving ||
+                              !draft.trim() ||
+                              (draft.trim() === detail.content.text &&
+                                (!detail.content.followUps ||
+                                  detail.content.followUps.every(
+                                    (text, index) => draftFollowUps[index]?.trim() === text,
+                                  )))
+                            }
+                            onClick={() => {
+                              void mutate('edit');
+                            }}
+                          >
+                            {saving ? 'Saving…' : 'Save edits'}
+                          </button>
+                        )}
+                      <button
+                        ref={dismissTrigger}
+                        className="danger-button engagement-proposal-dismiss"
+                        type="button"
+                        disabled={
+                          saving ||
+                          !['pending', 'expired', 'superseded'].includes(detail.status) ||
+                          sendUncertain
+                        }
+                        onClick={() => {
+                          setConfirmDismiss(true);
                         }}
                       >
-                        Allow messages
+                        Dismiss proposal
+                      </button>
+                      {detail.provider === 'facebook_page' &&
+                        detail.kind === 'dm' &&
+                        detail.canApprove && (
+                          <button
+                            ref={noGoTrigger}
+                            className={
+                              detail.noGo
+                                ? 'secondary-button engagement-proposal-no-go'
+                                : 'danger-button engagement-proposal-no-go'
+                            }
+                            type="button"
+                            disabled={saving || sendUncertain}
+                            onClick={() => {
+                              setConfirmNoGo(true);
+                            }}
+                          >
+                            {detail.noGo ? 'Remove from no-go list' : 'Do not message this person'}
+                          </button>
+                        )}
+                    </div>
+                    {detail.status === 'pending' &&
+                      !canApprove &&
+                      !(
+                        detail.provider === 'facebook_page' &&
+                        detail.kind === 'dm' &&
+                        !pageDmWindowReady
+                      ) && (
+                        <p className="muted">
+                          {sendUncertain
+                            ? 'Refresh to verify the latest send state before continuing.'
+                            : dmTiming === 'scheduled' &&
+                                detail.provider === 'facebook_page' &&
+                                detail.kind === 'dm' &&
+                                !detail.plannedDueAt
+                              ? 'A future bot-selected send time is required before approval.'
+                              : !detail.canApprove
+                                ? 'Only a workspace owner or admin can approve and send.'
+                                : draft.trim() !== detail.content.text ||
+                                    detail.content.followUps?.some(
+                                      (text, index) => draftFollowUps[index]?.trim() !== text,
+                                    )
+                                  ? 'Save the edited draft before approving.'
+                                  : !mediaReady
+                                    ? 'Prepare every attachment and confirm it is ready before approving.'
+                                    : 'Sending is not available for this provider or proposal shape.'}
+                        </p>
+                      )}
+                    {sendUncertain && (
+                      <button
+                        className="secondary-button engagement-proposal-refresh"
+                        type="button"
+                        onClick={() => {
+                          setDetailReload((current) => current + 1);
+                        }}
+                      >
+                        Refresh proposal state
                       </button>
                     )}
-                  </li>
-                ))}
-              </ul>
-              {noGoCursor && (
+                  </>
+                )}
+              </section>
+            </div>
+            <section
+              className="engagement-no-go-list"
+              aria-labelledby="engagement-no-go-title"
+              hidden={view !== 'attention' || providerFilter === 'fanvue'}
+            >
+              <h2 id="engagement-no-go-title">Page DM no-go list</h2>
+              {noGoFailed ? (
                 <button
-                  className="secondary-button engagement-no-go-more"
+                  className="secondary-button engagement-no-go-retry"
                   type="button"
-                  disabled={noGoLoadingMore}
                   onClick={() => {
-                    setNoGoLoadingMore(true);
-                    void loadNoGo(noGoCursor)
-                      .catch(() => {
-                        setNoGoFailed(true);
-                      })
-                      .finally(() => {
-                        setNoGoLoadingMore(false);
-                      });
+                    void loadNoGo().catch(() => {
+                      setNoGoFailed(true);
+                    });
                   }}
                 >
-                  {noGoLoadingMore ? 'Loading…' : 'Load more blocked conversations'}
+                  Retry loading no-go list
                 </button>
+              ) : noGoEntries.length === 0 ? (
+                <p className="muted">No Page conversations are blocked.</p>
+              ) : (
+                <>
+                  <ul className="engagement-no-go-entries">
+                    {noGoEntries.map((entry) => (
+                      <li
+                        className="engagement-no-go-entry"
+                        key={`${entry.accountId}:${entry.conversationId}`}
+                      >
+                        <span>
+                          {entry.displayName ?? 'Page conversation'} · {entry.accountDisplayName}
+                        </span>
+                        <small>Blocked {new Date(entry.createdAt).toLocaleString()}</small>
+                        {canManageNoGo && (
+                          <button
+                            className="secondary-button engagement-no-go-remove"
+                            type="button"
+                            disabled={saving}
+                            onClick={() => {
+                              setSaving(true);
+                              setError(null);
+                              void readApi<{ noGo: boolean }>(
+                                `/api/facebook-page-dm-no-go/${encodeURIComponent(entry.accountId)}/${encodeURIComponent(entry.conversationId)}`,
+                                {
+                                  method: 'DELETE',
+                                  headers: { 'x-csrf-token': getCsrfToken() },
+                                },
+                              )
+                                .then(async () => {
+                                  setNotice('Conversation removed from the no-go list.');
+                                  await loadNoGo();
+                                  setDetailReload((current) => current + 1);
+                                })
+                                .catch((failure: unknown) => {
+                                  setError(
+                                    failure instanceof Error
+                                      ? failure.message
+                                      : 'Could not remove block',
+                                  );
+                                })
+                                .finally(() => {
+                                  setSaving(false);
+                                });
+                            }}
+                          >
+                            Allow messages
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {noGoCursor && (
+                    <button
+                      className="secondary-button engagement-no-go-more"
+                      type="button"
+                      disabled={noGoLoadingMore}
+                      onClick={() => {
+                        setNoGoLoadingMore(true);
+                        void loadNoGo(noGoCursor)
+                          .catch(() => {
+                            setNoGoFailed(true);
+                          })
+                          .finally(() => {
+                            setNoGoLoadingMore(false);
+                          });
+                      }}
+                    >
+                      {noGoLoadingMore ? 'Loading…' : 'Load more blocked conversations'}
+                    </button>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </section>
-        <div hidden={providerFilter === 'fanvue'}>
-          <PageDmHistory />
-          <PageCommentHistory />
-        </div>
-        <div hidden={providerFilter === 'facebook_page'}>
-          <FanvueActionHistory refreshRevision={fanvueHistoryRevision} />
-        </div>
+            </section>
+          </div>
+        )}
+        {view === 'history' && (
+          <div
+            role="tabpanel"
+            id="engagement-panel-history"
+            aria-labelledby="engagement-tab-history"
+            className="engagement-history-sections"
+          >
+            <p className="muted">
+              Provider histories retain their own filters and pagination; no combined chronology is
+              implied.
+            </p>
+            {scheduledItems.length > 0 && (
+              <section className="engagement-scheduled-management" aria-label="Scheduled proposals">
+                <h2>Scheduled proposals</h2>
+                {scheduledItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setSelectedId(item.id);
+                      setView('review');
+                      changeQuery('view', 'review');
+                    }}
+                  >
+                    Manage scheduled {proposalLabel(item)} · {item.accountDisplayName}
+                  </button>
+                ))}
+              </section>
+            )}
+            <div hidden={providerFilter === 'fanvue'}>
+              <PageDmHistory />
+              <PageCommentHistory />
+            </div>
+            <div hidden={providerFilter === 'facebook_page'}>
+              <FanvueActionHistory refreshRevision={fanvueHistoryRevision} />
+            </div>
+          </div>
+        )}
       </section>
       {confirmDismiss && (
         <ConfirmationDialog

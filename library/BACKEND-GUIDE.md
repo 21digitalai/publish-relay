@@ -560,6 +560,12 @@ Production releases install production dependencies without building on the host
 
 ## Review-first engagement proposals (foundation)
 
+The authenticated bounded `GET /api/engagement-proposals` list accepts independent allowlisted
+`provider=facebook_page|fanvue` and `kind=dm|comment` filters. Both predicates apply before the
+existing created-at/key cursor and limit, so filtered pagination cannot leak rows from another
+action kind. The response remains an allowlisted summary; exact source/reply text stays behind
+the authorized detail route.
+
 - `engagement_proposals` is the provider-neutral, workspace/account-bound queue for optional DM/comment review. Its client action ID is unique per workspace, and source context plus proposed content are durable snapshots. `src/modules/providers/engagement-proposal.repository.ts` owns idempotent create, pending list, optimistic edit, and dismiss; a stale edit cannot overwrite another reviewer's revision.
 - A pending Facebook Page DM proposal with a past `planned_due_at` becomes `expired` without a send or schedule. The worker sweeps across workspaces; tenant-bound list/detail reads perform the same compare-and-set for immediate review truth. Scheduled, sending, and settled outcomes are untouched. Expired rows remain visible and may be approved with a fresh window-clamped delay unless a newer active draft supersedes them. Editing remains pending-only; owner dismissal accepts an expired row.
 - `facebook-dm-schedule-time.ts` holds the pure approval-time due calculation; `facebook-dm-approval-preview.service.ts` owns the fresh Page-window read, proposal/source validation, one jitter sample, and a fingerprint of the latest inbound message. The browser preview shows that exact instant before confirmation; approval accepts the same preview for at most two minutes, rechecks the live window, Page settings, revision and inbound fingerprint under the Page account lock, and never samples a second time. A past agent-selected time re-anchors to preview time; a window too short for the minimum delay fails closed. The pending intent binds the latest inbound message ID for dispatch recheck.

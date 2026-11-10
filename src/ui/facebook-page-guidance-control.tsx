@@ -82,6 +82,7 @@ function GuidanceDialog({
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [activeField, setActiveField] = useState<keyof Guidance>('profile');
   const dialog = useRef<HTMLElement>(null);
   const endpoint = `/api/facebook-pages/${encodeURIComponent(accountId)}/guidance`;
   const dirty = FIELDS.some(({ key }) => value[key] !== saved[key]);
@@ -176,7 +177,7 @@ function GuidanceDialog({
   };
 
   return (
-    <div className="dialog-backdrop" role="presentation">
+    <div className="dialog-backdrop facebook-guidance-backdrop" role="presentation">
       <section
         ref={dialog}
         className="facebook-guidance-dialog fanvue-guidance-dialog confirm-dialog"
@@ -201,6 +202,9 @@ function GuidanceDialog({
           Context for authorized agents. Relay stores it with this Page; it does not send it to
           Facebook or automatically answer people.
         </p>
+        <p className="facebook-guidance-state" role="status" aria-live="polite">
+          {state === 'saving' ? 'Saving' : error ? 'Error' : dirty ? 'Unsaved changes' : 'Saved'}
+        </p>
         {state === 'loading' && <p role="status">Loading Page guidance…</p>}
         {state === 'error' && (
           <p role="alert">
@@ -219,8 +223,55 @@ function GuidanceDialog({
         )}
         {(state === 'ready' || state === 'saving') && (
           <>
-            {FIELDS.map(({ key, label, hint }) => (
-              <div className="facebook-guidance-field" key={key}>
+            <div
+              className="facebook-guidance-tabs"
+              role="tablist"
+              aria-label="Page guidance section"
+            >
+              {FIELDS.map(({ key, label }, index) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  id={`facebook-guidance-tab-${key}-${accountId}`}
+                  aria-selected={activeField === key}
+                  aria-controls={`facebook-guidance-panel-${key}-${accountId}`}
+                  tabIndex={activeField === key ? 0 : -1}
+                  onClick={() => {
+                    setActiveField(key);
+                  }}
+                  onKeyDown={(event) => {
+                    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                    event.preventDefault();
+                    const next =
+                      event.key === 'Home'
+                        ? 0
+                        : event.key === 'End'
+                          ? FIELDS.length - 1
+                          : (index + (event.key === 'ArrowRight' ? 1 : -1) + FIELDS.length) %
+                            FIELDS.length;
+                    const field = FIELDS[next];
+                    if (!field) return;
+                    setActiveField(field.key);
+                    dialog.current
+                      ?.querySelector<HTMLElement>(
+                        `#facebook-guidance-tab-${field.key}-${accountId}`,
+                      )
+                      ?.focus();
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {FIELDS.filter(({ key }) => key === activeField).map(({ key, label, hint }) => (
+              <div
+                className="facebook-guidance-field"
+                role="tabpanel"
+                id={`facebook-guidance-panel-${key}-${accountId}`}
+                aria-labelledby={`facebook-guidance-tab-${key}-${accountId}`}
+                key={key}
+              >
                 <label htmlFor={`facebook-guidance-${key}-${accountId}`}>{label}</label>
                 <p className="facebook-guidance-hint">{hint}</p>
                 <textarea

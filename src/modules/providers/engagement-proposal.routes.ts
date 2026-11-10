@@ -631,6 +631,7 @@ export function registerEngagementProposalRoutes(
       .strictObject({
         cursor: z.string().max(512).optional(),
         provider: z.enum(['facebook_page', 'fanvue']).optional(),
+        kind: z.enum(['dm', 'comment']).optional(),
       })
       .safeParse(request.query);
     if (!query.success)
@@ -644,6 +645,7 @@ export function registerEngagementProposalRoutes(
     const rows = await listEngagementReviewQueue(database, identity.workspaceId, {
       ...(cursor ? { beforeCreatedAt: new Date(cursor.createdAt), beforeId: cursor.id } : {}),
       ...(query.data.provider ? { provider: query.data.provider } : {}),
+      ...(query.data.kind ? { kind: query.data.kind } : {}),
       limit: PAGE_SIZE + 1,
     });
     const page = rows.slice(0, PAGE_SIZE);

@@ -1599,6 +1599,55 @@ export const fanvueActionIntents = pgTable(
   ],
 );
 
+export const fanvueDmPendingIntents = pgTable(
+  'fanvue_dm_pending_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    fanUuid: uuid('fan_uuid').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    actorType: actorType('actor_type').notNull(),
+    actorId: uuid('actor_id').notNull(),
+    textBody: text('text_body'),
+    mediaIds: jsonb('media_ids').$type<string[]>().notNull().default([]),
+    priceCents: integer('price_cents'),
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    status: text('status').notNull().default('pending'),
+    leaseOwner: text('lease_owner'),
+    leaseUntil: timestamp('lease_until', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_dm_pending_intents_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
+    index('fanvue_dm_pending_intents_due_idx').on(table.dueAt, table.id),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_dm_pending_intents_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvueDmDispatchPacing = pgTable(
+  'fanvue_dm_dispatch_pacing',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    nextAt: timestamp('next_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+    }).onDelete('cascade'),
+  ],
+);
+
 export const fanvueDmAttachments = pgTable(
   'fanvue_dm_attachments',
   {

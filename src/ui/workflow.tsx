@@ -4109,14 +4109,36 @@ export function JobDetailPage() {
                   })
                     .then(async (response) => {
                       const result = (await response.json()) as {
-                        data: unknown;
+                        data: { jobIds: string[] } | null;
                         error: string | null;
                       };
                       if (!response.ok || !result.data)
                         throw new Error(result.error ?? 'Could not update the publishing time');
-                      setJob({ ...job, scheduledAt: target.toISOString() });
-                      setIsEditingSchedule(false);
-                      setMutationAnnouncement('Publication rescheduled successfully');
+                      const successors = await Promise.all(
+                        result.data.jobIds.map(async (id) => {
+                          try {
+                            const detailResponse = await fetch(
+                              `/api/workflow/jobs/${encodeURIComponent(id)}`,
+                              { cache: 'no-store' },
+                            );
+                            if (!detailResponse.ok) return null;
+                            const detailResult = (await detailResponse.json()) as {
+                              data: JobDetailDto | null;
+                            };
+                            return detailResult.data;
+                          } catch {
+                            return null;
+                          }
+                        }),
+                      );
+                      const successor = successors.find(
+                        (candidate) => candidate?.providerAccount.id === job.providerAccountId,
+                      );
+                      window.location.assign(
+                        successor
+                          ? `${workspacePath}/jobs/${encodeURIComponent(successor.id)}`
+                          : `${workspacePath}/queue`,
+                      );
                     })
                     .catch((error: unknown) => {
                       const message =

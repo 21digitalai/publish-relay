@@ -95,6 +95,23 @@ test('held publication survives reload, approves exact job and remains cancellab
   await expect(page.getByRole('button', { name: 'Approve publication' })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Approve publication' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit schedule' }).click();
+  const revisedLocalTime = await page.evaluate(() => {
+    const date = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  });
+  await page.getByLabel('Date and time').fill(revisedLocalTime);
+  await page.getByRole('button', { name: 'Update schedule' }).click();
+  await expect(page).toHaveURL(new RegExp(`/w/${slug}/jobs/(?!${jobId}$)`));
+  await expect(page.getByText('Awaiting approval').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve publication' })).toBeVisible();
+  const successorId = page.url().split('/').at(-1);
+  expect(successorId).not.toBe(jobId);
+  const oldJob = await page.request.get(`/api/workflow/jobs/${jobId}`);
+  expect(((await oldJob.json()) as { data: { state: string } }).data.state).toBe('superseded');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Approve publication' })).toBeVisible();
   await page.getByRole('button', { name: 'Require approval: On' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Turn approval off' }).click();
   await expect(page.getByRole('button', { name: 'Require approval: Off' })).toBeVisible();
@@ -102,6 +119,10 @@ test('held publication survives reload, approves exact job and remains cancellab
   await page.getByRole('button', { name: 'Require approval: Off' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Turn approval on' }).click();
   await expect(page.getByRole('button', { name: 'Approve publication' })).toBeVisible();
+  await page.getByRole('button', { name: 'Approve publication' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve publication' }).click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Approve publication' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel job' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel job' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel job' }).click();

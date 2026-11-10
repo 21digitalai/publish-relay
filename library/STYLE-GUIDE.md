@@ -320,6 +320,8 @@ Publication trust surfaces keep normalized server truth visible: `.queue-media` 
 
 Job detail is a route-backed drawer on desktop and a page on mobile. Sections: status, account/provider, content/media, schedule/timezone, execution timeline, provider result, audit metadata, actions.
 
+Rescheduling supersedes the current job. After a successful schedule revision, Job detail resolves the returned successor job for the selected provider account and navigates to its server-fetched detail; it must not locally patch the superseded job or retain an old approved state. If the successor cannot be resolved, return to Queue rather than presenting stale controls.
+
 - Edit only before dispatch, with disabled reason.
 - Cancellation explains that published external content cannot be undone.
 - Retry shows failure, count, next automatic attempt, and safety.

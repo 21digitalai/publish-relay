@@ -902,4 +902,54 @@ describe('Page DM pending intent', () => {
       await pg.close();
     }
   });
+
+  it('does not let a paced Page starve an overdue root on another Page', async () => {
+    const { pg, database } = await setup();
+    try {
+      const secondAccountId = randomUUID();
+      await pg.query(
+        "INSERT INTO provider_accounts (id, workspace_id, destination_provider) VALUES ($1, $2, 'facebook_page')",
+        [secondAccountId, workspaceId],
+      );
+      await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_1',
+        clientActionId: randomUUID(),
+        texts: ['One', 'Two'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user', id: actorId },
+      });
+      await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_2',
+        clientActionId: randomUUID(),
+        texts: ['Three', 'Four'],
+        expectedLatestInboundMessageId: 'inbound-2',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user', id: actorId },
+      });
+      const otherPage = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId: secondAccountId,
+        conversationId: 't_3',
+        clientActionId: randomUUID(),
+        texts: ['Five', 'Six'],
+        expectedLatestInboundMessageId: 'inbound-3',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user', id: actorId },
+      });
+      await pg.query("UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '2 minutes' WHERE status = 'pending' AND account_id = $1", [accountId]);
+      await pg.query("UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '1 minute' WHERE status = 'pending' AND account_id = $1", [secondAccountId]);
+      const now = new Date();
+      const [claimedFirst] = await claimDuePageDms(database, { workerId: 'w', now, leaseMs: 30_000, limit: 1 });
+      expect(claimedFirst?.accountId).toBe(accountId);
+      const [claimedOther] = await claimDuePageDms(database, { workerId: 'w', now, leaseMs: 30_000, limit: 1 });
+      expect(claimedOther?.id).toBe(otherPage.id);
+    } finally {
+      await pg.close();
+    }
+  });
 });

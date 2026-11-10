@@ -1,6 +1,6 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 
-import { and, desc, eq, inArray, lte, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -593,9 +593,22 @@ export async function claimDuePageDms(
         sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
       })
       .from(facebookPageDmPendingIntents)
+      .leftJoin(
+        facebookPageDmDispatchPacing,
+        and(
+          eq(facebookPageDmDispatchPacing.workspaceId, facebookPageDmPendingIntents.workspaceId),
+          eq(facebookPageDmDispatchPacing.accountId, facebookPageDmPendingIntents.accountId),
+        ),
+      )
       .where(
         and(
           lte(facebookPageDmPendingIntents.dueAt, input.now),
+          or(
+            sql`${facebookPageDmPendingIntents.sequenceIndex} > 0`,
+            isNull(facebookPageDmDispatchPacing.accountId),
+            lte(facebookPageDmDispatchPacing.nextRootAt, input.now),
+            eq(facebookPageDmDispatchPacing.lastRootId, facebookPageDmPendingIntents.id),
+          ),
           or(
             eq(facebookPageDmPendingIntents.status, 'pending'),
             and(

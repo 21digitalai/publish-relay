@@ -31,6 +31,7 @@ import {
   setPageDmDelayWindow,
 } from './facebook-dm-pending.repository.js';
 import { getScheduledProposalPageComment } from './facebook-comment-pending.repository.js';
+import { findPendingFanvueDm } from './fanvue-dm-pending.repository.js';
 import {
   listPageCommentHistory,
   pageCommentPostLink,
@@ -667,7 +668,7 @@ export function registerEngagementProposalRoutes(
             conversationId: row.targetId,
           })
         : false;
-    const schedule =
+    const pageSchedule =
       row.provider === 'facebook_page' && row.status === 'scheduled'
         ? row.kind === 'comment'
           ? await getScheduledProposalPageComment(database, {
@@ -679,6 +680,20 @@ export function registerEngagementProposalRoutes(
               clientActionId: row.clientActionId,
             })
         : null;
+    const fanvueSchedule =
+      row.provider === 'fanvue' &&
+      row.kind === 'dm' &&
+      ['scheduled', 'sending'].includes(row.status)
+        ? await findPendingFanvueDm(database, {
+            workspaceId: identity.workspaceId,
+            accountId: row.accountId,
+            fanUuid: row.targetId,
+            clientActionId: row.clientActionId,
+          })
+        : null;
+    const schedule = fanvueSchedule
+      ? { dueAt: fanvueSchedule.dueAt.toISOString(), status: fanvueSchedule.status }
+      : pageSchedule;
     const scheduleWindow =
       row.provider === 'facebook_page' && row.kind === 'dm'
         ? await getPageDmDelayWindow(database, {

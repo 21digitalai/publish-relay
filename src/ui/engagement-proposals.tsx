@@ -971,6 +971,18 @@ export function EngagementProposalsPage() {
                   )}
                 <div className="engagement-proposal-actions">
                   {detail.status === 'pending' &&
+                    detail.provider === 'fanvue' &&
+                    detail.kind === 'dm' && (
+                      <fieldset className="engagement-proposal-timing">
+                        <legend>Fanvue message timing</legend>
+                        <p className="muted engagement-planned-due-at">
+                          {detail.plannedDueAt
+                            ? `Planned time ${new Date(detail.plannedDueAt).toLocaleString()}. Approval before then preserves it; approval after then enters paced dispatch.`
+                            : 'Approval enters paced dispatch. The message is not sent by this click.'}
+                        </p>
+                      </fieldset>
+                    )}
+                  {detail.status === 'pending' &&
                     detail.provider === 'facebook_page' &&
                     detail.kind === 'comment' && (
                       <fieldset className="engagement-proposal-timing">
@@ -1120,7 +1132,8 @@ export function EngagementProposalsPage() {
                           void openApprovalConfirmation();
                         }}
                       >
-                        {detail.provider === 'facebook_page' && dmTiming === 'scheduled'
+                        {(detail.provider === 'facebook_page' && dmTiming === 'scheduled') ||
+                        (detail.provider === 'fanvue' && detail.kind === 'dm')
                           ? detail.content.followUps
                             ? 'Approve and schedule 3 bubbles'
                             : 'Approve and schedule'
@@ -1378,34 +1391,39 @@ export function EngagementProposalsPage() {
         <ConfirmationDialog
           titleId="engagement-approve-title"
           title={
-            dmTiming === 'scheduled' &&
-            detail.provider === 'facebook_page' &&
-            detail.kind === 'comment'
-              ? 'Approve and schedule this comment reply?'
+            detail.provider === 'fanvue' && detail.kind === 'dm'
+              ? 'Approve and schedule this Fanvue message?'
               : dmTiming === 'scheduled' &&
                   detail.provider === 'facebook_page' &&
-                  detail.kind === 'dm'
-                ? detail.content.followUps
-                  ? 'Approve and schedule all three bubbles?'
-                  : 'Approve and schedule this reply?'
-                : 'Approve and send this reply?'
+                  detail.kind === 'comment'
+                ? 'Approve and schedule this comment reply?'
+                : dmTiming === 'scheduled' &&
+                    detail.provider === 'facebook_page' &&
+                    detail.kind === 'dm'
+                  ? detail.content.followUps
+                    ? 'Approve and schedule all three bubbles?'
+                    : 'Approve and schedule this reply?'
+                  : 'Approve and send this reply?'
           }
           description={
-            dmTiming === 'scheduled' &&
-            detail.provider === 'facebook_page' &&
-            detail.kind === 'comment'
-              ? `Schedule the reviewed public comment reply on ${detail.accountDisplayName} for ${detail.plannedDueAt && Date.parse(detail.plannedDueAt) > Date.now() ? new Date(detail.plannedDueAt).toLocaleString() : 'the next paced Page slot'}. You can cancel while pending; the current comment thread is checked again before send.`
+            detail.provider === 'fanvue' && detail.kind === 'dm'
+              ? `Schedule the reviewed message on ${detail.accountDisplayName} for ${detail.plannedDueAt && Date.parse(detail.plannedDueAt) > Date.now() ? new Date(detail.plannedDueAt).toLocaleString() : 'the next paced Fanvue slot'}${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. You can cancel before dispatch. Approval does not send it now.`
               : dmTiming === 'scheduled' &&
                   detail.provider === 'facebook_page' &&
-                  detail.kind === 'dm'
-                ? `Schedule the reviewed ${detail.content.followUps ? 'three-bubble reply' : 'reply'} to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for ${approvalPreview ? new Date(approvalPreview.dueAt).toLocaleString() : 'an unavailable time'}.${detail.content.followUps ? ' Later bubbles follow confirmed sends by 4–10 seconds.' : ''} You can cancel remaining pending bubbles.`
-                : `Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`
+                  detail.kind === 'comment'
+                ? `Schedule the reviewed public comment reply on ${detail.accountDisplayName} for ${detail.plannedDueAt && Date.parse(detail.plannedDueAt) > Date.now() ? new Date(detail.plannedDueAt).toLocaleString() : 'the next paced Page slot'}. You can cancel while pending; the current comment thread is checked again before send.`
+                : dmTiming === 'scheduled' &&
+                    detail.provider === 'facebook_page' &&
+                    detail.kind === 'dm'
+                  ? `Schedule the reviewed ${detail.content.followUps ? 'three-bubble reply' : 'reply'} to ${detail.sourceContext.authorLabel ?? 'this recipient'} on ${detail.accountDisplayName} for ${approvalPreview ? new Date(approvalPreview.dueAt).toLocaleString() : 'an unavailable time'}.${detail.content.followUps ? ' Later bubbles follow confirmed sends by 4–10 seconds.' : ''} You can cancel remaining pending bubbles.`
+                  : `Send the reviewed ${proposalLabel(detail)} to ${detail.accountDisplayName} now${detail.content.priceCents ? ` with a $${(detail.content.priceCents / 100).toFixed(2)} unlock price` : ''}. This cannot be undone in Publish Relay.`
           }
           cancelLabel="Keep reviewing"
           confirmLabel={
             saving
               ? 'Submitting…'
-              : dmTiming === 'scheduled' && detail.provider === 'facebook_page'
+              : (dmTiming === 'scheduled' && detail.provider === 'facebook_page') ||
+                  (detail.provider === 'fanvue' && detail.kind === 'dm')
                 ? 'Approve and schedule'
                 : 'Approve and send'
           }

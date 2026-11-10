@@ -149,6 +149,15 @@ export class FanvueMessageService {
     const command = scheduleInput.parse(input);
     const replay = await replayScheduledFanvueDm(this.database, command);
     if (replay) return replay;
+    const targetLabel = await this.preflightScheduledMessage(command);
+    return scheduleFanvueDm(this.database, {
+      ...command,
+      targetLabel,
+    });
+  }
+
+  async preflightScheduledMessage(input: z.input<typeof scheduleInput>) {
+    const command = scheduleInput.parse(input);
     let targetLabel: string | null;
     try {
       ({ targetLabel } = await this.reads.getExistingChatForMessage(command));
@@ -165,19 +174,7 @@ export class FanvueMessageService {
     } catch (cause) {
       throw markFanvuePreSendError(cause);
     }
-    return scheduleFanvueDm(this.database, {
-      workspaceId: command.workspaceId,
-      accountId: command.accountId,
-      fanUuid: command.fanUuid,
-      clientActionId: command.clientActionId,
-      actor: command.actor,
-      targetLabel,
-      ...(command.text ? { text: command.text } : {}),
-      ...(command.mediaIds ? { mediaIds: command.mediaIds } : {}),
-      ...(command.mediaPreviewId ? { mediaPreviewId: command.mediaPreviewId } : {}),
-      ...(command.price !== undefined ? { price: command.price } : {}),
-      dueAt: input.dueAt,
-    });
+    return targetLabel;
   }
 
   async scheduledMessageStatus(input: {

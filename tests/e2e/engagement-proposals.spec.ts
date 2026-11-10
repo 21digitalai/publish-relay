@@ -1386,7 +1386,7 @@ test('late stage result from another proposal cannot unlock reused media', async
   await page.getByRole('button', { name: /Proposal 2/ }).click();
   releaseFirst?.();
   await expect(page.getByText('Not prepared for sending')).toBeVisible();
-  const approve = page.getByRole('button', { name: 'Approve and send', exact: true });
+  const approve = page.getByRole('button', { name: 'Approve and schedule', exact: true });
   await expect(approve).toBeDisabled();
   await page.getByRole('button', { name: 'Prepare attachment' }).click();
   await expect(page.getByText('Ready to send')).toBeVisible();
@@ -1413,6 +1413,8 @@ test('priced Fanvue DM media requires explicit ready staging before approval', a
   const targetId = '00000000-0000-4000-8000-000000000393';
   let stateIndex = 0;
   let approvals = 0;
+  let proposalStatus = 'pending';
+  const plannedDueAt = '2026-11-11T10:05:00.000Z';
   await page.route('**/api/engagement-proposals**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -1427,10 +1429,12 @@ test('priced Fanvue DM media requires explicit ready staging before approval', a
     }
     if (path.endsWith('/approve')) {
       approvals += 1;
+      proposalStatus = 'scheduled';
       await route.fulfill({
+        status: 202,
         contentType: 'application/json',
         body: JSON.stringify({
-          data: { id: proposalId, status: 'sent' },
+          data: { id: proposalId, status: 'scheduled', dueAt: plannedDueAt },
           error: null,
         }),
       });
@@ -1445,7 +1449,7 @@ test('priced Fanvue DM media requires explicit ready staging before approval', a
               accountDisplayName: 'Mira Studio',
               provider: 'fanvue',
               kind: 'dm',
-              status: 'pending',
+              status: proposalStatus,
               sourcePreview: 'Hi',
               contentPreview: 'Unlock',
               createdAt: '2026-10-25T12:00:00Z',
@@ -1462,7 +1466,10 @@ test('priced Fanvue DM media requires explicit ready staging before approval', a
           sourceContext: { text: 'Hi' },
           content: { text: 'Unlock', mediaIds: [mediaId], priceCents: 300 },
           revision: 1,
-          status: 'pending',
+          status: proposalStatus,
+          plannedDueAt,
+          schedule:
+            proposalStatus === 'scheduled' ? { dueAt: plannedDueAt, status: 'pending' } : null,
           canApprove: true,
         };
     await route.fulfill({
@@ -1472,7 +1479,7 @@ test('priced Fanvue DM media requires explicit ready staging before approval', a
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await page.getByRole('button', { name: /Fanvue message/ }).click();
-  const approve = page.getByRole('button', { name: 'Approve and send', exact: true });
+  const approve = page.getByRole('button', { name: 'Approve and schedule', exact: true });
   await expect(approve).toBeDisabled();
   await expect(page.getByRole('link', { name: 'Preview attachment 1' })).toHaveAttribute(
     'href',
@@ -1486,8 +1493,11 @@ test('priced Fanvue DM media requires explicit ready staging before approval', a
   await expect(approve).toBeEnabled();
   await approve.click();
   await expect(page.getByRole('alertdialog')).toContainText('$3.00 unlock price');
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
-  await expect(page.getByText('Reply sent through Fanvue.')).toBeVisible();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await expect(page.getByText(/Reply scheduled for/)).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: /Fanvue message/ }).click();
+  await expect(page.getByRole('button', { name: 'Cancel scheduled reply' })).toBeEnabled();
   expect(approvals).toBe(1);
 });
 
@@ -1745,7 +1755,9 @@ test('Fanvue text approval confirms once and removes the reply from the pending 
   await expect(page.getByText('No replies await review or reconciliation.')).toBeVisible();
 });
 
-test('unknown approval stays visible after reload without a resend control', async ({ page }) => {
+test('unknown Fanvue comment approval stays visible after reload without a resend control', async ({
+  page,
+}) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Uncertain Owner',
@@ -1781,7 +1793,7 @@ test('unknown approval stays visible after reload without a resend control', asy
               id: proposalId,
               accountDisplayName: 'Mira Studio',
               provider: 'fanvue',
-              kind: 'dm',
+              kind: 'comment',
               status,
               sourcePreview: 'Hello',
               contentPreview: 'Hi',
@@ -1794,7 +1806,7 @@ test('unknown approval stays visible after reload without a resend control', asy
           id: proposalId,
           accountDisplayName: 'Mira Studio',
           provider: 'fanvue',
-          kind: 'dm',
+          kind: 'comment',
           targetId: '00000000-0000-4000-8000-000000000306',
           sourceContext: { text: 'Hello' },
           content: { text: 'Hi' },
@@ -1808,13 +1820,13 @@ test('unknown approval stays visible after reload without a resend control', asy
     });
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
-  await page.getByRole('button', { name: /Fanvue message/ }).click();
+  await page.getByRole('button', { name: /Fanvue comment/ }).click();
   await page.getByRole('button', { name: 'Approve and send', exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
   await expect(page.getByText(/Send outcome is unknown/).first()).toBeVisible();
   await page.reload();
   await expect(page.getByText('Send outcome unknown')).toBeVisible();
-  await page.getByRole('button', { name: /Fanvue message/ }).click();
+  await page.getByRole('button', { name: /Fanvue comment/ }).click();
   await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0);
   expect(approvals).toBe(1);
 });

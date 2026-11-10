@@ -12,6 +12,10 @@ import type { FanvueCommentService } from './fanvue-comment.service.js';
 import type { FanvueMessageService } from './fanvue-message.service.js';
 import { isFanvuePreSendError } from './fanvue-pre-send-error.js';
 import {
+  FanvueDmScheduleConflictError,
+  scheduleApprovedFanvueDm,
+} from './fanvue-dm-pending.repository.js';
+import {
   FacebookDmNoGoError,
   FacebookDmWindowClosedError,
 } from './facebook-messenger-send.service.js';
@@ -30,7 +34,7 @@ import type { scheduleApprovedPageComment } from './facebook-comment-approval.se
 
 export interface EngagementSendCommands {
   comments?: Pick<FanvueCommentService, 'send'>;
-  messages?: Pick<FanvueMessageService, 'sendText' | 'sendMessage'>;
+  messages?: Pick<FanvueMessageService, 'sendText' | 'sendMessage' | 'preflightScheduledMessage'>;
   facebook?: {
     scheduleComment?: (
       input: Parameters<typeof scheduleApprovedPageComment>[1],
@@ -277,4 +281,46 @@ export async function approveEngagementProposal(
     status: settled.status,
     ...(result.state === 'confirmed' ? { providerObjectId: result.providerObjectUuid } : {}),
   };
+}
+
+export async function scheduleFanvueProposal(
+  database: NodePgDatabase,
+  commands: EngagementSendCommands,
+  input: { workspaceId: string; userId: string; proposalId: string; expectedRevision: number },
+) {
+  const proposal = await getEngagementProposal(database, input.workspaceId, input.proposalId);
+  if (proposal?.status !== 'pending' || proposal.revision !== input.expectedRevision)
+    throw new EngagementProposalError('Proposal is stale or unavailable', 409);
+  const sendable = sendableProposal(proposal);
+  if (sendable.provider !== 'fanvue' || sendable.kind !== 'dm' || !commands.messages)
+    throw new EngagementProposalError('Fanvue DM scheduling is unavailable', 409);
+  const command = {
+    workspaceId: input.workspaceId,
+    accountId: proposal.accountId,
+    fanUuid: sendable.targetId,
+    clientActionId: proposal.clientActionId,
+    actor: { type: 'user' as const, id: input.userId },
+    text: sendable.text,
+    ...(sendable.mediaIds ? { mediaIds: sendable.mediaIds } : {}),
+    ...(sendable.price !== undefined ? { price: sendable.price } : {}),
+    dueAt: proposal.plannedDueAt ?? new Date(),
+  };
+  try {
+    const targetLabel = await commands.messages.preflightScheduledMessage(command);
+    return await scheduleApprovedFanvueDm(database, {
+      ...input,
+      accountId: proposal.accountId,
+      fanUuid: sendable.targetId,
+      clientActionId: proposal.clientActionId,
+      content: proposal.content,
+      text: sendable.text,
+      ...(sendable.mediaIds ? { mediaIds: sendable.mediaIds } : {}),
+      ...(sendable.price !== undefined ? { price: sendable.price } : {}),
+      targetLabel,
+    });
+  } catch (error) {
+    if (isFanvuePreSendError(error) || error instanceof FanvueDmScheduleConflictError)
+      throw new EngagementProposalError('Send permission or destination is unavailable', 409);
+    throw error;
+  }
 }

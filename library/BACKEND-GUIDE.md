@@ -1,5 +1,7 @@
 # Publish Relay Backend Guide
 
+Fanvue DM proposal approval preflights the current selected chat, local media, and send policy without a provider POST, then locks the exact pending proposal revision and inserts its immutable pending intent in one tenant transaction. The same action ID joins timing with the canonical Fanvue action ledger. Approval retains a future planned time or uses the approval time if overdue; per-account worker pacing still gates dispatch. Pending-only cancellation changes proposal and intent together. Claim and fenced settlement keep proposal status aligned with actual action truth; no approval or scheduled row implies sent. Fanvue comments are not included until their separately scoped supported-target scheduler is reviewed.
+
 ## Scheduled Facebook Page comment replies
 
 For review-first Facebook Page comments, the owner/admin approval route defaults to scheduling rather than direct Meta send. `scheduleApprovedPageComment` reads the current selected-Page target, then atomically inserts the canonical pending comment intent and moves the proposal to `scheduled` under revision/status compare-and-set. A past or absent bot-selected time becomes a due-now intent, still subject to the persistent per-Page pacing cursor. The existing explicit `sendMode: immediate` path remains separate. Pending-only browser cancellation and worker settlement update both proposal and intent in one tenant transaction; the proposal detail resolves due/status by its action ID without exposing an intent ID.

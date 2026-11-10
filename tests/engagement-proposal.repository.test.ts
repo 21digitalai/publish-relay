@@ -156,6 +156,7 @@ describe('engagement proposal foundation', () => {
       const sendMessage = vi
         .fn()
         .mockResolvedValue({ state: 'confirmed', messageUuid: fanvuePost });
+      const preflightScheduledMessage = vi.fn().mockResolvedValue('@fan');
       const sendPageComment = vi.fn().mockResolvedValue({ state: 'confirmed', commentId: '900_3' });
       const schedulePageComment = vi.fn().mockResolvedValue({
         id: '00000000-0000-4000-8000-000000000998',
@@ -183,7 +184,11 @@ describe('engagement proposal foundation', () => {
         database,
         auth,
         comments: { send: sendComment },
-        messages: { sendText, sendMessage },
+        messages: {
+          sendText,
+          sendMessage,
+          preflightScheduledMessage,
+        },
         facebook: {
           scheduleComment: schedulePageComment,
           sendComment: sendPageComment,
@@ -694,17 +699,50 @@ describe('engagement proposal foundation', () => {
         headers: approvedHeaders,
         payload: approvalPayload,
       });
-      expect(mediaApproval.statusCode).toBe(200);
-      expect(sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          workspaceId: workspace,
-          accountId: fanvueAccount,
-          clientActionId: unsupported.clientActionId,
-          mediaIds: [fanvuePost],
-        }),
-      );
+      expect(mediaApproval.statusCode).toBe(202);
+      expect(mediaApproval.json()).toMatchObject({ data: { status: 'scheduled' } });
+      expect(sendMessage).not.toHaveBeenCalled();
+      const mediaDetail = await app.inject({
+        method: 'GET',
+        url: `/api/engagement-proposals/${unsupported.id}`,
+        headers: approvedHeaders,
+      });
+      expect(mediaDetail.json()).toMatchObject({
+        data: { status: 'scheduled', schedule: { status: 'pending' } },
+      });
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/engagement-proposals/${unsupported.id}/approve`,
+            headers: approvedHeaders,
+            payload: approvalPayload,
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/engagement-proposals/${unsupported.id}/cancel-scheduled`,
+            headers: approvedHeaders,
+          })
+        ).statusCode,
+      ).toBe(200);
       expect((await getEngagementProposal(database, workspace, unsupported.id))?.status).toBe(
-        'sent',
+        'cancelled',
+      );
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/engagement-proposals/${unsupported.id}/cancel-scheduled`,
+            headers: approvedHeaders,
+          })
+        ).statusCode,
+      ).toBe(409);
+      expect((await getEngagementProposal(database, workspace, unsupported.id))?.status).toBe(
+        'cancelled',
       );
       const priced = await createEngagementProposal(database, {
         workspaceId: workspace,
@@ -714,6 +752,7 @@ describe('engagement proposal foundation', () => {
         kind: 'dm',
         targetId: fanvuePost,
         content: { text: 'Unlock', mediaIds: [fanvuePost], priceCents: 300 },
+        plannedDueAt: new Date(Date.now() + 60 * 60 * 1000),
         proposerType: 'api_key',
         proposerId: proposer,
       });
@@ -726,12 +765,13 @@ describe('engagement proposal foundation', () => {
             payload: approvalPayload,
           })
         ).statusCode,
-      ).toBe(200);
-      expect(sendMessage).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          mediaIds: [fanvuePost],
-          price: 300,
-        }),
+      ).toBe(202);
+      const pricedIntent = await client.query<{ price_cents: number; due_at: Date }>(
+        `SELECT price_cents, due_at FROM fanvue_dm_pending_intents WHERE client_action_id = '${priced.clientActionId}'`,
+      );
+      expect(pricedIntent.rows[0]?.price_cents).toBe(300);
+      expect(new Date(pricedIntent.rows[0]?.due_at ?? '').toISOString()).toBe(
+        priced.plannedDueAt?.toISOString(),
       );
       const underMinimum = await createEngagementProposal(database, {
         workspaceId: workspace,
@@ -754,7 +794,7 @@ describe('engagement proposal foundation', () => {
           })
         ).statusCode,
       ).toBe(409);
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).not.toHaveBeenCalled();
       expect(sendText).not.toHaveBeenCalled();
       const preflightProposal = await createEngagementProposal(database, {
         workspaceId: workspace,
@@ -767,7 +807,9 @@ describe('engagement proposal foundation', () => {
         proposerType: 'api_key',
         proposerId: proposer,
       });
-      sendText.mockRejectedValueOnce(markFanvuePreSendError(new Error('write:chat unavailable')));
+      preflightScheduledMessage.mockRejectedValueOnce(
+        markFanvuePreSendError(new Error('write:chat unavailable')),
+      );
       const preflightResponse = await app.inject({
         method: 'POST',
         url: `/api/engagement-proposals/${preflightProposal.id}/approve`,
@@ -786,9 +828,11 @@ describe('engagement proposal foundation', () => {
         kind: 'dm',
         targetId: fanvuePost,
         content: { text: 'Hello' },
+        plannedDueAt: new Date(Date.now() - 60_000),
         proposerType: 'api_key',
         proposerId: proposer,
       });
+      const approvalStartedAt = Date.now();
       const unknown = await app.inject({
         method: 'POST',
         url: `/api/engagement-proposals/${messageProposal.id}/approve`,
@@ -796,10 +840,13 @@ describe('engagement proposal foundation', () => {
         payload: approvalPayload,
       });
       expect(unknown.statusCode).toBe(202);
-      expect(unknown.json()).toMatchObject({ data: { status: 'unknown' } });
-      expect(sendText).toHaveBeenCalledTimes(2);
+      expect(unknown.json()).toMatchObject({ data: { status: 'scheduled' } });
+      const dueNow = unknown.json<{ data: { dueAt: string } }>().data.dueAt;
+      expect(Date.parse(dueNow)).toBeGreaterThanOrEqual(approvalStartedAt);
+      expect(Date.parse(dueNow)).toBeLessThanOrEqual(Date.now());
+      expect(sendText).not.toHaveBeenCalled();
       expect((await getEngagementProposal(database, workspace, messageProposal.id))?.status).toBe(
-        'unknown',
+        'scheduled',
       );
       const pageComment = await createEngagementProposal(database, {
         workspaceId: workspace,
@@ -1379,5 +1426,5 @@ describe('engagement proposal foundation', () => {
     } finally {
       await client.close();
     }
-  });
+  }, 15_000);
 });

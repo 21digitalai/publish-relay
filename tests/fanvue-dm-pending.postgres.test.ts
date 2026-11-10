@@ -35,6 +35,8 @@ describe('Fanvue DM pending intent foundation', () => {
     try {
       await pg.exec(`
         CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated');
+        CREATE TABLE engagement_proposals (workspace_id uuid NOT NULL, client_action_id uuid NOT NULL,
+          provider text NOT NULL, kind text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL, destination_provider text NOT NULL,
           PRIMARY KEY (workspace_id,id));
         CREATE TABLE fanvue_action_intents (id uuid PRIMARY KEY, workspace_id uuid NOT NULL, client_action_id uuid NOT NULL);
@@ -104,6 +106,8 @@ describe('Fanvue DM pending intent foundation', () => {
     try {
       await pg.exec(`
         CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated');
+        CREATE TABLE engagement_proposals (workspace_id uuid NOT NULL, client_action_id uuid NOT NULL,
+          provider text NOT NULL, kind text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL,
           destination_provider text NOT NULL, PRIMARY KEY (workspace_id,id));
         CREATE TABLE fanvue_action_intents (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
@@ -131,14 +135,22 @@ describe('Fanvue DM pending intent foundation', () => {
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const dueAt = new Date('2026-11-11T10:00:00Z');
       await scheduleFanvueDm(database, { ...input, dueAt });
+      await pg.exec(`INSERT INTO engagement_proposals (workspace_id, client_action_id, provider, kind, status)
+        VALUES ('${workspaceId}', '${input.clientActionId}', 'fanvue', 'dm', 'scheduled')`);
       const second = { ...input, clientActionId: '00000000-0000-4000-8000-000000000007', dueAt };
       await scheduleFanvueDm(database, second);
+      await pg.exec(`INSERT INTO engagement_proposals (workspace_id, client_action_id, provider, kind, status)
+        VALUES ('${workspaceId}', '${second.clientActionId}', 'fanvue', 'dm', 'scheduled')`);
       const firstClaim = await claimDueFanvueDm(database, {
         workerId: 'old',
         now: dueAt,
         leaseMs: 30_000,
       });
       expect(firstClaim?.status).toBe('claimed');
+      const sendingProposal = await pg.query<{ status: string }>(
+        `SELECT status FROM engagement_proposals WHERE client_action_id = '${firstClaim?.clientActionId ?? ''}'`,
+      );
+      expect(sendingProposal.rows[0]?.status).toBe('sending');
       expect(
         await claimDueFanvueDm(database, { workerId: 'new', now: dueAt, leaseMs: 30_000 }),
       ).toBeNull();
@@ -158,6 +170,10 @@ describe('Fanvue DM pending intent foundation', () => {
           state: 'unknown',
         }),
       ).toBe(true);
+      const settledProposal = await pg.query<{ status: string }>(
+        `SELECT status FROM engagement_proposals WHERE client_action_id = '${firstClaim?.clientActionId ?? ''}'`,
+      );
+      expect(settledProposal.rows[0]?.status).toBe('unknown');
       expect(
         await finishClaimedFanvueDm(database, {
           workspaceId,
@@ -176,6 +192,22 @@ describe('Fanvue DM pending intent foundation', () => {
         leaseMs: 30_000,
       });
       expect(secondClaim?.clientActionId).not.toBe(firstClaim?.clientActionId);
+      expect(
+        await finishClaimedFanvueDm(database, {
+          workspaceId,
+          id: secondClaim?.id ?? '',
+          leaseOwner: secondClaim?.leaseOwner ?? '',
+          state: 'pending',
+        }),
+      ).toBe(true);
+      const retried = await pg.query<{ due_at: Date }>(
+        `SELECT due_at FROM fanvue_dm_pending_intents WHERE id = '${secondClaim?.id ?? ''}'`,
+      );
+      expect(new Date(retried.rows[0]?.due_at ?? '').toISOString()).toBe(dueAt.toISOString());
+      const retryProposal = await pg.query<{ status: string }>(
+        `SELECT status FROM engagement_proposals WHERE client_action_id = '${secondClaim?.clientActionId ?? ''}'`,
+      );
+      expect(retryProposal.rows[0]?.status).toBe('scheduled');
     } finally {
       await pg.close();
     }
@@ -186,6 +218,8 @@ describe('Fanvue DM pending intent foundation', () => {
     try {
       await pg.exec(`
         CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated');
+        CREATE TABLE engagement_proposals (workspace_id uuid NOT NULL, client_action_id uuid NOT NULL,
+          provider text NOT NULL, kind text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
         CREATE TYPE membership_role AS ENUM ('owner', 'admin', 'member');
         CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL,
           destination_provider text NOT NULL, PRIMARY KEY (workspace_id,id));

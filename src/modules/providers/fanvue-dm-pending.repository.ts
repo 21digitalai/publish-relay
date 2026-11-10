@@ -1,4 +1,5 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import { and, eq, isNull, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -8,7 +9,9 @@ import {
   fanvueActionIntents,
   fanvueDmDispatchPacing,
   fanvueDmPendingIntents,
+  engagementProposals,
   providerAccounts,
+  providerConnections,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
@@ -124,65 +127,168 @@ export async function scheduleFanvueDm(
   unparsed: z.input<typeof scheduleInput>,
 ) {
   const input = scheduleInput.parse(unparsed);
+  return withTenantTransaction(database, input, (tx) => insertScheduledFanvueDm(tx, input));
+}
+
+async function insertScheduledFanvueDm(tx: NodePgDatabase, input: z.output<typeof scheduleInput>) {
   const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
   const mediaIds = input.mediaIds ?? [];
   const fingerprint = expectedFingerprint(input);
+  const [account] = await tx
+    .select({ provider: providerAccounts.destinationProvider })
+    .from(providerAccounts)
+    .where(
+      and(
+        eq(providerAccounts.workspaceId, input.workspaceId),
+        eq(providerAccounts.id, input.accountId),
+      ),
+    )
+    .limit(1);
+  if (account?.provider !== 'fanvue') throw new FanvueDmScheduleConflictError();
+  const [action] = await tx
+    .select({ id: fanvueActionIntents.id })
+    .from(fanvueActionIntents)
+    .where(
+      and(
+        eq(fanvueActionIntents.workspaceId, input.workspaceId),
+        eq(fanvueActionIntents.clientActionId, input.clientActionId),
+      ),
+    )
+    .limit(1);
+  if (action) throw new FanvueDmScheduleConflictError();
+  const [inserted] = await tx
+    .insert(fanvueDmPendingIntents)
+    .values({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      fanUuid: input.fanUuid,
+      clientActionId: input.clientActionId,
+      actorType,
+      actorId: input.actor.id,
+      textBody: input.text ?? null,
+      targetLabel: input.targetLabel ?? null,
+      mediaIds,
+      mediaPreviewId: input.mediaPreviewId ?? null,
+      priceCents: input.price ?? null,
+      dueAt: input.dueAt,
+    })
+    .onConflictDoNothing()
+    .returning(projection);
+  if (inserted) return inserted;
+  const [existing] = await tx
+    .select(projection)
+    .from(fanvueDmPendingIntents)
+    .where(
+      and(
+        eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+        eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+      ),
+    )
+    .limit(1);
+  if (!existing) throw new FanvueDmScheduleConflictError();
+  const same = pendingFingerprint(existing) === fingerprint;
+  if (!same) throw new FanvueDmScheduleConflictError();
+  return existing;
+}
+
+/** Approval and immutable timing intent commit together; no provider send occurs here. */
+export async function scheduleApprovedFanvueDm(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    proposalId: string;
+    expectedRevision: number;
+    userId: string;
+    accountId: string;
+    fanUuid: string;
+    clientActionId: string;
+    content: unknown;
+    text: string;
+    mediaIds?: string[];
+    price?: number;
+    targetLabel: string | null;
+  },
+) {
   return withTenantTransaction(database, input, async (tx) => {
-    const [account] = await tx
-      .select({ provider: providerAccounts.destinationProvider })
-      .from(providerAccounts)
-      .where(
+    const [selected] = await tx
+      .select({
+        proposal: engagementProposals,
+        availability: providerAccounts.availability,
+        disconnectedAt: providerAccounts.disconnectedAt,
+        connectionStatus: providerConnections.status,
+        revokedAt: providerConnections.revokedAt,
+      })
+      .from(engagementProposals)
+      .innerJoin(
+        providerAccounts,
         and(
-          eq(providerAccounts.workspaceId, input.workspaceId),
-          eq(providerAccounts.id, input.accountId),
+          eq(providerAccounts.workspaceId, engagementProposals.workspaceId),
+          eq(providerAccounts.id, engagementProposals.accountId),
         ),
       )
-      .limit(1);
-    if (account?.provider !== 'fanvue') throw new FanvueDmScheduleConflictError();
-    const [action] = await tx
-      .select({ id: fanvueActionIntents.id })
-      .from(fanvueActionIntents)
-      .where(
+      .innerJoin(
+        providerConnections,
         and(
-          eq(fanvueActionIntents.workspaceId, input.workspaceId),
-          eq(fanvueActionIntents.clientActionId, input.clientActionId),
+          eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+          eq(providerConnections.id, providerAccounts.connectionId),
         ),
       )
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.proposalId),
+        ),
+      )
+      .for('update')
       .limit(1);
-    if (action) throw new FanvueDmScheduleConflictError();
-    const [inserted] = await tx
-      .insert(fanvueDmPendingIntents)
-      .values({
+    if (!selected) throw new FanvueDmScheduleConflictError();
+    const proposal = selected.proposal;
+    if (
+      proposal.status !== 'pending' ||
+      proposal.revision !== input.expectedRevision ||
+      proposal.provider !== 'fanvue' ||
+      proposal.kind !== 'dm' ||
+      proposal.accountId !== input.accountId ||
+      proposal.targetId !== input.fanUuid ||
+      proposal.clientActionId !== input.clientActionId ||
+      !isDeepStrictEqual(proposal.content, input.content)
+    )
+      throw new FanvueDmScheduleConflictError();
+    if (
+      selected.availability !== 'active' ||
+      selected.disconnectedAt ||
+      selected.connectionStatus !== 'active' ||
+      selected.revokedAt
+    )
+      throw new FanvueDmScheduleConflictError();
+    const now = new Date();
+    const dueAt =
+      proposal.plannedDueAt && proposal.plannedDueAt > now ? proposal.plannedDueAt : now;
+    const intent = await insertScheduledFanvueDm(
+      tx,
+      scheduleInput.parse({
         workspaceId: input.workspaceId,
         accountId: input.accountId,
         fanUuid: input.fanUuid,
         clientActionId: input.clientActionId,
-        actorType,
-        actorId: input.actor.id,
-        textBody: input.text ?? null,
-        targetLabel: input.targetLabel ?? null,
-        mediaIds,
-        mediaPreviewId: input.mediaPreviewId ?? null,
-        priceCents: input.price ?? null,
-        dueAt: input.dueAt,
-      })
-      .onConflictDoNothing()
-      .returning(projection);
-    if (inserted) return inserted;
-    const [existing] = await tx
-      .select(projection)
-      .from(fanvueDmPendingIntents)
+        actor: { type: 'user', id: input.userId },
+        text: input.text,
+        targetLabel: input.targetLabel,
+        ...(input.mediaIds ? { mediaIds: input.mediaIds } : {}),
+        ...(input.price !== undefined ? { price: input.price } : {}),
+        dueAt,
+      }),
+    );
+    await tx
+      .update(engagementProposals)
+      .set({ status: 'scheduled', updatedAt: now })
       .where(
         and(
-          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
-          eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.proposalId),
         ),
-      )
-      .limit(1);
-    if (!existing) throw new FanvueDmScheduleConflictError();
-    const same = pendingFingerprint(existing) === fingerprint;
-    if (!same) throw new FanvueDmScheduleConflictError();
-    return existing;
+      );
+    return { id: proposal.id, status: 'scheduled' as const, dueAt: intent.dueAt.toISOString() };
   });
 }
 
@@ -204,7 +310,68 @@ export async function cancelPendingFanvueDm(
         ),
       )
       .returning({ id: fanvueDmPendingIntents.id });
+    if (cancelled) {
+      await tx
+        .update(engagementProposals)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            eq(engagementProposals.workspaceId, input.workspaceId),
+            eq(engagementProposals.clientActionId, input.clientActionId),
+            eq(engagementProposals.provider, 'fanvue'),
+            eq(engagementProposals.kind, 'dm'),
+            eq(engagementProposals.status, 'scheduled'),
+          ),
+        );
+    }
     return Boolean(cancelled);
+  });
+}
+
+export async function cancelScheduledProposalFanvueDm(
+  database: NodePgDatabase,
+  input: { workspaceId: string; proposalId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [proposal] = await tx
+      .select({
+        id: engagementProposals.id,
+        clientActionId: engagementProposals.clientActionId,
+      })
+      .from(engagementProposals)
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.proposalId),
+          eq(engagementProposals.provider, 'fanvue'),
+          eq(engagementProposals.kind, 'dm'),
+          eq(engagementProposals.status, 'scheduled'),
+        ),
+      )
+      .limit(1);
+    if (!proposal) return false;
+    const [cancelled] = await tx
+      .update(fanvueDmPendingIntents)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.clientActionId, proposal.clientActionId),
+          eq(fanvueDmPendingIntents.status, 'pending'),
+        ),
+      )
+      .returning({ id: fanvueDmPendingIntents.id });
+    if (!cancelled) return false;
+    await tx
+      .update(engagementProposals)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, proposal.id),
+        ),
+      );
+    return true;
   });
 }
 
@@ -314,6 +481,18 @@ export async function claimDueFanvueDm(
       )
       .returning(projection);
     if (!claimed) return null;
+    await tx
+      .update(engagementProposals)
+      .set({ status: 'sending', updatedAt: input.now })
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, candidate.workspaceId),
+          eq(engagementProposals.clientActionId, claimed.clientActionId),
+          eq(engagementProposals.provider, 'fanvue'),
+          eq(engagementProposals.kind, 'dm'),
+          eq(engagementProposals.status, 'scheduled'),
+        ),
+      );
     const nextAt = new Date(input.now.getTime() + randomInt(60, 121) * 1000);
     await tx
       .insert(fanvueDmDispatchPacing)
@@ -390,7 +569,7 @@ export async function finishClaimedFanvueDm(
         status: input.state,
         leaseOwner: null,
         leaseUntil: null,
-        dueAt: input.state === 'pending' ? new Date(Date.now() + 30_000) : undefined,
+        // Preserve the original planned time; the per-account pacing cursor bounds retries.
         updatedAt: new Date(),
       })
       .where(
@@ -402,6 +581,26 @@ export async function finishClaimedFanvueDm(
         ),
       )
       .returning({ id: fanvueDmPendingIntents.id });
+    if (settled) {
+      const proposalStatus =
+        input.state === 'confirmed'
+          ? 'sent'
+          : input.state === 'pending'
+            ? 'scheduled'
+            : input.state;
+      await tx
+        .update(engagementProposals)
+        .set({ status: proposalStatus, updatedAt: new Date() })
+        .where(
+          and(
+            eq(engagementProposals.workspaceId, input.workspaceId),
+            eq(engagementProposals.clientActionId, intent.clientActionId),
+            eq(engagementProposals.provider, 'fanvue'),
+            eq(engagementProposals.kind, 'dm'),
+            eq(engagementProposals.status, 'sending'),
+          ),
+        );
+    }
     return Boolean(settled);
   });
 }

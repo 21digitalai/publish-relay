@@ -33,8 +33,10 @@ import {
 } from './facebook-comment-pending.repository.js';
 import {
   approveEngagementProposal,
+  scheduleFanvueProposal,
   type EngagementSendCommands,
 } from './engagement-approval.service.js';
+import { cancelScheduledProposalFanvueDm } from './fanvue-dm-pending.repository.js';
 
 const paramsSchema = z.strictObject({ proposalId: z.uuid() });
 const approvalSchema = z.strictObject({
@@ -159,15 +161,20 @@ export function registerEngagementApprovalRoutes(
         identity.workspaceId,
         params.data.proposalId,
       );
-      const cancelled = await (proposal?.provider === 'facebook_page' && proposal.kind === 'comment'
-        ? cancelScheduledProposalPageComment(dependencies.database, {
+      const cancelled = await (proposal?.provider === 'fanvue' && proposal.kind === 'dm'
+        ? cancelScheduledProposalFanvueDm(dependencies.database, {
             workspaceId: identity.workspaceId,
             proposalId: params.data.proposalId,
           })
-        : cancelScheduledProposalPageDm(dependencies.database, {
-            workspaceId: identity.workspaceId,
-            proposalId: params.data.proposalId,
-          }));
+        : proposal?.provider === 'facebook_page' && proposal.kind === 'comment'
+          ? cancelScheduledProposalPageComment(dependencies.database, {
+              workspaceId: identity.workspaceId,
+              proposalId: params.data.proposalId,
+            })
+          : cancelScheduledProposalPageDm(dependencies.database, {
+              workspaceId: identity.workspaceId,
+              proposalId: params.data.proposalId,
+            }));
       if (!cancelled)
         return reply
           .code(409)
@@ -264,6 +271,15 @@ export function registerEngagementApprovalRoutes(
             .code(409)
             .send({ data: null, error: 'Page comment scheduling is unavailable' });
         const scheduled = await dependencies.facebook.scheduleComment({
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          proposalId: params.data.proposalId,
+          expectedRevision: body.data.expectedRevision,
+        });
+        return await reply.code(202).send({ data: scheduled, error: null });
+      }
+      if (proposal?.provider === 'fanvue' && proposal.kind === 'dm') {
+        const scheduled = await scheduleFanvueProposal(dependencies.database, dependencies, {
           workspaceId: identity.workspaceId,
           userId: identity.userId,
           proposalId: params.data.proposalId,

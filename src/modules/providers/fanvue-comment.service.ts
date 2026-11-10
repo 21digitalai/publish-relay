@@ -65,7 +65,12 @@ export class FanvueCommentService {
       const selected = await this.reads.getOwnedPostForComment(command);
       accessToken = selected.accessToken;
       const excerpt = selected.post.text?.trim().slice(0, 160);
-      targetLabel = excerpt?.length ? excerpt : null;
+      const postedAt = Date.parse(selected.post.createdAt);
+      targetLabel = excerpt?.length
+        ? excerpt
+        : Number.isFinite(postedAt)
+          ? `Media post · ${new Date(postedAt).toISOString().slice(0, 10)}`
+          : 'Selected account post';
       await withTenantTransaction(this.database, command, (transaction) =>
         enforceWorkspaceAction(transaction, this.policy, {
           workspaceId: command.workspaceId,

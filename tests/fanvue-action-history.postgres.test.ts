@@ -59,10 +59,10 @@ describe('Fanvue action history', () => {
       await pg.exec(`
         UPDATE fanvue_action_intents SET state='confirmed', provider_object_uuid='00000000-0000-4000-8000-000000000019' WHERE workspace_id='${workspaceId}';
         INSERT INTO fanvue_action_intents
-          (workspace_id, account_id, client_action_id, action_kind, target_uuid, request_fingerprint, state, text_body)
+          (workspace_id, account_id, client_action_id, action_kind, target_uuid, request_fingerprint, state, text_body, target_label)
           VALUES
-          ('${workspaceId}','${accountId}','00000000-0000-4000-8000-000000000013','comment','${targetUuid}','${'c'.repeat(64)}','failed','Exact direct comment'),
-          ('${otherWorkspaceId}','${accountId}','00000000-0000-4000-8000-000000000012','comment','${targetUuid}','${'b'.repeat(64)}','confirmed','Foreign private comment');
+          ('${workspaceId}','${accountId}','00000000-0000-4000-8000-000000000013','comment','${targetUuid}','${'c'.repeat(64)}','failed','Exact direct comment','Media post · 2026-11-05'),
+          ('${otherWorkspaceId}','${accountId}','00000000-0000-4000-8000-000000000012','comment','${targetUuid}','${'b'.repeat(64)}','confirmed','Foreign private comment','Private target');
       `);
       const rows = await listFanvueActionHistory(database, { workspaceId, limit: 50 });
       expect(rows).toHaveLength(2);
@@ -75,6 +75,7 @@ describe('Fanvue action history', () => {
       });
       expect(rows.find((row) => row.kind === 'comment')).toMatchObject({
         outboundText: 'Exact direct comment',
+        targetLabel: 'Media post · 2026-11-05',
         status: 'failed',
       });
       expect(

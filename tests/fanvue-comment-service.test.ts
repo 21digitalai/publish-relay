@@ -89,6 +89,18 @@ describe('Fanvue creator-owned top-level comment command', () => {
     );
   });
 
+  it('labels a textless owned media post with its verified post date', async () => {
+    reads.getOwnedPostForComment.mockResolvedValueOnce({
+      accessToken: 'token',
+      post: { text: null, createdAt: '2026-11-05T09:00:00Z', mediaUuids: [input.postUuid] },
+    });
+    await service.send(input);
+    expect(ledger.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ targetLabel: 'Media post · 2026-11-05' }),
+    );
+  });
+
   it('does not reserve or send when account ownership or write scope fails', async () => {
     reads.getOwnedPostForComment.mockRejectedValueOnce(new Error('scope missing'));
     await expect(service.send(input)).rejects.toThrow('scope missing');

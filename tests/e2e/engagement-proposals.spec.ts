@@ -1633,7 +1633,9 @@ test('Page DM no-go block survives reload and can be removed from the list', asy
   await expect(page.getByText('No Page conversations are blocked.')).toBeVisible();
 });
 
-test('late stage result from another proposal cannot unlock reused media', async ({ page }) => {
+test('late stage result from another proposal cannot unlock reused media', async ({
+  page,
+}, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Race Review Owner',
@@ -1707,6 +1709,8 @@ test('late stage result from another proposal cannot unlock reused media', async
   await page.getByRole('button', { name: /Proposal 1/ }).click();
   await page.getByRole('button', { name: 'Prepare attachment' }).click();
   await expect.poll(() => firstStarted).toBe(true);
+  if (testInfo.project.name.includes('mobile'))
+    await page.getByRole('button', { name: 'Back to Review' }).click();
   await page.getByRole('button', { name: /Proposal 2/ }).click();
   releaseFirst?.();
   await expect(page.getByText('Not prepared for sending')).toBeVisible();
@@ -1820,7 +1824,8 @@ test('priced Fanvue DM media requires explicit ready staging before approval', a
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
   await expect(page.getByText(/Reply scheduled for/)).toBeVisible();
   await page.reload();
-  await page.getByRole('button', { name: /Fanvue message/ }).click();
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
+  await page.getByRole('button', { name: /Manage scheduled Fanvue message/ }).click();
   await expect(page.getByRole('button', { name: 'Cancel scheduled reply' })).toBeEnabled();
   expect(approvals).toBe(1);
 });
@@ -2078,7 +2083,8 @@ test('Fanvue comment approval schedules once and survives reload without claimin
   );
   expect(approvals).toBe(1);
   await page.reload();
-  await page.getByRole('button', { name: /Fanvue comment/ }).click();
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
+  await page.getByRole('button', { name: /Manage scheduled Fanvue comment/ }).click();
   await expect(page.getByRole('button', { name: /Cancel scheduled reply/ })).toBeVisible();
 });
 
@@ -2157,6 +2163,7 @@ test('unknown Fanvue comment dispatch stays visible after scheduled approval wit
   await expect(page.getByText(/Scheduled/).first()).toBeVisible();
   status = 'unknown';
   await page.reload();
+  await page.getByRole('tab', { name: /Needs attention/ }).click();
   await expect(page.getByText('Send outcome unknown')).toBeVisible();
   await page.getByRole('button', { name: /Fanvue comment/ }).click();
   await expect(page.getByRole('button', { name: 'Approve and schedule', exact: true })).toHaveCount(

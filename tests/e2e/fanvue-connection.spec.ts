@@ -67,6 +67,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await fanvue.click();
   await page.waitForURL('**/app?oauth=fanvue-connected');
   await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Allow message reading' })).toBeVisible();
   await page.getByRole('button', { name: 'Allow message reading' }).click();
@@ -75,17 +76,20 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     page.getByText('Fanvue message reading was not enabled. Authorization was cancelled.'),
   ).toBeVisible();
   await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Allow message reading' })).toBeVisible();
   await page.getByRole('button', { name: 'Allow message reading' }).click();
   await page.waitForURL('**/app?oauth=fanvue-chat-read-scope');
   await expect(page.getByText(/message reading.*not enabled/i)).toBeVisible();
   await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'Allow message reading' }).click();
   await page.waitForURL('**/app?oauth=fanvue-chat-read-connected');
   await expect(
     page.getByText('Fanvue message reading is connected for the selected account.'),
   ).toBeVisible();
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
   await expect(page.getByText('Message reading enabled')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Allow message reading' })).toHaveCount(0);
@@ -94,6 +98,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.waitForURL('**/app?oauth=fanvue-chat-send-scope');
   await expect(page.getByText(/message sending.*not enabled/i)).toBeVisible();
   await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByText('Message reading enabled')).toBeVisible();
   await page.getByRole('button', { name: 'Allow message sending' }).click();
   await page.waitForURL('**/app?oauth=fanvue-chat-send-connected');
@@ -101,6 +106,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     page.getByText('Fanvue message sending is connected for the selected account.'),
   ).toBeVisible();
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByText('Message sending enabled')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Allow payment signals' })).toHaveCount(0);
   await expect(page.getByText('Payment signals enabled')).toHaveCount(0);
@@ -109,10 +115,12 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.getByRole('button', { name: 'Allow Audience access' }).click();
   await page.waitForURL('**/app?oauth=fanvue-audience-scope');
   await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Allow Audience access' })).toBeVisible();
   await page.getByRole('button', { name: 'Allow Audience access' }).click();
   await page.waitForURL('**/app?oauth=fanvue-audience-connected');
   await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByText('Audience enabled')).toBeVisible();
   await expect(page.getByText('Followers (not active subscribers)')).toBeVisible();
   await expect(page.getByText('Subscriber: active')).toBeVisible();
@@ -276,6 +284,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await expect(page.getByRole('button', { name: 'Schedule 1 post' })).toBeDisabled();
   expect(requests).toHaveLength(1);
   await page.goto(accountsPath);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByText('Fixture Creator').first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('fanvue-account-permissions.png') });
   const initialGuidance = await page.request.get(`/api/fanvue/accounts/${accountId}/guidance`);
@@ -316,6 +325,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
   await page.getByRole('button', { name: 'Close DM guidance' }).click();
   await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveCount(0);
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'DM guidance' }).click();
   await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue(
     'Offer a friendly greeting. Do not promise content without checking availability.',
@@ -409,6 +419,7 @@ test('Fanvue publishing consent appears only as its own adapter and persists a c
     rmSync(directory, { recursive: true, force: true });
   }
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'DM guidance' }).click();
   await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue(
     'CLI-edited account guidance',

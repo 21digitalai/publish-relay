@@ -230,6 +230,7 @@ test('Page owner manages separate local modules and explicit agent access', asyn
     });
   });
   await page.goto(`/w/${data.slug}/accounts`);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   const control = page.locator('.x-long-post-setting').filter({ hasText: 'Optional Page modules' });
   await expect(control.getByRole('switch', { name: 'Comments' })).toHaveAttribute(
     'aria-checked',
@@ -244,6 +245,7 @@ test('Page owner manages separate local modules and explicit agent access', asyn
   await expect(page.locator('.account-module-success')).toContainText(
     'Messages permission was verified',
   );
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(control).toContainText('Provider grant: verified');
   await expect(control.getByRole('button', { name: 'Reconnect Messages' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('messages-verified.png'), fullPage: true });
@@ -267,6 +269,7 @@ test('Page owner manages separate local modules and explicit agent access', asyn
     fullPage: true,
   });
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(control.getByRole('switch', { name: 'Comments' })).toHaveAttribute(
     'aria-checked',
     'true',

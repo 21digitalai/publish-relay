@@ -871,6 +871,7 @@ test('selected Meta grant revoke distinguishes remote and local actions', async 
     .filter({ has: page.getByRole('heading', { name: 'Meta' }) })
     .locator('.account-row')
     .first();
+  await firstRow.getByRole('button', { name: 'Manage', exact: true }).click();
   await firstRow.getByRole('button', { name: 'Revoke Meta connection' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('every Page and Instagram destination');
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
@@ -946,9 +947,10 @@ test('Meta revoke pending state survives reload and retry isolates the selected 
   });
   await page.goto(await workspacePath(page, 'accounts'));
   const row = page.locator('.account-row').filter({ hasText: 'Selected Page' });
+  await row.getByRole('button', { name: 'Manage', exact: true }).click();
   await row.getByRole('button', { name: 'Revoke Meta connection' }).click();
   await page.getByRole('button', { name: 'Revoke Meta grant' }).click();
-  await expect(page.getByRole('alert')).toContainText('revocation is pending');
+  await expect(page.locator('.accounts-error')).toContainText('revocation is pending');
   await page.reload();
   await expect(row).toContainText('Revocation pending');
   await expect(row.getByRole('button', { name: 'Reconnect' })).toHaveCount(0);
@@ -964,6 +966,7 @@ test('Meta revoke pending state survives reload and retry isolates the selected 
     path: testInfo.outputPath('meta-revoke-pending-mobile.png'),
     fullPage: true,
   });
+  await row.getByRole('button', { name: 'Manage', exact: true }).click();
   await row.getByRole('button', { name: 'Revoke Meta connection' }).click();
   await page.getByRole('button', { name: 'Revoke Meta grant' }).click();
   await expect(row).toHaveCount(0);
@@ -993,9 +996,19 @@ test('computes Meta destination capability intersection on desktop and mobile', 
     'Facebook',
     'Facebook',
   ]);
+  await metaGroup
+    .locator('.account-row')
+    .filter({ hasText: 'Reconnect Meta and restore publishing permissions.' })
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click();
   await expect(
     metaGroup.getByText('Reconnect Meta and restore publishing permissions.'),
   ).toBeVisible();
+  await metaGroup
+    .locator('.account-row')
+    .filter({ hasText: 'Reconnect Meta to refresh destinations; history remains available.' })
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click();
   await expect(
     metaGroup.getByText('Reconnect Meta to refresh destinations; history remains available.'),
   ).toBeVisible();
@@ -1650,6 +1663,11 @@ test('filters accounts and opens a named disconnect confirmation', async ({ page
   await expect(page.getByText('Avery Studio')).toBeVisible();
   await expect(page.getByText('Example Editorial', { exact: true })).toBeHidden();
   await page.getByPlaceholder('Search name or handle').fill('');
+  await page
+    .locator('.account-row')
+    .filter({ hasText: 'Studio Notes' })
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click();
   await page.getByRole('button', { name: 'More actions for Studio Notes' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('Disconnect Studio Notes?');
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
@@ -1726,6 +1744,11 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
   );
   await page.goto(await workspacePath(page, 'accounts'));
   await expect(page.getByText('Shared from 21digital')).toBeVisible();
+  await page
+    .locator('.account-row')
+    .filter({ hasText: 'Shared Page' })
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click();
   const visibility = page.getByRole('switch', { name: 'Show posts from other workspaces' }).first();
   await expect(visibility).toHaveAttribute('aria-checked', 'true');
   await visibility.click();
@@ -1742,6 +1765,11 @@ test('shows an exposed Page in Accounts and Composer without origin-owned action
     fullPage: true,
   });
   await page.reload();
+  await page
+    .locator('.account-row')
+    .filter({ hasText: 'Shared Page' })
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click();
   await expect(visibility).toHaveAttribute('aria-checked', 'false');
   await visibility.click();
   await expect(visibility).toHaveAttribute('aria-checked', 'true');
@@ -1795,11 +1823,13 @@ test('lets the origin Page owner hide other-workspace calendar posts', async ({ 
     });
   });
   await page.goto(await workspacePath(page, 'accounts'));
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   const visibility = page.getByRole('switch', { name: 'Show posts from other workspaces' });
   await expect(visibility).toHaveAttribute('aria-checked', 'true');
   await visibility.click();
   await expect(visibility).toHaveAttribute('aria-checked', 'false');
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(visibility).toHaveAttribute('aria-checked', 'false');
 });
 
@@ -1881,6 +1911,7 @@ test('owner shares one Page with workspace checkboxes and sees revoke guard', as
     });
   });
   await page.goto(`/w/${current.data.slug}/accounts`);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'Share with workspaces' }).click();
   const editorial = page.getByRole('checkbox', { name: 'Editorial' });
   const influencer = page.getByRole('checkbox', { name: 'AI Influencer' });
@@ -1889,13 +1920,14 @@ test('owner shares one Page with workspace checkboxes and sees revoke guard', as
   await influencer.click();
   await expect(influencer).toHaveAttribute('aria-checked', 'true');
   await editorial.click();
-  await expect(page.getByRole('alert')).toContainText('Resolve scheduled jobs');
+  await expect(page.locator('.page-exposure-error')).toContainText('Resolve scheduled jobs');
   await expect(editorial).toHaveAttribute('aria-checked', 'true');
   await page.screenshot({
     path: testInfo.outputPath('page-exposure-checkboxes.png'),
     fullPage: true,
   });
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'Share with workspaces' }).click();
   await expect(page.getByRole('checkbox', { name: 'AI Influencer' })).toHaveAttribute(
     'aria-checked',
@@ -1957,12 +1989,14 @@ test('self-declares X long posts per account with persistence and recovery', asy
   const toggle = page.getByRole('switch', {
     name: 'Allow longer X posts for this account (self-declared)',
   });
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await expect(page.getByText('X may reject longer posts')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('x-long-post-off.png'), fullPage: true });
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await page.screenshot({ path: testInfo.outputPath('x-long-post-on.png'), fullPage: true });
   shouldFail = true;
@@ -1973,6 +2007,7 @@ test('self-declares X long posts per account with persistence and recovery', asy
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
 });
 
@@ -2045,6 +2080,7 @@ test('edits YouTube destination defaults through the account row', async ({ page
   await page.getByRole('button', { name: 'Close adapter picker' }).click();
   await expect(page.getByRole('button', { name: /Connect X/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Connect YouTube/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByText('Publishing defaults')).toBeVisible();
   await page.getByRole('button', { name: 'Visibility' }).click();
   await expect(page.getByRole('listbox', { name: 'Visibility' })).toBeInViewport();
@@ -2074,6 +2110,7 @@ test('edits YouTube destination defaults through the account row', async ({ page
   );
   await expect(saveButton).toBeEnabled();
   await page.reload();
+  await page.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Visibility' })).toContainText('Public');
   await expect(page.getByRole('button', { name: 'Made for kids' })).toContainText('Yes');
   await expect(page.getByRole('switch', { name: 'Notify subscribers' })).toHaveAttribute(
@@ -2154,6 +2191,11 @@ test('persists credential-free fake-provider connect and disconnect through relo
   await page.getByRole('button', { name: 'Reconnect' }).first().click();
   await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(0);
   expect((await page.request.post('/__test__/block-account-disconnect')).ok()).toBe(true);
+  await page
+    .locator('.account-row')
+    .filter({ hasText: 'Example Editorial' })
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click();
   await page.getByRole('button', { name: 'More actions for Example Editorial' }).click();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await page.getByRole('button', { name: 'Disconnect account' }).click();
@@ -2166,6 +2208,11 @@ test('persists credential-free fake-provider connect and disconnect through relo
     path: testInfo.outputPath('accounts-disconnect-blocked.png'),
     fullPage: true,
   });
+  await page
+    .locator('.account-row')
+    .filter({ hasText: 'Studio Notes' })
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click();
   await page.getByRole('button', { name: 'More actions for Studio Notes' }).click();
   await page.getByRole('button', { name: 'Disconnect account' }).click();
   await expect(page.getByText('Studio Notes', { exact: true })).toBeHidden();
@@ -4908,7 +4955,7 @@ test('edits a scheduled job through the canonical browser revision route', async
       });
     await route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ data: { revisionId: 'revision-new' }, error: null }),
+      body: JSON.stringify({ data: { jobIds: [] }, error: null }),
     });
   });
   await page.goto(await workspacePath(page, 'jobs/scheduled-job'));

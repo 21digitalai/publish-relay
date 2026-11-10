@@ -595,6 +595,8 @@ Facebook Page comment replies use the separate Comments grant including pages_ma
 
 Graph may omit `parent` on a top-level Page post comment. The reply preflight follows at most ten comment-parent edges; when an ancestor has no parent, it proves that exact ancestor appears on the already Page-owned post's comments edge, scanning at most ten cursor pages of 100 IDs. Missing/malformed/cyclic pagination, a different post, or proof beyond those bounds denies the reply before action reservation. Raw caller ID shape alone is never ownership proof.
 
+Textless Page DM reads retain the existing selected-Page ownership and `dms:read` grant boundary. After the bounded base message page, Core probes the documented `/{message-id}/attachments` edge for at most ten textless rows, asking only `id,mime_type` and one result; other rows remain `unknown`. A well-formed observed attachment projects `contentKind: attachment`; subtype is `image|video|audio` only for a matching MIME prefix and otherwise null. Nonempty text projects `text`. A missing, denied, malformed or oversized optional edge projects `unknown`, never an inferred reaction/unsupported event or a safe-reply signal. The API, source CLI and served CLI expose only these allowlisted fields, not media IDs, URLs, names or bytes. Target Page/grant acceptance for the held conversation remains a separate live read-only proof; no provider send follows from this classification alone.
+
 ## Page conversation agent memory
 
 ### Autonomous Page DM groups

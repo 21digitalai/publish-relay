@@ -85,6 +85,16 @@ const conversationMessageSchema = z.object({
   created_time: graphTimestampSchema,
   from: z.object({ id: z.string().min(1).max(256) }).optional(),
 });
+const messageAttachmentsSchema = z.object({
+  data: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(256),
+        mime_type: z.string().min(1).max(128).optional(),
+      }),
+    )
+    .max(1),
+});
 const sentMessageSchema = z.object({
   recipient_id: z.string().min(1).max(256),
   message_id: z.string().min(1).max(256),
@@ -102,6 +112,7 @@ const graphPageSchema = <T extends z.ZodType>(item: T) =>
 const MAX_RETRY_AFTER_SECONDS = 86_400;
 const MAX_MESSAGE_TEXT_BYTES = 16 * 1024;
 const MAX_MESSAGE_PAGE_BYTES = 64 * 1024;
+const MAX_TEXTLESS_CLASSIFICATION_PROBES = 10;
 const MAX_COMMENT_ANCESTRY_DEPTH = 10;
 const MAX_POST_COMMENT_PROOF_PAGES = 10;
 
@@ -441,18 +452,53 @@ export class FacebookHttpClient {
       )
     )
       throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    let probes = 0;
+    const messages = await Promise.all(
+      page.data.map(async (item) => {
+        const text = item.message ?? '';
+        const classification = text
+          ? { contentKind: 'text' as const, contentSubtype: null }
+          : probes++ < MAX_TEXTLESS_CLASSIFICATION_PROBES
+            ? await this.classifyTextlessMessage(item.id, input.accessToken)
+            : { contentKind: 'unknown' as const, contentSubtype: null };
+        return {
+          id: item.id,
+          text,
+          createdAt: item.created_time,
+          senderId: item.from?.id ?? null,
+          ...classification,
+        };
+      }),
+    );
     const result = {
-      messages: page.data.map((item) => ({
-        id: item.id,
-        text: item.message ?? '',
-        createdAt: item.created_time,
-        senderId: item.from?.id ?? null,
-      })),
+      messages,
       nextCursor: page.paging?.next ? (page.paging.cursors?.after ?? null) : null,
     };
     if (Buffer.byteLength(JSON.stringify(result), 'utf8') > MAX_MESSAGE_PAGE_BYTES)
       throw new FacebookRequestError({ kind: 'permanent', status: 502 });
     return result;
+  }
+
+  private async classifyTextlessMessage(id: string, accessToken: string) {
+    try {
+      const body = await this.get(
+        `/${id}/attachments`,
+        { fields: 'id,mime_type', limit: '1' },
+        accessToken,
+      );
+      const parsed = messageAttachmentsSchema.safeParse(body);
+      const attachment = parsed.success ? parsed.data.data[0] : undefined;
+      if (!attachment) return { contentKind: 'unknown' as const, contentSubtype: null };
+      const mime = attachment.mime_type?.toLowerCase() ?? '';
+      const subtype = ['image/', 'video/', 'audio/'].find((prefix) => mime.startsWith(prefix));
+      return {
+        contentKind: 'attachment' as const,
+        contentSubtype: subtype ? subtype.slice(0, -1) : null,
+      };
+    } catch {
+      // A missing or denied optional edge must never fabricate a content label.
+      return { contentKind: 'unknown' as const, contentSubtype: null };
+    }
   }
 
   /** Only a verified Page-scoped conversation may supply recipientId. */

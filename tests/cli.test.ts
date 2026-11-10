@@ -443,6 +443,8 @@ describe('Publish Relay CLI', () => {
                 id: 'm_1',
                 text: 'Hello',
                 senderId: 'sender_1',
+                contentKind: 'attachment',
+                contentSubtype: 'image',
                 createdAt: '2026-10-26T12:00:00Z',
                 providerToken: 'private',
               },
@@ -512,7 +514,14 @@ describe('Publish Relay CLI', () => {
       expect((JSON.parse(result.stdout) as { data: unknown }).data).toMatchObject({
         displayName: 'Birkan Reyhan',
         link: 'https://www.facebook.com/messages/t/123',
-        messages: [{ text: 'Hello', providerToken: '[REDACTED]' }],
+        messages: [
+          {
+            text: 'Hello',
+            contentKind: 'attachment',
+            contentSubtype: 'image',
+            providerToken: '[REDACTED]',
+          },
+        ],
         nextCursor: 'cursor-2',
       });
     },

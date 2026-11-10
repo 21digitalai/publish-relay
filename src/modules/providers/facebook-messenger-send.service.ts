@@ -165,6 +165,7 @@ export async function sendAccountPageConversationMessage(
     workspaceId: command.workspaceId,
     accountId: command.accountId,
     conversationId: command.conversationId,
+    text: command.text,
     clientActionId: command.clientActionId,
     actor: command.actor,
     requestFingerprint: createHash('sha256')

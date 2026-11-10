@@ -3368,6 +3368,12 @@ textarea:focus-visible {
 .page-dm-history-row button {
   min-height: 44px;
 }
+.page-dm-history-text {
+  flex-basis: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .page-dm-history-timestamps {
   margin-left: auto;
   display: grid;

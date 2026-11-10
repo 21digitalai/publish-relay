@@ -644,6 +644,7 @@ test('Page DM history filters by recipient without showing raw conversation IDs'
               accountDisplayName: 'Eli Page',
               conversationId: 't_900',
               receiverLabel: 'Alexandra',
+              outboundText: 'Exact direct agent reply',
               status: 'confirmed',
               createdAt: '2026-11-05T09:00:00Z',
               updatedAt: '2026-11-05T09:00:00Z',
@@ -657,6 +658,7 @@ test('Page DM history filters by recipient without showing raw conversation IDs'
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
+  await expect(page.locator('.page-dm-history-text')).toHaveText('Exact direct agent reply');
   await expect(
     page.locator('.page-dm-history').getByRole('button', { name: 'Open conversation on Facebook' }),
   ).toBeVisible();

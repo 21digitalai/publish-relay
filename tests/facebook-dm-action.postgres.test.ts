@@ -19,6 +19,7 @@ const key = {
   accountId,
   clientActionId: actionId,
   conversationId: 't_123',
+  text: 'Hello Alexandra',
   requestFingerprint: 'a'.repeat(64),
   actor: { type: 'api-key' as const, id: actorId },
 };
@@ -52,6 +53,12 @@ beforeEach(async () => {
       'utf8',
     ),
   );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0108_facebook_page_dm_action_text.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   await postgres.exec(`
     CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
@@ -78,8 +85,10 @@ describe('Facebook DM action PostgreSQL ledger', () => {
       outcome: { state: 'confirmed', messageId: 'mid_9' },
     });
     await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
-    const labels = await postgres.query('SELECT receiver_label FROM facebook_page_dm_actions');
-    expect(labels.rows).toEqual([{ receiver_label: 'Alexandra' }]);
+    const labels = await postgres.query(
+      'SELECT receiver_label, text_body FROM facebook_page_dm_actions',
+    );
+    expect(labels.rows).toEqual([{ receiver_label: 'Alexandra', text_body: 'Hello Alexandra' }]);
     expect(await reserveFacebookDmAction(database, { ...key, conversationId: 't_other' })).toEqual({
       kind: 'conflict',
     });

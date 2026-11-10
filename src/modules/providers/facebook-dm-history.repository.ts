@@ -90,6 +90,7 @@ export async function listPageDmHistory(database: NodePgDatabase, input: PageDmH
         accountId: facebookPageDmActions.accountId,
         conversationId: facebookPageDmActions.conversationId,
         receiverLabel: facebookPageDmActions.receiverLabel,
+        outboundText: facebookPageDmActions.textBody,
         status: facebookPageDmActions.state,
         createdAt: facebookPageDmActions.createdAt,
         updatedAt: facebookPageDmActions.updatedAt,

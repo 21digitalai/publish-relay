@@ -9,6 +9,7 @@ interface HistoryRow {
   accountDisplayName: string;
   conversationId: string;
   receiverLabel: string | null;
+  outboundText?: string | null;
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -145,6 +146,11 @@ export function PageDmHistory() {
               <span className="page-dm-history-state">
                 {row.kind === 'proposal' ? 'Proposal' : 'Send'} · {row.status}
               </span>
+              {row.kind === 'send' && (
+                <p className="page-dm-history-text">
+                  {row.outboundText ?? 'Text unavailable for this older action'}
+                </p>
+              )}
               <PageDmConversationLink kind={row.kind} rowId={row.id} />
               <span className="page-dm-history-timestamps">
                 <time dateTime={row.createdAt}>

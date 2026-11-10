@@ -674,6 +674,7 @@ export const facebookPageDmActions = pgTable(
     clientActionId: uuid('client_action_id').notNull(),
     conversationId: text('conversation_id').notNull(),
     receiverLabel: text('receiver_label'),
+    textBody: text('text_body'),
     requestFingerprint: text('request_fingerprint').notNull(),
     state: text('state').notNull().default('reserved'),
     providerMessageId: text('provider_message_id'),

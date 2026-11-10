@@ -1,4 +1,82 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Route } from '@playwright/test';
+
+test('latest All response wins after rapid provider changes', async ({ page }) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Provider Race Owner',
+      email: `provider-race-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Provider Race Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const heldAllRequests: Route[] = [];
+  await page.route('**/api/engagement-proposals*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== '/api/engagement-proposals') return route.continue();
+    if (!url.searchParams.has('provider')) {
+      heldAllRequests.push(route);
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [], nextCursor: null }, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await expect.poll(() => heldAllRequests.length).toBe(1);
+  const filters = page.getByRole('group', { name: 'Filter proposals by provider' });
+  await filters.getByRole('button', { name: 'Fanvue' }).click();
+  await filters.getByRole('button', { name: 'All' }).click();
+  await expect.poll(() => heldAllRequests.length).toBe(2);
+  const fulfillAll = (route: Route, preview: string, cursor: string | null) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [
+            {
+              id: '00000000-0000-4000-8000-000000000001',
+              accountDisplayName: 'Facebook Page',
+              provider: 'facebook_page',
+              kind: 'comment',
+              status: 'pending',
+              sourcePreview: 'Original comment',
+              contentPreview: preview,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          nextCursor: cursor,
+        },
+        error: null,
+      }),
+    });
+  const newestRequest = heldAllRequests[1];
+  const oldestRequest = heldAllRequests[0];
+  if (!newestRequest || !oldestRequest) throw new Error('Expected two All requests');
+  await fulfillAll(newestRequest, 'Newest response', 'page-2');
+  const list = page.locator('.engagement-proposals-list');
+  await expect(list).toContainText('Newest response');
+  await fulfillAll(oldestRequest, 'Stale response', 'stale-cursor');
+  await expect(list).toContainText('Newest response');
+  await expect(list).not.toContainText('Stale response');
+  await list.getByRole('button', { name: 'Load more' }).click();
+  await expect.poll(() => heldAllRequests.length).toBe(3);
+  await filters.getByRole('button', { name: 'Fanvue' }).click();
+  await filters.getByRole('button', { name: 'All' }).click();
+  await expect.poll(() => heldAllRequests.length).toBe(4);
+  const finalRequest = heldAllRequests[3];
+  const stalePageRequest = heldAllRequests[2];
+  if (!finalRequest || !stalePageRequest) throw new Error('Expected page and refresh requests');
+  await fulfillAll(finalRequest, 'Final response', null);
+  await expect(list).toContainText('Final response');
+  await fulfillAll(stalePageRequest, 'Stale page', 'stale-page-cursor');
+  await expect(list).not.toContainText('Stale page');
+  await expect(list.getByRole('button', { name: 'Load more' })).toHaveCount(0);
+});
 
 test('shared Proposed replies filters provider queue and relevant histories on desktop and mobile', async ({
   page,

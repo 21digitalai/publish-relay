@@ -113,8 +113,10 @@ Normal text must meet 4.5:1 contrast and large text/UI boundaries 3:1. Semantic 
 The optional engagement review inbox is `/w/:workspace/proposals` in the existing rail and
 `WorkspaceLayout`. `src/ui/engagement-proposals.tsx` owns a bounded pending list, selected
 detail, text draft edit, and dismiss confirmation using the shared confirmation dialog.
-Its prominent All / Facebook Page / Fanvue provider filter is server-backed for the paginated
-proposal queue and shows only that provider's engagement history sections; existing channel,
+Its prominent All / Facebook Page / Fanvue provider filter uses `.engagement-provider-filter`
+buttons and is server-backed for the paginated proposal queue. The latest request owns the list
+and cursor across filter changes, refreshes, and load-more; delayed older responses cannot replace
+newer results. The filter shows only that provider's engagement history sections; existing channel,
 account, and status filters inside those histories remain independent.
 It identifies agent-supplied source context as unverified, and explicitly says that saving
 or dismissing does not send. Unsupported media/price suggestions remain visible facts but cannot be

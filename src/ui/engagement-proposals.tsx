@@ -102,6 +102,7 @@ export function EngagementProposalsPage() {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all');
   const providerFilterRef = useRef(providerFilter);
   providerFilterRef.current = providerFilter;
+  const listRequestGeneration = useRef(0);
   const [noGoEntries, setNoGoEntries] = useState<NoGoEntry[]>([]);
   const [noGoCursor, setNoGoCursor] = useState<string | null>(null);
   const [noGoLoadingMore, setNoGoLoadingMore] = useState(false);
@@ -168,16 +169,30 @@ export function EngagementProposalsPage() {
 
   const loadPage = useCallback(
     async (cursor?: string) => {
+      const generation = ++listRequestGeneration.current;
+      if (!cursor) setLoadingMore(false);
       const requestedProvider = providerFilter;
       const params = new URLSearchParams();
       if (requestedProvider !== 'all') params.set('provider', requestedProvider);
       if (cursor) params.set('cursor', cursor);
-      const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
-        `/api/engagement-proposals${params.size ? `?${params.toString()}` : ''}`,
-      );
-      if (providerFilterRef.current !== requestedProvider) return;
-      setItems((current) => (cursor ? [...current, ...page.items] : page.items));
-      setNextCursor(page.nextCursor);
+      try {
+        const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
+          `/api/engagement-proposals${params.size ? `?${params.toString()}` : ''}`,
+        );
+        if (
+          generation !== listRequestGeneration.current ||
+          providerFilterRef.current !== requestedProvider
+        )
+          return;
+        setItems((current) => (cursor ? [...current, ...page.items] : page.items));
+        setNextCursor(page.nextCursor);
+      } catch (failure) {
+        if (
+          generation === listRequestGeneration.current &&
+          providerFilterRef.current === requestedProvider
+        )
+          throw failure;
+      }
     },
     [providerFilter],
   );
@@ -244,6 +259,7 @@ export function EngagementProposalsPage() {
       });
     return () => {
       active = false;
+      listRequestGeneration.current += 1;
     };
   }, [loadPage]);
 
@@ -732,10 +748,12 @@ export function EngagementProposalsPage() {
             <button
               key={choice.value}
               type="button"
-              className="secondary-button"
+              className="engagement-provider-filter secondary-button"
               aria-pressed={providerFilter === choice.value}
               onClick={() => {
+                listRequestGeneration.current += 1;
                 setSelectedId(null);
+                setLoadingMore(false);
                 setProviderFilter(choice.value);
               }}
             >
@@ -755,6 +773,7 @@ export function EngagementProposalsPage() {
                 type="button"
                 className="secondary-button"
                 onClick={() => {
+                  const generation = listRequestGeneration.current + 1;
                   setLoading(true);
                   setError(null);
                   void loadPage()
@@ -767,7 +786,7 @@ export function EngagementProposalsPage() {
                       );
                     })
                     .finally(() => {
-                      setLoading(false);
+                      if (generation === listRequestGeneration.current) setLoading(false);
                     });
                 }}
               >
@@ -810,6 +829,7 @@ export function EngagementProposalsPage() {
                 type="button"
                 disabled={loadingMore}
                 onClick={() => {
+                  const generation = listRequestGeneration.current + 1;
                   setLoadingMore(true);
                   setError(null);
                   void loadPage(nextCursor)
@@ -821,7 +841,7 @@ export function EngagementProposalsPage() {
                       );
                     })
                     .finally(() => {
-                      setLoadingMore(false);
+                      if (generation === listRequestGeneration.current) setLoadingMore(false);
                     });
                 }}
               >

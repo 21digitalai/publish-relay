@@ -729,6 +729,13 @@
       "when": 1794164100000,
       "tag": "0103_facebook_page_dm_memory",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1794297600000,
+      "tag": "0104_page_dm_autonomous_groups",
+      "breakpoints": true
     }
   ]
 }

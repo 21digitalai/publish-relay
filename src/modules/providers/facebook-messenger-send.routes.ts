@@ -16,10 +16,18 @@ import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-pol
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
 import {
   FacebookDmActionConflictError,
+  FacebookDmConversationChangedError,
   FacebookDmNoGoError,
   FacebookDmWindowClosedError,
+  getPageDmApprovalWindow,
   sendAccountPageConversationMessage,
 } from './facebook-messenger-send.service.js';
+import {
+  cancelPageDmGroup,
+  findPageDmGroupReplay,
+  getPageDmGroupStatus,
+  schedulePageDmGroup,
+} from './facebook-dm-group.repository.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 import {
   cancelPendingPageDm,
@@ -47,6 +55,12 @@ export const facebookDmSendRequestSchema = z.strictObject({
     .optional(),
 });
 const cancelParamsSchema = paramsSchema.extend({ intentId: z.uuid() });
+const groupParamsSchema = paramsSchema.extend({ rootId: z.uuid() });
+export const facebookDmGroupRequestSchema = z.strictObject({
+  clientActionId: z.uuid(),
+  texts: z.array(z.string().trim().min(1).max(2000)).min(2).max(4),
+  expectedLatestInboundMessageId: z.string().trim().min(1).max(256),
+});
 
 export function registerFacebookPageDmSendRoute(
   application: FastifyInstance,
@@ -60,6 +74,175 @@ export function registerFacebookPageDmSendRoute(
   rateLimiter: ApiRateLimiter,
   delegatedAuthorization?: DelegatedAuthorizationService,
 ): void {
+  application.post(
+    '/api/v1/destinations/:accountId/facebook-conversations/:conversationId/scheduled-groups',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const path = paramsSchema.safeParse(request.params);
+      const body = facebookDmGroupRequestSchema.safeParse(request.body);
+      if (!path.success || !body.success)
+        return reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', 'Invalid Page DM group', request.id));
+      try {
+        const principal = await authorizePageEngagementRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          runtime.database,
+          path.data.accountId,
+          'dms:send',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const limit = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
+        if (!limit.allowed)
+          return await reply
+            .code(429)
+            .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+        const groupInput = {
+          ...path.data,
+          ...body.data,
+          workspaceId: principal.workspaceId,
+          actor: { type: principal.kind, id: principal.actorId },
+        };
+        const replay = await findPageDmGroupReplay(runtime.database, groupInput);
+        if (replay)
+          return await reply.code(202).send(
+            successEnvelope(
+              {
+                id: replay.id,
+                status: replay.status,
+                dueAt: replay.dueAt.toISOString(),
+              },
+              request.id,
+            ),
+          );
+        const proof = await getPageDmApprovalWindow(runtime, {
+          workspaceId: principal.workspaceId,
+          accountId: path.data.accountId,
+          conversationId: path.data.conversationId,
+        });
+        if (proof.latestInboundMessageId !== body.data.expectedLatestInboundMessageId)
+          throw new FacebookDmConversationChangedError();
+        const group = await schedulePageDmGroup(runtime.database, {
+          ...groupInput,
+          windowDeadline: proof.windowDeadline,
+        });
+        return await reply
+          .code(202)
+          .send(
+            successEnvelope(
+              { id: group.id, status: group.status, dueAt: group.dueAt.toISOString() },
+              request.id,
+            ),
+          );
+      } catch (error) {
+        if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
+          return await reply
+            .code(403)
+            .send(errorEnvelope(error.code, 'Page message access denied', request.id));
+        if (
+          error instanceof PendingDmConflictError ||
+          error instanceof FacebookDmConversationChangedError ||
+          error instanceof FacebookDmWindowClosedError ||
+          error instanceof PendingDmNoGoError
+        )
+          return await reply
+            .code(409)
+            .send(errorEnvelope('group_not_schedulable', error.message, request.id));
+        if (error instanceof PageReadUnavailableError || error instanceof FacebookRequestError)
+          return await reply
+            .code(409)
+            .send(
+              errorEnvelope('page_dm_unavailable', 'Page DM preflight unavailable', request.id),
+            );
+        throw error;
+      }
+    },
+  );
+  application.get(
+    '/api/v1/destinations/:accountId/facebook-conversations/:conversationId/scheduled-groups/:rootId',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const path = groupParamsSchema.safeParse(request.params);
+      if (!path.success)
+        return reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', 'Invalid Page DM group', request.id));
+      try {
+        const principal = await authorizePageEngagementRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          runtime.database,
+          path.data.accountId,
+          'dms:send',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const status = await getPageDmGroupStatus(runtime.database, {
+          ...path.data,
+          workspaceId: principal.workspaceId,
+        });
+        return status
+          ? await reply.send(successEnvelope(status, request.id))
+          : await reply
+              .code(404)
+              .send(errorEnvelope('not_found', 'Page DM group not found', request.id));
+      } catch (error) {
+        if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
+          return await reply
+            .code(403)
+            .send(errorEnvelope(error.code, 'Page message access denied', request.id));
+        throw error;
+      }
+    },
+  );
+  application.delete(
+    '/api/v1/destinations/:accountId/facebook-conversations/:conversationId/scheduled-groups/:rootId',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const path = groupParamsSchema.safeParse(request.params);
+      if (!path.success)
+        return reply
+          .code(400)
+          .send(errorEnvelope('invalid_request', 'Invalid Page DM group', request.id));
+      try {
+        const principal = await authorizePageEngagementRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          runtime.database,
+          path.data.accountId,
+          'dms:send',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const result = await cancelPageDmGroup(runtime.database, {
+          ...path.data,
+          workspaceId: principal.workspaceId,
+        });
+        return result
+          ? await reply.send(successEnvelope(result, request.id))
+          : await reply
+              .code(404)
+              .send(errorEnvelope('not_found', 'Page DM group not found', request.id));
+      } catch (error) {
+        if (error instanceof ApiKeyAuthorizationError || error instanceof MachineAuthorizationError)
+          return await reply
+            .code(403)
+            .send(errorEnvelope(error.code, 'Page message access denied', request.id));
+        throw error;
+      }
+    },
+  );
   application.post(
     '/api/v1/destinations/:accountId/facebook-conversations/:conversationId/messages',
     async (request, reply) => {

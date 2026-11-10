@@ -10,6 +10,18 @@ const mocks = vi.hoisted(() => ({
   scheduled: vi.fn(),
   cancel: vi.fn(),
   hasPending: vi.fn(),
+  groupReplay: vi.fn(),
+  groupSchedule: vi.fn(),
+  groupStatus: vi.fn(),
+  groupCancel: vi.fn(),
+  approvalWindow: vi.fn(),
+}));
+vi.mock('../src/modules/providers/facebook-dm-group.repository.js', async (loadOriginal) => ({
+  ...(await loadOriginal<object>()),
+  findPageDmGroupReplay: mocks.groupReplay,
+  schedulePageDmGroup: mocks.groupSchedule,
+  getPageDmGroupStatus: mocks.groupStatus,
+  cancelPageDmGroup: mocks.groupCancel,
 }));
 vi.mock('../src/modules/providers/facebook-dm-pending.repository.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -24,6 +36,7 @@ vi.mock('../src/modules/identity/machine-auth.js', async (loadOriginal) => ({
 vi.mock('../src/modules/providers/facebook-messenger-send.service.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
   sendAccountPageConversationMessage: mocks.send,
+  getPageDmApprovalWindow: mocks.approvalWindow,
 }));
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
@@ -34,6 +47,7 @@ const path = `/api/v1/destinations/${accountId}/facebook-conversations/t_123/mes
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.hasPending.mockResolvedValue(false);
+  mocks.groupReplay.mockResolvedValue(null);
 });
 
 async function appForTest() {
@@ -55,6 +69,80 @@ async function appForTest() {
 }
 
 describe('Facebook Page DM send machine route', () => {
+  it('schedules a guarded multi-bubble group without a provider call and exposes only bounded state', async () => {
+    const app = await appForTest();
+    const rootId = '00000000-0000-4000-8000-000000000006';
+    const base = `/api/v1/destinations/${accountId}/facebook-conversations/t_123/scheduled-groups`;
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: clientActionId, kind: 'api-key' });
+      mocks.approvalWindow.mockResolvedValue({
+        latestInboundMessageId: 'mid-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+      });
+      mocks.groupSchedule.mockResolvedValue({
+        id: rootId,
+        status: 'pending',
+        dueAt: new Date(Date.now() + 60_000),
+      });
+      const response = await app.inject({
+        method: 'POST',
+        url: base,
+        payload: {
+          clientActionId,
+          texts: ['First', 'Second'],
+          expectedLatestInboundMessageId: 'mid-1',
+        },
+      });
+      expect(response.statusCode).toBe(202);
+      expect(mocks.groupSchedule).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          workspaceId,
+          accountId,
+          conversationId: 't_123',
+          texts: ['First', 'Second'],
+          expectedLatestInboundMessageId: 'mid-1',
+        }),
+      );
+      expect(mocks.send).not.toHaveBeenCalled();
+      mocks.groupStatus.mockResolvedValue({
+        id: rootId,
+        bubbles: [{ sequence: 0, status: 'pending', dueAt: new Date().toISOString() }],
+      });
+      const status = await app.inject({ method: 'GET', url: `${base}/${rootId}` });
+      expect(status.statusCode).toBe(200);
+      expect(status.body).not.toContain('First');
+      mocks.groupCancel.mockResolvedValue({ cancelled: 2 });
+      const cancelled = await app.inject({ method: 'DELETE', url: `${base}/${rootId}` });
+      expect(cancelled.statusCode).toBe(200);
+      expect(cancelled.json()).toMatchObject({ data: { cancelled: 2 } });
+    } finally {
+      await app.close();
+    }
+  });
+  it('refuses a group when the latest inbound changed before scheduling', async () => {
+    const app = await appForTest();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: clientActionId, kind: 'api-key' });
+      mocks.approvalWindow.mockResolvedValue({
+        latestInboundMessageId: 'mid-new',
+        windowDeadline: new Date(Date.now() + 3600_000),
+      });
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/destinations/${accountId}/facebook-conversations/t_123/scheduled-groups`,
+        payload: {
+          clientActionId,
+          texts: ['First', 'Second'],
+          expectedLatestInboundMessageId: 'mid-old',
+        },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(mocks.groupSchedule).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
   it('persists a jittered intent without sending and exposes bounded cancellation', async () => {
     const app = await appForTest();
     try {

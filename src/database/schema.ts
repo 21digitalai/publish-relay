@@ -750,6 +750,24 @@ export const facebookPageDmPendingIntents = pgTable(
   ],
 );
 
+export const facebookPageDmDispatchPacing = pgTable(
+  'facebook_page_dm_dispatch_pacing',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    nextRootAt: timestamp('next_root_at', { withTimezone: true }).notNull(),
+    lastRootId: uuid('last_root_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_dispatch_pacing_account_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
 export const facebookPageDmNoGo = pgTable(
   'facebook_page_dm_no_go',
   {

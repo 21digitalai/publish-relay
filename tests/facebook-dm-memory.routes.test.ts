@@ -127,4 +127,51 @@ describe('Page DM memory machine API', () => {
       await app.close();
     }
   });
+
+  it('accepts Meta compact and ISO colon offsets for first contact', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: 'key' });
+      mocks.upsert.mockResolvedValue({ conversationId: 't_1' });
+      const url = `${base}/t_1/memory`;
+      for (const offset of ['+0000', '+00:00', '-0530', '-05:30']) {
+        const response = await app.inject({
+          method: 'PATCH',
+          url,
+          payload: { firstContactAt: `2026-11-09T07:42:13${offset}` },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(mocks.upsert).toHaveBeenLastCalledWith(expect.anything(), {
+          workspaceId,
+          accountId,
+          conversationId: 't_1',
+          patch: {
+            firstContactAt: new Date(
+              `2026-11-09T07:42:13${offset.replace(/(\d{2})(\d{2})$/, '$1:$2')}`,
+            ),
+          },
+        });
+      }
+      expect(
+        (
+          await app.inject({
+            method: 'PATCH',
+            url,
+            payload: { firstContactAt: '2026-11-09T07:42:13+2460' },
+          })
+        ).statusCode,
+      ).toBe(400);
+      expect(
+        (
+          await app.inject({
+            method: 'PATCH',
+            url,
+            payload: { firstContactAt: '2026-11-09T07:42:13+0000', extra: true },
+          })
+        ).statusCode,
+      ).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
 });

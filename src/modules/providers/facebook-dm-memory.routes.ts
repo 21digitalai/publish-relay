@@ -26,10 +26,14 @@ const getManyBody = z.strictObject({
     .refine((ids) => new Set(ids).size === ids.length),
   terminal: z.enum(['include', 'exclude', 'only']).optional(),
 });
+const firstContactAt = z.preprocess(
+  (value) => (typeof value === 'string' ? value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2') : value),
+  z.iso.datetime({ offset: true }),
+);
 const patchBody = z
   .strictObject({
     facts: z.array(z.string().trim().min(1).max(160)).max(10).optional(),
-    firstContactAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    firstContactAt: firstContactAt.nullable().optional(),
     lastProcessedInboundId: z.string().trim().min(1).max(256).nullable().optional(),
     lastOutboundReceiptRef: z.string().trim().min(1).max(256).nullable().optional(),
     terminal: z.boolean().optional(),

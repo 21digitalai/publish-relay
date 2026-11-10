@@ -129,6 +129,25 @@ export async function getPageCommentIntent(
   });
 }
 
+export async function getPageCommentIntentByAction(
+  database: NodePgDatabase,
+  input: { workspaceId: string; clientActionId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [row] = await tx
+      .select(projection)
+      .from(facebookPageCommentPendingIntents)
+      .where(
+        and(
+          eq(facebookPageCommentPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageCommentPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  });
+}
+
 export async function cancelPageCommentIntent(
   database: NodePgDatabase,
   input: { workspaceId: string; accountId: string; id: string },

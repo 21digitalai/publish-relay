@@ -9,7 +9,9 @@ import { enforceWorkspaceAction, type ActionPolicy } from '../policy/action-poli
 import { readScheduledCommentTarget } from './facebook-comments-read.service.js';
 import {
   cancelPageCommentIntent,
+  getPageCommentIntentByAction,
   getPageCommentIntent,
+  PendingCommentConflictError,
   schedulePageComment,
 } from './facebook-comment-pending.repository.js';
 import type { FacebookHttpClient } from './facebook-http-client.js';
@@ -45,7 +47,6 @@ export async function scheduleAccountPageCommentReply(
 ) {
   const command = commentScheduleSchema.parse(input);
   const dueAt = new Date(command.dueAt);
-  if (dueAt.getTime() <= Date.now()) throw new PageReadUnavailableError();
   await withTenantTransaction(runtime.database, command, (tx) =>
     enforceWorkspaceAction(tx, runtime.policy, {
       workspaceId: command.workspaceId,
@@ -55,8 +56,6 @@ export async function scheduleAccountPageCommentReply(
       requestedProviderAccountIds: [command.accountId],
     }),
   );
-  const target = await readScheduledCommentTarget(runtime, command);
-  if (target.hasPageReply || !target.threadFingerprint) throw new PageReadUnavailableError();
   const requestFingerprint = createHash('sha256')
     .update(
       JSON.stringify({
@@ -68,6 +67,23 @@ export async function scheduleAccountPageCommentReply(
       }),
     )
     .digest('hex');
+  const existing = await getPageCommentIntentByAction(runtime.database, command);
+  if (existing) {
+    const actorType = command.actor.type === 'api-key' ? 'api_key' : command.actor.type;
+    if (
+      existing.accountId !== command.accountId ||
+      existing.postId !== command.postId ||
+      existing.commentId !== command.commentId ||
+      existing.requestFingerprint !== requestFingerprint ||
+      existing.actorType !== actorType ||
+      existing.actorId !== command.actor.id
+    )
+      throw new PendingCommentConflictError();
+    return { id: existing.id, status: existing.status, dueAt: existing.dueAt.toISOString() };
+  }
+  if (dueAt.getTime() <= Date.now()) throw new PageReadUnavailableError();
+  const target = await readScheduledCommentTarget(runtime, command);
+  if (target.hasPageReply || !target.threadFingerprint) throw new PageReadUnavailableError();
   const intent = await schedulePageComment(runtime.database, {
     ...command,
     dueAt,

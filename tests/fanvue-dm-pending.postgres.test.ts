@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cancelPendingFanvueDm,
   FanvueDmScheduleConflictError,
+  replayScheduledFanvueDm,
   scheduleFanvueDm,
 } from '../src/modules/providers/fanvue-dm-pending.repository.js';
 
@@ -52,6 +53,10 @@ describe('Fanvue DM pending intent foundation', () => {
       const scheduled = await scheduleFanvueDm(database, input);
       expect(scheduled).toMatchObject({ status: 'pending', text: 'Scheduled hello', mediaIds: [] });
       expect((await scheduleFanvueDm(database, input)).id).toBe(scheduled.id);
+      expect((await replayScheduledFanvueDm(database, input))?.id).toBe(scheduled.id);
+      await expect(
+        replayScheduledFanvueDm(database, { ...input, text: 'Changed' }),
+      ).rejects.toBeInstanceOf(FanvueDmScheduleConflictError);
       await expect(
         scheduleFanvueDm(database, { ...input, text: 'Changed' }),
       ).rejects.toBeInstanceOf(FanvueDmScheduleConflictError);

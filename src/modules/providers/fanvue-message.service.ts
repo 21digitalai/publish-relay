@@ -15,6 +15,7 @@ import { getReadyFanvueDmMedia } from './fanvue-dm-ready-media.repository.js';
 import {
   cancelPendingFanvueDm,
   findPendingFanvueDm,
+  replayScheduledFanvueDm,
   scheduleFanvueDm,
   scheduleInput,
 } from './fanvue-dm-pending.repository.js';
@@ -146,6 +147,8 @@ export class FanvueMessageService {
 
   async scheduleMessage(input: z.input<typeof scheduleInput>) {
     const command = scheduleInput.parse(input);
+    const replay = await replayScheduledFanvueDm(this.database, command);
+    if (replay) return replay;
     try {
       await this.reads.getExistingChatForMessage(command);
       await this.resolveMedia(command);

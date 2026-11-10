@@ -60,6 +60,60 @@ const projection = {
   status: fanvueDmPendingIntents.status,
 };
 
+function pendingFingerprint(value: {
+  accountId: string;
+  fanUuid: string;
+  actorType: string;
+  actorId: string;
+  text: string | null;
+  mediaIds: string[];
+  mediaPreviewId: string | null;
+  price: number | null;
+  dueAt: Date;
+}) {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        accountId: value.accountId,
+        fanUuid: value.fanUuid,
+        actorType: value.actorType,
+        actorId: value.actorId,
+        text: value.text,
+        mediaIds: value.mediaIds,
+        mediaPreviewId: value.mediaPreviewId,
+        price: value.price,
+        dueAt: value.dueAt.toISOString(),
+      }),
+    )
+    .digest('hex');
+}
+
+function expectedFingerprint(input: z.output<typeof scheduleInput>) {
+  return pendingFingerprint({
+    accountId: input.accountId,
+    fanUuid: input.fanUuid,
+    actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
+    actorId: input.actor.id,
+    text: input.text ?? null,
+    mediaIds: input.mediaIds ?? [],
+    mediaPreviewId: input.mediaPreviewId ?? null,
+    price: input.price ?? null,
+    dueAt: input.dueAt,
+  });
+}
+
+export async function replayScheduledFanvueDm(
+  database: NodePgDatabase,
+  unparsed: z.input<typeof scheduleInput>,
+) {
+  const input = scheduleInput.parse(unparsed);
+  const prior = await findPendingFanvueDm(database, input);
+  if (!prior) return null;
+  if (pendingFingerprint(prior) !== expectedFingerprint(input))
+    throw new FanvueDmScheduleConflictError();
+  return prior;
+}
+
 /** Timing state only. The due worker must use the canonical FanvueMessageService sender. */
 export async function scheduleFanvueDm(
   database: NodePgDatabase,
@@ -68,21 +122,7 @@ export async function scheduleFanvueDm(
   const input = scheduleInput.parse(unparsed);
   const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
   const mediaIds = input.mediaIds ?? [];
-  const fingerprint = createHash('sha256')
-    .update(
-      JSON.stringify({
-        accountId: input.accountId,
-        fanUuid: input.fanUuid,
-        actorType,
-        actorId: input.actor.id,
-        text: input.text ?? null,
-        mediaIds,
-        mediaPreviewId: input.mediaPreviewId ?? null,
-        price: input.price ?? null,
-        dueAt: input.dueAt.toISOString(),
-      }),
-    )
-    .digest('hex');
+  const fingerprint = expectedFingerprint(input);
   return withTenantTransaction(database, input, async (tx) => {
     const [account] = await tx
       .select({ provider: providerAccounts.destinationProvider })
@@ -135,22 +175,7 @@ export async function scheduleFanvueDm(
       )
       .limit(1);
     if (!existing) throw new FanvueDmScheduleConflictError();
-    const same =
-      createHash('sha256')
-        .update(
-          JSON.stringify({
-            accountId: existing.accountId,
-            fanUuid: existing.fanUuid,
-            actorType: existing.actorType,
-            actorId: existing.actorId,
-            text: existing.text,
-            mediaIds: existing.mediaIds,
-            mediaPreviewId: existing.mediaPreviewId,
-            price: existing.price,
-            dueAt: existing.dueAt.toISOString(),
-          }),
-        )
-        .digest('hex') === fingerprint;
+    const same = pendingFingerprint(existing) === fingerprint;
     if (!same) throw new FanvueDmScheduleConflictError();
     return existing;
   });

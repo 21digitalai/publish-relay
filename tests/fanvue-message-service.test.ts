@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const ledger = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), settle: vi.fn() }));
 const policy = vi.hoisted(() => ({ enforce: vi.fn(() => Promise.resolve()) }));
 const readyMedia = vi.hoisted(() => ({ get: vi.fn() }));
-const pending = vi.hoisted(() => ({ schedule: vi.fn(), find: vi.fn(), cancel: vi.fn() }));
+const pending = vi.hoisted(() => ({
+  schedule: vi.fn(),
+  replay: vi.fn(),
+  find: vi.fn(),
+  cancel: vi.fn(),
+}));
 vi.mock('../src/database/tenant-transaction.js', () => ({
   withTenantTransaction: (_db: unknown, _input: unknown, work: (transaction: unknown) => unknown) =>
     work({}),
@@ -22,6 +27,7 @@ vi.mock('../src/modules/providers/fanvue-dm-ready-media.repository.js', () => ({
 vi.mock('../src/modules/providers/fanvue-dm-pending.repository.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   scheduleFanvueDm: pending.schedule,
+  replayScheduledFanvueDm: pending.replay,
   findPendingFanvueDm: pending.find,
   cancelPendingFanvueDm: pending.cancel,
 }));
@@ -79,6 +85,7 @@ beforeEach(() => {
   });
   readyMedia.get.mockResolvedValue(new Map([[localMediaId, mediaUuid]]));
   pending.schedule.mockResolvedValue({ status: 'pending' });
+  pending.replay.mockResolvedValue(null);
 });
 
 describe('Fanvue scheduled message preflight', () => {
@@ -107,6 +114,19 @@ describe('Fanvue scheduled message preflight', () => {
   it('does not persist or send on revoked chat access', async () => {
     reads.getExistingChatForMessage.mockRejectedValueOnce(new Error('revoked'));
     await expect(service.scheduleMessage({ ...input, dueAt })).rejects.toThrow('revoked');
+    expect(pending.schedule).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns an exact prior receipt without provider preflight', async () => {
+    pending.replay.mockResolvedValueOnce({
+      status: 'cancelled',
+      clientActionId: input.clientActionId,
+    });
+    await expect(service.scheduleMessage({ ...input, dueAt })).resolves.toMatchObject({
+      status: 'cancelled',
+    });
+    expect(reads.getExistingChatForMessage).not.toHaveBeenCalled();
     expect(pending.schedule).not.toHaveBeenCalled();
     expect(client.sendMessage).not.toHaveBeenCalled();
   });

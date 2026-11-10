@@ -1,6 +1,7 @@
 # Publish Relay Style Guide
 
 The Composer offers a default-off approval switch for ordinary and staged TikTok publication jobs. When enabled, scheduling creates a visible Calendar/Queue job marked Awaiting approval at its planned time; the Job detail lets an authorized owner/admin approve the exact current job in the shared confirmation dialog. Approval only makes normal worker dispatch eligible and never posts synchronously. Edit/reschedule creates a new awaiting-approval job. The staged TikTok path binds the choice into its immutable schedule attempt so ambiguous retries cannot silently change the hold.
+The same Job detail, reached from Calendar or Queue, lets an owner/admin turn the hold on or off for one still-scheduled job in the existing confirmation dialog. It navigates to the superseding job after the mutation; previous approval is not inherited. Turning the hold off makes an overdue job eligible for normal dispatch, never a synchronous post. Claimed/published jobs have no toggle.
 
 Status: accepted Builder direction. Changes to the operator-sensitive choices at the end require Overseer or operator approval.
 

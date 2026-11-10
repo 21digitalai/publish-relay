@@ -111,6 +111,71 @@ export async function approvePublicationJob(
   });
 }
 
+/** Replace one unclaimed job so stale approval links cannot authorize its successor. */
+export async function replacePublicationApproval(
+  database: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; approvalRequired: boolean },
+) {
+  return withTenantTransaction(database, input, (tx) =>
+    replacePublicationApprovalInTransaction(tx, input),
+  );
+}
+
+export async function replacePublicationApprovalInTransaction(
+  tx: NodePgDatabase,
+  input: { workspaceId: string; jobId: string; approvalRequired: boolean },
+) {
+  const [job] = await tx
+    .select({
+      id: publicationJobs.id,
+      postId: publicationJobs.postId,
+      revisionId: publicationJobs.revisionId,
+      providerAccountId: publicationJobs.providerAccountId,
+      effectivePayload: publicationJobs.effectivePayload,
+      effectiveProviderSettings: publicationJobs.effectiveProviderSettings,
+      scheduledAt: publicationJobs.scheduledAt,
+      state: publicationJobs.state,
+      approvalRequired: publicationJobs.approvalRequired,
+    })
+    .from(publicationJobs)
+    .where(
+      and(eq(publicationJobs.workspaceId, input.workspaceId), eq(publicationJobs.id, input.jobId)),
+    )
+    .limit(1)
+    .for('update');
+  if (!job) return { kind: 'not_found' as const };
+  if (job.state !== 'scheduled' || job.approvalRequired === input.approvalRequired)
+    return { kind: 'conflict' as const };
+  const now = new Date();
+  await tx
+    .update(publicationJobs)
+    .set({ state: 'superseded', supersededAt: now, updatedAt: now })
+    .where(and(eq(publicationJobs.workspaceId, input.workspaceId), eq(publicationJobs.id, job.id)));
+  const [successor] = await tx
+    .insert(publicationJobs)
+    .values({
+      workspaceId: input.workspaceId,
+      postId: job.postId,
+      revisionId: job.revisionId,
+      providerAccountId: job.providerAccountId,
+      effectivePayload: job.effectivePayload,
+      effectiveProviderSettings: job.effectiveProviderSettings,
+      scheduledAt: job.scheduledAt,
+      approvalRequired: input.approvalRequired,
+    })
+    .returning({ id: publicationJobs.id });
+  if (!successor) throw new Error('Approval successor was not created');
+  await tx.insert(publicationJobEvents).values({
+    workspaceId: input.workspaceId,
+    jobId: job.id,
+    fromState: 'scheduled',
+    toState: 'superseded',
+    reason: 'approval_requirement_changed',
+    metadata: { successorJobId: successor.id },
+  });
+  return { kind: 'replaced' as const, jobId: successor.id };
+}
+
 export async function claimDueJobs(
   database: NodePgDatabase,
   input: {

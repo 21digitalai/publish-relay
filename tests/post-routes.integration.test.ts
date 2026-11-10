@@ -775,6 +775,53 @@ describe('browser workflow PostgreSQL boundary', () => {
       approvalRequired: false,
       approvalStatus: 'not_required',
     });
+    const toggle = (id: string, required: boolean, key: string) =>
+      application.inject({
+        method: 'PATCH',
+        url: `/api/workflow/jobs/${id}/approval-requirement`,
+        headers: { ...headers, 'idempotency-key': key },
+        payload: { approvalRequired: required },
+      });
+    const held = await toggle(legacyJobId ?? '', true, 'approval-toggle-on');
+    expect(held.statusCode).toBe(200);
+    const successorId = held.json<{ data: { jobId: string } }>().data.jobId;
+    expect(successorId).not.toBe(legacyJobId);
+    expect((await toggle(legacyJobId ?? '', true, 'approval-toggle-on')).json()).toEqual(
+      held.json(),
+    );
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: `/api/workflow/jobs/${legacyJobId ?? ''}/approve`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(409);
+    const successorDetail = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs/${successorId}`,
+      headers: browserHeaders,
+    });
+    expect(successorDetail.json<{ data: Record<string, unknown> }>().data).toMatchObject({
+      approvalStatus: 'awaiting_approval',
+    });
+    const released = await toggle(successorId, false, 'approval-toggle-off');
+    expect(released.statusCode).toBe(200);
+    const releasedId = released.json<{ data: { jobId: string } }>().data.jobId;
+    const releasedDetail = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs/${releasedId}`,
+      headers: browserHeaders,
+    });
+    expect(releasedDetail.json<{ data: Record<string, unknown> }>().data).toMatchObject({
+      approvalStatus: 'not_required',
+    });
+    browserAuthenticate.mockResolvedValueOnce({ workspaceId, userId, role: 'viewer' });
+    expect((await toggle(releasedId, true, 'approval-viewer')).statusCode).toBe(403);
+    expect((await toggle(foreignJobId, true, 'approval-foreign')).statusCode).toBe(404);
+    await database.exec(`UPDATE publication_jobs SET state = 'leased' WHERE id = '${releasedId}'`);
+    expect((await toggle(releasedId, true, 'approval-claimed')).statusCode).toBe(409);
   });
 
   it('admits a paid Fanvue media post only for its ready selected account', async () => {

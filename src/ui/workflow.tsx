@@ -52,6 +52,7 @@ interface Job {
   postId?: string | undefined;
   providerAccountId?: string | undefined;
   state: JobState;
+  approvalRequired?: boolean;
   approvalStatus?: 'not_required' | 'awaiting_approval' | 'approved';
   scheduledAt: string;
   text: string;
@@ -119,6 +120,7 @@ interface QueueJobDto {
   id: string;
   postId?: string;
   state: string;
+  approvalRequired?: boolean;
   approvalStatus?: 'not_required' | 'awaiting_approval' | 'approved';
   needsAttention: boolean;
   scheduledAt: string;
@@ -441,6 +443,7 @@ function toJob(dto: QueueJobDto): Job {
     providerAccountId: dto.providerAccount.id,
     state,
     ...(dto.approvalStatus ? { approvalStatus: dto.approvalStatus } : {}),
+    ...(dto.approvalRequired !== undefined ? { approvalRequired: dto.approvalRequired } : {}),
     scheduledAt: dto.scheduledAt,
     text: dto.contentPreview,
     account: dto.providerAccount.displayName,
@@ -461,6 +464,7 @@ function detailToJob(dto: JobDetailDto): Job {
     ...(dto.postId ? { postId: dto.postId } : {}),
     state: dto.state,
     ...(dto.approvalStatus ? { approvalStatus: dto.approvalStatus } : {}),
+    ...(dto.approvalRequired !== undefined ? { approvalRequired: dto.approvalRequired } : {}),
     needsAttention: dto.needsAttention,
     scheduledAt: dto.scheduledAt,
     contentPreview: contentParts(dto.content).join('\n\n'),
@@ -3701,7 +3705,9 @@ export function JobDetailPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'cancel' | 'retry' | 'approve' | null>(null);
+  const [dialog, setDialog] = useState<'cancel' | 'retry' | 'approve' | 'toggle_approval' | null>(
+    null,
+  );
   const confirmationTrigger = useRef<HTMLElement | null>(null);
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
   const [editSchedule, setEditSchedule] = useState('');
@@ -3964,6 +3970,18 @@ export function JobDetailPage() {
             </div>
           )}
           <footer className="detail-actions">
+            {job.state === 'scheduled' && detail?.canApprove && (
+              <button
+                className="secondary-button job-approval-requirement"
+                disabled={isMutating}
+                onClick={(event) => {
+                  confirmationTrigger.current = event.currentTarget;
+                  setDialog('toggle_approval');
+                }}
+              >
+                Require approval: {job.approvalRequired ? 'On' : 'Off'}
+              </button>
+            )}
             {job.approvalStatus === 'awaiting_approval' && detail?.canApprove && (
               <button
                 className="primary-button job-approve-publication"
@@ -4132,14 +4150,18 @@ export function JobDetailPage() {
               ? `Cancel ${job.account} publication?`
               : dialog === 'approve'
                 ? `Approve ${job.account} publication?`
-                : 'Retry this publication now?'
+                : dialog === 'toggle_approval'
+                  ? `${job.approvalRequired ? 'Turn off' : 'Turn on'} approval for ${job.account}?`
+                  : 'Retry this publication now?'
           }
           description={
             dialog === 'cancel'
               ? 'It will be removed from dispatch. Published external content cannot be undone.'
               : dialog === 'approve'
                 ? `Approve the current post for ${job.account}. It remains scheduled for ${formatTime(job.scheduledAt)} and becomes eligible through the normal worker, not this click.`
-                : 'The same publication job will be reused, preventing a duplicate post.'
+                : dialog === 'toggle_approval'
+                  ? 'This replaces the scheduled job. Turning approval off makes it eligible through the normal worker; turning it on holds it until you approve the new job.'
+                  : 'The same publication job will be reused, preventing a duplicate post.'
           }
           cancelLabel="Keep job"
           confirmLabel={
@@ -4148,12 +4170,18 @@ export function JobDetailPage() {
                 ? 'Cancelling…'
                 : dialog === 'approve'
                   ? 'Approving…'
-                  : 'Retrying…'
+                  : dialog === 'toggle_approval'
+                    ? 'Updating…'
+                    : 'Retrying…'
               : dialog === 'cancel'
                 ? 'Cancel job'
                 : dialog === 'approve'
                   ? 'Approve publication'
-                  : 'Retry safely'
+                  : dialog === 'toggle_approval'
+                    ? job.approvalRequired
+                      ? 'Turn approval off'
+                      : 'Turn approval on'
+                    : 'Retry safely'
           }
           confirmTone={dialog === 'cancel' ? 'danger' : 'primary'}
           disabled={isMutating}
@@ -4165,6 +4193,40 @@ export function JobDetailPage() {
             const action = dialog;
             setIsMutating(true);
             setMutationError(null);
+            if (action === 'toggle_approval') {
+              void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/approval-requirement`, {
+                method: 'PATCH',
+                headers: {
+                  'content-type': 'application/json',
+                  'x-csrf-token': cookieValue('publish_relay_csrf'),
+                  'idempotency-key': crypto.randomUUID(),
+                },
+                body: JSON.stringify({ approvalRequired: !job.approvalRequired }),
+              })
+                .then(async (response) => {
+                  const result = (await response.json()) as {
+                    data: { jobId: string } | null;
+                    error: string | null;
+                  };
+                  if (!response.ok || !result.data)
+                    throw new Error(result.error ?? 'Approval requirement could not be changed');
+                  window.location.assign(
+                    `${workspacePath}/jobs/${encodeURIComponent(result.data.jobId)}`,
+                  );
+                })
+                .catch((error: unknown) => {
+                  setMutationError(
+                    error instanceof Error
+                      ? error.message
+                      : 'Approval requirement could not be changed',
+                  );
+                  setDialog(null);
+                })
+                .finally(() => {
+                  setIsMutating(false);
+                });
+              return;
+            }
             setMutationAnnouncement(
               action === 'cancel'
                 ? 'Cancelling publication'

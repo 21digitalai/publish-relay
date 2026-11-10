@@ -16,6 +16,7 @@ import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import {
   approvePublicationJob,
+  replacePublicationApprovalInTransaction,
   cancelPendingJob,
   requestOperatorRetry,
 } from '../scheduler/job.repository.js';
@@ -924,6 +925,69 @@ export function registerBrowserWorkflowRoutes(
       },
       error: null,
     };
+  });
+
+  application.patch('/api/workflow/jobs/:jobId/approval-requirement', async (request, reply) => {
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (identity.role !== 'owner' && identity.role !== 'admin')
+      return reply.code(403).send({ data: null, error: 'Operator control is required' });
+    if (!authorizeMutation(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const params = jobParamsSchema.safeParse(request.params);
+    const body = z.strictObject({ approvalRequired: z.boolean() }).safeParse(request.body);
+    const key = idempotencyKey(request.headers);
+    if (!params.success || !body.success || !key)
+      return reply.code(400).send({ data: null, error: 'Invalid approval requirement' });
+    try {
+      const result = await executeBrowserMutation(
+        dependencies.database,
+        {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          operation: `change-publication-approval:${params.data.jobId}`,
+          idempotencyKey: key,
+          requestFingerprint: mutationFingerprint(body.data),
+        },
+        async (transaction) => {
+          const changed = await replacePublicationApprovalInTransaction(transaction, {
+            workspaceId: identity.workspaceId,
+            jobId: params.data.jobId,
+            approvalRequired: body.data.approvalRequired,
+          });
+          return {
+            statusCode:
+              changed.kind === 'not_found' ? 404 : changed.kind === 'conflict' ? 409 : 200,
+            body:
+              changed.kind === 'replaced'
+                ? {
+                    data: { jobId: changed.jobId, approvalRequired: body.data.approvalRequired },
+                    error: null,
+                  }
+                : {
+                    data: null,
+                    error:
+                      changed.kind === 'not_found'
+                        ? 'Job not found'
+                        : 'Job already changed or dispatching',
+                  },
+          };
+        },
+      );
+      if (result.kind === 'conflict')
+        return await reply
+          .code(409)
+          .send({ data: null, error: 'Idempotency key was already used' });
+      if (result.kind === 'replayed') reply.header('idempotency-replayed', 'true');
+      return await reply.code(result.response.statusCode).send(result.response.body);
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
   });
 
   application.post('/api/workflow/jobs/:jobId/cancel', async (request, reply) => {

@@ -1,5 +1,82 @@
 import { expect, test } from '@playwright/test';
 
+test('shared Proposed replies filters provider queue and relevant histories on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Provider Filter Owner',
+      email: `provider-filter-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Provider Filter Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const requestedProviders: string[] = [];
+  await page.route('**/api/engagement-proposals*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== '/api/engagement-proposals') return route.continue();
+    const provider = url.searchParams.get('provider') ?? 'all';
+    requestedProviders.push(provider);
+    const providers = provider === 'all' ? ['facebook_page', 'fanvue'] : [provider];
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: providers.map((value, index) => ({
+            id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+            accountDisplayName: value === 'fanvue' ? 'Fanvue creator' : 'Facebook Page',
+            provider: value,
+            kind: 'comment',
+            status: 'pending',
+            sourcePreview: 'Original comment',
+            contentPreview: 'Suggested reply',
+            createdAt: new Date().toISOString(),
+          })),
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.setViewportSize(
+    testInfo.project.name.includes('mobile')
+      ? { width: 390, height: 844 }
+      : { width: 1440, height: 900 },
+  );
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  const list = page.locator('.engagement-proposals-list');
+  await expect(list.getByRole('button', { name: /Facebook Page comment/ })).toBeVisible();
+  await expect(list.getByRole('button', { name: /Fanvue comment/ })).toBeVisible();
+  await page
+    .getByRole('group', { name: 'Filter proposals by provider' })
+    .getByRole('button', { name: 'Fanvue' })
+    .click();
+  await expect.poll(() => requestedProviders.at(-1)).toBe('fanvue');
+  await expect(list.getByRole('button', { name: /Facebook Page comment/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Fanvue engagement history' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeHidden();
+  await page.locator('.fanvue-action-history-filters').getByRole('button', { name: 'DMs' }).click();
+  await page
+    .getByRole('group', { name: 'Filter proposals by provider' })
+    .getByRole('button', { name: 'Facebook Page' })
+    .click();
+  await expect.poll(() => requestedProviders.at(-1)).toBe('facebook_page');
+  await expect(list.getByRole('button', { name: /Fanvue comment/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Page DM history' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Fanvue engagement history' })).toBeHidden();
+  await page
+    .getByRole('group', { name: 'Filter proposals by provider' })
+    .getByRole('button', { name: 'Fanvue' })
+    .click();
+  await expect(
+    page.locator('.fanvue-action-history-filters').getByRole('button', { name: 'DMs' }),
+  ).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('Fanvue direct action history shows exact text, safe media and price with no guessed link', async ({
   page,
 }) => {

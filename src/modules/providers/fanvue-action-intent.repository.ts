@@ -2,8 +2,13 @@ import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
-import { fanvueActionIntents } from '../../database/schema.js';
+import {
+  fanvueActionIntents,
+  fanvueCommentPendingIntents,
+  fanvueDmPendingIntents,
+} from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { lockFanvueActionNamespace } from './fanvue-action-namespace.js';
 
 export type FanvueActionKind = 'message' | 'comment' | 'chat_create';
 export type FanvueActionState = 'reserved' | 'confirmed' | 'failed' | 'unknown';
@@ -97,6 +102,52 @@ export async function reserveFanvueAction(
     .regex(/^[a-f0-9]{64}$/)
     .parse(input.requestFingerprint);
   return withTenantTransaction(database, input, async (transaction) => {
+    await lockFanvueActionNamespace(transaction, input.workspaceId, input.clientActionId);
+    const [dm] = await transaction
+      .select({
+        accountId: fanvueDmPendingIntents.accountId,
+        targetUuid: fanvueDmPendingIntents.fanUuid,
+        text: fanvueDmPendingIntents.textBody,
+        mediaIds: fanvueDmPendingIntents.mediaIds,
+        price: fanvueDmPendingIntents.priceCents,
+      })
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    const [comment] = await transaction
+      .select({
+        accountId: fanvueCommentPendingIntents.accountId,
+        targetUuid: fanvueCommentPendingIntents.postUuid,
+        text: fanvueCommentPendingIntents.textBody,
+      })
+      .from(fanvueCommentPendingIntents)
+      .where(
+        and(
+          eq(fanvueCommentPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueCommentPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (
+      (dm &&
+        (input.actionKind !== 'message' ||
+          dm.accountId !== input.accountId ||
+          dm.targetUuid !== input.targetUuid ||
+          dm.text !== (input.textBody ?? null) ||
+          dm.mediaIds.length !== (input.mediaCount ?? 0) ||
+          dm.price !== (input.priceCents ?? null))) ||
+      (comment &&
+        (input.actionKind !== 'comment' ||
+          comment.accountId !== input.accountId ||
+          comment.targetUuid !== input.targetUuid ||
+          comment.text !== input.textBody))
+    )
+      return { kind: 'conflict' };
     const inserted = await transaction
       .insert(fanvueActionIntents)
       .values({

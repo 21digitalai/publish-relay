@@ -36,6 +36,7 @@ export async function listFanvueActionHistory(
         priceCents: fanvueActionIntents.priceCents,
         status: fanvueActionIntents.state,
         providerReceipt: fanvueActionIntents.providerObjectUuid,
+        dueAt: fanvueDmPendingIntents.dueAt,
         createdAt: fanvueActionIntents.createdAt,
         updatedAt: fanvueActionIntents.updatedAt,
       })
@@ -45,6 +46,14 @@ export async function listFanvueActionHistory(
         and(
           eq(providerAccounts.workspaceId, fanvueActionIntents.workspaceId),
           eq(providerAccounts.id, fanvueActionIntents.accountId),
+        ),
+      )
+      .leftJoin(
+        fanvueDmPendingIntents,
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, fanvueActionIntents.workspaceId),
+          eq(fanvueDmPendingIntents.clientActionId, fanvueActionIntents.clientActionId),
+          eq(fanvueDmPendingIntents.accountId, fanvueActionIntents.accountId),
         ),
       )
       .where(
@@ -144,7 +153,7 @@ export async function listFanvueActionHistory(
             .orderBy(desc(fanvueDmPendingIntents.createdAt), desc(fanvueDmPendingIntents.id))
             .limit(input.limit);
     const merged = [
-      ...actionRows.map((row) => ({ ...row, dueAt: null as Date | null })),
+      ...actionRows,
       ...pendingRows.map((row) => ({
         id: row.id,
         accountId: row.accountId,

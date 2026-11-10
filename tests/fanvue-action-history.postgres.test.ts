@@ -144,6 +144,10 @@ describe('Fanvue action history', () => {
       `);
       const merged = await listFanvueActionHistory(database, { workspaceId, limit: 50 });
       expect(merged).toHaveLength(3);
+      expect(merged.find((row) => row.status === 'confirmed')).toMatchObject({
+        outboundText: 'Exact agent DM',
+        dueAt: new Date('2026-11-11T10:00:00Z'),
+      });
       expect(merged.find((row) => row.status === 'pending')).toMatchObject({
         outboundText: 'Planned exact reply',
         targetLabel: '@alexandra',

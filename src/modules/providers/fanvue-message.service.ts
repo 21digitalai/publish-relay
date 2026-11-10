@@ -149,8 +149,9 @@ export class FanvueMessageService {
     const command = scheduleInput.parse(input);
     const replay = await replayScheduledFanvueDm(this.database, command);
     if (replay) return replay;
+    let targetLabel: string | null;
     try {
-      await this.reads.getExistingChatForMessage(command);
+      ({ targetLabel } = await this.reads.getExistingChatForMessage(command));
       await this.resolveMedia(command);
       await withTenantTransaction(this.database, command, (transaction) =>
         enforceWorkspaceAction(transaction, this.policy, {
@@ -170,6 +171,7 @@ export class FanvueMessageService {
       fanUuid: command.fanUuid,
       clientActionId: command.clientActionId,
       actor: command.actor,
+      targetLabel,
       ...(command.text ? { text: command.text } : {}),
       ...(command.mediaIds ? { mediaIds: command.mediaIds } : {}),
       ...(command.mediaPreviewId ? { mediaPreviewId: command.mediaPreviewId } : {}),

@@ -24,41 +24,60 @@ test('Fanvue direct action history shows exact text, safe media and price with n
       body: JSON.stringify({
         data: {
           items:
-            url.searchParams.get('kind') === 'comment'
+            url.searchParams.get('status') === 'pending'
               ? [
                   {
-                    id: '00000000-0000-4000-8000-000000000905',
-                    accountId: '00000000-0000-4000-8000-000000000902',
-                    accountDisplayName: 'Eli Fanvue',
-                    kind: 'comment',
-                    targetLabel: 'Media post · 2026-11-05',
-                    outboundText: 'Exact media post comment',
-                    mediaCount: 0,
-                    priceCents: null,
-                    status: 'confirmed',
-                    providerReceipt: null,
-                    createdAt: '2026-11-05T09:00:00Z',
-                    updatedAt: '2026-11-05T09:01:00Z',
-                    destinationUrl: null,
-                  },
-                ]
-              : [
-                  {
-                    id: '00000000-0000-4000-8000-000000000901',
+                    id: '00000000-0000-4000-8000-000000000906',
                     accountId: '00000000-0000-4000-8000-000000000902',
                     accountDisplayName: 'Eli Fanvue',
                     kind: 'message',
                     targetLabel: '@alexandra',
-                    outboundText: 'Exact direct agent DM',
-                    mediaCount: 1,
-                    priceCents: 300,
-                    status: 'confirmed',
-                    providerReceipt: '00000000-0000-4000-8000-000000000904',
-                    createdAt: '2026-11-05T09:00:00Z',
-                    updatedAt: '2026-11-05T09:01:00Z',
+                    outboundText: 'Planned fan reply',
+                    mediaCount: 0,
+                    priceCents: null,
+                    status: 'pending',
+                    dueAt: '2026-11-11T10:00:00Z',
+                    providerReceipt: null,
+                    createdAt: '2026-11-10T09:00:00Z',
+                    updatedAt: '2026-11-10T09:00:00Z',
                     destinationUrl: null,
                   },
-                ],
+                ]
+              : url.searchParams.get('kind') === 'comment'
+                ? [
+                    {
+                      id: '00000000-0000-4000-8000-000000000905',
+                      accountId: '00000000-0000-4000-8000-000000000902',
+                      accountDisplayName: 'Eli Fanvue',
+                      kind: 'comment',
+                      targetLabel: 'Media post · 2026-11-05',
+                      outboundText: 'Exact media post comment',
+                      mediaCount: 0,
+                      priceCents: null,
+                      status: 'confirmed',
+                      providerReceipt: null,
+                      createdAt: '2026-11-05T09:00:00Z',
+                      updatedAt: '2026-11-05T09:01:00Z',
+                      destinationUrl: null,
+                    },
+                  ]
+                : [
+                    {
+                      id: '00000000-0000-4000-8000-000000000901',
+                      accountId: '00000000-0000-4000-8000-000000000902',
+                      accountDisplayName: 'Eli Fanvue',
+                      kind: 'message',
+                      targetLabel: '@alexandra',
+                      outboundText: 'Exact direct agent DM',
+                      mediaCount: 1,
+                      priceCents: 300,
+                      status: 'confirmed',
+                      providerReceipt: '00000000-0000-4000-8000-000000000904',
+                      createdAt: '2026-11-05T09:00:00Z',
+                      updatedAt: '2026-11-05T09:01:00Z',
+                      destinationUrl: null,
+                    },
+                  ],
           nextCursor: null,
         },
         error: null,
@@ -77,6 +96,13 @@ test('Fanvue direct action history shows exact text, safe media and price with n
   await expect.poll(() => queries.at(-1)).toContain('kind=comment');
   await expect(history.getByText('Exact direct agent DM')).toHaveCount(0);
   await expect(history.getByText('On post: Media post · 2026-11-05')).toBeVisible();
+  await history.getByRole('button', { name: 'DMs' }).click();
+  await history.getByRole('button', { name: 'Scheduled' }).click();
+  await expect.poll(() => queries.at(-1)).toContain('status=pending');
+  await expect(history.getByText('Planned fan reply')).toBeVisible();
+  await expect(history.getByText('DM · Scheduled')).toBeVisible();
+  await expect(history.getByText(/Planned .*2026/)).toBeVisible();
+  await expect(history.getByText('Link unavailable')).toBeVisible();
 });
 
 test('Page comment history shows direct and scheduled truth with filters and safe links', async ({

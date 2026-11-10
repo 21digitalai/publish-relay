@@ -23,6 +23,7 @@ describe('Fanvue action history', () => {
     const app = Fastify();
     try {
       await pg.exec(`
+        CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated');
         CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL, display_name text NOT NULL, PRIMARY KEY (workspace_id,id));
         CREATE TABLE fanvue_action_intents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL, account_id uuid NOT NULL,
           client_action_id uuid NOT NULL, action_kind text NOT NULL, target_uuid uuid NOT NULL, request_fingerprint text NOT NULL,
@@ -39,6 +40,24 @@ describe('Fanvue action history', () => {
       await pg.exec(
         await readFile(
           new URL('../migrations/0110_fanvue_action_target_context.sql', import.meta.url),
+          'utf8',
+        ),
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0111_fanvue_dm_pending_intents.sql', import.meta.url),
+          'utf8',
+        ),
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0112_fanvue_dm_pending_media_preview.sql', import.meta.url),
+          'utf8',
+        ),
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0113_fanvue_pending_target_label.sql', import.meta.url),
           'utf8',
         ),
       );
@@ -108,6 +127,57 @@ describe('Fanvue action history', () => {
         /Foreign private|fingerprint|credential|sourceContext|targetUuid/,
       );
       expect(Buffer.byteLength(response.body)).toBeLessThan(4096);
+      await pg.exec(`
+        INSERT INTO fanvue_dm_pending_intents
+          (workspace_id, account_id, fan_uuid, client_action_id, actor_type, actor_id,
+           text_body, target_label, due_at)
+        VALUES
+          ('${workspaceId}','${accountId}','${targetUuid}',
+           '00000000-0000-4000-8000-000000000011','user','${targetUuid}',
+           'Stale timing row','@alexandra','2026-11-11T10:00:00Z'),
+          ('${workspaceId}','${accountId}','${targetUuid}',
+           '00000000-0000-4000-8000-000000000014','user','${targetUuid}',
+           'Planned exact reply','@alexandra','2026-11-11T10:05:00Z'),
+          ('${otherWorkspaceId}','${accountId}','${targetUuid}',
+           '00000000-0000-4000-8000-000000000015','user','${targetUuid}',
+           'Foreign planned reply','@private','2026-11-11T10:05:00Z');
+      `);
+      const merged = await listFanvueActionHistory(database, { workspaceId, limit: 50 });
+      expect(merged).toHaveLength(3);
+      expect(merged.find((row) => row.status === 'pending')).toMatchObject({
+        outboundText: 'Planned exact reply',
+        targetLabel: '@alexandra',
+        providerReceipt: null,
+      });
+      expect(JSON.stringify(merged)).not.toMatch(/Stale timing row|Foreign planned reply/);
+      const pendingResponse = await app.inject({
+        method: 'GET',
+        url: '/api/fanvue-engagement-history?kind=message&status=pending',
+        headers: { cookie: `publish_relay_session=${workspaceId}.test-token` },
+      });
+      expect(pendingResponse.statusCode).toBe(200);
+      const pendingBody = pendingResponse.json<{ data: { items: Record<string, unknown>[] } }>();
+      expect(pendingBody.data.items).toMatchObject([
+        { status: 'pending', dueAt: '2026-11-11T10:05:00.000Z', destinationUrl: null },
+      ]);
+      expect(JSON.stringify(pendingBody)).not.toMatch(
+        /Foreign planned|fanUuid|actorId|fingerprint/,
+      );
+      expect(Buffer.byteLength(pendingResponse.body)).toBeLessThan(4096);
+      await pg.exec(`
+        INSERT INTO fanvue_dm_pending_intents
+          (workspace_id, account_id, fan_uuid, client_action_id, actor_type, actor_id,
+           text_body, target_label, due_at, status)
+        VALUES ('${workspaceId}','${accountId}','${targetUuid}',
+          '00000000-0000-4000-8000-000000000016','user','${targetUuid}',
+          'Denied before provider action','@alexandra','2026-11-11T10:10:00Z','failed');
+      `);
+      const failures = await listFanvueActionHistory(database, {
+        workspaceId,
+        status: 'failed',
+        limit: 50,
+      });
+      expect(failures.map((row) => row.outboundText)).toContain('Denied before provider action');
     } finally {
       await app.close();
       await pg.close();

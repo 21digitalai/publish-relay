@@ -3358,13 +3358,15 @@ textarea:focus-visible {
   gap: 0.5rem;
   margin-block: 1rem;
 }
-.fanvue-action-history-filters {
+.fanvue-action-history-filters,
+.fanvue-action-history-status-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-block: 1rem;
 }
-.fanvue-action-history-filters [aria-pressed='true'] {
+.fanvue-action-history-filters [aria-pressed='true'],
+.fanvue-action-history-status-filters [aria-pressed='true'] {
   border-color: var(--brand);
 }
 .page-comment-history-filters [aria-pressed='true'] {

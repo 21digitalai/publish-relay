@@ -1610,6 +1610,7 @@ export const fanvueDmPendingIntents = pgTable(
     actorType: actorType('actor_type').notNull(),
     actorId: uuid('actor_id').notNull(),
     textBody: text('text_body'),
+    targetLabel: text('target_label'),
     mediaIds: jsonb('media_ids').$type<string[]>().notNull().default([]),
     mediaPreviewId: uuid('media_preview_id'),
     priceCents: integer('price_cents'),

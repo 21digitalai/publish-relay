@@ -470,7 +470,9 @@ export function registerEngagementProposalRoutes(
       .strictObject({
         accountId: z.uuid().optional(),
         kind: z.enum(['message', 'comment']).optional(),
-        status: z.enum(['reserved', 'confirmed', 'failed', 'unknown']).optional(),
+        status: z
+          .enum(['pending', 'claimed', 'cancelled', 'reserved', 'confirmed', 'failed', 'unknown'])
+          .optional(),
         cursor: z.string().max(512).optional(),
       })
       .safeParse(request.query);
@@ -517,6 +519,7 @@ export function registerEngagementProposalRoutes(
           mediaCount: row.mediaCount,
           priceCents: row.priceCents,
           status: row.status,
+          dueAt: row.dueAt?.toISOString() ?? null,
           providerReceipt: row.providerReceipt,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),

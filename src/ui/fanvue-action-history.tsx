@@ -10,6 +10,7 @@ interface FanvueHistoryRow {
   mediaCount: number | null;
   priceCents: number | null;
   status: string;
+  dueAt: string | null;
   providerReceipt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -20,21 +21,35 @@ function localTime(value: string) {
   return new Date(value).toLocaleString(undefined, { timeZoneName: 'short' });
 }
 
+const statusLabels: Record<string, string> = {
+  pending: 'Scheduled',
+  claimed: 'Dispatching',
+  cancelled: 'Cancelled',
+  reserved: 'Sending',
+  confirmed: 'Sent',
+  failed: 'Failed',
+  unknown: 'Outcome unknown',
+};
+
 export function FanvueActionHistory() {
   const [rows, setRows] = useState<FanvueHistoryRow[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [kind, setKind] = useState<'all' | 'message' | 'comment'>('all');
+  const [status, setStatus] = useState<
+    'all' | 'pending' | 'claimed' | 'cancelled' | 'reserved' | 'confirmed' | 'failed' | 'unknown'
+  >('all');
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const generationRef = useRef(0);
-  const filterKey = `${accountId ?? ''}:${kind}`;
+  const filterKey = `${accountId ?? ''}:${kind}:${status}`;
 
   const load = useCallback(
     async (generation: number, next?: string) => {
       const params = new URLSearchParams();
       if (accountId) params.set('accountId', accountId);
       if (kind !== 'all') params.set('kind', kind);
+      if (status !== 'all') params.set('status', status);
       if (next) params.set('cursor', next);
       const response = await fetch(`/api/fanvue-engagement-history?${params.toString()}`);
       const body = (await response.json()) as {
@@ -48,7 +63,7 @@ export function FanvueActionHistory() {
       setRows((current) => (next ? [...current, ...result.items] : result.items));
       setCursor(result.nextCursor);
     },
-    [accountId, kind],
+    [accountId, kind, status],
   );
 
   useEffect(() => {
@@ -76,7 +91,7 @@ export function FanvueActionHistory() {
       aria-labelledby="fanvue-history-title"
     >
       <h2 id="fanvue-history-title">Fanvue engagement history</h2>
-      <p className="muted">Direct and approved send attempts; a proposal alone is not a send.</p>
+      <p className="muted">Scheduled actions and send attempts; a proposal alone is not a send.</p>
       <div className="fanvue-action-history-filters" aria-label="Filter Fanvue channel">
         {(['all', 'message', 'comment'] as const).map((choice) => (
           <button
@@ -102,6 +117,35 @@ export function FanvueActionHistory() {
             Clear account filter
           </button>
         )}
+      </div>
+      <div
+        className="fanvue-action-history-status-filters"
+        aria-label="Filter Fanvue action status"
+      >
+        {(
+          [
+            'all',
+            'pending',
+            'claimed',
+            'cancelled',
+            'reserved',
+            'confirmed',
+            'failed',
+            'unknown',
+          ] as const
+        ).map((choice) => (
+          <button
+            key={choice}
+            type="button"
+            className="fanvue-action-history-status secondary-button"
+            aria-pressed={status === choice}
+            onClick={() => {
+              setStatus(choice);
+            }}
+          >
+            {choice === 'all' ? 'All statuses' : statusLabels[choice]}
+          </button>
+        ))}
       </div>
       {loading && <p role="status">Loading Fanvue history…</p>}
       {error && (
@@ -145,7 +189,8 @@ export function FanvueActionHistory() {
                 {row.accountDisplayName}
               </button>
               <strong>
-                {row.kind === 'message' ? 'DM' : 'Comment'} · {row.status}
+                {row.kind === 'message' ? 'DM' : 'Comment'} ·{' '}
+                {statusLabels[row.status] ?? row.status}
               </strong>
               <p className="fanvue-action-history-target">
                 {row.kind === 'message' ? 'To: ' : 'On post: '}
@@ -167,6 +212,11 @@ export function FanvueActionHistory() {
                     row.priceCents / 100,
                   )}
                 </span>
+              )}
+              {row.dueAt && (
+                <time className="fanvue-action-history-due" dateTime={row.dueAt}>
+                  Planned {localTime(row.dueAt)}
+                </time>
               )}
               {row.destinationUrl ? (
                 <a

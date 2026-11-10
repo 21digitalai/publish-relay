@@ -9,6 +9,106 @@ const makeClient = (request: typeof fetch) =>
   new FacebookHttpClient({ graphVersion: 'v26.0', fetch: request });
 
 describe('Facebook Page comment read transport', () => {
+  it('re-reads current target and detects a Page reply across pagination', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: '123_456_789',
+          message: 'Current text',
+          created_time: '2026-11-10T12:00:00+0000',
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [{ id: '11', from: { id: 'visitor' } }],
+          paging: { next: 'private-url', cursors: { after: 'page-2' } },
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [{ id: '12', from: { id: '123' } }] }));
+    // Graph author IDs are numeric; a malformed author must fail closed.
+    await expect(
+      makeClient(request).readCommentThreadForReply({
+        pageId: '123',
+        commentId: '123_456_789',
+        accessToken: 'token',
+      }),
+    ).rejects.toBeInstanceOf(FacebookRequestError);
+    const valid = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: '123_456_789',
+          message: 'Current text',
+          created_time: '2026-11-10T12:00:00+0000',
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [{ id: '11', from: { id: '456' } }],
+          paging: { next: 'private-url', cursors: { after: 'page-2' } },
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [{ id: '12', from: { id: '123' } }] }));
+    expect(
+      await makeClient(valid).readCommentThreadForReply({
+        pageId: '123',
+        commentId: '123_456_789',
+        accessToken: 'token',
+      }),
+    ).toEqual({
+      text: 'Current text',
+      createdAt: '2026-11-10T12:00:00+0000',
+      hasPageReply: true,
+      threadFingerprint: null,
+    });
+    const third = valid.mock.calls[2]?.[0];
+    if (!(third instanceof URL)) throw new Error('Expected Graph URL');
+    expect(third.searchParams.get('after')).toBe('page-2');
+    expect(third.toString()).not.toContain('token');
+  });
+
+  it('fails closed when a reply author or terminal pagination proof is missing', async () => {
+    const missingAuthor = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ id: '9', message: 'Hello', created_time: '2026-11-10T12:00:00+0000' }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [{ id: '10' }] }));
+    await expect(
+      makeClient(missingAuthor).readCommentThreadForReply({
+        pageId: '1',
+        commentId: '9',
+        accessToken: 'token',
+      }),
+    ).rejects.toBeInstanceOf(FacebookRequestError);
+    const noCursor = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ id: '9', message: 'Hello', created_time: '2026-11-10T12:00:00+0000' }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [], paging: { next: 'private-url' } }));
+    await expect(
+      makeClient(noCursor).readCommentThreadForReply({
+        pageId: '1',
+        commentId: '9',
+        accessToken: 'token',
+      }),
+    ).rejects.toBeInstanceOf(FacebookRequestError);
+    const eligible = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ id: '9', message: 'Hello', created_time: '2026-11-10T12:00:00+0000' }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [{ id: '10', from: { id: '2' } }] }));
+    const snapshot = await makeClient(eligible).readCommentThreadForReply({
+      pageId: '1',
+      commentId: '9',
+      accessToken: 'token',
+    });
+    expect(snapshot.hasPageReply).toBe(false);
+    expect(snapshot.threadFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
   it('bounds Page-owned posts and returns only a safe cursor and allowlisted fields', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({

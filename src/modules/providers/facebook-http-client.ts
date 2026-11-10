@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { z } from 'zod';
 
 const idSchema = z.object({ id: z.string().min(1) });
@@ -115,6 +117,7 @@ const MAX_MESSAGE_PAGE_BYTES = 64 * 1024;
 const MAX_TEXTLESS_CLASSIFICATION_PROBES = 10;
 const MAX_COMMENT_ANCESTRY_DEPTH = 10;
 const MAX_POST_COMMENT_PROOF_PAGES = 10;
+const MAX_COMMENT_REPLY_PROOF_PAGES = 10;
 
 export type FacebookErrorKind =
   'auth' | 'permission' | 'rate_limit' | 'validation' | 'transient' | 'permanent';
@@ -306,6 +309,75 @@ export class FacebookHttpClient {
     const commentId = graphIdSchema.parse(input.commentId);
     const text = z.string().trim().min(1).max(2000).parse(input.text);
     return this.create(`/${commentId}/comments`, { message: text }, input.accessToken);
+  }
+
+  /** A due send must see the current target and every reply, or fail closed. */
+  public async readCommentThreadForReply(input: {
+    pageId: string;
+    commentId: string;
+    accessToken: string;
+  }): Promise<{
+    text: string;
+    createdAt: string;
+    hasPageReply: boolean;
+    threadFingerprint: string | null;
+  }> {
+    const pageId = graphIdSchema.parse(input.pageId);
+    const commentId = graphIdSchema.parse(input.commentId);
+    const target = await this.get(
+      `/${commentId}`,
+      { fields: 'id,message,created_time' },
+      input.accessToken,
+    );
+    const parsed = z
+      .object({
+        id: graphIdSchema,
+        message: z.string().min(1).max(16_000),
+        created_time: graphTimestampSchema,
+      })
+      .safeParse(target);
+    if (!parsed.success || parsed.data.id !== commentId)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+    let after: string | undefined;
+    const cursors = new Set<string>();
+    const replyIds: string[] = [];
+    for (let pageNumber = 0; pageNumber < MAX_COMMENT_REPLY_PROOF_PAGES; pageNumber += 1) {
+      const body = await this.get(
+        `/${commentId}/comments`,
+        {
+          fields: 'id,from{id}',
+          limit: '100',
+          ...(after ? { after } : {}),
+        },
+        input.accessToken,
+      );
+      const replies = graphPageSchema(
+        z.object({ id: graphIdSchema, from: z.object({ id: graphIdSchema }) }),
+      ).safeParse(body);
+      if (!replies.success) throw new FacebookRequestError({ kind: 'permanent', status: 502 });
+      if (replies.data.data.some((reply) => reply.from.id === pageId))
+        return {
+          text: parsed.data.message,
+          createdAt: parsed.data.created_time,
+          hasPageReply: true,
+          threadFingerprint: null,
+        };
+      replyIds.push(...replies.data.data.map((reply) => reply.id));
+      if (!replies.data.paging?.next)
+        return {
+          text: parsed.data.message,
+          createdAt: parsed.data.created_time,
+          hasPageReply: false,
+          threadFingerprint: createHash('sha256')
+            .update(JSON.stringify(replyIds.sort()))
+            .digest('hex'),
+        };
+      const next = replies.data.paging.cursors?.after;
+      if (!next || cursors.has(next)) break;
+      cursors.add(next);
+      after = next;
+    }
+    throw new FacebookRequestError({ kind: 'permanent', status: 502 });
   }
 
   /** Caller must first prove that postId belongs to its selected Page. */

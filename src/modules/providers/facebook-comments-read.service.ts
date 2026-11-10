@@ -40,3 +40,30 @@ export async function listAccountPostComments(
     },
   );
 }
+
+/** Scheduled replies must recheck the exact Page/post/comment and current thread. */
+export async function readScheduledCommentTarget(
+  runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
+  input: { workspaceId: string; accountId: string; postId: string; commentId: string },
+) {
+  return withPageReadToken(
+    runtime,
+    {
+      ...input,
+      module: 'comments',
+      additionalScopes: ['pages_read_user_content', 'pages_manage_engagement'],
+      additionalTasks: ['MODERATE'],
+    },
+    async (pageId, accessToken) => {
+      const ownerPageId = await runtime.client.getPostOwner(input.postId, accessToken);
+      if (ownerPageId !== pageId) throw new PageReadUnavailableError();
+      if (!(await runtime.client.isCommentUnderPost(input.commentId, input.postId, accessToken)))
+        throw new PageReadUnavailableError();
+      return runtime.client.readCommentThreadForReply({
+        pageId,
+        commentId: input.commentId,
+        accessToken,
+      });
+    },
+  );
+}

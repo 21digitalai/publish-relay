@@ -1,6 +1,6 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { facebookPageDmActions, facebookPageDmPendingIntents } from '../../database/schema.js';
@@ -155,7 +155,10 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         and(
           eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
           eq(facebookPageDmPendingIntents.accountId, input.accountId),
-          isNull(facebookPageDmPendingIntents.sequenceIndex),
+          or(
+            isNull(facebookPageDmPendingIntents.sequenceIndex),
+            eq(facebookPageDmPendingIntents.sequenceIndex, 0),
+          ),
           inArray(facebookPageDmPendingIntents.status, ['pending', 'claimed']),
         ),
       )

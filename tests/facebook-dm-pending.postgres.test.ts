@@ -711,6 +711,14 @@ describe('Page DM pending intent', () => {
         actor: { type: 'user' as const, id: actorId },
       };
       const first = await schedulePageDmGroup(database, input);
+      const next = await schedulePageDmGroup(database, {
+        ...input,
+        conversationId: 't_456',
+        clientActionId: randomUUID(),
+      });
+      const gapSeconds = (next.dueAt.getTime() - first.dueAt.getTime()) / 1000;
+      expect(gapSeconds).toBeGreaterThanOrEqual(60);
+      expect(gapSeconds).toBeLessThanOrEqual(120);
       expect((await schedulePageDmGroup(database, input)).id).toBe(first.id);
       await expect(
         schedulePageDmGroup(database, { ...input, texts: ['Different', 'Reply'] }),
@@ -720,7 +728,8 @@ describe('Page DM pending intent', () => {
         gap_seconds: number;
         expected_latest_inbound_message_id: string;
       }>(
-        'SELECT status, gap_seconds, expected_latest_inbound_message_id FROM facebook_page_dm_pending_intents ORDER BY sequence_index',
+        'SELECT status, gap_seconds, expected_latest_inbound_message_id FROM facebook_page_dm_pending_intents WHERE group_id = $1 ORDER BY sequence_index',
+        [first.groupId],
       );
       expect(rows.rows.map((row) => row.status)).toEqual([
         'pending',

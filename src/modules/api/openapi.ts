@@ -20,7 +20,10 @@ import { fanvueDmStageRequestSchema } from '../providers/fanvue-dm-stage.routes.
 import { fanvueCommentRequestSchema } from '../providers/fanvue-comment.routes.js';
 import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
 import { facebookCommentSendRequestSchema } from '../providers/facebook-comment-send.routes.js';
-import { facebookDmSendRequestSchema } from '../providers/facebook-messenger-send.routes.js';
+import {
+  facebookDmGroupRequestSchema,
+  facebookDmSendRequestSchema,
+} from '../providers/facebook-messenger-send.routes.js';
 import { updateCapabilitiesSchema } from '../identity/api-key.routes.js';
 import { errorResponseSchema, openApiJsonSchema, successResponseSchema } from './contract.js';
 
@@ -644,6 +647,95 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/scheduled-groups': {
+        post: {
+          operationId: 'scheduleFacebookPageDmGroup',
+          description:
+            'Atomically schedule 2–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; no provider send on this request.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: openApiJsonSchema(facebookDmGroupRequestSchema),
+              },
+            },
+          },
+          responses: {
+            '202': { description: 'Root ID, pending status and dueAt; not a send receipt' },
+            '400': { description: 'Invalid group' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing selected-Page dms:send grant' },
+            '409': { description: 'Conversation changed, no-go, conflict or reply window closed' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/scheduled-groups/{rootId}':
+        {
+          get: {
+            operationId: 'getFacebookPageDmGroupStatus',
+            description:
+              'Read at most four selected-Page bubble state summaries without message text.',
+            security: [{ bearerAuth: [], workspace: [] }],
+            parameters: [
+              {
+                name: 'accountId',
+                in: 'path',
+                required: true,
+                schema: { type: 'string', format: 'uuid' },
+              },
+              { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+              {
+                name: 'rootId',
+                in: 'path',
+                required: true,
+                schema: { type: 'string', format: 'uuid' },
+              },
+            ],
+            responses: {
+              '200': { description: 'Bounded sequence/status/dueAt summaries' },
+              '401': { description: 'Authentication required' },
+              '403': { description: 'Missing selected-Page dms:send grant' },
+              '404': { description: 'Group not found in selected Page conversation' },
+            },
+          },
+          delete: {
+            operationId: 'cancelFacebookPageDmGroup',
+            description:
+              'Cancel pending and waiting bubbles only; claimed or sent bubbles remain untouched.',
+            security: [{ bearerAuth: [], workspace: [] }],
+            parameters: [
+              {
+                name: 'accountId',
+                in: 'path',
+                required: true,
+                schema: { type: 'string', format: 'uuid' },
+              },
+              { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+              {
+                name: 'rootId',
+                in: 'path',
+                required: true,
+                schema: { type: 'string', format: 'uuid' },
+              },
+            ],
+            responses: {
+              '200': { description: 'Count of newly cancelled unsent bubbles' },
+              '401': { description: 'Authentication required' },
+              '403': { description: 'Missing selected-Page dms:send grant' },
+              '404': { description: 'Group not found in selected Page conversation' },
+            },
+          },
+        },
       '/api/v1/fanvue/accounts/{accountId}/posts/{postUuid}/comments': {
         post: {
           operationId: 'sendFanvueComment',

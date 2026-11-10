@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -26,6 +27,12 @@ import {
 } from '../src/modules/providers/facebook-dm-pending.repository.js';
 import { setPageConversationNoGo } from '../src/modules/providers/facebook-dm-no-go.repository.js';
 import { dispatchDuePageDms } from '../src/modules/providers/facebook-dm-pending.worker.js';
+import {
+  cancelPageDmGroup,
+  getPageDmGroupStatus,
+  schedulePageDmGroup,
+} from '../src/modules/providers/facebook-dm-group.repository.js';
+import { FacebookDmConversationChangedError } from '../src/modules/providers/facebook-messenger-send.service.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const accountId = '00000000-0000-4000-8000-000000000002';
@@ -60,6 +67,7 @@ async function setup() {
     '0098_engagement_proposal_planned_due_at.sql',
     '0099_page_dm_pre_send_attempts.sql',
     '0100_page_dm_grouped_approval.sql',
+    '0104_page_dm_autonomous_groups.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -684,6 +692,203 @@ describe('Page DM pending intent', () => {
           limit: 10,
         }),
       ).toEqual([]);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it.each([2, 3, 4])('arms exactly %i bubbles atomically and replays the root', async (count) => {
+    const { pg, database } = await setup();
+    try {
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        texts: Array.from({ length: count }, (_, index) => `Bubble ${String(index)}`),
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user' as const, id: actorId },
+      };
+      const first = await schedulePageDmGroup(database, input);
+      expect((await schedulePageDmGroup(database, input)).id).toBe(first.id);
+      await expect(
+        schedulePageDmGroup(database, { ...input, texts: ['Different', 'Reply'] }),
+      ).rejects.toBeInstanceOf(PendingDmConflictError);
+      const rows = await pg.query<{
+        status: string;
+        gap_seconds: number;
+        expected_latest_inbound_message_id: string;
+      }>(
+        'SELECT status, gap_seconds, expected_latest_inbound_message_id FROM facebook_page_dm_pending_intents ORDER BY sequence_index',
+      );
+      expect(rows.rows.map((row) => row.status)).toEqual([
+        'pending',
+        ...Array.from({ length: count - 1 }, () => 'waiting'),
+      ]);
+      expect(rows.rows.every((row) => row.expected_latest_inbound_message_id === 'inbound-1')).toBe(
+        true,
+      );
+      expect(rows.rows.slice(1).every((row) => row.gap_seconds >= 4 && row.gap_seconds <= 10)).toBe(
+        true,
+      );
+      const status = await getPageDmGroupStatus(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        rootId: first.id,
+      });
+      expect(status?.bubbles).toHaveLength(count);
+      expect(
+        await getPageDmGroupStatus(database, {
+          workspaceId: otherWorkspaceId,
+          accountId,
+          conversationId: 't_123',
+          rootId: first.id,
+        }),
+      ).toBeNull();
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('cancels unsent tails after changed inbound and supports explicit group cancellation', async () => {
+    const { pg, database } = await setup();
+    try {
+      await pg.query('INSERT INTO memberships (workspace_id, user_id, role) VALUES ($1, $2, $3)', [
+        workspaceId,
+        actorId,
+        'owner',
+      ]);
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        texts: ['First', 'Second', 'Third', 'Fourth'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user' as const, id: actorId },
+      };
+      const group = await schedulePageDmGroup(database, input);
+      expect(
+        (
+          await cancelPageDmGroup(database, {
+            workspaceId,
+            accountId,
+            conversationId: 't_123',
+            rootId: group.id,
+          })
+        )?.cancelled,
+      ).toBe(4);
+      const second = await schedulePageDmGroup(database, {
+        ...input,
+        clientActionId: randomUUID(),
+      });
+      await pg.query(
+        "UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '1 minute' WHERE id = $1",
+        [second.id],
+      );
+      sendMock.mockReset();
+      sendMock.mockRejectedValueOnce(new FacebookDmConversationChangedError());
+      await dispatchDuePageDms({
+        database,
+        keys: {} as never,
+        client: {} as never,
+        workerId: 'w',
+        leaseMs: 30_000,
+      });
+      const rows = await pg.query<{ status: string }>(
+        'SELECT status FROM facebook_page_dm_pending_intents WHERE group_id = $1 ORDER BY sequence_index',
+        [second.groupId],
+      );
+      expect(rows.rows.map((row) => row.status)).toEqual([
+        'failed',
+        'cancelled',
+        'cancelled',
+        'cancelled',
+      ]);
+      expect(sendMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await pg.close();
+      sendMock.mockReset();
+    }
+  });
+
+  it('paces overdue Page roots durably but permits a confirmed group tail', async () => {
+    const { pg, database } = await setup();
+    try {
+      const first = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_1',
+        clientActionId: actionId,
+        texts: ['One', 'Two'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user', id: actorId },
+      });
+      const second = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_2',
+        clientActionId: randomUUID(),
+        texts: ['Three', 'Four'],
+        expectedLatestInboundMessageId: 'inbound-2',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user', id: actorId },
+      });
+      await pg.exec(
+        "UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '1 minute' WHERE status = 'pending'",
+      );
+      const now = new Date();
+      const claim = await claimDuePageDms(database, {
+        workerId: 'w',
+        now,
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      expect(claim).toHaveLength(1);
+      if (!claim[0]?.leaseOwner) throw new Error('Expected a claimed root');
+      await finishClaimedPageDm(database, {
+        workspaceId,
+        id: claim[0].id,
+        workerId: claim[0].leaseOwner,
+        state: 'confirmed',
+      });
+      await pg.exec(
+        "UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '1 second' WHERE status = 'pending' AND sequence_index > 0",
+      );
+      const tail = await claimDuePageDms(database, {
+        workerId: 'w',
+        now: new Date(),
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      expect(tail[0]?.sequenceIndex).toBe(1);
+      if (!tail[0]?.leaseOwner) throw new Error('Expected a claimed tail');
+      await finishClaimedPageDm(database, {
+        workspaceId,
+        id: tail[0].id,
+        workerId: tail[0].leaseOwner,
+        state: 'confirmed',
+      });
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'w',
+          now: new Date(),
+          leaseMs: 30_000,
+          limit: 1,
+        }),
+      ).toEqual([]);
+      const later = await claimDuePageDms(database, {
+        workerId: 'w',
+        now: new Date(now.getTime() + 121_000),
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      expect(later[0]?.id).toBe(claim[0].id === first.id ? second.id : first.id);
+      expect(first.id).not.toBe(second.id);
     } finally {
       await pg.close();
     }

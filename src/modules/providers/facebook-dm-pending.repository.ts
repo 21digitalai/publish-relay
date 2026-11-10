@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 
-import { and, eq, inArray, lte, ne, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, lte, ne, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -8,6 +8,7 @@ import {
   engagementProposals,
   facebookPageDmActions,
   facebookPageDmDelaySettings,
+  facebookPageDmDispatchPacing,
   facebookPageDmPendingIntents,
   providerAccounts,
 } from '../../database/schema.js';
@@ -149,6 +150,21 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
     .limit(1);
   if (sent) throw new PendingDmConflictError();
   const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
+  const [activeGroup] = await tx
+    .select({ id: facebookPageDmPendingIntents.id })
+    .from(facebookPageDmPendingIntents)
+    .where(
+      and(
+        eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+        eq(facebookPageDmPendingIntents.accountId, input.accountId),
+        eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+        ne(facebookPageDmPendingIntents.clientActionId, input.clientActionId),
+        inArray(facebookPageDmPendingIntents.status, ['pending', 'waiting', 'claimed', 'unknown']),
+        sql`${facebookPageDmPendingIntents.groupId} IS NOT NULL`,
+      ),
+    )
+    .limit(1);
+  if (activeGroup) throw new PendingDmConflictError('Resolve the prior Page DM group first');
   const [inserted] = await tx
     .insert(facebookPageDmPendingIntents)
     .values({
@@ -570,7 +586,12 @@ export async function claimDuePageDms(
 ) {
   return database.transaction(async (tx) => {
     const candidates = await tx
-      .select({ id: facebookPageDmPendingIntents.id })
+      .select({
+        id: facebookPageDmPendingIntents.id,
+        workspaceId: facebookPageDmPendingIntents.workspaceId,
+        accountId: facebookPageDmPendingIntents.accountId,
+        sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
+      })
       .from(facebookPageDmPendingIntents)
       .where(
         and(
@@ -584,10 +605,82 @@ export async function claimDuePageDms(
           ),
         ),
       )
-      .orderBy(facebookPageDmPendingIntents.dueAt, facebookPageDmPendingIntents.id)
-      .limit(input.limit)
-      .for('update', { skipLocked: true });
+      .orderBy(
+        sql`CASE WHEN ${facebookPageDmPendingIntents.sequenceIndex} > 0 THEN 0 ELSE 1 END`,
+        facebookPageDmPendingIntents.dueAt,
+        facebookPageDmPendingIntents.id,
+      )
+      .limit(input.limit);
     if (!candidates.length) return [];
+    // Lock Page before intent, matching schedule/cancel/no-go lock order.
+    const candidate = candidates[0];
+    if (!candidate) return [];
+    await tx
+      .select({ id: providerAccounts.id })
+      .from(providerAccounts)
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, candidate.workspaceId),
+          eq(providerAccounts.id, candidate.accountId),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    const [locked] = await tx
+      .select({ id: facebookPageDmPendingIntents.id })
+      .from(facebookPageDmPendingIntents)
+      .where(
+        and(
+          eq(facebookPageDmPendingIntents.id, candidate.id),
+          lte(facebookPageDmPendingIntents.dueAt, input.now),
+          or(
+            eq(facebookPageDmPendingIntents.status, 'pending'),
+            and(
+              eq(facebookPageDmPendingIntents.status, 'claimed'),
+              lte(facebookPageDmPendingIntents.leaseUntil, input.now),
+            ),
+          ),
+        ),
+      )
+      .limit(1)
+      .for('update', { skipLocked: true });
+    if (!locked) return [];
+    // A persisted Page cursor prevents overdue roots from collapsing into a
+    // burst after restart. Confirmed tails bypass the root pacing cursor.
+    if (candidate.sequenceIndex === null || candidate.sequenceIndex === 0) {
+      const [pacing] = await tx
+        .select({
+          nextRootAt: facebookPageDmDispatchPacing.nextRootAt,
+          lastRootId: facebookPageDmDispatchPacing.lastRootId,
+        })
+        .from(facebookPageDmDispatchPacing)
+        .where(
+          and(
+            eq(facebookPageDmDispatchPacing.workspaceId, candidate.workspaceId),
+            eq(facebookPageDmDispatchPacing.accountId, candidate.accountId),
+          ),
+        )
+        .limit(1);
+      if (pacing?.lastRootId !== candidate.id) {
+        if (pacing && pacing.nextRootAt > input.now) return [];
+        const nextRootAt = new Date(input.now.getTime() + randomInt(60, 121) * 1000);
+        await tx
+          .insert(facebookPageDmDispatchPacing)
+          .values({
+            workspaceId: candidate.workspaceId,
+            accountId: candidate.accountId,
+            nextRootAt,
+            lastRootId: candidate.id,
+          })
+          .onConflictDoUpdate({
+            target: [
+              facebookPageDmDispatchPacing.workspaceId,
+              facebookPageDmDispatchPacing.accountId,
+            ],
+            set: { nextRootAt, lastRootId: candidate.id },
+          });
+      }
+    }
     return tx
       .update(facebookPageDmPendingIntents)
       .set({
@@ -596,12 +689,7 @@ export async function claimDuePageDms(
         leaseUntil: new Date(input.now.getTime() + input.leaseMs),
         updatedAt: input.now,
       })
-      .where(
-        inArray(
-          facebookPageDmPendingIntents.id,
-          candidates.map((row) => row.id),
-        ),
-      )
+      .where(inArray(facebookPageDmPendingIntents.id, [candidate.id]))
       .returning(projection);
   });
 }
@@ -685,12 +773,21 @@ export async function finishClaimedPageDm(
         updatedAt: new Date(),
       })
       .where(eq(facebookPageDmPendingIntents.id, input.id));
-    if (
-      state === 'confirmed' &&
-      intent.groupId &&
-      intent.sequenceIndex !== null &&
-      intent.sequenceIndex < 2
-    ) {
+    const [lastBubble] = intent.groupId
+      ? await tx
+          .select({ sequenceIndex: facebookPageDmPendingIntents.sequenceIndex })
+          .from(facebookPageDmPendingIntents)
+          .where(
+            and(
+              eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+              eq(facebookPageDmPendingIntents.groupId, intent.groupId),
+            ),
+          )
+          .orderBy(desc(facebookPageDmPendingIntents.sequenceIndex))
+          .limit(1)
+      : [];
+    const isLastBubble = intent.sequenceIndex === lastBubble?.sequenceIndex;
+    if (state === 'confirmed' && intent.groupId && intent.sequenceIndex !== null && !isLastBubble) {
       const [next] = await tx
         .update(facebookPageDmPendingIntents)
         .set({
@@ -743,10 +840,7 @@ export async function finishClaimedPageDm(
             eq(facebookPageDmPendingIntents.status, 'waiting'),
           ),
         );
-    if (
-      state !== 'pending' &&
-      (!intent.groupId || state !== 'confirmed' || intent.sequenceIndex === 2)
-    )
+    if (state !== 'pending' && (!intent.groupId || state !== 'confirmed' || isLastBubble))
       await tx
         .update(engagementProposals)
         .set({ status: state === 'confirmed' ? 'sent' : state, updatedAt: new Date() })

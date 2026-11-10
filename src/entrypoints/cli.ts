@@ -33,6 +33,8 @@ const MUTATIONS = new Set([
   'facebook-comments:reply',
   'facebook-dms:send',
   'facebook-dms:schedule',
+  'facebook-dms:group-schedule',
+  'facebook-dms:group-cancel',
   'facebook-dms:cancel',
   'facebook-dms:memory-upsert',
   'proposals:create',
@@ -70,6 +72,19 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   'facebook-dms:cancel': {
     method: 'DELETE',
     path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/scheduled/:intentId',
+  },
+  'facebook-dms:group-schedule': {
+    method: 'POST',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/scheduled-groups',
+    body: true,
+  },
+  'facebook-dms:group-status': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/scheduled-groups/:rootId',
+  },
+  'facebook-dms:group-cancel': {
+    method: 'DELETE',
+    path: '/api/v1/destinations/:id/facebook-conversations/:conversationId/scheduled-groups/:rootId',
   },
   'facebook-dms:memory-get-many': {
     method: 'POST',
@@ -174,6 +189,9 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
   'facebook-dms:send': new Set([...ENVELOPE_OUTPUT_KEYS, 'messageId', 'failureStatus']),
   'facebook-dms:schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
   'facebook-dms:cancel': new Set(ENVELOPE_OUTPUT_KEYS),
+  'facebook-dms:group-schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
+  'facebook-dms:group-status': new Set([...ENVELOPE_OUTPUT_KEYS, 'bubbles', 'sequence', 'dueAt']),
+  'facebook-dms:group-cancel': new Set([...ENVELOPE_OUTPUT_KEYS, 'cancelled']),
   'facebook-dms:memory-get-many': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'records',
@@ -598,6 +616,12 @@ function routePath(
   if (route.path.includes(':conversationId') && typeof conversationId !== 'string')
     throw new CliError(EXIT.usage, 'Facebook DM command requires --conversation-id');
   const intentId = flags['intent-id'];
+  const rootId = flags['root-id'];
+  if (
+    route.path.includes(':rootId') &&
+    (typeof rootId !== 'string' || !WORKSPACE_ID_PATTERN.test(rootId))
+  )
+    throw new CliError(EXIT.usage, 'Page DM group command requires UUID --root-id');
   if (
     route.path.includes(':intentId') &&
     (typeof intentId !== 'string' || !WORKSPACE_ID_PATTERN.test(intentId))
@@ -613,7 +637,8 @@ function routePath(
     .replace(':postId', encodeURIComponent(String(postId ?? '')))
     .replace(':commentId', encodeURIComponent(String(flags['comment-id'] ?? '')))
     .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')))
-    .replace(':intentId', encodeURIComponent(String(intentId ?? '')));
+    .replace(':intentId', encodeURIComponent(String(intentId ?? '')))
+    .replace(':rootId', encodeURIComponent(String(rootId ?? '')));
   if (
     command !== 'posts:list' &&
     command !== 'destinations:list' &&
@@ -775,9 +800,15 @@ async function run(): Promise<Json> {
     )
       throw new CliError(EXIT.usage, 'Facebook comment reply requires numeric --comment-id');
   }
-  if (parsed.command === 'facebook-dms:send' || parsed.command === 'facebook-dms:schedule') {
+  if (
+    parsed.command === 'facebook-dms:send' ||
+    parsed.command === 'facebook-dms:schedule' ||
+    parsed.command === 'facebook-dms:group-schedule'
+  ) {
     const payload = JSON.parse(String(body)) as {
       clientActionId?: unknown;
+      texts?: unknown;
+      expectedLatestInboundMessageId?: unknown;
       schedule?: { earliestDelaySeconds?: unknown; latestDelaySeconds?: unknown };
     };
     const actionId = payload.clientActionId;
@@ -785,6 +816,17 @@ async function run(): Promise<Json> {
       throw new CliError(EXIT.usage, 'Facebook DM clientActionId must match --idempotency-key');
     if (parsed.command === 'facebook-dms:send' && payload.schedule !== undefined)
       throw new CliError(EXIT.usage, 'Use facebook-dms schedule for a delayed message');
+    if (
+      parsed.command === 'facebook-dms:group-schedule' &&
+      (!Array.isArray(payload.texts) ||
+        payload.texts.length < 2 ||
+        payload.texts.length > 4 ||
+        typeof payload.expectedLatestInboundMessageId !== 'string')
+    )
+      throw new CliError(
+        EXIT.usage,
+        'Page DM group requires 2–4 texts and expectedLatestInboundMessageId',
+      );
     if (
       parsed.command === 'facebook-dms:schedule' &&
       (!payload.schedule ||
@@ -802,6 +844,7 @@ async function run(): Promise<Json> {
   if (
     MUTATIONS.has(parsed.command) &&
     parsed.command !== 'facebook-dms:cancel' &&
+    parsed.command !== 'facebook-dms:group-cancel' &&
     parsed.command !== 'facebook-dms:memory-upsert' &&
     typeof idempotencyKey !== 'string'
   )

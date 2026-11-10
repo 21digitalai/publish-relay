@@ -169,6 +169,8 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'text',
     'createdAt',
     'senderId',
+    'contentKind',
+    'contentSubtype',
   ]),
   'facebook-comments:reply': new Set([...ENVELOPE_OUTPUT_KEYS, 'commentId', 'failureStatus']),
   'facebook-dms:send': new Set([...ENVELOPE_OUTPUT_KEYS, 'messageId', 'failureStatus']),

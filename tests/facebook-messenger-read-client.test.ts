@@ -212,11 +212,74 @@ describe('Facebook Messenger read transport', () => {
           text: 'Hello',
           createdAt: '2026-10-25T02:01:00+0000',
           senderId: 'psid_789',
+          contentKind: 'text',
+          contentSubtype: null,
         },
       ],
       nextCursor: null,
     });
     expect(JSON.stringify(result)).not.toMatch(/Private Person|hidden@example/);
+  });
+
+  it('classifies only observed textless attachment presence and hides provider fields', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [
+            { id: 'mid_1', created_time: '2026-10-25T02:01:00+0000' },
+            { id: 'mid_2', created_time: '2026-10-25T02:02:00+0000' },
+            { id: 'mid_3', created_time: '2026-10-25T02:03:00+0000' },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [
+            {
+              id: 'a_1',
+              mime_type: 'image/jpeg',
+              file_url: 'https://private.example/media',
+              name: 'private',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [] }))
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'a_3', mime_type: 'x'.repeat(129) }] }));
+    const result = await clientWith(request).listConversationMessages({
+      conversationId: 't_123',
+      accessToken: 'token',
+    });
+    expect(result.messages.map((message) => [message.contentKind, message.contentSubtype])).toEqual(
+      [
+        ['attachment', 'image'],
+        ['unknown', null],
+        ['unknown', null],
+      ],
+    );
+    expect(JSON.stringify(result)).not.toMatch(/private.example|private/);
+    for (const call of request.mock.calls.slice(1)) {
+      const target = call[0];
+      if (!(target instanceof URL)) throw new Error('Expected Graph URL');
+      expect(target.pathname).toMatch(/\/mid_[123]\/attachments$/);
+      expect(target.searchParams.get('fields')).toBe('id,mime_type');
+      expect(target.searchParams.get('limit')).toBe('1');
+    }
+  });
+
+  it('keeps textless classification unknown when the optional edge is denied', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ data: [{ id: 'mid_1', created_time: '2026-10-25T02:01:00+0000' }] }),
+      )
+      .mockResolvedValueOnce(Response.json({ error: { code: 200 } }, { status: 403 }));
+    const result = await clientWith(request).listConversationMessages({
+      conversationId: 't_123',
+      accessToken: 'token',
+    });
+    expect(result.messages[0]).toMatchObject({ contentKind: 'unknown', contentSubtype: null });
   });
 
   it('fails safely for oversized single messages or aggregate pages', async () => {

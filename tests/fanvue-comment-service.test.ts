@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ledger = vi.hoisted(() => ({ reserve: vi.fn(), settle: vi.fn() }));
 const policy = vi.hoisted(() => ({ enforce: vi.fn(() => Promise.resolve()) }));
+const pending = vi.hoisted(() => ({ replay: vi.fn(), schedule: vi.fn() }));
 vi.mock('../src/database/tenant-transaction.js', () => ({
   withTenantTransaction: (_db: unknown, _input: unknown, work: (transaction: unknown) => unknown) =>
     work({}),
@@ -12,6 +13,10 @@ vi.mock('../src/modules/policy/action-policy.js', () => ({
 vi.mock('../src/modules/providers/fanvue-action-intent.repository.js', () => ({
   reserveFanvueAction: ledger.reserve,
   settleFanvueAction: ledger.settle,
+}));
+vi.mock('../src/modules/providers/fanvue-comment-pending.repository.js', () => ({
+  replayScheduledFanvueComment: pending.replay,
+  scheduleFanvueComment: pending.schedule,
 }));
 
 import { FanvueCommentService } from '../src/modules/providers/fanvue-comment.service.js';
@@ -52,9 +57,37 @@ beforeEach(() => {
     events.push('settle');
     return Promise.resolve();
   });
+  pending.replay.mockResolvedValue(null);
+  pending.schedule.mockResolvedValue({
+    clientActionId: input.clientActionId,
+    status: 'pending',
+    dueAt: new Date('2026-11-11T10:00:00Z'),
+  });
 });
 
 describe('Fanvue creator-owned top-level comment command', () => {
+  it('schedules without provider POST and replays the immutable receipt before current preflight', async () => {
+    const dueAt = new Date('2026-11-11T10:00:00Z');
+    expect(await service.schedule({ ...input, dueAt })).toEqual({
+      clientActionId: input.clientActionId,
+      status: 'pending',
+      dueAt: dueAt.toISOString(),
+    });
+    expect(reads.getOwnedPostForComment).toHaveBeenCalledTimes(1);
+    expect(pending.schedule).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ dueAt }),
+    );
+    expect(client.createComment).not.toHaveBeenCalled();
+    pending.replay.mockResolvedValueOnce({
+      clientActionId: input.clientActionId,
+      status: 'pending',
+      dueAt,
+    });
+    await service.schedule({ ...input, dueAt });
+    expect(reads.getOwnedPostForComment).toHaveBeenCalledTimes(1);
+    expect(pending.schedule).toHaveBeenCalledTimes(1);
+  });
   it('preflights the selected account before durable reservation and one POST', async () => {
     await expect(service.send(input)).resolves.toEqual({ state: 'confirmed', commentUuid });
     expect(events).toEqual(['preflight', 'reserve', 'send', 'settle']);

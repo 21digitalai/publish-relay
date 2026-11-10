@@ -16,6 +16,10 @@ import {
   scheduleApprovedFanvueDm,
 } from './fanvue-dm-pending.repository.js';
 import {
+  FanvueCommentScheduleConflictError,
+  scheduleApprovedFanvueComment,
+} from './fanvue-comment-pending.repository.js';
+import {
   FacebookDmNoGoError,
   FacebookDmWindowClosedError,
 } from './facebook-messenger-send.service.js';
@@ -33,7 +37,8 @@ import { ActionPolicyDeniedError } from '../policy/action-policy.js';
 import type { scheduleApprovedPageComment } from './facebook-comment-approval.service.js';
 
 export interface EngagementSendCommands {
-  comments?: Pick<FanvueCommentService, 'send'>;
+  comments?: Pick<FanvueCommentService, 'send'> &
+    Partial<Pick<FanvueCommentService, 'preflightScheduledComment'>>;
   messages?: Pick<FanvueMessageService, 'sendText' | 'sendMessage' | 'preflightScheduledMessage'>;
   facebook?: {
     scheduleComment?: (
@@ -292,7 +297,36 @@ export async function scheduleFanvueProposal(
   if (proposal?.status !== 'pending' || proposal.revision !== input.expectedRevision)
     throw new EngagementProposalError('Proposal is stale or unavailable', 409);
   const sendable = sendableProposal(proposal);
-  if (sendable.provider !== 'fanvue' || sendable.kind !== 'dm' || !commands.messages)
+  if (sendable.provider !== 'fanvue')
+    throw new EngagementProposalError('Fanvue scheduling is unavailable', 409);
+  if (sendable.kind === 'comment') {
+    if (!commands.comments?.preflightScheduledComment)
+      throw new EngagementProposalError('Fanvue comment scheduling is unavailable', 409);
+    try {
+      const targetLabel = await commands.comments.preflightScheduledComment({
+        workspaceId: input.workspaceId,
+        accountId: proposal.accountId,
+        postUuid: sendable.targetId,
+        clientActionId: proposal.clientActionId,
+        text: sendable.text,
+        actor: { type: 'user', id: input.userId },
+      });
+      return await scheduleApprovedFanvueComment(database, {
+        ...input,
+        accountId: proposal.accountId,
+        postUuid: sendable.targetId,
+        clientActionId: proposal.clientActionId,
+        content: proposal.content,
+        text: sendable.text,
+        targetLabel,
+      });
+    } catch (error) {
+      if (isFanvuePreSendError(error) || error instanceof FanvueCommentScheduleConflictError)
+        throw new EngagementProposalError('Send permission or destination is unavailable', 409);
+      throw error;
+    }
+  }
+  if (!commands.messages)
     throw new EngagementProposalError('Fanvue DM scheduling is unavailable', 409);
   const command = {
     workspaceId: input.workspaceId,

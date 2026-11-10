@@ -52,6 +52,9 @@ import { FanvueReadService } from '../modules/providers/fanvue-read.service.js';
 import { FanvueMessageClient } from '../modules/providers/fanvue-message-client.js';
 import { FanvueMessageService } from '../modules/providers/fanvue-message.service.js';
 import { dispatchDueFanvueDms } from '../modules/providers/fanvue-dm-pending.worker.js';
+import { dispatchDueFanvueComments } from '../modules/providers/fanvue-comment-pending.worker.js';
+import { FanvueCommentService } from '../modules/providers/fanvue-comment.service.js';
+import { FanvueCommentClient } from '../modules/providers/fanvue-comment-client.js';
 import { allowAllActionPolicy } from '../modules/policy/action-policy.js';
 import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
 import { FanvuePostClient } from '../modules/providers/fanvue-post-client.js';
@@ -362,6 +365,19 @@ while (!shutdownController.signal.aborted) {
       });
       if (result)
         process.stdout.write(`${JSON.stringify({ event: 'fanvue_dm_cycle', ...result })}\n`);
+      const comment = await dispatchDueFanvueComments({
+        database,
+        comments: new FanvueCommentService(
+          database,
+          reads,
+          new FanvueCommentClient(),
+          allowAllActionPolicy,
+        ),
+        workerId: fanvueRuntime.workerId,
+        leaseMs: fanvueRuntime.leaseMs,
+      });
+      if (comment)
+        process.stdout.write(`${JSON.stringify({ event: 'fanvue_comment_cycle', ...comment })}\n`);
     } catch (error) {
       process.stderr.write(
         `${JSON.stringify({ event: 'fanvue_dm_cycle_failed', error: String(error) })}\n`,

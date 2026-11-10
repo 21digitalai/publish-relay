@@ -23,6 +23,9 @@ const headers = {
 
 function fixture(allowed = true) {
   const send = vi.fn().mockResolvedValue({ state: 'confirmed', commentUuid });
+  const schedule = vi
+    .fn()
+    .mockResolvedValue({ clientActionId, status: 'pending', dueAt: '2026-11-11T10:00:00.000Z' });
   const requireCapability = vi.fn().mockImplementation(() => {
     if (!allowed) throw new ApiKeyAuthorizationError('missing capability');
   });
@@ -37,7 +40,7 @@ function fixture(allowed = true) {
   const application = Fastify();
   registerFanvueCommentRoutes(
     application,
-    { send } as unknown as FanvueCommentService,
+    { send, schedule } as unknown as FanvueCommentService,
     apiKeys,
     new ApiRateLimiter({
       workspace: 100,
@@ -47,10 +50,41 @@ function fixture(allowed = true) {
       windowMs: 60_000,
     }),
   );
-  return { application, send, requireCapability };
+  return { application, send, schedule, requireCapability };
 }
 
 describe('Fanvue account-scoped machine comment send', () => {
+  it('schedules only with comment send authority and never calls the immediate sender', async () => {
+    const context = fixture();
+    const response = await context.application.inject({
+      method: 'POST',
+      url: `${url}/scheduled`,
+      headers,
+      payload: { text: 'Later', clientActionId, dueAt: '2026-11-11T10:00:00Z' },
+    });
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ data: { clientActionId, status: 'pending' } });
+    expect(context.schedule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId,
+        accountId,
+        postUuid,
+        text: 'Later',
+        actor: { type: 'api-key', id: '00000000-0000-4000-8000-000000000006' },
+      }),
+    );
+    expect(context.send).not.toHaveBeenCalled();
+    expect(
+      (
+        await fixture(false).application.inject({
+          method: 'POST',
+          url: `${url}/scheduled`,
+          headers,
+          payload: { text: 'Later', clientActionId, dueAt: '2026-11-11T10:00:00Z' },
+        })
+      ).statusCode,
+    ).toBe(403);
+  });
   it('requires distinct send scope and derives actor/workspace from the credential', async () => {
     const context = fixture();
     const response = await context.application.inject({

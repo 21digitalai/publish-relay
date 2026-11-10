@@ -29,7 +29,11 @@ interface Runtime {
 type Intent = NonNullable<Awaited<ReturnType<typeof claimDueFanvueDm>>>;
 type State = 'confirmed' | 'failed' | 'unknown' | 'pending';
 
-async function hasCurrentAuthority(database: NodePgDatabase, intent: Intent): Promise<boolean> {
+export async function hasCurrentFanvueAuthority(
+  database: NodePgDatabase,
+  intent: { workspaceId: string; actorType: string; actorId: string },
+  capability: 'fanvue:chats:send' | 'fanvue:comments:send',
+): Promise<boolean> {
   return withTenantTransaction(database, intent, async (tx) => {
     if (intent.actorType === 'user') {
       const [membership] = await tx
@@ -57,7 +61,7 @@ async function hasCurrentAuthority(database: NodePgDatabase, intent: Intent): Pr
           ),
         )
         .limit(1);
-      return key?.scopes.includes('fanvue:chats:send') ?? false;
+      return key?.scopes.includes(capability) ?? false;
     }
     if (intent.actorType !== 'delegated') return false;
     const [grant] = await tx
@@ -72,11 +76,7 @@ async function hasCurrentAuthority(database: NodePgDatabase, intent: Intent): Pr
         ),
       )
       .limit(1);
-    return (
-      (grant?.scopes.includes('fanvue:chats:send') &&
-        grant.allowed.includes('fanvue:chats:send')) ??
-      false
-    );
+    return (grant?.scopes.includes(capability) && grant.allowed.includes(capability)) ?? false;
   });
 }
 
@@ -121,7 +121,8 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   const prior = await existingActionState(runtime.database, intent);
   if (prior) return prior;
   if (intent.actorType === 'system') return 'failed';
-  if (!(await hasCurrentAuthority(runtime.database, intent))) return 'failed';
+  if (!(await hasCurrentFanvueAuthority(runtime.database, intent, 'fanvue:chats:send')))
+    return 'failed';
   try {
     const result = await runtime.messages.sendMessage({
       workspaceId: intent.workspaceId,

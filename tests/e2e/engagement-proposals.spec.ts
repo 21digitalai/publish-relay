@@ -1795,7 +1795,7 @@ test('failed list and detail loads offer a retry instead of an empty or endless 
   await expect(page.getByText('Destination: Mira Studio')).toBeVisible();
 });
 
-test('Fanvue text approval confirms once and removes the reply from the pending queue', async ({
+test('Fanvue comment approval schedules once and survives reload without claiming sent', async ({
   page,
 }, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
@@ -1818,31 +1818,31 @@ test('Fanvue text approval confirms once and removes the reply from the pending 
     const list = new URL(request.url()).pathname.endsWith('/api/engagement-proposals');
     if (request.method() === 'POST' && request.url().endsWith('/approve')) {
       approvals += 1;
-      expect(request.postDataJSON()).toEqual({ expectedRevision: 1 });
-      status = 'sent';
+      expect(request.postDataJSON()).toEqual({ expectedRevision: 1, sendMode: 'scheduled' });
+      status = 'scheduled';
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ data: { id: proposalId, status }, error: null }),
+        body: JSON.stringify({
+          data: { id: proposalId, status, dueAt: '2026-11-11T10:00:00Z' },
+          error: null,
+        }),
       });
       return;
     }
     const data = list
       ? {
-          items:
-            status === 'pending'
-              ? [
-                  {
-                    id: proposalId,
-                    accountDisplayName: 'Mira Studio',
-                    provider: 'fanvue',
-                    kind: 'comment',
-                    status,
-                    sourcePreview: 'Nice work',
-                    contentPreview: 'Thank you',
-                    createdAt: '2026-10-25T12:00:00Z',
-                  },
-                ]
-              : [],
+          items: [
+            {
+              id: proposalId,
+              accountDisplayName: 'Mira Studio',
+              provider: 'fanvue',
+              kind: 'comment',
+              status,
+              sourcePreview: 'Nice work',
+              contentPreview: 'Thank you',
+              createdAt: '2026-10-25T12:00:00Z',
+            },
+          ],
           nextCursor: null,
         }
       : {
@@ -1864,7 +1864,7 @@ test('Fanvue text approval confirms once and removes the reply from the pending 
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await page.getByRole('button', { name: /Fanvue comment/ }).click();
-  const approve = page.getByRole('button', { name: 'Approve and send', exact: true });
+  const approve = page.getByRole('button', { name: 'Approve and schedule', exact: true });
   await expect(approve).toBeEnabled();
   await approve.click();
   await expect(page.getByRole('alertdialog')).toBeVisible();
@@ -1872,15 +1872,18 @@ test('Fanvue text approval confirms once and removes the reply from the pending 
     path: testInfo.outputPath('proposal-approval-confirm.png'),
     fullPage: true,
   });
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
-  await expect(page.getByText('Reply sent through Fanvue.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0);
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await expect(page.getByText(/Scheduled/).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve and schedule', exact: true })).toHaveCount(
+    0,
+  );
   expect(approvals).toBe(1);
   await page.reload();
-  await expect(page.getByText('No replies await review or reconciliation.')).toBeVisible();
+  await page.getByRole('button', { name: /Fanvue comment/ }).click();
+  await expect(page.getByRole('button', { name: /Cancel scheduled reply/ })).toBeVisible();
 });
 
-test('unknown Fanvue comment approval stays visible after reload without a resend control', async ({
+test('unknown Fanvue comment dispatch stays visible after scheduled approval without a resend control', async ({
   page,
 }) => {
   const registered = await page.request.post('/api/auth/register', {
@@ -1903,11 +1906,15 @@ test('unknown Fanvue comment approval stays visible after reload without a resen
     const list = new URL(request.url()).pathname.endsWith('/api/engagement-proposals');
     if (request.method() === 'POST' && request.url().endsWith('/approve')) {
       approvals += 1;
-      status = 'unknown';
+      expect(request.postDataJSON()).toEqual({ expectedRevision: 1, sendMode: 'scheduled' });
+      status = 'scheduled';
       await route.fulfill({
         status: 202,
         contentType: 'application/json',
-        body: JSON.stringify({ data: { id: proposalId, status }, error: null }),
+        body: JSON.stringify({
+          data: { id: proposalId, status, dueAt: '2026-11-11T10:00:00Z' },
+          error: null,
+        }),
       });
       return;
     }
@@ -1946,12 +1953,15 @@ test('unknown Fanvue comment approval stays visible after reload without a resen
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await page.getByRole('button', { name: /Fanvue comment/ }).click();
-  await page.getByRole('button', { name: 'Approve and send', exact: true }).click();
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
-  await expect(page.getByText(/Send outcome is unknown/).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await expect(page.getByText(/Scheduled/).first()).toBeVisible();
+  status = 'unknown';
   await page.reload();
   await expect(page.getByText('Send outcome unknown')).toBeVisible();
   await page.getByRole('button', { name: /Fanvue comment/ }).click();
-  await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Approve and schedule', exact: true })).toHaveCount(
+    0,
+  );
   expect(approvals).toBe(1);
 });

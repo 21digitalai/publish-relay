@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray, lt, notExists, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, notExists, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   fanvueActionIntents,
   fanvueDmPendingIntents,
+  fanvueCommentPendingIntents,
   providerAccounts,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -36,7 +37,7 @@ export async function listFanvueActionHistory(
         priceCents: fanvueActionIntents.priceCents,
         status: fanvueActionIntents.state,
         providerReceipt: fanvueActionIntents.providerObjectUuid,
-        dueAt: fanvueDmPendingIntents.dueAt,
+        dueAt: sql<Date | null>`coalesce(${fanvueDmPendingIntents.dueAt}, ${fanvueCommentPendingIntents.dueAt})`,
         createdAt: fanvueActionIntents.createdAt,
         updatedAt: fanvueActionIntents.updatedAt,
       })
@@ -54,6 +55,14 @@ export async function listFanvueActionHistory(
           eq(fanvueDmPendingIntents.workspaceId, fanvueActionIntents.workspaceId),
           eq(fanvueDmPendingIntents.clientActionId, fanvueActionIntents.clientActionId),
           eq(fanvueDmPendingIntents.accountId, fanvueActionIntents.accountId),
+        ),
+      )
+      .leftJoin(
+        fanvueCommentPendingIntents,
+        and(
+          eq(fanvueCommentPendingIntents.workspaceId, fanvueActionIntents.workspaceId),
+          eq(fanvueCommentPendingIntents.clientActionId, fanvueActionIntents.clientActionId),
+          eq(fanvueCommentPendingIntents.accountId, fanvueActionIntents.accountId),
         ),
       )
       .where(
@@ -152,6 +161,79 @@ export async function listFanvueActionHistory(
             )
             .orderBy(desc(fanvueDmPendingIntents.createdAt), desc(fanvueDmPendingIntents.id))
             .limit(input.limit);
+    const commentPendingRows =
+      input.kind === 'message' ||
+      (input.status &&
+        !['pending', 'claimed', 'cancelled', 'failed', 'unknown'].includes(input.status))
+        ? []
+        : await tx
+            .select({
+              id: fanvueCommentPendingIntents.id,
+              accountId: fanvueCommentPendingIntents.accountId,
+              accountDisplayName: providerAccounts.displayName,
+              outboundText: fanvueCommentPendingIntents.textBody,
+              targetLabel: fanvueCommentPendingIntents.targetLabel,
+              status: fanvueCommentPendingIntents.status,
+              dueAt: fanvueCommentPendingIntents.dueAt,
+              createdAt: fanvueCommentPendingIntents.createdAt,
+              updatedAt: fanvueCommentPendingIntents.updatedAt,
+            })
+            .from(fanvueCommentPendingIntents)
+            .innerJoin(
+              providerAccounts,
+              and(
+                eq(providerAccounts.workspaceId, fanvueCommentPendingIntents.workspaceId),
+                eq(providerAccounts.id, fanvueCommentPendingIntents.accountId),
+              ),
+            )
+            .where(
+              and(
+                eq(fanvueCommentPendingIntents.workspaceId, input.workspaceId),
+                input.accountId
+                  ? eq(fanvueCommentPendingIntents.accountId, input.accountId)
+                  : undefined,
+                input.status
+                  ? eq(fanvueCommentPendingIntents.status, input.status)
+                  : inArray(fanvueCommentPendingIntents.status, [
+                      'pending',
+                      'claimed',
+                      'cancelled',
+                      'failed',
+                      'unknown',
+                    ]),
+                notExists(
+                  tx
+                    .select({ id: fanvueActionIntents.id })
+                    .from(fanvueActionIntents)
+                    .where(
+                      and(
+                        eq(
+                          fanvueActionIntents.workspaceId,
+                          fanvueCommentPendingIntents.workspaceId,
+                        ),
+                        eq(
+                          fanvueActionIntents.clientActionId,
+                          fanvueCommentPendingIntents.clientActionId,
+                        ),
+                      ),
+                    ),
+                ),
+                input.beforeCreatedAt && input.beforeId
+                  ? or(
+                      lt(fanvueCommentPendingIntents.createdAt, input.beforeCreatedAt),
+                      and(
+                        eq(fanvueCommentPendingIntents.createdAt, input.beforeCreatedAt),
+                        lt(fanvueCommentPendingIntents.id, input.beforeId),
+                      ),
+                    )
+                  : undefined,
+              ),
+            )
+            .orderBy(
+              desc(fanvueCommentPendingIntents.createdAt),
+              desc(fanvueCommentPendingIntents.id),
+            )
+            .limit(input.limit);
     const merged = [
       ...actionRows,
       ...pendingRows.map((row) => ({
@@ -169,10 +251,20 @@ export async function listFanvueActionHistory(
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       })),
+      ...commentPendingRows.map((row) => ({
+        ...row,
+        kind: 'comment',
+        mediaCount: 0,
+        priceCents: null,
+        providerReceipt: null,
+      })),
     ];
     merged.sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
     );
-    return merged.slice(0, input.limit);
+    return merged.slice(0, input.limit).map((row) => ({
+      ...row,
+      dueAt: row.dueAt ? new Date(row.dueAt) : null,
+    }));
   });
 }

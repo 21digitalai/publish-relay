@@ -13,6 +13,10 @@ import {
 import type { FanvueCommentClient } from './fanvue-comment-client.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
 import { markFanvuePreSendError } from './fanvue-pre-send-error.js';
+import {
+  replayScheduledFanvueComment,
+  scheduleFanvueComment,
+} from './fanvue-comment-pending.repository.js';
 import type { FanvueReadService } from './fanvue-read.service.js';
 
 const sendInput = z.strictObject({
@@ -56,6 +60,57 @@ export class FanvueCommentService {
     private readonly client: FanvueCommentClient,
     private readonly policy: ActionPolicy,
   ) {}
+
+  async preflightScheduledComment(input: z.input<typeof sendInput>): Promise<string | null> {
+    const command = sendInput.parse(input);
+    try {
+      const selected = await this.reads.getOwnedPostForComment(command);
+      await withTenantTransaction(this.database, command, (transaction) =>
+        enforceWorkspaceAction(transaction, this.policy, {
+          workspaceId: command.workspaceId,
+          actor: command.actor,
+          action: 'engagement.send',
+          request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
+          requestedProviderAccountIds: [command.accountId],
+        }),
+      );
+      const excerpt = selected.post.text?.trim().slice(0, 160);
+      const postedAt = Date.parse(selected.post.createdAt);
+      return excerpt?.length
+        ? excerpt
+        : Number.isFinite(postedAt)
+          ? `Media post · ${new Date(postedAt).toISOString().slice(0, 10)}`
+          : 'Selected account post';
+    } catch (cause) {
+      throw markFanvuePreSendError(cause);
+    }
+  }
+
+  async schedule(input: z.input<typeof sendInput> & { dueAt: Date }) {
+    const { dueAt, ...request } = input;
+    const command = sendInput.parse(request);
+    const prior = await replayScheduledFanvueComment(this.database, {
+      ...command,
+      dueAt,
+    });
+    if (prior)
+      return {
+        clientActionId: prior.clientActionId,
+        status: prior.status,
+        dueAt: prior.dueAt.toISOString(),
+      };
+    const targetLabel = await this.preflightScheduledComment(command);
+    const row = await scheduleFanvueComment(this.database, {
+      ...command,
+      targetLabel,
+      dueAt,
+    });
+    return {
+      clientActionId: row.clientActionId,
+      status: row.status,
+      dueAt: row.dueAt.toISOString(),
+    };
+  }
 
   async send(input: z.input<typeof sendInput>): Promise<FanvueCommentResult> {
     const command = sendInput.parse(input);

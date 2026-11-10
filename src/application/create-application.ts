@@ -299,6 +299,7 @@ function registerMachineApiRoutes(
       apiKeys,
       rateLimiter,
       delegatedAuthorization,
+      database,
     );
     registerFanvueMessageRoutes(
       application,

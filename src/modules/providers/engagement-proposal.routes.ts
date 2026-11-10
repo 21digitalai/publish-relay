@@ -32,6 +32,7 @@ import {
 } from './facebook-dm-pending.repository.js';
 import { getScheduledProposalPageComment } from './facebook-comment-pending.repository.js';
 import { findPendingFanvueDm } from './fanvue-dm-pending.repository.js';
+import { findScheduledFanvueComment } from './fanvue-comment-pending.repository.js';
 import {
   listPageCommentHistory,
   pageCommentPostLink,
@@ -681,15 +682,20 @@ export function registerEngagementProposalRoutes(
             })
         : null;
     const fanvueSchedule =
-      row.provider === 'fanvue' &&
-      row.kind === 'dm' &&
-      ['scheduled', 'sending'].includes(row.status)
-        ? await findPendingFanvueDm(database, {
-            workspaceId: identity.workspaceId,
-            accountId: row.accountId,
-            fanUuid: row.targetId,
-            clientActionId: row.clientActionId,
-          })
+      row.provider === 'fanvue' && ['scheduled', 'sending'].includes(row.status)
+        ? row.kind === 'dm'
+          ? await findPendingFanvueDm(database, {
+              workspaceId: identity.workspaceId,
+              accountId: row.accountId,
+              fanUuid: row.targetId,
+              clientActionId: row.clientActionId,
+            })
+          : await findScheduledFanvueComment(database, {
+              workspaceId: identity.workspaceId,
+              accountId: row.accountId,
+              postUuid: row.targetId,
+              clientActionId: row.clientActionId,
+            })
         : null;
     const schedule = fanvueSchedule
       ? { dueAt: fanvueSchedule.dueAt.toISOString(), status: fanvueSchedule.status }

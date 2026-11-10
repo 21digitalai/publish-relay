@@ -61,6 +61,12 @@ describe('Fanvue action history', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0115_fanvue_comment_pending_intents.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const result = await reserveFanvueAction(database, {
         workspaceId,

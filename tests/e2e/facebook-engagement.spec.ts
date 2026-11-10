@@ -3,6 +3,114 @@ import { expect, test } from '@playwright/test';
 const accountId = '00000000-0000-4000-8000-000000000281';
 const keyId = '00000000-0000-4000-8000-000000000282';
 
+test('Page guidance keeps shared facts separate from channel instructions', async ({
+  page,
+}, testInfo) => {
+  const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Guidance Owner',
+      email: `guidance-${suffix}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: `Guidance ${suffix}`,
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const saved = { profile: 'Christina lives in Sofia.', dmGuidance: '', commentGuidance: '' };
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: accountId,
+              provider: 'meta',
+              destinationProvider: 'facebook_page',
+              displayName: 'Christina Page',
+              status: 'active',
+              availability: 'active',
+              capabilityFreshness: 'fresh',
+              capabilitySnapshot: { contentKinds: ['text'] },
+              adapterDefaults: {},
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/engagement`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          comments: { localEnabled: false, providerGrant: 'unknown' },
+          dms: { localEnabled: false, providerGrant: 'unknown' },
+        },
+        error: null,
+      }),
+    }),
+  );
+  let failSave = true;
+  await page.route(`**/api/facebook-pages/${accountId}/guidance`, (route) => {
+    if (route.request().method() === 'PATCH') {
+      if (failSave) {
+        failSave = false;
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ data: null, error: 'Unavailable' }),
+        });
+      }
+      Object.assign(saved, route.request().postDataJSON());
+    }
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: saved, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/accounts`);
+  await page.getByRole('button', { name: 'Page guidance' }).click();
+  const dialog = page.getByRole('dialog', { name: /Page guidance/ });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Shared Page profile' })).toHaveValue(
+    saved.profile,
+  );
+  await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue('');
+  await expect(page.getByRole('textbox', { name: 'Public-comment guidance' })).toHaveValue('');
+  await page
+    .getByRole('textbox', { name: 'Public-comment guidance' })
+    .fill('Keep public replies playful.');
+  await page.getByRole('button', { name: 'Save Page guidance' }).click();
+  await expect(page.getByText('Page guidance was not saved. Retry.')).toBeVisible();
+  await page.getByRole('button', { name: 'Save Page guidance' }).click();
+  await expect(page.getByText('Page guidance saved.')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('facebook-page-guidance-desktop.png') });
+  await page.getByRole('button', { name: 'Close Page guidance' }).click();
+  await page.reload();
+  await page.getByRole('button', { name: 'Page guidance' }).click();
+  await expect(page.getByRole('textbox', { name: 'Public-comment guidance' })).toHaveValue(
+    'Keep public replies playful.',
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  const box = await dialog.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) throw new Error('Page guidance dialog has no visible bounds');
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath('facebook-page-guidance-mobile.png') });
+  await page.getByRole('textbox', { name: 'DM guidance' }).fill('Answer privately.');
+  await page.getByRole('button', { name: 'Close Page guidance' }).click();
+  await expect(page.getByText('Discard unsaved Page guidance changes?')).toBeVisible();
+  await page.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(page.getByRole('textbox', { name: 'DM guidance' })).toHaveValue('Answer privately.');
+});
+
 test('Page owner manages separate local modules and explicit agent access', async ({
   page,
 }, testInfo) => {

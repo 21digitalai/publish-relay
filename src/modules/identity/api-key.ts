@@ -22,6 +22,8 @@ export const DEFAULT_API_KEY_CAPABILITIES = [
   'engagement:propose',
   'fanvue:guidance:read',
   'fanvue:guidance:write',
+  'facebook:guidance:read',
+  'facebook:guidance:write',
 ] as const;
 
 export const PAGE_ENGAGEMENT_CAPABILITIES = [

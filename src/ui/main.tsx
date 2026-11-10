@@ -7,6 +7,7 @@ import { DefaultsSelect } from './defaults-select.js';
 import { EngagementProposalsPage } from './engagement-proposals.js';
 import { FacebookPageExposureControl } from './facebook-page-exposure-control.js';
 import { FacebookEngagementControl } from './facebook-engagement-control.js';
+import { FacebookPageGuidanceControl } from './facebook-page-guidance-control.js';
 import { FanvueAudienceControl } from './fanvue-audience-control.js';
 import { FanvueGuidanceControl } from './fanvue-guidance-control.js';
 import { LiveRegion } from './feedback.js';
@@ -1217,6 +1218,11 @@ function AccountRow({
       {!account.isExposed &&
         account.destinationProvider === 'facebook_page' &&
         originWorkspaceId && <FacebookEngagementControl key={account.id} accountId={account.id} />}
+      {!account.isExposed &&
+        account.destinationProvider === 'facebook_page' &&
+        canManageAccount && (
+          <FacebookPageGuidanceControl accountId={account.id} accountName={account.name} />
+        )}
       {!account.isExposed &&
         account.destinationProvider === 'facebook_page' &&
         originWorkspaceId && (

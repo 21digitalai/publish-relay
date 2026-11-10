@@ -42,6 +42,12 @@ describe('Fanvue DM pending intent foundation', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0112_fanvue_dm_pending_media_preview.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const scheduled = await scheduleFanvueDm(database, input);
       expect(scheduled).toMatchObject({ status: 'pending', text: 'Scheduled hello', mediaIds: [] });
@@ -55,10 +61,24 @@ describe('Fanvue DM pending intent foundation', () => {
       expect(await cancelPendingFanvueDm(database, input)).toBe(true);
       expect(await cancelPendingFanvueDm(database, input)).toBe(false);
       expect((await scheduleFanvueDm(database, input)).status).toBe('cancelled');
+      const priced = {
+        ...input,
+        clientActionId: '00000000-0000-4000-8000-000000000010',
+        mediaIds: ['00000000-0000-4000-8000-000000000011'],
+        mediaPreviewId: '00000000-0000-4000-8000-000000000011',
+        price: 300,
+      };
+      expect(await scheduleFanvueDm(database, priced)).toMatchObject({
+        mediaPreviewId: priced.mediaPreviewId,
+        price: 300,
+      });
+      await expect(
+        scheduleFanvueDm(database, { ...priced, mediaPreviewId: input.fanUuid }),
+      ).rejects.toThrow();
       const count = await pg.query<{ count: number }>(
         `SELECT count(*)::integer AS count FROM fanvue_dm_pending_intents`,
       );
-      expect(count.rows[0]?.count).toBe(1);
+      expect(count.rows[0]?.count).toBe(2);
     } finally {
       await pg.close();
     }

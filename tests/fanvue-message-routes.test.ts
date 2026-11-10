@@ -31,6 +31,15 @@ const headers = {
 function fixture(allowed = true) {
   const sendMessage = vi.fn().mockResolvedValue({ state: 'confirmed', messageUuid });
   const createChat = vi.fn().mockResolvedValue({ state: 'confirmed', fanUuid });
+  const scheduleMessage = vi.fn().mockResolvedValue({
+    clientActionId,
+    status: 'pending',
+    dueAt: new Date('2026-11-11T10:00:00Z'),
+  });
+  const scheduledMessageStatus = vi
+    .fn()
+    .mockResolvedValue({ clientActionId, status: 'pending', dueAt: '2026-11-11T10:00:00.000Z' });
+  const cancelScheduledMessage = vi.fn().mockResolvedValue(true);
   const requireCapability = vi.fn().mockImplementation(() => {
     if (!allowed) throw new ApiKeyAuthorizationError('missing capability');
   });
@@ -49,7 +58,13 @@ function fixture(allowed = true) {
   const application = Fastify();
   registerFanvueMessageRoutes(
     application,
-    { sendMessage, createChat } as unknown as FanvueMessageService,
+    {
+      sendMessage,
+      createChat,
+      scheduleMessage,
+      scheduledMessageStatus,
+      cancelScheduledMessage,
+    } as unknown as FanvueMessageService,
     apiKeys,
     new ApiRateLimiter({
       workspace: 100,
@@ -59,8 +74,87 @@ function fixture(allowed = true) {
       windowMs: 60_000,
     }),
   );
-  return { application, sendMessage, createChat, requireCapability };
+  return {
+    application,
+    sendMessage,
+    createChat,
+    scheduleMessage,
+    scheduledMessageStatus,
+    cancelScheduledMessage,
+    requireCapability,
+  };
 }
+
+describe('Fanvue scheduled DM machine routes', () => {
+  const scheduledUrl = `${url}/scheduled`;
+  const receiptUrl = `${scheduledUrl}/${clientActionId}`;
+  it('schedules without sending and exposes only a bounded receipt', async () => {
+    const context = fixture();
+    const response = await context.application.inject({
+      method: 'POST',
+      url: scheduledUrl,
+      headers,
+      payload: { clientActionId, text: 'Later', dueAt: '2026-11-11T10:00:00Z' },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(context.scheduleMessage).toHaveBeenCalledWith({
+      workspaceId,
+      accountId,
+      fanUuid,
+      clientActionId,
+      text: 'Later',
+      dueAt: new Date('2026-11-11T10:00:00Z'),
+      actor: { type: 'api-key', id: actorId },
+    });
+    expect(context.sendMessage).not.toHaveBeenCalled();
+    expect(response.json()).toMatchObject({
+      data: {
+        clientActionId,
+        status: 'pending',
+        dueAt: '2026-11-11T10:00:00.000Z',
+      },
+    });
+    expect(response.body).not.toMatch(/actorId|accessToken|mediaIds|price|fingerprint/);
+    expect(Buffer.byteLength(response.body)).toBeLessThan(512);
+    const status = await context.application.inject({ method: 'GET', url: receiptUrl, headers });
+    expect(status.statusCode).toBe(200);
+    expect(context.scheduledMessageStatus).toHaveBeenCalledWith({
+      workspaceId,
+      accountId,
+      fanUuid,
+      clientActionId,
+    });
+    const cancel = await context.application.inject({ method: 'DELETE', url: receiptUrl, headers });
+    expect(cancel.json()).toMatchObject({ data: { cancelled: true } });
+  });
+
+  it('rejects read-only keys and provider media UUIDs before scheduling', async () => {
+    const denied = fixture(false);
+    expect(
+      (
+        await denied.application.inject({
+          method: 'POST',
+          url: scheduledUrl,
+          headers,
+          payload: { clientActionId, text: 'Later', dueAt: '2026-11-11T10:00:00Z' },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(denied.scheduleMessage).not.toHaveBeenCalled();
+    const context = fixture();
+    expect(
+      (
+        await context.application.inject({
+          method: 'POST',
+          url: scheduledUrl,
+          headers,
+          payload: { clientActionId, mediaUuids: [mediaUuid], dueAt: '2026-11-11T10:00:00Z' },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(context.scheduleMessage).not.toHaveBeenCalled();
+  });
+});
 
 describe('Fanvue selected-fan chat creation route', () => {
   const chatUrl = `/api/v1/fanvue/accounts/${accountId}/chats`;

@@ -11,7 +11,7 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
-const scheduleInput = z
+export const scheduleInput = z
   .strictObject({
     workspaceId: z.uuid(),
     accountId: z.uuid(),
@@ -20,6 +20,7 @@ const scheduleInput = z
     actor: z.strictObject({ type: z.enum(['user', 'api-key', 'delegated']), id: z.uuid() }),
     text: z.string().min(1).max(5000).optional(),
     mediaIds: z.array(z.uuid()).min(1).max(10).optional(),
+    mediaPreviewId: z.uuid().optional(),
     price: z.number().int().min(300).optional(),
     dueAt: z.date(),
   })
@@ -30,6 +31,11 @@ const scheduleInput = z
       context.addIssue({ code: 'custom', message: 'Priced messages require media' });
     if (input.mediaIds && new Set(input.mediaIds).size !== input.mediaIds.length)
       context.addIssue({ code: 'custom', message: 'Duplicate media is not allowed' });
+    if (
+      input.mediaPreviewId &&
+      (input.price === undefined || !input.mediaIds?.includes(input.mediaPreviewId))
+    )
+      context.addIssue({ code: 'custom', message: 'Preview must be attached to priced media' });
   });
 
 export class FanvueDmScheduleConflictError extends Error {
@@ -48,6 +54,7 @@ const projection = {
   actorId: fanvueDmPendingIntents.actorId,
   text: fanvueDmPendingIntents.textBody,
   mediaIds: fanvueDmPendingIntents.mediaIds,
+  mediaPreviewId: fanvueDmPendingIntents.mediaPreviewId,
   price: fanvueDmPendingIntents.priceCents,
   dueAt: fanvueDmPendingIntents.dueAt,
   status: fanvueDmPendingIntents.status,
@@ -70,6 +77,7 @@ export async function scheduleFanvueDm(
         actorId: input.actor.id,
         text: input.text ?? null,
         mediaIds,
+        mediaPreviewId: input.mediaPreviewId ?? null,
         price: input.price ?? null,
         dueAt: input.dueAt.toISOString(),
       }),
@@ -109,6 +117,7 @@ export async function scheduleFanvueDm(
         actorId: input.actor.id,
         textBody: input.text ?? null,
         mediaIds,
+        mediaPreviewId: input.mediaPreviewId ?? null,
         priceCents: input.price ?? null,
         dueAt: input.dueAt,
       })
@@ -136,6 +145,7 @@ export async function scheduleFanvueDm(
             actorId: existing.actorId,
             text: existing.text,
             mediaIds: existing.mediaIds,
+            mediaPreviewId: existing.mediaPreviewId,
             price: existing.price,
             dueAt: existing.dueAt.toISOString(),
           }),
@@ -148,7 +158,7 @@ export async function scheduleFanvueDm(
 
 export async function cancelPendingFanvueDm(
   database: NodePgDatabase,
-  input: { workspaceId: string; accountId: string; clientActionId: string },
+  input: { workspaceId: string; accountId: string; fanUuid: string; clientActionId: string },
 ) {
   return withTenantTransaction(database, input, async (tx) => {
     const [cancelled] = await tx
@@ -158,11 +168,33 @@ export async function cancelPendingFanvueDm(
         and(
           eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
           eq(fanvueDmPendingIntents.accountId, input.accountId),
+          eq(fanvueDmPendingIntents.fanUuid, input.fanUuid),
           eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
           eq(fanvueDmPendingIntents.status, 'pending'),
         ),
       )
       .returning({ id: fanvueDmPendingIntents.id });
     return Boolean(cancelled);
+  });
+}
+
+export async function findPendingFanvueDm(
+  database: NodePgDatabase,
+  input: { workspaceId: string; accountId: string; fanUuid: string; clientActionId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [intent] = await tx
+      .select(projection)
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.accountId, input.accountId),
+          eq(fanvueDmPendingIntents.fanUuid, input.fanUuid),
+          eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    return intent ?? null;
   });
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const ledger = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), settle: vi.fn() }));
 const policy = vi.hoisted(() => ({ enforce: vi.fn(() => Promise.resolve()) }));
 const readyMedia = vi.hoisted(() => ({ get: vi.fn() }));
+const pending = vi.hoisted(() => ({ schedule: vi.fn(), find: vi.fn(), cancel: vi.fn() }));
 vi.mock('../src/database/tenant-transaction.js', () => ({
   withTenantTransaction: (_db: unknown, _input: unknown, work: (transaction: unknown) => unknown) =>
     work({}),
@@ -17,6 +18,12 @@ vi.mock('../src/modules/providers/fanvue-action-intent.repository.js', () => ({
 }));
 vi.mock('../src/modules/providers/fanvue-dm-ready-media.repository.js', () => ({
   getReadyFanvueDmMedia: readyMedia.get,
+}));
+vi.mock('../src/modules/providers/fanvue-dm-pending.repository.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  scheduleFanvueDm: pending.schedule,
+  findPendingFanvueDm: pending.find,
+  cancelPendingFanvueDm: pending.cancel,
 }));
 
 import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
@@ -71,6 +78,38 @@ beforeEach(() => {
     return Promise.resolve();
   });
   readyMedia.get.mockResolvedValue(new Map([[localMediaId, mediaUuid]]));
+  pending.schedule.mockResolvedValue({ status: 'pending' });
+});
+
+describe('Fanvue scheduled message preflight', () => {
+  const dueAt = new Date('2026-11-11T10:00:00Z');
+  it('persists timing only after current account, target and policy checks', async () => {
+    await service.scheduleMessage({ ...input, dueAt });
+    expect(reads.getExistingChatForMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+      }),
+    );
+    expect(policy.enforce).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ action: 'engagement.send' }),
+    );
+    expect(pending.schedule).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ...input, dueAt }),
+    );
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not persist or send on revoked chat access', async () => {
+    reads.getExistingChatForMessage.mockRejectedValueOnce(new Error('revoked'));
+    await expect(service.scheduleMessage({ ...input, dueAt })).rejects.toThrow('revoked');
+    expect(pending.schedule).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('Fanvue selected-fan chat creation', () => {

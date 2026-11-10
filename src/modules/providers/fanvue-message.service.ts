@@ -12,6 +12,12 @@ import {
   type FanvueActionReservation,
 } from './fanvue-action-intent.repository.js';
 import { getReadyFanvueDmMedia } from './fanvue-dm-ready-media.repository.js';
+import {
+  cancelPendingFanvueDm,
+  findPendingFanvueDm,
+  scheduleFanvueDm,
+  scheduleInput,
+} from './fanvue-dm-pending.repository.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
 import { markFanvuePreSendError } from './fanvue-pre-send-error.js';
 import type { FanvueMessageClient } from './fanvue-message-client.js';
@@ -137,6 +143,61 @@ export class FanvueMessageService {
     private readonly client: FanvueMessageClient,
     private readonly policy: ActionPolicy,
   ) {}
+
+  async scheduleMessage(input: z.input<typeof scheduleInput>) {
+    const command = scheduleInput.parse(input);
+    try {
+      await this.reads.getExistingChatForMessage(command);
+      await this.resolveMedia(command);
+      await withTenantTransaction(this.database, command, (transaction) =>
+        enforceWorkspaceAction(transaction, this.policy, {
+          workspaceId: command.workspaceId,
+          actor: command.actor,
+          action: 'engagement.send',
+          request: { provider: 'fanvue', providerAccountIds: [command.accountId] },
+          requestedProviderAccountIds: [command.accountId],
+        }),
+      );
+    } catch (cause) {
+      throw markFanvuePreSendError(cause);
+    }
+    return scheduleFanvueDm(this.database, {
+      workspaceId: command.workspaceId,
+      accountId: command.accountId,
+      fanUuid: command.fanUuid,
+      clientActionId: command.clientActionId,
+      actor: command.actor,
+      ...(command.text ? { text: command.text } : {}),
+      ...(command.mediaIds ? { mediaIds: command.mediaIds } : {}),
+      ...(command.mediaPreviewId ? { mediaPreviewId: command.mediaPreviewId } : {}),
+      ...(command.price !== undefined ? { price: command.price } : {}),
+      dueAt: input.dueAt,
+    });
+  }
+
+  async scheduledMessageStatus(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+    clientActionId: string;
+  }) {
+    const intent = await findPendingFanvueDm(this.database, input);
+    if (!intent) return null;
+    return {
+      clientActionId: intent.clientActionId,
+      status: intent.status,
+      dueAt: intent.dueAt.toISOString(),
+    };
+  }
+
+  async cancelScheduledMessage(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+    clientActionId: string;
+  }) {
+    return cancelPendingFanvueDm(this.database, input);
+  }
 
   async createChat(
     input: z.input<typeof createChatCommand>,

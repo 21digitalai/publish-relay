@@ -1611,6 +1611,7 @@ export const fanvueDmPendingIntents = pgTable(
     actorId: uuid('actor_id').notNull(),
     textBody: text('text_body'),
     mediaIds: jsonb('media_ids').$type<string[]>().notNull().default([]),
+    mediaPreviewId: uuid('media_preview_id'),
     priceCents: integer('price_cents'),
     dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
     status: text('status').notNull().default('pending'),

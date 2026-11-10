@@ -124,20 +124,23 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   if (!(await hasCurrentFanvueAuthority(runtime.database, intent, 'fanvue:chats:send')))
     return 'failed';
   try {
-    const result = await runtime.messages.sendMessage({
-      workspaceId: intent.workspaceId,
-      accountId: intent.accountId,
-      fanUuid: intent.fanUuid,
-      clientActionId: intent.clientActionId,
-      actor: {
-        type: intent.actorType === 'api_key' ? 'api-key' : intent.actorType,
-        id: intent.actorId,
+    const result = await runtime.messages.sendMessage(
+      {
+        workspaceId: intent.workspaceId,
+        accountId: intent.accountId,
+        fanUuid: intent.fanUuid,
+        clientActionId: intent.clientActionId,
+        actor: {
+          type: intent.actorType === 'api_key' ? 'api-key' : intent.actorType,
+          id: intent.actorId,
+        },
+        ...(intent.text ? { text: intent.text } : {}),
+        ...(intent.mediaIds.length ? { mediaIds: intent.mediaIds } : {}),
+        ...(intent.mediaPreviewId ? { mediaPreviewId: intent.mediaPreviewId } : {}),
+        ...(intent.price !== null ? { price: intent.price } : {}),
       },
-      ...(intent.text ? { text: intent.text } : {}),
-      ...(intent.mediaIds.length ? { mediaIds: intent.mediaIds } : {}),
-      ...(intent.mediaPreviewId ? { mediaPreviewId: intent.mediaPreviewId } : {}),
-      ...(intent.price !== null ? { price: intent.price } : {}),
-    });
+      intent.leaseOwner ?? '',
+    );
     return result.state;
   } catch (error) {
     // A committed action reservation can have reached Fanvue even if settlement failed.

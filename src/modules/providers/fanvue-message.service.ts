@@ -285,7 +285,10 @@ export class FanvueMessageService {
     return this.sendMessage(textMessage.parse(input));
   }
 
-  async sendMessage(input: z.input<typeof messageCommand>): Promise<FanvueTextMessageResult> {
+  async sendMessage(
+    input: z.input<typeof messageCommand>,
+    scheduledLeaseOwner?: string,
+  ): Promise<FanvueTextMessageResult> {
     const command = messageCommand.parse(input);
     let accessToken: string;
     let targetLabel: string | null;
@@ -329,6 +332,11 @@ export class FanvueMessageService {
       targetLabel,
       mediaCount: mediaUuids?.length ?? 0,
       priceCents: command.price ?? null,
+      mediaIds: command.mediaIds ?? [],
+      mediaPreviewId: command.mediaPreviewId ?? null,
+      actorType: command.actor.type === 'api-key' ? 'api_key' : command.actor.type,
+      actorId: command.actor.id,
+      scheduledLeaseOwner,
     };
     const reservation = await reserveFanvueAction(this.database, intent);
     if (reservation.kind !== 'new') return replayResult(reservation);

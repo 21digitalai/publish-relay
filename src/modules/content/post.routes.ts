@@ -67,6 +67,7 @@ const jobListQuerySchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   states: z.string().optional(),
+  approvalStatus: z.enum(['not_required', 'awaiting_approval', 'approved']).optional(),
   providerAccountId: z.uuid().optional(),
   scheduledAfter: z.iso.datetime().optional(),
   scheduledBefore: z.iso.datetime().optional(),
@@ -104,6 +105,7 @@ function parseJobListQuery(raw: unknown, cursorCodec: CursorCodec) {
     resource: 'jobs',
     limit: query.limit,
     states: states.join(','),
+    approvalStatus: query.approvalStatus ?? null,
     providerAccountId: query.providerAccountId ?? null,
     scheduledAfter: query.scheduledAfter ?? null,
     scheduledBefore: query.scheduledBefore ?? null,
@@ -252,6 +254,7 @@ export function registerPostRoutes(
         machineActor: { type: principal.kind, id: principal.actorId, capability: 'schedules:read' },
         limit: query.limit + 1,
         ...(states.length ? { states } : {}),
+        ...(query.approvalStatus ? { approvalStatus: query.approvalStatus } : {}),
         ...(query.providerAccountId ? { providerAccountId: query.providerAccountId } : {}),
         ...(query.scheduledAfter ? { scheduledAfter: new Date(query.scheduledAfter) } : {}),
         ...(query.scheduledBefore ? { scheduledBefore: new Date(query.scheduledBefore) } : {}),
@@ -273,6 +276,12 @@ export function registerPostRoutes(
               id: job.id,
               postId: job.postId,
               state: job.state,
+              approvalRequired: job.approvalRequired,
+              approvalStatus: job.approvalRequired
+                ? job.approvedAt
+                  ? 'approved'
+                  : 'awaiting_approval'
+                : 'not_required',
               scheduledAt: job.scheduledAt,
               updatedAt: job.updatedAt,
               destination: {

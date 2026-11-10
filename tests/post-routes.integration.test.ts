@@ -703,6 +703,28 @@ describe('browser workflow PostgreSQL boundary', () => {
       approvalStatus: 'awaiting_approval',
       canApprove: true,
     });
+    const machineHeaders = {
+      authorization: 'Bearer pr_test.secret',
+      'x-publish-relay-workspace': workspaceId,
+    };
+    const machineDetail = await application.inject({
+      method: 'GET',
+      url: `/api/v1/jobs/${jobId ?? ''}`,
+      headers: machineHeaders,
+    });
+    expect(machineDetail.json<{ data: Record<string, unknown> }>().data).toMatchObject({
+      approvalRequired: true,
+      approvalStatus: 'awaiting_approval',
+    });
+    const heldList = await application.inject({
+      method: 'GET',
+      url: '/api/v1/jobs?approvalStatus=awaiting_approval',
+      headers: machineHeaders,
+    });
+    expect(heldList.statusCode).toBe(200);
+    expect(
+      heldList.json<{ data: { items: { id: string }[] } }>().data.items.map((item) => item.id),
+    ).toContain(jobId);
     browserAuthenticate.mockResolvedValueOnce({ workspaceId, userId, role: 'viewer' });
     expect(
       (await application.inject({ method: 'POST', url: `${url}/approve`, headers })).statusCode,
@@ -712,6 +734,15 @@ describe('browser workflow PostgreSQL boundary', () => {
     expect(approved.json<{ data: { approvalStatus: string } }>().data.approvalStatus).toBe(
       'approved',
     );
+    const approvedList = await application.inject({
+      method: 'GET',
+      url: '/api/v1/jobs?approvalStatus=approved',
+      headers: machineHeaders,
+    });
+    expect(approvedList.statusCode).toBe(200);
+    expect(
+      approvedList.json<{ data: { items: { id: string }[] } }>().data.items.map((item) => item.id),
+    ).toContain(jobId);
     expect(
       (await application.inject({ method: 'POST', url: `${url}/approve`, headers })).json(),
     ).toEqual(approved.json());

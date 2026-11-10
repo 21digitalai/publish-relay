@@ -225,10 +225,11 @@ export class FanvueMessageService {
   async sendMessage(input: z.input<typeof messageCommand>): Promise<FanvueTextMessageResult> {
     const command = messageCommand.parse(input);
     let accessToken: string;
+    let targetLabel: string | null;
     let mediaUuids: string[] | undefined;
     let mediaPreviewUuid: string | undefined;
     try {
-      ({ accessToken } = await this.reads.getExistingChatForMessage(command));
+      ({ accessToken, targetLabel } = await this.reads.getExistingChatForMessage(command));
       ({ mediaUuids, mediaPreviewUuid } = await this.resolveMedia(command));
       await withTenantTransaction(this.database, command, (transaction) =>
         enforceWorkspaceAction(transaction, this.policy, {
@@ -262,6 +263,7 @@ export class FanvueMessageService {
       targetUuid: command.fanUuid,
       requestFingerprint,
       textBody: command.text ?? null,
+      targetLabel,
       mediaCount: mediaUuids?.length ?? 0,
       priceCents: command.price ?? null,
     };

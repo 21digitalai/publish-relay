@@ -32,6 +32,7 @@ test('Fanvue direct action history shows exact text, safe media and price with n
                     accountId: '00000000-0000-4000-8000-000000000902',
                     accountDisplayName: 'Eli Fanvue',
                     kind: 'message',
+                    targetLabel: '@alexandra',
                     outboundText: 'Exact direct agent DM',
                     mediaCount: 1,
                     priceCents: 300,
@@ -51,6 +52,7 @@ test('Fanvue direct action history shows exact text, safe media and price with n
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   const history = page.locator('.fanvue-action-history');
   await expect(history.getByText('Exact direct agent DM')).toBeVisible();
+  await expect(history.getByText('To: @alexandra')).toBeVisible();
   await expect(history.getByText('1 media attachment')).toBeVisible();
   await expect(history.getByText('Price $3.00')).toBeVisible();
   await expect(history.getByText('Link unavailable')).toBeVisible();

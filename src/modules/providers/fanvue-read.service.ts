@@ -96,7 +96,12 @@ export class FanvueReadService {
     const first = messages.data[0];
     if (!first || (first.sender.uuid !== fanUuid && first.recipient.uuid !== fanUuid))
       throw new FanvueReadUnavailableError('account_not_found');
-    return { accessToken: token };
+    const counterpart = first.sender.uuid === fanUuid ? first.sender : first.recipient;
+    const handle = counterpart.handle?.trim();
+    return {
+      accessToken: token,
+      targetLabel: handle && /^[A-Za-z0-9._-]{1,159}$/.test(handle) ? `@${handle}` : null,
+    };
   }
 
   /** Chat creation is scoped to the selected creator and its optional send grant. */

@@ -30,9 +30,22 @@ describe('Fanvue existing-chat send preflight', () => {
     ]);
     await expect(context.service.getExistingChatForMessage(input)).resolves.toEqual({
       accessToken: 'token',
+      targetLabel: null,
     });
     expect(context.accessToken).toHaveBeenCalledWith(input, 'chat', ['write:chat']);
     expect(context.listMessages).toHaveBeenCalledWith('token', input.fanUuid, { size: 1 });
+  });
+
+  it('captures only the selected counterpart handle as a friendly send target', async () => {
+    const context = fixture([
+      {
+        sender: { uuid: '00000000-0000-4000-8000-000000000004' },
+        recipient: { uuid: input.fanUuid, handle: 'alexandra' },
+      },
+    ]);
+    await expect(context.service.getExistingChatForMessage(input)).resolves.toMatchObject({
+      targetLabel: '@alexandra',
+    });
   });
 
   it('refuses empty or mismatched chat evidence', async () => {

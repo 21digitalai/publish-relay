@@ -60,8 +60,12 @@ export class FanvueCommentService {
   async send(input: z.input<typeof sendInput>): Promise<FanvueCommentResult> {
     const command = sendInput.parse(input);
     let accessToken: string;
+    let targetLabel: string | null;
     try {
-      ({ accessToken } = await this.reads.getOwnedPostForComment(command));
+      const selected = await this.reads.getOwnedPostForComment(command);
+      accessToken = selected.accessToken;
+      const excerpt = selected.post.text?.trim().slice(0, 160);
+      targetLabel = excerpt?.length ? excerpt : null;
       await withTenantTransaction(this.database, command, (transaction) =>
         enforceWorkspaceAction(transaction, this.policy, {
           workspaceId: command.workspaceId,
@@ -85,6 +89,7 @@ export class FanvueCommentService {
       targetUuid: command.postUuid,
       requestFingerprint,
       textBody: command.text,
+      targetLabel,
     };
     const reservation = await reserveFanvueAction(this.database, intent);
     if (reservation.kind !== 'new') return replayResult(reservation);

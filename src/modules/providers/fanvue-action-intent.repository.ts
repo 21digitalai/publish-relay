@@ -16,6 +16,7 @@ export interface FanvueActionInput {
   targetUuid: string;
   requestFingerprint: string;
   textBody?: string | null;
+  targetLabel?: string | null;
   mediaCount?: number | null;
   priceCents?: number | null;
 }
@@ -101,6 +102,7 @@ export async function reserveFanvueAction(
       .values({
         ...input,
         textBody: input.textBody ?? null,
+        targetLabel: input.targetLabel ?? null,
         mediaCount: input.mediaCount ?? null,
         priceCents: input.priceCents ?? null,
       })

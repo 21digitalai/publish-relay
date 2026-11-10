@@ -77,6 +77,18 @@ describe('Fanvue creator-owned top-level comment command', () => {
     );
   });
 
+  it('retains a bounded owned-post excerpt as the comment target', async () => {
+    reads.getOwnedPostForComment.mockResolvedValueOnce({
+      accessToken: 'token',
+      post: { text: 'Creator post about the new collection' },
+    });
+    await service.send(input);
+    expect(ledger.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ targetLabel: 'Creator post about the new collection' }),
+    );
+  });
+
   it('does not reserve or send when account ownership or write scope fails', async () => {
     reads.getOwnedPostForComment.mockRejectedValueOnce(new Error('scope missing'));
     await expect(service.send(input)).rejects.toThrow('scope missing');

@@ -40,7 +40,7 @@ const reads = {
   listSubscribers: vi.fn(() => Promise.resolve({ data: [{ uuid: input.fanUuid }] })),
   getExistingChatForMessage: vi.fn(() => {
     events.push('preflight');
-    return Promise.resolve({ accessToken: 'token' });
+    return Promise.resolve({ accessToken: 'token', targetLabel: '@alexandra' });
   }),
   getMediaStatus: vi.fn(() => Promise.resolve({ uuid: mediaUuid, status: 'ready' })),
 };
@@ -211,7 +211,12 @@ describe('Fanvue existing-chat text send command', () => {
     expect(client.sendMessage).toHaveBeenCalledWith('token', input.fanUuid, { text: input.text });
     expect(ledger.reserve).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ textBody: 'Hello', mediaCount: 0, priceCents: null }),
+      expect.objectContaining({
+        textBody: 'Hello',
+        targetLabel: '@alexandra',
+        mediaCount: 0,
+        priceCents: null,
+      }),
     );
     expect(ledger.settle).toHaveBeenCalledWith(
       expect.anything(),

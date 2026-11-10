@@ -36,6 +36,12 @@ describe('Fanvue action history', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0110_fanvue_action_target_context.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const result = await reserveFanvueAction(database, {
         workspaceId,
@@ -45,6 +51,7 @@ describe('Fanvue action history', () => {
         targetUuid,
         requestFingerprint: 'a'.repeat(64),
         textBody: 'Exact agent DM',
+        targetLabel: '@alexandra',
         mediaCount: 2,
         priceCents: 300,
       });
@@ -61,6 +68,7 @@ describe('Fanvue action history', () => {
       expect(rows).toHaveLength(2);
       expect(rows.find((row) => row.kind === 'message')).toMatchObject({
         outboundText: 'Exact agent DM',
+        targetLabel: '@alexandra',
         mediaCount: 2,
         priceCents: 300,
         status: 'confirmed',
@@ -89,6 +97,7 @@ describe('Fanvue action history', () => {
       expect(body.data.items).toHaveLength(1);
       expect(body.data.items[0]).toMatchObject({
         outboundText: 'Exact agent DM',
+        targetLabel: '@alexandra',
         mediaCount: 2,
         priceCents: 300,
         status: 'confirmed',

@@ -5,6 +5,7 @@ interface FanvueHistoryRow {
   accountId: string;
   accountDisplayName: string;
   kind: 'message' | 'comment';
+  targetLabel: string | null;
   outboundText: string | null;
   mediaCount: number | null;
   priceCents: number | null;
@@ -146,6 +147,10 @@ export function FanvueActionHistory() {
               <strong>
                 {row.kind === 'message' ? 'DM' : 'Comment'} · {row.status}
               </strong>
+              <p className="fanvue-action-history-target">
+                {row.kind === 'message' ? 'To: ' : 'On post: '}
+                {row.targetLabel ?? 'Target label unavailable for this action'}
+              </p>
               <p className="fanvue-action-history-text page-dm-history-text">
                 {row.outboundText ??
                   (row.mediaCount ? 'Media-only send' : 'Text unavailable for this older action')}

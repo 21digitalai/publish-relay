@@ -512,6 +512,7 @@ export function registerEngagementProposalRoutes(
           accountId: row.accountId,
           accountDisplayName: row.accountDisplayName,
           kind: row.kind,
+          targetLabel: row.targetLabel,
           outboundText: row.outboundText,
           mediaCount: row.mediaCount,
           priceCents: row.priceCents,

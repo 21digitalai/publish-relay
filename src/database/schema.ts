@@ -1573,6 +1573,7 @@ export const fanvueActionIntents = pgTable(
     requestFingerprint: text('request_fingerprint').notNull(),
     state: text('state').notNull().default('reserved'),
     textBody: text('text_body'),
+    targetLabel: text('target_label'),
     mediaCount: integer('media_count'),
     priceCents: integer('price_cents'),
     providerObjectUuid: uuid('provider_object_uuid'),

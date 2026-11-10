@@ -55,6 +55,21 @@ describe('Page comment reply history', () => {
       expect(pageCommentPostLink('123_456')).toBe('https://www.facebook.com/123_456');
       expect(pageCommentPostLink('https://evil.example/x')).toBeNull();
 
+      await pg.exec(`
+        INSERT INTO facebook_page_comment_actions VALUES
+          ('00000000-0000-4000-8000-000000000023','${workspaceId}','${accountId}','${scheduledActionId}',
+           '123_456','123_888','Exact scheduled reply','confirmed',
+           '2026-11-05 10:01Z','2026-11-05 10:02Z');
+      `);
+      const settled = await listPageCommentHistory(database, { workspaceId, limit: 50 });
+      expect(settled).toHaveLength(2);
+      expect(settled.find((row) => row.outboundText === 'Exact scheduled reply')).toMatchObject({
+        kind: 'send',
+        status: 'confirmed',
+        targetText: 'Original visitor context',
+        dueAt: new Date('2026-11-05T10:00:00.000Z'),
+      });
+
       await app.register(cookie);
       const auth = {
         authenticate: () => Promise.resolve({ userId: directActionId, workspaceId, role: 'owner' }),
@@ -67,8 +82,14 @@ describe('Page comment reply history', () => {
       });
       expect(response.statusCode).toBe(200);
       const body = response.json<{ data: { items: Record<string, unknown>[] } }>();
-      expect(body.data.items).toHaveLength(1);
+      expect(body.data.items).toHaveLength(2);
       expect(body.data.items[0]).toMatchObject({
+        outboundText: 'Exact scheduled reply',
+        targetExcerpt: 'Original visitor context',
+        dueAt: '2026-11-05T10:00:00.000Z',
+        status: 'confirmed',
+      });
+      expect(body.data.items[1]).toMatchObject({
         outboundText: 'Exact direct reply',
         status: 'confirmed',
         postUrl: 'https://www.facebook.com/123_456',

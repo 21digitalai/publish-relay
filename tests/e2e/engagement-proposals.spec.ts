@@ -47,6 +47,19 @@ test('Page comment history shows direct and scheduled truth with filters and saf
         updatedAt: '2026-11-05T09:02:00Z',
         postUrl: null,
       },
+      {
+        id: '00000000-0000-4000-8000-000000000804',
+        kind: 'send',
+        accountId: '00000000-0000-4000-8000-000000000802',
+        accountDisplayName: 'Christina Page',
+        targetExcerpt: 'Original visitor context',
+        outboundText: 'Exact sent scheduled reply',
+        status: 'confirmed',
+        dueAt: '2026-11-05T08:00:00Z',
+        createdAt: '2026-11-05T08:01:00Z',
+        updatedAt: '2026-11-05T08:02:00Z',
+        postUrl: 'https://www.facebook.com/123_456',
+      },
     ].filter((row) => !status || row.status === status);
     await route.fulfill({
       contentType: 'application/json',
@@ -57,10 +70,12 @@ test('Page comment history shows direct and scheduled truth with filters and saf
   const history = page.locator('.page-comment-history');
   await expect(history.getByText('Exact direct reply')).toBeVisible();
   await expect(history.getByText('Exact future reply')).toBeVisible();
-  await expect(history.getByRole('link', { name: 'Open post on Facebook' })).toHaveAttribute(
-    'href',
-    'https://www.facebook.com/123_456',
-  );
+  const settled = history.locator('li').filter({ hasText: 'Exact sent scheduled reply' });
+  await expect(settled.getByText('In reply to: Original visitor context')).toBeVisible();
+  await expect(settled.getByText(/Due /)).toBeVisible();
+  await expect(
+    history.getByRole('link', { name: 'Open post on Facebook' }).first(),
+  ).toHaveAttribute('href', 'https://www.facebook.com/123_456');
   await expect(history.getByText('Post link unavailable')).toBeVisible();
   await history.getByRole('button', { name: 'pending', exact: true }).click();
   await expect.poll(() => queries.at(-1)).toContain('status=pending');

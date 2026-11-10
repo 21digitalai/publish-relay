@@ -44,8 +44,9 @@ export function PageCommentHistory() {
       if (!response.ok || !body.data)
         throw new Error(body.error ?? 'Could not load comment history');
       if (generationRef.current !== generation) return;
-      setRows((current) => (next ? [...current, ...body.data!.items] : body.data!.items));
-      setCursor(body.data.nextCursor);
+      const result = body.data;
+      setRows((current) => (next ? [...current, ...result.items] : result.items));
+      setCursor(result.nextCursor);
     },
     [accountId, status],
   );
@@ -70,7 +71,10 @@ export function PageCommentHistory() {
   }, [filterKey, load]);
 
   return (
-    <section className="page-comment-history page-dm-history" aria-labelledby="page-comment-history-title">
+    <section
+      className="page-comment-history page-dm-history"
+      aria-labelledby="page-comment-history-title"
+    >
       <h2 id="page-comment-history-title">Page comment reply history</h2>
       <p className="muted">Direct and scheduled replies, newest first. Scheduled is not sent.</p>
       <div className="page-comment-history-filters" aria-label="Filter comment reply status">
@@ -80,13 +84,21 @@ export function PageCommentHistory() {
             type="button"
             className="secondary-button"
             aria-pressed={status === choice}
-            onClick={() => setStatus(choice)}
+            onClick={() => {
+              setStatus(choice);
+            }}
           >
             {choice === 'all' ? 'All statuses' : choice}
           </button>
         ))}
         {accountId && (
-          <button type="button" className="secondary-button" onClick={() => setAccountId(null)}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              setAccountId(null);
+            }}
+          >
             Clear Page filter
           </button>
         )}
@@ -102,11 +114,15 @@ export function PageCommentHistory() {
               const generation = ++generationRef.current;
               setLoading(true);
               void load(generation)
-                .then(() => setError(null))
-                .catch((failure: unknown) =>
-                  setError(failure instanceof Error ? failure.message : 'Could not load replies'),
-                )
-                .finally(() => setLoading(false));
+                .then(() => {
+                  setError(null);
+                })
+                .catch((failure: unknown) => {
+                  setError(failure instanceof Error ? failure.message : 'Could not load replies');
+                })
+                .finally(() => {
+                  setLoading(false);
+                });
             }}
           >
             Retry
@@ -122,12 +138,20 @@ export function PageCommentHistory() {
                 type="button"
                 className="secondary-button"
                 aria-pressed={accountId === row.accountId}
-                onClick={() => setAccountId(row.accountId)}
+                onClick={() => {
+                  setAccountId(row.accountId);
+                }}
               >
                 {row.accountDisplayName}
               </button>
-              <strong>{row.kind === 'scheduled' && row.status === 'pending' ? 'Scheduled' : row.status}</strong>
-              <p>{row.targetExcerpt ? `In reply to: ${row.targetExcerpt}` : 'Original comment text unavailable'}</p>
+              <strong>
+                {row.kind === 'scheduled' && row.status === 'pending' ? 'Scheduled' : row.status}
+              </strong>
+              <p>
+                {row.targetExcerpt
+                  ? `In reply to: ${row.targetExcerpt}`
+                  : 'Original comment text unavailable'}
+              </p>
               <p className="page-dm-history-text">
                 {row.outboundText ?? 'Reply text unavailable for this older action'}
               </p>
@@ -155,10 +179,14 @@ export function PageCommentHistory() {
             const generation = generationRef.current;
             setLoading(true);
             void load(generation, cursor)
-              .catch((failure: unknown) =>
-                setError(failure instanceof Error ? failure.message : 'Could not load more replies'),
-              )
-              .finally(() => setLoading(false));
+              .catch((failure: unknown) => {
+                setError(
+                  failure instanceof Error ? failure.message : 'Could not load more replies',
+                );
+              })
+              .finally(() => {
+                setLoading(false);
+              });
           }}
         >
           Load more replies

@@ -17,11 +17,7 @@ export interface PageCommentHistoryQuery {
   limit: number;
 }
 
-function beforeCursor(
-  createdAt: AnyColumn,
-  id: AnyColumn,
-  input: PageCommentHistoryQuery,
-) {
+function beforeCursor(createdAt: AnyColumn, id: AnyColumn, input: PageCommentHistoryQuery) {
   if (!input.beforeCreatedAt || !input.beforeId) return undefined;
   return or(
     lt(createdAt, input.beforeCreatedAt),

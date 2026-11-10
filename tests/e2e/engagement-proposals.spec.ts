@@ -67,7 +67,9 @@ test('Page comment history shows direct and scheduled truth with filters and saf
   await expect(history.getByText('Exact direct reply')).toHaveCount(0);
   await expect(history.getByText('Exact future reply')).toBeVisible();
   await history.getByRole('button', { name: 'Christina Page' }).click();
-  await expect.poll(() => queries.at(-1)).toContain('accountId=00000000-0000-4000-8000-000000000802');
+  await expect
+    .poll(() => queries.at(-1))
+    .toContain('accountId=00000000-0000-4000-8000-000000000802');
 });
 
 test('Page comment proposal schedules at its planned time and can be cancelled after reload', async ({

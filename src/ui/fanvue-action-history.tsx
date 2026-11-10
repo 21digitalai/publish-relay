@@ -43,8 +43,9 @@ export function FanvueActionHistory() {
       if (!response.ok || !body.data)
         throw new Error(body.error ?? 'Could not load Fanvue history');
       if (generationRef.current !== generation) return;
-      setRows((current) => (next ? [...current, ...body.data!.items] : body.data!.items));
-      setCursor(body.data.nextCursor);
+      const result = body.data;
+      setRows((current) => (next ? [...current, ...result.items] : result.items));
+      setCursor(result.nextCursor);
     },
     [accountId, kind],
   );
@@ -82,7 +83,9 @@ export function FanvueActionHistory() {
             type="button"
             className="fanvue-action-history-channel secondary-button"
             aria-pressed={kind === choice}
-            onClick={() => setKind(choice)}
+            onClick={() => {
+              setKind(choice);
+            }}
           >
             {choice === 'all' ? 'All channels' : choice === 'message' ? 'DMs' : 'Comments'}
           </button>
@@ -91,7 +94,9 @@ export function FanvueActionHistory() {
           <button
             type="button"
             className="fanvue-action-history-clear-account secondary-button"
-            onClick={() => setAccountId(null)}
+            onClick={() => {
+              setAccountId(null);
+            }}
           >
             Clear account filter
           </button>
@@ -108,11 +113,15 @@ export function FanvueActionHistory() {
               const generation = ++generationRef.current;
               setLoading(true);
               void load(generation)
-                .then(() => setError(null))
-                .catch((failure: unknown) =>
-                  setError(failure instanceof Error ? failure.message : 'Could not load history'),
-                )
-                .finally(() => setLoading(false));
+                .then(() => {
+                  setError(null);
+                })
+                .catch((failure: unknown) => {
+                  setError(failure instanceof Error ? failure.message : 'Could not load history');
+                })
+                .finally(() => {
+                  setLoading(false);
+                });
             }}
           >
             Retry
@@ -128,7 +137,9 @@ export function FanvueActionHistory() {
                 type="button"
                 className="fanvue-action-history-account secondary-button"
                 aria-pressed={accountId === row.accountId}
-                onClick={() => setAccountId(row.accountId)}
+                onClick={() => {
+                  setAccountId(row.accountId);
+                }}
               >
                 {row.accountDisplayName}
               </button>
@@ -186,12 +197,14 @@ export function FanvueActionHistory() {
             const generation = generationRef.current;
             setLoading(true);
             void load(generation, cursor)
-              .catch((failure: unknown) =>
+              .catch((failure: unknown) => {
                 setError(
                   failure instanceof Error ? failure.message : 'Could not load more actions',
-                ),
-              )
-              .finally(() => setLoading(false));
+                );
+              })
+              .finally(() => {
+                setLoading(false);
+              });
           }}
         >
           Load more actions

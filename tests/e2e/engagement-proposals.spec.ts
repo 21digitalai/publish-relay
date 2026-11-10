@@ -799,11 +799,7 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
     }
     if (path.endsWith('/approve')) {
       approvals += 1;
-      expect(request.postDataJSON()).toEqual(
-        path.includes(commentId)
-          ? { expectedRevision: 1 }
-          : { expectedRevision: 1, sendMode: 'immediate' },
-      );
+      expect(request.postDataJSON()).toEqual({ expectedRevision: 1, sendMode: 'immediate' });
       if (path.includes(commentId)) sentComment = true;
       else dmUnknown = true;
       await route.fulfill({
@@ -873,6 +869,7 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
   });
   await page.goto(`/w/${workspace.data.slug}/proposals`);
   await page.getByRole('button', { name: /Facebook Page comment/ }).click();
+  await page.getByRole('button', { name: 'Send immediately instead' }).click();
   await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toBeEnabled();
   await page.screenshot({ path: testInfo.outputPath('facebook-comment-ready.png') });
   await page.getByRole('button', { name: 'Approve and send', exact: true }).click();

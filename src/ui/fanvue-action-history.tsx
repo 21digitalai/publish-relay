@@ -31,7 +31,7 @@ const statusLabels: Record<string, string> = {
   unknown: 'Outcome unknown',
 };
 
-export function FanvueActionHistory() {
+export function FanvueActionHistory({ refreshRevision = 0 }: { refreshRevision?: number }) {
   const [rows, setRows] = useState<FanvueHistoryRow[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [kind, setKind] = useState<'all' | 'message' | 'comment'>('all');
@@ -83,7 +83,7 @@ export function FanvueActionHistory() {
     return () => {
       generationRef.current += 1;
     };
-  }, [filterKey, load]);
+  }, [filterKey, load, refreshRevision]);
 
   return (
     <section

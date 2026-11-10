@@ -105,6 +105,131 @@ test('Fanvue direct action history shows exact text, safe media and price with n
   await expect(history.getByText('Link unavailable')).toBeVisible();
 });
 
+test('reviewed Fanvue DM appears in action history on schedule and cancellation without reload', async ({
+  page,
+}, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Fanvue Schedule Owner',
+      email: `fanvue-schedule-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Fanvue Schedule Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const proposalId = '00000000-0000-4000-8000-000000000911';
+  const accountId = '00000000-0000-4000-8000-000000000912';
+  const dueAt = new Date(Date.now() + 3_600_000).toISOString();
+  let status = 'pending';
+  let approvals = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/approve')) {
+      approvals += 1;
+      expect(route.request().postDataJSON()).toEqual({ expectedRevision: 1 });
+      status = 'scheduled';
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id: proposalId, status, dueAt }, error: null }),
+      });
+      return;
+    }
+    if (path.endsWith('/cancel-scheduled')) status = 'cancelled';
+    const data = path.endsWith('/api/engagement-proposals')
+      ? {
+          items:
+            status === 'cancelled'
+              ? []
+              : [
+                  {
+                    id: proposalId,
+                    accountDisplayName: 'Eli Fanvue',
+                    provider: 'fanvue',
+                    kind: 'dm',
+                    status,
+                    sourcePreview: 'Hello',
+                    contentPreview: 'Reviewed DM',
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+          nextCursor: null,
+        }
+      : path.endsWith('/cancel-scheduled')
+        ? { status }
+        : {
+            id: proposalId,
+            accountDisplayName: 'Eli Fanvue',
+            provider: 'fanvue',
+            kind: 'dm',
+            targetId: '00000000-0000-4000-8000-000000000913',
+            sourceContext: { text: 'Hello', authorLabel: '@alexandra' },
+            content: { text: 'Reviewed DM' },
+            plannedDueAt: dueAt,
+            revision: 1,
+            status,
+            canApprove: true,
+            noGo: false,
+            schedule: status === 'scheduled' ? { dueAt, status: 'pending' } : null,
+          };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.route('**/api/fanvue-engagement-history**', async (route) => {
+    const data = {
+      items:
+        status === 'pending'
+          ? []
+          : [
+              {
+                id: '00000000-0000-4000-8000-000000000914',
+                accountId,
+                accountDisplayName: 'Eli Fanvue',
+                kind: 'message',
+                targetLabel: '@alexandra',
+                outboundText: 'Reviewed DM',
+                mediaCount: 0,
+                priceCents: null,
+                status: status === 'scheduled' ? 'pending' : 'cancelled',
+                dueAt,
+                providerReceipt: null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                destinationUrl: null,
+              },
+            ],
+      nextCursor: null,
+    };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  const history = page.locator('.fanvue-action-history');
+  await expect(history.getByText('Reviewed DM')).toHaveCount(0);
+  await page.getByRole('button', { name: /Fanvue message/ }).click();
+  await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await expect(history.getByText('DM · Scheduled')).toBeVisible();
+  await expect(history.getByText('Reviewed DM')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-scheduled-history.png') });
+  await page.getByRole('button', { name: 'Cancel scheduled reply' }).click();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Cancel scheduled reply' })
+    .click();
+  await expect(history.getByText('DM · Cancelled')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('fanvue-cancelled-history.png') });
+  await page.reload();
+  await expect(history.getByText('DM · Cancelled')).toBeVisible();
+  expect(approvals).toBe(1);
+});
+
 test('Page comment history shows direct and scheduled truth with filters and safe links', async ({
   page,
 }) => {

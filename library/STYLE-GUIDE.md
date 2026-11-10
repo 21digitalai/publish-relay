@@ -1,6 +1,7 @@
 # Publish Relay Style Guide
 
 Fanvue DM approval reuses the selected proposal detail and `.engagement-proposal-timing` fieldset. It retains a future proposed planned time, or enters paced due-now dispatch after that time; the approve click never synchronously sends. The shared confirmation names the account and timing, a scheduled receipt permits pending-only cancellation, and detail refreshes to sending/sent/failed/unknown from the canonical action. Fanvue comment scheduling remains a separately scoped supported-target slice.
+The same engagement page refreshes its canonical Fanvue action-history list after a successful proposal approval or pending cancellation, without resetting account/channel/status filters. A proposal alone never creates a send-history row; the scheduled intent or action ledger supplies the visible state and survives reload.
 
 Status: accepted Builder direction. Changes to the operator-sensitive choices at the end require Overseer or operator approval.
 

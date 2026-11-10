@@ -116,6 +116,7 @@ export function EngagementProposalsPage() {
   const [listFailed, setListFailed] = useState(false);
   const [detailFailed, setDetailFailed] = useState(false);
   const [detailReload, setDetailReload] = useState(0);
+  const [fanvueHistoryRevision, setFanvueHistoryRevision] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
@@ -404,6 +405,7 @@ export function EngagementProposalsPage() {
               item.id === detail.id ? { ...item, status: outcome.status } : item,
             ),
       );
+      if (detail.provider === 'fanvue') setFanvueHistoryRevision((current) => current + 1);
       setNotice(
         outcome.status === 'sent'
           ? `Reply sent through ${detail.provider === 'facebook_page' ? 'Facebook Page' : 'Fanvue'}.`
@@ -466,6 +468,7 @@ export function EngagementProposalsPage() {
         headers: { 'x-csrf-token': getCsrfToken() },
       });
       setDetailReload((current) => current + 1);
+      if (detail.provider === 'fanvue') setFanvueHistoryRevision((current) => current + 1);
       setItems((current) => current.filter((item) => item.id !== detail.id));
       setNotice(
         detail.content.followUps
@@ -1343,7 +1346,7 @@ export function EngagementProposalsPage() {
         </section>
         <PageDmHistory />
         <PageCommentHistory />
-        <FanvueActionHistory />
+        <FanvueActionHistory refreshRevision={fanvueHistoryRevision} />
       </section>
       {confirmDismiss && (
         <ConfirmationDialog

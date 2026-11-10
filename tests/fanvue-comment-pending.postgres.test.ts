@@ -14,6 +14,12 @@ import {
   scheduleFanvueComment,
 } from '../src/modules/providers/fanvue-comment-pending.repository.js';
 import { dispatchDueFanvueComments } from '../src/modules/providers/fanvue-comment-pending.worker.js';
+import { listFanvueActionHistory } from '../src/modules/providers/fanvue-action-history.repository.js';
+import { reserveFanvueAction } from '../src/modules/providers/fanvue-action-intent.repository.js';
+import {
+  scheduleFanvueDm,
+  FanvueDmScheduleConflictError,
+} from '../src/modules/providers/fanvue-dm-pending.repository.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const accountId = '00000000-0000-4000-8000-000000000003';
@@ -35,16 +41,42 @@ async function fixture() {
     CREATE TABLE engagement_proposals (workspace_id uuid NOT NULL, client_action_id uuid NOT NULL,
       provider text NOT NULL, kind text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL, destination_provider text NOT NULL,
+      display_name text NOT NULL DEFAULT 'Eli Fanvue',
       PRIMARY KEY (workspace_id,id));
     CREATE TABLE fanvue_action_intents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL,
       account_id uuid, client_action_id uuid NOT NULL, action_kind text, target_uuid uuid, state text,
-      text_body text);
+      request_fingerprint text, provider_object_uuid uuid, failure_status integer,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE memberships (workspace_id uuid NOT NULL, user_id uuid NOT NULL, role text NOT NULL);
     INSERT INTO provider_accounts VALUES ('${accountId}','${workspaceId}','fanvue');
   `);
   await pg.exec(
     await readFile(
+      new URL('../migrations/0109_fanvue_action_history_payload.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await pg.exec(
+    await readFile(
+      new URL('../migrations/0110_fanvue_action_target_context.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await pg.exec(
+    await readFile(
       new URL('../migrations/0111_fanvue_dm_pending_intents.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await pg.exec(
+    await readFile(
+      new URL('../migrations/0112_fanvue_dm_pending_media_preview.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await pg.exec(
+    await readFile(
+      new URL('../migrations/0113_fanvue_pending_target_label.sql', import.meta.url),
       'utf8',
     ),
   );
@@ -58,6 +90,76 @@ async function fixture() {
 }
 
 describe('Fanvue supported-comment pending intents', () => {
+  it('rejects cross-kind reuse of a workspace action ID at admission in both directions', async () => {
+    const { pg, database } = await fixture();
+    try {
+      await scheduleFanvueComment(database, input);
+      expect(
+        await reserveFanvueAction(database, {
+          workspaceId,
+          accountId,
+          clientActionId: input.clientActionId,
+          actionKind: 'message',
+          targetUuid: postUuid,
+          requestFingerprint: 'a'.repeat(64),
+        }),
+      ).toEqual({ kind: 'conflict' });
+      expect(
+        await reserveFanvueAction(database, {
+          workspaceId,
+          accountId,
+          clientActionId: input.clientActionId,
+          actionKind: 'comment',
+          targetUuid: postUuid,
+          requestFingerprint: 'a'.repeat(64),
+          textBody: 'Different comment',
+        }),
+      ).toEqual({ kind: 'conflict' });
+      const { postUuid: target, ...shared } = input;
+      await expect(
+        scheduleFanvueDm(database, {
+          ...shared,
+          fanUuid: target,
+        }),
+      ).rejects.toBeInstanceOf(FanvueDmScheduleConflictError);
+      const other = { ...input, clientActionId: '00000000-0000-4000-8000-000000000019' };
+      await scheduleFanvueDm(database, {
+        ...shared,
+        clientActionId: other.clientActionId,
+        fanUuid: target,
+      });
+      await expect(scheduleFanvueComment(database, other)).rejects.toBeInstanceOf(
+        FanvueCommentScheduleConflictError,
+      );
+      const rows = await pg.query<{ count: number }>(
+        'SELECT count(*)::integer AS count FROM fanvue_comment_pending_intents',
+      );
+      expect(rows.rows[0]?.count).toBe(1);
+      const history = await listFanvueActionHistory(database, { workspaceId, limit: 50 });
+      expect(history).toHaveLength(2);
+      expect(history.map((row) => row.kind).sort()).toEqual(['comment', 'message']);
+      expect(history.every((row) => row.status === 'pending')).toBe(true);
+    } finally {
+      await pg.close();
+    }
+  });
+  it('admits at most one kind when schedules race for the same action ID', async () => {
+    const { pg, database } = await fixture();
+    try {
+      const { postUuid: target, ...shared } = input;
+      const results = await Promise.allSettled([
+        scheduleFanvueComment(database, input),
+        scheduleFanvueDm(database, { ...shared, fanUuid: target }),
+      ]);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      const history = await listFanvueActionHistory(database, { workspaceId, limit: 50 });
+      expect(history).toHaveLength(1);
+      expect(history[0]?.status).toBe('pending');
+    } finally {
+      await pg.close();
+    }
+  });
   it('keeps immutable exact-action replay, tenant isolation and pending-only cancellation', async () => {
     const { pg, database } = await fixture();
     try {

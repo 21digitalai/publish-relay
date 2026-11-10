@@ -10,10 +10,12 @@ import {
   fanvueActionIntents,
   fanvueCommentPendingIntents as intents,
   fanvueDmDispatchPacing,
+  fanvueDmPendingIntents,
   providerAccounts,
   providerConnections,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { lockFanvueActionNamespace } from './fanvue-action-namespace.js';
 
 export const commentScheduleInput = z.strictObject({
   workspaceId: z.uuid(),
@@ -115,6 +117,18 @@ export async function replayScheduledFanvueComment(
 }
 
 async function insertComment(tx: NodePgDatabase, input: Input) {
+  await lockFanvueActionNamespace(tx, input.workspaceId, input.clientActionId);
+  const [otherKind] = await tx
+    .select({ id: fanvueDmPendingIntents.id })
+    .from(fanvueDmPendingIntents)
+    .where(
+      and(
+        eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+        eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+      ),
+    )
+    .limit(1);
+  if (otherKind) throw new FanvueCommentScheduleConflictError();
   const [account] = await tx
     .select({ provider: providerAccounts.destinationProvider })
     .from(providerAccounts)

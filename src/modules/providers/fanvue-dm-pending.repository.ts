@@ -9,11 +9,13 @@ import {
   fanvueActionIntents,
   fanvueDmDispatchPacing,
   fanvueDmPendingIntents,
+  fanvueCommentPendingIntents,
   engagementProposals,
   providerAccounts,
   providerConnections,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { lockFanvueActionNamespace } from './fanvue-action-namespace.js';
 
 export const scheduleInput = z
   .strictObject({
@@ -131,6 +133,18 @@ export async function scheduleFanvueDm(
 }
 
 async function insertScheduledFanvueDm(tx: NodePgDatabase, input: z.output<typeof scheduleInput>) {
+  await lockFanvueActionNamespace(tx, input.workspaceId, input.clientActionId);
+  const [otherKind] = await tx
+    .select({ id: fanvueCommentPendingIntents.id })
+    .from(fanvueCommentPendingIntents)
+    .where(
+      and(
+        eq(fanvueCommentPendingIntents.workspaceId, input.workspaceId),
+        eq(fanvueCommentPendingIntents.clientActionId, input.clientActionId),
+      ),
+    )
+    .limit(1);
+  if (otherKind) throw new FanvueDmScheduleConflictError();
   const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
   const mediaIds = input.mediaIds ?? [];
   const fingerprint = expectedFingerprint(input);

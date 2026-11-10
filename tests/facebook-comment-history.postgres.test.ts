@@ -73,7 +73,9 @@ describe('Page comment reply history', () => {
         status: 'confirmed',
         postUrl: 'https://www.facebook.com/123_456',
       });
-      expect(JSON.stringify(body)).not.toMatch(/Foreign private|targetText|actorId|fingerprint|credential/);
+      expect(JSON.stringify(body)).not.toMatch(
+        /Foreign private|targetText|actorId|fingerprint|credential/,
+      );
     } finally {
       await app.close();
       await pg.close();

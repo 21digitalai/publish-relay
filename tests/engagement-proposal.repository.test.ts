@@ -157,13 +157,11 @@ describe('engagement proposal foundation', () => {
         .fn()
         .mockResolvedValue({ state: 'confirmed', messageUuid: fanvuePost });
       const sendPageComment = vi.fn().mockResolvedValue({ state: 'confirmed', commentId: '900_3' });
-      const schedulePageComment = vi
-        .fn()
-        .mockResolvedValue({
-          id: '00000000-0000-4000-8000-000000000998',
-          status: 'scheduled',
-          dueAt: new Date(Date.now() + 60_000).toISOString(),
-        });
+      const schedulePageComment = vi.fn().mockResolvedValue({
+        id: '00000000-0000-4000-8000-000000000998',
+        status: 'scheduled',
+        dueAt: new Date(Date.now() + 60_000).toISOString(),
+      });
       const sendPageDm = vi.fn().mockResolvedValue({ state: 'confirmed', messageId: 'mid_7' });
       registerEngagementProposalRoutes(app, {
         database,
@@ -868,7 +866,7 @@ describe('engagement proposal foundation', () => {
         payload: approvalPayload,
       });
       expect(scheduledResponse.statusCode).toBe(202);
-      expect(scheduledResponse.json().data.status).toBe('scheduled');
+      expect(scheduledResponse.json<{ data: { status: string } }>().data.status).toBe('scheduled');
       expect(schedulePageComment).toHaveBeenCalledWith(
         expect.objectContaining({
           proposalId: scheduledComment.id,

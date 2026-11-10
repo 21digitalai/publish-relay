@@ -941,12 +941,28 @@ describe('Page DM pending intent', () => {
         windowDeadline: new Date(Date.now() + 3600_000),
         actor: { type: 'user', id: actorId },
       });
-      await pg.query("UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '2 minutes' WHERE status = 'pending' AND account_id = $1", [accountId]);
-      await pg.query("UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '1 minute' WHERE status = 'pending' AND account_id = $1", [secondAccountId]);
+      await pg.query(
+        "UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '2 minutes' WHERE status = 'pending' AND account_id = $1",
+        [accountId],
+      );
+      await pg.query(
+        "UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '1 minute' WHERE status = 'pending' AND account_id = $1",
+        [secondAccountId],
+      );
       const now = new Date();
-      const [claimedFirst] = await claimDuePageDms(database, { workerId: 'w', now, leaseMs: 30_000, limit: 1 });
+      const [claimedFirst] = await claimDuePageDms(database, {
+        workerId: 'w',
+        now,
+        leaseMs: 30_000,
+        limit: 1,
+      });
       expect(claimedFirst?.accountId).toBe(accountId);
-      const [claimedOther] = await claimDuePageDms(database, { workerId: 'w', now, leaseMs: 30_000, limit: 1 });
+      const [claimedOther] = await claimDuePageDms(database, {
+        workerId: 'w',
+        now,
+        leaseMs: 30_000,
+        limit: 1,
+      });
       expect(claimedOther?.id).toBe(otherPage.id);
     } finally {
       await pg.close();

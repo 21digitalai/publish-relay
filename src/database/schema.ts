@@ -822,6 +822,8 @@ export const facebookPageCommentActions = pgTable(
     accountId: uuid('account_id').notNull(),
     clientActionId: uuid('client_action_id').notNull(),
     commentId: text('comment_id').notNull(),
+    postId: text('post_id'),
+    textBody: text('text_body'),
     requestFingerprint: text('request_fingerprint').notNull(),
     state: text('state').notNull().default('reserved'),
     providerCommentId: text('provider_comment_id'),
@@ -844,6 +846,77 @@ export const facebookPageCommentActions = pgTable(
       'facebook_page_comment_actions_state_check',
       sql`${table.state} IN ('reserved', 'confirmed', 'failed', 'unknown')`,
     ),
+  ],
+);
+
+export const facebookPageCommentPendingIntents = pgTable(
+  'facebook_page_comment_pending_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    postId: text('post_id').notNull(),
+    commentId: text('comment_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    actorType: actorType('actor_type').notNull(),
+    actorId: uuid('actor_id').notNull(),
+    textBody: text('text_body').notNull(),
+    targetText: text('target_text').notNull(),
+    targetCreatedAt: text('target_created_at').notNull(),
+    threadFingerprint: text('thread_fingerprint').notNull(),
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    status: text('status').notNull().default('pending'),
+    preSendAttempts: integer('pre_send_attempts').notNull().default(0),
+    leaseOwner: text('lease_owner'),
+    leaseUntil: timestamp('lease_until', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('facebook_page_comment_pending_intents_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
+    uniqueIndex('facebook_page_comment_pending_intents_active_comment_unique')
+      .on(table.workspaceId, table.accountId, table.commentId)
+      .where(sql`${table.status} IN ('pending', 'claimed', 'confirmed', 'unknown')`),
+    index('facebook_page_comment_pending_intents_due_idx')
+      .on(table.dueAt, table.id)
+      .where(sql`${table.status} IN ('pending', 'claimed')`),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_comment_pending_intents_account_fk',
+    }).onDelete('restrict'),
+    check(
+      'facebook_page_comment_pending_intents_status_check',
+      sql`${table.status} IN ('pending', 'claimed', 'cancelled', 'confirmed', 'failed', 'unknown')`,
+    ),
+    check(
+      'facebook_page_comment_pending_intents_text_check',
+      sql`length(trim(${table.textBody})) BETWEEN 1 AND 2000`,
+    ),
+    check(
+      'facebook_page_comment_pending_intents_lease_check',
+      sql`(${table.status} = 'claimed') = (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const facebookPageCommentDispatchPacing = pgTable(
+  'facebook_page_comment_dispatch_pacing',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    nextAt: timestamp('next_at', { withTimezone: true }).notNull(),
+    lastIntentId: uuid('last_intent_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+    }).onDelete('cascade'),
   ],
 );
 

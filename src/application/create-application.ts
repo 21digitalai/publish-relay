@@ -41,6 +41,7 @@ import type { FacebookHttpClient } from '../modules/providers/facebook-http-clie
 import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-page-read.routes.js';
 import { registerFacebookDmMemoryRoutes } from '../modules/providers/facebook-dm-memory.routes.js';
 import { registerFacebookPageCommentSendRoute } from '../modules/providers/facebook-comment-send.routes.js';
+import { registerFacebookPageCommentScheduleRoutes } from '../modules/providers/facebook-comment-schedule.routes.js';
 import { registerFacebookPageDmSendRoute } from '../modules/providers/facebook-messenger-send.routes.js';
 import { sendAccountPageCommentReply } from '../modules/providers/facebook-comment-send.service.js';
 import {
@@ -262,6 +263,13 @@ function registerMachineApiRoutes(
       delegatedAuthorization,
     );
     registerFacebookPageCommentSendRoute(
+      application,
+      { ...facebook, policy: actionPolicy },
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+    registerFacebookPageCommentScheduleRoutes(
       application,
       { ...facebook, policy: actionPolicy },
       apiKeys,

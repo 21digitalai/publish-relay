@@ -32,6 +32,8 @@ const MUTATIONS = new Set([
   'facebook-guidance:set',
   'fanvue:create-chat',
   'facebook-comments:reply',
+  'facebook-comments:schedule',
+  'facebook-comments:cancel',
   'facebook-dms:send',
   'facebook-dms:schedule',
   'facebook-dms:group-schedule',
@@ -54,6 +56,19 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
     method: 'POST',
     path: '/api/v1/destinations/:id/facebook-posts/:postId/comments/:commentId/replies',
     body: true,
+  },
+  'facebook-comments:schedule': {
+    method: 'POST',
+    path: '/api/v1/destinations/:id/facebook-posts/:postId/comments/:commentId/replies/schedule',
+    body: true,
+  },
+  'facebook-comments:status': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/facebook-comment-replies/:intentId',
+  },
+  'facebook-comments:cancel': {
+    method: 'DELETE',
+    path: '/api/v1/destinations/:id/facebook-comment-replies/:intentId',
   },
   'facebook-dms:list': { method: 'GET', path: '/api/v1/destinations/:id/facebook-conversations' },
   'facebook-dms:messages': {
@@ -195,6 +210,9 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'contentSubtype',
   ]),
   'facebook-comments:reply': new Set([...ENVELOPE_OUTPUT_KEYS, 'commentId', 'failureStatus']),
+  'facebook-comments:schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
+  'facebook-comments:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
+  'facebook-comments:cancel': new Set(ENVELOPE_OUTPUT_KEYS),
   'facebook-dms:send': new Set([...ENVELOPE_OUTPUT_KEYS, 'messageId', 'failureStatus']),
   'facebook-dms:schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
   'facebook-dms:cancel': new Set(ENVELOPE_OUTPUT_KEYS),
@@ -647,7 +665,7 @@ function routePath(
     route.path.includes(':intentId') &&
     (typeof intentId !== 'string' || !WORKSPACE_ID_PATTERN.test(intentId))
   )
-    throw new CliError(EXIT.usage, 'Facebook DM cancellation requires UUID --intent-id');
+    throw new CliError(EXIT.usage, 'Scheduled action requires UUID --intent-id');
   if (
     route.path.includes(':postId') &&
     (typeof postId !== 'string' || !/^[0-9]+(?:_[0-9]+)*$/.test(postId))
@@ -748,7 +766,7 @@ async function pollJob(
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.8.4' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.6' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);
@@ -808,7 +826,10 @@ async function run(): Promise<Json> {
       EXIT.usage,
       'This command requires --body-file (or --file for Fanvue DM guidance)',
     );
-  if (parsed.command === 'facebook-comments:reply') {
+  if (
+    parsed.command === 'facebook-comments:reply' ||
+    parsed.command === 'facebook-comments:schedule'
+  ) {
     const actionId = (JSON.parse(String(body)) as { clientActionId?: unknown }).clientActionId;
     if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])
       throw new CliError(
@@ -820,6 +841,11 @@ async function run(): Promise<Json> {
       !/^[0-9]+(?:_[0-9]+)*$/.test(parsed.flags['comment-id'])
     )
       throw new CliError(EXIT.usage, 'Facebook comment reply requires numeric --comment-id');
+    if (parsed.command === 'facebook-comments:schedule') {
+      const dueAt = (JSON.parse(String(body)) as { dueAt?: unknown }).dueAt;
+      if (typeof dueAt !== 'string' || !Number.isFinite(Date.parse(dueAt)))
+        throw new CliError(EXIT.usage, 'Scheduled Page comment requires dueAt');
+    }
   }
   if (
     parsed.command === 'facebook-dms:send' ||
@@ -865,6 +891,7 @@ async function run(): Promise<Json> {
   if (
     MUTATIONS.has(parsed.command) &&
     parsed.command !== 'facebook-dms:cancel' &&
+    parsed.command !== 'facebook-comments:cancel' &&
     parsed.command !== 'facebook-dms:group-cancel' &&
     parsed.command !== 'facebook-dms:memory-upsert' &&
     typeof idempotencyKey !== 'string'

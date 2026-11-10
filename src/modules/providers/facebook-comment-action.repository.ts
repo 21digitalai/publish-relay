@@ -9,6 +9,8 @@ export interface FacebookCommentActionKey {
   accountId: string;
   clientActionId: string;
   commentId: string;
+  postId: string;
+  text: string;
   requestFingerprint: string;
   actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
 }
@@ -88,6 +90,8 @@ export async function reserveFacebookCommentAction(
         accountId: input.accountId,
         clientActionId: input.clientActionId,
         commentId: input.commentId,
+        postId: input.postId,
+        textBody: input.text,
         requestFingerprint: input.requestFingerprint,
         actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
         actorId: input.actor.id,

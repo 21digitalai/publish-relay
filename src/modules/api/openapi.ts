@@ -20,6 +20,7 @@ import { fanvueDmStageRequestSchema } from '../providers/fanvue-dm-stage.routes.
 import { fanvueCommentRequestSchema } from '../providers/fanvue-comment.routes.js';
 import { createEngagementProposalSchema } from '../providers/engagement-proposal.routes.js';
 import { facebookCommentSendRequestSchema } from '../providers/facebook-comment-send.routes.js';
+import { facebookCommentScheduleRequestSchema } from '../providers/facebook-comment-schedule.routes.js';
 import {
   facebookDmGroupRequestSchema,
   facebookDmSendRequestSchema,
@@ -463,6 +464,84 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '409': { description: 'Page, grant, post/comment ancestry or action unavailable' },
             '429': { description: 'Mutation rate limit exceeded' },
             '502': { description: 'Provider preflight failed' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/facebook-posts/{postId}/comments/{commentId}/replies/schedule':
+        {
+          post: {
+            operationId: 'scheduleFacebookPageCommentReply',
+            description:
+              'Schedule one selected-Page comment reply with current-thread snapshot; the receipt is not a send confirmation.',
+            security: [{ bearerAuth: [], workspace: [] }],
+            parameters: [
+              {
+                name: 'accountId',
+                in: 'path',
+                required: true,
+                schema: { type: 'string', format: 'uuid' },
+              },
+              { name: 'postId', in: 'path', required: true, schema: { type: 'string' } },
+              { name: 'commentId', in: 'path', required: true, schema: { type: 'string' } },
+            ],
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(facebookCommentScheduleRequestSchema),
+                },
+              },
+            },
+            responses: {
+              '202': { description: 'Pending intent ID, status and dueAt' },
+              '403': { description: 'Missing selected-Page comments:send grant' },
+              '409': { description: 'Target stale, already replied to, or duplicate action' },
+            },
+          },
+        },
+      '/api/v1/destinations/{accountId}/facebook-comment-replies/{intentId}': {
+        get: {
+          operationId: 'getFacebookPageCommentReplyIntent',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'intentId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': { description: 'Intent ID, state and dueAt only' },
+            '404': { description: 'Intent absent or foreign' },
+          },
+        },
+        delete: {
+          operationId: 'cancelFacebookPageCommentReplyIntent',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'intentId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': { description: 'Pending intent cancelled' },
+            '409': { description: 'Intent already claimed or settled' },
           },
         },
       },

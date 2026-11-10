@@ -66,6 +66,8 @@ export async function sendAccountPageCommentReply(
     workspaceId: command.workspaceId,
     accountId: command.accountId,
     commentId: command.commentId,
+    postId: command.postId,
+    text: command.text,
     clientActionId: command.clientActionId,
     actor: command.actor,
     requestFingerprint: createHash('sha256')

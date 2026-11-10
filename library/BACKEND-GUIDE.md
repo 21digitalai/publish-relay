@@ -1,5 +1,9 @@
 # Publish Relay Backend Guide
 
+## Scheduled Facebook Page comment replies
+
+Migration 0107 adds `facebook_page_comment_pending_intents` for immutable due replies and `facebook_page_comment_dispatch_pacing` for a durable per-Page 60–120-second send cursor. Schedule, status, and pending-only cancel use selected-Page `comments:send` authorization and bounded receipts. Scheduling captures the target's text, creation time, and complete reply-ID fingerprint after proving Page/post/comment ancestry; the due worker compares a fresh snapshot and stops on any changed context or Page-authored reply. One action ID flows into the existing `facebook_page_comment_actions` sender ledger. A reserved or unknown action never retries; only pre-reservation transient failures retry (up to three attempts), with fenced claims and lease renewal. Direct replies store post/text in that same action ledger; scheduled intents are timing state, not a second send path. No migration or branch push is a live Meta-send authorization.
+
 ## Page DM conversation links
 
 The browser-only `GET /api/facebook-page-dm-link/:kind/:id` resolves a tenant-owned proposal or send-action row ID after `content:read` authorization. It reuses the enabled Page DMs grant and verifies the exact Graph conversation participants contain the selected Page and one recipient before returning only Graph's validated `link` or `null`. It never fabricates a Page inbox or thread URL when Graph omits the link. No provider conversation ID or token is exposed in the browser link URL; absent grant and foreign rows fail closed. This on-click read avoids Graph polling per list row.

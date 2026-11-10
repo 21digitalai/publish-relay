@@ -19,6 +19,8 @@ const key = {
   accountId,
   clientActionId: actionId,
   commentId: '123_456_789',
+  postId: '123_456',
+  text: 'Reply',
   requestFingerprint: 'a'.repeat(64),
   actor: { type: 'api-key' as const, id: actorId },
 };
@@ -43,6 +45,12 @@ beforeEach(async () => {
   await postgres.exec(
     readFileSync(
       new URL('../migrations/0094_facebook_page_comment_actions.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0107_facebook_comment_scheduled_intents.sql', import.meta.url),
       'utf8',
     ),
   );

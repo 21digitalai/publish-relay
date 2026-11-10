@@ -44,6 +44,7 @@ import {
 } from '../modules/providers/youtube-media-dispatch.service.js';
 import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { dispatchDuePageDms } from '../modules/providers/facebook-dm-pending.worker.js';
+import { dispatchDuePageComments } from '../modules/providers/facebook-comment-pending.worker.js';
 import { expireScheduledEngagementProposals } from '../modules/providers/engagement-proposal.repository.js';
 import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
 import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
@@ -303,6 +304,21 @@ while (!shutdownController.signal.aborted) {
   for (const failure of destinationFailures)
     process.stderr.write(`${JSON.stringify({ event: 'destination_cycle_failed', ...failure })}\n`);
   if (facebookRuntime) {
+    try {
+      const pageComments = await dispatchDuePageComments({
+        ...facebookRuntime,
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      });
+      if (pageComments.confirmed || pageComments.failed || pageComments.unknown)
+        process.stdout.write(
+          `${JSON.stringify({ event: 'facebook_page_comment_cycle', ...pageComments })}\n`,
+        );
+    } catch (error) {
+      process.stderr.write(
+        `${JSON.stringify({ event: 'facebook_page_comment_cycle_failed', error: String(error) })}\n`,
+      );
+    }
     try {
       const pageDms = await dispatchDuePageDms({
         ...facebookRuntime,

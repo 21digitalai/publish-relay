@@ -1,5 +1,7 @@
 # Publish Relay Backend Guide
 
+The browser `GET /api/engagement-proposals` view filter scopes status before bounded cursor pagination: Review selects pending, Scheduled & sent selects scheduled proposal-management rows, and Needs attention selects sending/cancelled/unknown/failed/expired/superseded. Provider and kind filters compose with the selected cohort on the server. The absent-view legacy response retains the prior mixed-status contract for existing consumers. The Page DM no-go list remains a separate authorized endpoint, not part of proposal pagination.
+
 Fanvue DM proposal approval preflights the current selected chat, local media, and send policy without a provider POST, then locks the exact pending proposal revision and inserts its immutable pending intent in one tenant transaction. The same action ID joins timing with the canonical Fanvue action ledger. Approval retains a future planned time or uses the approval time if overdue; per-account worker pacing still gates dispatch. Pending-only cancellation changes proposal and intent together. Claim and fenced settlement keep proposal status aligned with actual action truth; no approval or scheduled row implies sent. The separately scoped Fanvue comment scheduling candidate applies this contract only to creator-owned top-level posts, using `fanvue_comment_pending_intents` and the same account pacing cursor, but is not released until its independent review and cumulative integration.
 
 ## Scheduled Facebook Page comment replies

@@ -686,29 +686,26 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
     });
     await page.reload();
     await page.getByRole('button', { name: /Facebook Page message/ }).click();
-    await expect(
-      page.getByText(
-        size.state === 'stale'
-          ? 'Newer message arrived · fresh draft coming'
-          : 'Reply window closed · waiting for their next message',
-      ),
-    ).toHaveCount(1);
+    await expect(page.locator('.engagement-reply-window-detail')).toContainText(
+      size.state === 'stale'
+        ? 'Newer message arrived · fresh draft coming'
+        : 'Reply window closed · waiting for their next message',
+    );
     await expect(page.getByRole('button', { name: 'Approve and schedule 3 bubbles' })).toHaveCount(
       0,
     );
     await expect(page.getByRole('button', { name: 'Approve scheduled time' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Dismiss proposal' })).toBeVisible();
     if (size.width === 390) await page.getByRole('button', { name: 'Back to Review' }).click();
-    await page.getByRole('tab', { name: 'Needs attention' }).click();
-    await expect(page.getByLabel('Unsent suggestions')).toContainText(
-      'Never sent · kept for context only.',
+    await expect(page.getByLabel('Unavailable drafts')).toContainText(
+      'Reply window closed or source changed · never sent.',
     );
-    await expect(page.getByLabel('Unsent suggestions')).toContainText('Facebook Page message');
+    await expect(page.getByLabel('Unavailable drafts')).toContainText('Facebook Page message');
     await expect(page.locator('.engagement-proposals-list > div:last-of-type')).toHaveClass(
       /engagement-proposals-inactive/,
     );
     const openControl = page
-      .getByLabel('Unsent suggestions')
+      .getByLabel('Unavailable drafts')
       .getByRole('button', { name: 'Open conversation on Facebook' });
     await expect(openControl).toBeVisible();
     const popupPromise = page.waitForEvent('popup');
@@ -718,15 +715,15 @@ test('closed Page DM window hides approval on desktop and mobile', async ({ page
       await expect(popup).toHaveTitle('Facebook conversation opened');
       await expect(
         page
-          .getByLabel('Unsent suggestions')
+          .getByLabel('Unavailable drafts')
           .getByRole('link', { name: 'Open conversation on Facebook' }),
       ).toHaveAttribute('href', graphLink);
       await popup.close();
     } else {
       await expect(
-        page.getByLabel('Unsent suggestions').getByText('Link unavailable'),
+        page.getByLabel('Unavailable drafts').getByText('Link unavailable'),
       ).toBeVisible();
-      await expect(page.getByLabel('Unsent suggestions').getByRole('link')).toHaveCount(0);
+      await expect(page.getByLabel('Unavailable drafts').getByRole('link')).toHaveCount(0);
       await expect.poll(() => popup.isClosed()).toBe(true);
     }
     await expect(page.locator('.engagement-reply-window-badge.danger')).toBeVisible();
@@ -829,8 +826,8 @@ test('verified inactive Page DM stays outside approval after switching rows and 
     await page.getByRole('button', { name: /Draft 1/ }).click();
     if (size.width === 390) await page.getByRole('button', { name: 'Back to Review' }).click();
     await page.getByRole('tab', { name: 'Needs attention' }).click();
-    await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
     await page.getByRole('tab', { name: 'Review' }).click();
+    await expect(page.getByLabel('Unavailable drafts')).toContainText('Draft 1');
     await page.getByRole('button', { name: /Draft 2/ }).click();
     if (size.width === 390) await page.getByRole('button', { name: 'Back to Review' }).click();
     await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
@@ -841,8 +838,8 @@ test('verified inactive Page DM stays outside approval after switching rows and 
     await expect(page.locator('.engagement-reply-window-detail')).toContainText('left');
     await page.reload();
     await page.getByRole('tab', { name: 'Needs attention' }).click();
-    await expect(page.getByLabel('Unsent suggestions')).toContainText('Draft 1');
     await page.getByRole('tab', { name: 'Review' }).click();
+    await expect(page.getByLabel('Unavailable drafts')).toContainText('Draft 1');
     await expect(page.getByLabel('Awaiting approval')).toContainText('Draft 2');
     expect(checked).toContain(first);
   }

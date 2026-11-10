@@ -632,6 +632,7 @@ export function registerEngagementProposalRoutes(
         cursor: z.string().max(512).optional(),
         provider: z.enum(['facebook_page', 'fanvue']).optional(),
         kind: z.enum(['dm', 'comment']).optional(),
+        view: z.enum(['review', 'history', 'attention']).optional(),
       })
       .safeParse(request.query);
     if (!query.success)
@@ -646,6 +647,7 @@ export function registerEngagementProposalRoutes(
       ...(cursor ? { beforeCreatedAt: new Date(cursor.createdAt), beforeId: cursor.id } : {}),
       ...(query.data.provider ? { provider: query.data.provider } : {}),
       ...(query.data.kind ? { kind: query.data.kind } : {}),
+      ...(query.data.view ? { view: query.data.view } : {}),
       limit: PAGE_SIZE + 1,
     });
     const page = rows.slice(0, PAGE_SIZE);

@@ -101,6 +101,8 @@ export function EngagementProposalsPage() {
     return view === 'history' || view === 'attention' ? view : 'review';
   };
   const [view, setView] = useState(readView);
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const [kindFilter, setKindFilter] = useState<'all' | 'dm' | 'comment'>(() => {
     const kind = new URLSearchParams(window.location.search).get('kind');
     return kind === 'dm' || kind === 'comment' ? kind : 'all';
@@ -216,7 +218,9 @@ export function EngagementProposalsPage() {
       if (!cursor) setLoadingMore(false);
       const requestedProvider = providerFilter;
       const requestedKind = kindFilter;
+      const requestedView = view;
       const params = new URLSearchParams();
+      params.set('view', requestedView);
       if (requestedProvider !== 'all') params.set('provider', requestedProvider);
       if (requestedKind !== 'all') params.set('kind', requestedKind);
       if (cursor) params.set('cursor', cursor);
@@ -226,6 +230,7 @@ export function EngagementProposalsPage() {
         );
         if (
           generation !== listRequestGeneration.current ||
+          viewRef.current !== requestedView ||
           providerFilterRef.current !== requestedProvider ||
           kindFilterRef.current !== requestedKind
         )
@@ -235,13 +240,14 @@ export function EngagementProposalsPage() {
       } catch (failure) {
         if (
           generation === listRequestGeneration.current &&
+          viewRef.current === requestedView &&
           providerFilterRef.current === requestedProvider &&
           kindFilterRef.current === requestedKind
         )
           throw failure;
       }
     },
-    [providerFilter, kindFilter],
+    [providerFilter, kindFilter, view],
   );
 
   const loadNoGo = useCallback(async (cursor?: string) => {
@@ -701,6 +707,8 @@ export function EngagementProposalsPage() {
   };
   const activeItems = items.filter((item) => item.status === 'pending' && !inactiveDraft(item));
   const inactiveItems = items.filter(inactiveDraft);
+  const inactivePendingItems = inactiveItems.filter((item) => item.status === 'pending');
+  const inactiveOutcomeItems = inactiveItems.filter((item) => item.status !== 'pending');
   const outcomeItems = items.filter((item) => item.status !== 'pending' && !inactiveDraft(item));
   const scheduledItems = outcomeItems.filter((item) => item.status === 'scheduled');
 
@@ -827,13 +835,10 @@ export function EngagementProposalsPage() {
               }}
             >
               {label}
-              {key !== 'history' && (
+              {view === key && (
                 <span className="engagement-tab-count">
                   {' · '}
-                  {key === 'review'
-                    ? activeItems.length
-                    : outcomeItems.filter((item) => item.status !== 'scheduled').length +
-                      inactiveItems.length}
+                  {items.length}
                   {nextCursor ? '+' : ''} loaded
                 </span>
               )}
@@ -955,6 +960,16 @@ export function EngagementProposalsPage() {
                         )}
                       </div>
                     )}
+                    {view === 'review' && inactivePendingItems.length > 0 && (
+                      <div
+                        className="engagement-proposals-inactive"
+                        aria-label="Unavailable drafts"
+                      >
+                        <h2>Unavailable drafts</h2>
+                        <p className="muted">Reply window closed or source changed · never sent.</p>
+                        {inactivePendingItems.map(renderProposalRow)}
+                      </div>
+                    )}
                     {view === 'attention' &&
                       outcomeItems.filter((item) => item.status !== 'scheduled').length > 0 && (
                         <div className="engagement-proposals-outcomes" aria-label="Send outcomes">
@@ -964,14 +979,14 @@ export function EngagementProposalsPage() {
                             .map(renderProposalRow)}
                         </div>
                       )}
-                    {view === 'attention' && inactiveItems.length > 0 && (
+                    {view === 'attention' && inactiveOutcomeItems.length > 0 && (
                       <div
                         className="engagement-proposals-inactive"
                         aria-label="Unsent suggestions"
                       >
                         <h2>Unsent suggestions</h2>
                         <p className="muted">Never sent · kept for context only.</p>
-                        {inactiveItems.map(renderProposalRow)}
+                        {inactiveOutcomeItems.map(renderProposalRow)}
                       </div>
                     )}
                   </>

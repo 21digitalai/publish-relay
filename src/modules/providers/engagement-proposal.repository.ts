@@ -252,6 +252,7 @@ export async function listEngagementReviewQueue(
     beforeId?: string;
     provider?: 'facebook_page' | 'fanvue';
     kind?: 'dm' | 'comment';
+    view?: 'review' | 'history' | 'attention';
     limit: number;
   },
 ) {
@@ -270,16 +271,25 @@ export async function listEngagementReviewQueue(
       .where(
         and(
           eq(engagementProposals.workspaceId, workspaceId),
-          inArray(engagementProposals.status, [
-            'pending',
-            'sending',
-            'scheduled',
-            'cancelled',
-            'unknown',
-            'failed',
-            'expired',
-            'superseded',
-          ]),
+          inArray(
+            engagementProposals.status,
+            page?.view === 'review'
+              ? ['pending']
+              : page?.view === 'history'
+                ? ['scheduled']
+                : page?.view === 'attention'
+                  ? ['sending', 'cancelled', 'unknown', 'failed', 'expired', 'superseded']
+                  : [
+                      'pending',
+                      'sending',
+                      'scheduled',
+                      'cancelled',
+                      'unknown',
+                      'failed',
+                      'expired',
+                      'superseded',
+                    ],
+          ),
           ...(page?.provider ? [eq(engagementProposals.provider, page.provider)] : []),
           ...(page?.kind ? [eq(engagementProposals.kind, page.kind)] : []),
           ...(page?.beforeCreatedAt && page.beforeId

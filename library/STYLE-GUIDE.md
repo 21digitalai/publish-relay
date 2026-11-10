@@ -119,6 +119,11 @@ compact sections; it does not claim a merged chronology. Needs attention contain
 proposal outcomes and the Page DM no-go list. The task view and filters remain linkable in the
 query string. Keep history off the default Review viewport. Preserve each provider's approval,
 permission, pagination, and receipt semantics.
+Each task tab requests its own server-filtered proposal cohort before cursor pagination; loaded
+counts describe only the active tab, never a mixed-status page or an unvisited tab. A pending
+Page DM draft found locally closed/stale remains visible as an unavailable draft in Review until
+server truth changes; it must not hide an older actionable pending row or crowd the Needs attention
+outcome cohort. The no-go list retains its separate pagination.
 
 Accounts start as compact identity/health rows with an explicit Manage disclosure. Existing
 provider actions and settings live in its expanded detail, without changing their data or

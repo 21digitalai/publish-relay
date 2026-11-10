@@ -534,6 +534,9 @@ describe('engagement proposal foundation', () => {
       expect(
         facebookOnly.json<{ data: { nextCursor: string | null } }>().data.nextCursor,
       ).not.toBeNull();
+      expect(Buffer.byteLength(facebookOnly.body)).toBeLessThan(30_000);
+      expect(facebookOnly.body).not.toContain('credentialId');
+      expect(facebookOnly.body).not.toContain('proposerId');
       const commentOnly = await app.inject({
         method: 'GET',
         url: '/api/engagement-proposals?kind=comment',
@@ -545,6 +548,49 @@ describe('engagement proposal foundation', () => {
           .json<{ data: { items: { kind: string }[] } }>()
           .data.items.every((item) => item.kind === 'comment'),
       ).toBe(true);
+      const oldPendingId = pageFixtureIds[50];
+      const oldScheduledId = pageFixtureIds[51];
+      if (!oldPendingId || !oldScheduledId) throw new Error('Missing pagination fixtures');
+      await client.exec(`
+        UPDATE engagement_proposals SET status = 'failed'
+          WHERE id IN (${pageFixtureIds
+            .slice(0, 50)
+            .map((id) => `'${id}'`)
+            .join(',')});
+        UPDATE engagement_proposals SET created_at = '2026-10-24 12:00:00+00'
+          WHERE id IN ('${oldPendingId}', '${oldScheduledId}');
+        UPDATE engagement_proposals SET status = 'scheduled' WHERE id = '${oldScheduledId}';
+      `);
+      const viewItems = async (view: 'review' | 'history' | 'attention') => {
+        const response = await app.inject({
+          method: 'GET',
+          url: `/api/engagement-proposals?view=${view}&provider=facebook_page&kind=comment`,
+          headers: browserHeaders,
+        });
+        expect(response.statusCode).toBe(200);
+        return response.json<{
+          data: { items: { id: string; status: string }[]; nextCursor: string | null };
+        }>().data;
+      };
+      expect((await viewItems('review')).items).toEqual([
+        expect.objectContaining({ id: oldPendingId, status: 'pending' }),
+      ]);
+      expect((await viewItems('history')).items).toEqual([
+        expect.objectContaining({ id: oldScheduledId, status: 'scheduled' }),
+      ]);
+      const attentionPage = await viewItems('attention');
+      expect(attentionPage.items).toHaveLength(50);
+      expect(attentionPage.nextCursor).toBeNull();
+      expect(attentionPage.items.every((item) => item.status === 'failed')).toBe(true);
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/api/engagement-proposals?view=unknown',
+            headers: browserHeaders,
+          })
+        ).statusCode,
+      ).toBe(400);
       expect(
         (
           await app.inject({

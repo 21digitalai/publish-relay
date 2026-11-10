@@ -65,6 +65,10 @@ describe('Fanvue creator-owned top-level comment command', () => {
     );
     expect(reads.getOwnedPostForComment).toHaveBeenCalledWith(input);
     expect(client.createComment).toHaveBeenCalledWith('token', input.postUuid, input.text);
+    expect(ledger.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ textBody: input.text }),
+    );
     expect(ledger.settle).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

@@ -1,0 +1,194 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+interface FanvueHistoryRow {
+  id: string;
+  accountId: string;
+  accountDisplayName: string;
+  kind: 'message' | 'comment';
+  targetUuid: string;
+  outboundText: string | null;
+  mediaCount: number | null;
+  priceCents: number | null;
+  status: string;
+  providerReceipt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  destinationUrl: string | null;
+}
+
+function localTime(value: string) {
+  return new Date(value).toLocaleString(undefined, { timeZoneName: 'short' });
+}
+
+export function FanvueActionHistory() {
+  const [rows, setRows] = useState<FanvueHistoryRow[]>([]);
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [kind, setKind] = useState<'all' | 'message' | 'comment'>('all');
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const generationRef = useRef(0);
+  const filterKey = `${accountId ?? ''}:${kind}`;
+
+  const load = useCallback(
+    async (generation: number, next?: string) => {
+      const params = new URLSearchParams();
+      if (accountId) params.set('accountId', accountId);
+      if (kind !== 'all') params.set('kind', kind);
+      if (next) params.set('cursor', next);
+      const response = await fetch(`/api/fanvue-engagement-history?${params.toString()}`);
+      const body = (await response.json()) as {
+        data: { items: FanvueHistoryRow[]; nextCursor: string | null } | null;
+        error: string | null;
+      };
+      if (!response.ok || !body.data)
+        throw new Error(body.error ?? 'Could not load Fanvue history');
+      if (generationRef.current !== generation) return;
+      setRows((current) => (next ? [...current, ...body.data!.items] : body.data!.items));
+      setCursor(body.data.nextCursor);
+    },
+    [accountId, kind],
+  );
+
+  useEffect(() => {
+    const generation = ++generationRef.current;
+    setRows([]);
+    setCursor(null);
+    setLoading(true);
+    setError(null);
+    void load(generation)
+      .catch((failure: unknown) => {
+        if (generationRef.current === generation)
+          setError(failure instanceof Error ? failure.message : 'Could not load Fanvue history');
+      })
+      .finally(() => {
+        if (generationRef.current === generation) setLoading(false);
+      });
+    return () => {
+      generationRef.current += 1;
+    };
+  }, [filterKey, load]);
+
+  return (
+    <section
+      className="fanvue-action-history page-dm-history"
+      aria-labelledby="fanvue-history-title"
+    >
+      <h2 id="fanvue-history-title">Fanvue engagement history</h2>
+      <p className="muted">Direct and approved send attempts; a proposal alone is not a send.</p>
+      <div className="fanvue-action-history-filters" aria-label="Filter Fanvue channel">
+        {(['all', 'message', 'comment'] as const).map((choice) => (
+          <button
+            key={choice}
+            type="button"
+            className="secondary-button"
+            aria-pressed={kind === choice}
+            onClick={() => setKind(choice)}
+          >
+            {choice === 'all' ? 'All channels' : choice === 'message' ? 'DMs' : 'Comments'}
+          </button>
+        ))}
+        {accountId && (
+          <button type="button" className="secondary-button" onClick={() => setAccountId(null)}>
+            Clear account filter
+          </button>
+        )}
+      </div>
+      {loading && <p role="status">Loading Fanvue history…</p>}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}{' '}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              const generation = ++generationRef.current;
+              setLoading(true);
+              void load(generation)
+                .then(() => setError(null))
+                .catch((failure: unknown) =>
+                  setError(failure instanceof Error ? failure.message : 'Could not load history'),
+                )
+                .finally(() => setLoading(false));
+            }}
+          >
+            Retry
+          </button>
+        </p>
+      )}
+      {!loading && !error && rows.length === 0 && <p>No Fanvue actions match these filters.</p>}
+      {!error && rows.length > 0 && (
+        <ul className="page-dm-history-rows">
+          {rows.map((row) => (
+            <li className="page-dm-history-row" key={row.id}>
+              <button
+                type="button"
+                className="secondary-button"
+                aria-pressed={accountId === row.accountId}
+                onClick={() => setAccountId(row.accountId)}
+              >
+                {row.accountDisplayName}
+              </button>
+              <strong>
+                {row.kind === 'message' ? 'DM' : 'Comment'} · {row.status}
+              </strong>
+              <p className="page-dm-history-text">
+                {row.outboundText ??
+                  (row.mediaCount ? 'Media-only send' : 'Text unavailable for this older action')}
+              </p>
+              {row.mediaCount !== null && row.mediaCount > 0 && (
+                <span>
+                  {row.mediaCount} media attachment{row.mediaCount === 1 ? '' : 's'}
+                </span>
+              )}
+              {row.priceCents !== null && (
+                <span>
+                  Price{' '}
+                  {new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(
+                    row.priceCents / 100,
+                  )}
+                </span>
+              )}
+              {row.destinationUrl ? (
+                <a href={row.destinationUrl} target="_blank" rel="noopener noreferrer">
+                  Open on Fanvue
+                </a>
+              ) : (
+                <span className="muted">Link unavailable</span>
+              )}
+              {row.providerReceipt && (
+                <details>
+                  <summary>Provider receipt</summary>
+                  <code>{row.providerReceipt}</code>
+                </details>
+              )}
+              <span className="page-dm-history-timestamps">
+                <time dateTime={row.createdAt}>Started {localTime(row.createdAt)}</time>
+                <time dateTime={row.updatedAt}>Updated {localTime(row.updatedAt)}</time>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {cursor && !loading && !error && (
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => {
+            const generation = generationRef.current;
+            setLoading(true);
+            void load(generation, cursor)
+              .catch((failure: unknown) =>
+                setError(
+                  failure instanceof Error ? failure.message : 'Could not load more actions',
+                ),
+              )
+              .finally(() => setLoading(false));
+          }}
+        >
+          Load more actions
+        </button>
+      )}
+    </section>
+  );
+}

@@ -261,6 +261,9 @@ export class FanvueMessageService {
       actionKind: 'message' as const,
       targetUuid: command.fanUuid,
       requestFingerprint,
+      textBody: command.text ?? null,
+      mediaCount: mediaUuids?.length ?? 0,
+      priceCents: command.price ?? null,
     };
     const reservation = await reserveFanvueAction(this.database, intent);
     if (reservation.kind !== 'new') return replayResult(reservation);

@@ -209,6 +209,10 @@ describe('Fanvue existing-chat text send command', () => {
     );
     expect(reads.getExistingChatForMessage).toHaveBeenCalledWith(input);
     expect(client.sendMessage).toHaveBeenCalledWith('token', input.fanUuid, { text: input.text });
+    expect(ledger.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ textBody: 'Hello', mediaCount: 0, priceCents: null }),
+    );
     expect(ledger.settle).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ result: { state: 'confirmed', providerObjectUuid: messageUuid } }),
@@ -289,6 +293,10 @@ describe('Fanvue existing-chat text send command', () => {
       price: 300,
       mediaPreviewUuid: mediaUuid,
     });
+    expect(ledger.reserve).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ textBody: 'Unlock', mediaCount: 1, priceCents: 300 }),
+    );
   });
 
   it('refuses not-ready or invalid paid media before reserving a send intent', async () => {

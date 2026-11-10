@@ -84,6 +84,7 @@ export class FanvueCommentService {
       actionKind: 'comment' as const,
       targetUuid: command.postUuid,
       requestFingerprint,
+      textBody: command.text,
     };
     const reservation = await reserveFanvueAction(this.database, intent);
     if (reservation.kind !== 'new') return replayResult(reservation);

@@ -15,6 +15,9 @@ export interface FanvueActionInput {
   actionKind: FanvueActionKind;
   targetUuid: string;
   requestFingerprint: string;
+  textBody?: string | null;
+  mediaCount?: number | null;
+  priceCents?: number | null;
 }
 
 export type FanvueActionReservation =
@@ -95,7 +98,12 @@ export async function reserveFanvueAction(
   return withTenantTransaction(database, input, async (transaction) => {
     const inserted = await transaction
       .insert(fanvueActionIntents)
-      .values(input)
+      .values({
+        ...input,
+        textBody: input.textBody ?? null,
+        mediaCount: input.mediaCount ?? null,
+        priceCents: input.priceCents ?? null,
+      })
       .onConflictDoNothing()
       .returning({ id: fanvueActionIntents.id });
     if (inserted[0]) return { kind: 'new', id: inserted[0].id };

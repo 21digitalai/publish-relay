@@ -1,5 +1,66 @@
 import { expect, test } from '@playwright/test';
 
+test('Fanvue direct action history shows exact text, safe media and price with no guessed link', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Fanvue History Owner',
+      email: `fanvue-history-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Fanvue History Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const queries: string[] = [];
+  await page.route('**/api/fanvue-engagement-history**', async (route) => {
+    const url = new URL(route.request().url());
+    queries.push(url.search);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items:
+            url.searchParams.get('kind') === 'comment'
+              ? []
+              : [
+                  {
+                    id: '00000000-0000-4000-8000-000000000901',
+                    accountId: '00000000-0000-4000-8000-000000000902',
+                    accountDisplayName: 'Eli Fanvue',
+                    kind: 'message',
+                    targetUuid: '00000000-0000-4000-8000-000000000903',
+                    outboundText: 'Exact direct agent DM',
+                    mediaCount: 1,
+                    priceCents: 300,
+                    status: 'confirmed',
+                    providerReceipt: '00000000-0000-4000-8000-000000000904',
+                    createdAt: '2026-11-05T09:00:00Z',
+                    updatedAt: '2026-11-05T09:01:00Z',
+                    destinationUrl: null,
+                  },
+                ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  const history = page.locator('.fanvue-action-history');
+  await expect(history.getByText('Exact direct agent DM')).toBeVisible();
+  await expect(history.getByText('1 media attachment')).toBeVisible();
+  await expect(history.getByText('Price $3.00')).toBeVisible();
+  await expect(history.getByText('Link unavailable')).toBeVisible();
+  await expect(history.getByRole('link', { name: 'Open on Fanvue' })).toHaveCount(0);
+  await history.getByRole('button', { name: 'Comments' }).click();
+  await expect.poll(() => queries.at(-1)).toContain('kind=comment');
+  await expect(history.getByText('Exact direct agent DM')).toHaveCount(0);
+});
+
 test('Page comment history shows direct and scheduled truth with filters and safe links', async ({
   page,
 }) => {
@@ -67,7 +128,9 @@ test('Page comment history shows direct and scheduled truth with filters and saf
   await expect(history.getByText('Exact direct reply')).toHaveCount(0);
   await expect(history.getByText('Exact future reply')).toBeVisible();
   await history.getByRole('button', { name: 'Christina Page' }).click();
-  await expect.poll(() => queries.at(-1)).toContain('accountId=00000000-0000-4000-8000-000000000802');
+  await expect
+    .poll(() => queries.at(-1))
+    .toContain('accountId=00000000-0000-4000-8000-000000000802');
 });
 
 test('Page comment proposal schedules at its planned time and can be cancelled after reload', async ({

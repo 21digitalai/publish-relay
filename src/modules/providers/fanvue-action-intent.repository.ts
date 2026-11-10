@@ -24,6 +24,11 @@ export interface FanvueActionInput {
   targetLabel?: string | null;
   mediaCount?: number | null;
   priceCents?: number | null;
+  mediaIds?: string[];
+  mediaPreviewId?: string | null;
+  actorType?: string;
+  actorId?: string;
+  scheduledLeaseOwner?: string | undefined;
 }
 
 export type FanvueActionReservation =
@@ -110,6 +115,11 @@ export async function reserveFanvueAction(
         text: fanvueDmPendingIntents.textBody,
         mediaIds: fanvueDmPendingIntents.mediaIds,
         price: fanvueDmPendingIntents.priceCents,
+        mediaPreviewId: fanvueDmPendingIntents.mediaPreviewId,
+        actorType: fanvueDmPendingIntents.actorType,
+        actorId: fanvueDmPendingIntents.actorId,
+        status: fanvueDmPendingIntents.status,
+        leaseOwner: fanvueDmPendingIntents.leaseOwner,
       })
       .from(fanvueDmPendingIntents)
       .where(
@@ -124,6 +134,10 @@ export async function reserveFanvueAction(
         accountId: fanvueCommentPendingIntents.accountId,
         targetUuid: fanvueCommentPendingIntents.postUuid,
         text: fanvueCommentPendingIntents.textBody,
+        actorType: fanvueCommentPendingIntents.actorType,
+        actorId: fanvueCommentPendingIntents.actorId,
+        status: fanvueCommentPendingIntents.status,
+        leaseOwner: fanvueCommentPendingIntents.leaseOwner,
       })
       .from(fanvueCommentPendingIntents)
       .where(
@@ -140,12 +154,23 @@ export async function reserveFanvueAction(
           dm.targetUuid !== input.targetUuid ||
           dm.text !== (input.textBody ?? null) ||
           dm.mediaIds.length !== (input.mediaCount ?? 0) ||
-          dm.price !== (input.priceCents ?? null))) ||
+          dm.mediaIds.some((id, index) => id !== input.mediaIds?.[index]) ||
+          dm.mediaPreviewId !== (input.mediaPreviewId ?? null) ||
+          dm.price !== (input.priceCents ?? null) ||
+          dm.actorType !== input.actorType ||
+          dm.actorId !== input.actorId ||
+          dm.status !== 'claimed' ||
+          dm.leaseOwner !== input.scheduledLeaseOwner)) ||
       (comment &&
         (input.actionKind !== 'comment' ||
           comment.accountId !== input.accountId ||
           comment.targetUuid !== input.targetUuid ||
-          comment.text !== input.textBody))
+          comment.text !== input.textBody ||
+          comment.actorType !== input.actorType ||
+          comment.actorId !== input.actorId ||
+          comment.status !== 'claimed' ||
+          comment.leaseOwner !== input.scheduledLeaseOwner)) ||
+      (!dm && !comment && input.scheduledLeaseOwner)
     )
       return { kind: 'conflict' };
     const inserted = await transaction

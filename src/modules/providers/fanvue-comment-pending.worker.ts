@@ -63,17 +63,20 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   if (!(await hasCurrentFanvueAuthority(runtime.database, intent, 'fanvue:comments:send')))
     return 'failed';
   try {
-    const result = await runtime.comments.send({
-      workspaceId: intent.workspaceId,
-      accountId: intent.accountId,
-      postUuid: intent.postUuid,
-      clientActionId: intent.clientActionId,
-      text: intent.text,
-      actor: {
-        type: intent.actorType === 'api_key' ? 'api-key' : intent.actorType,
-        id: intent.actorId,
+    const result = await runtime.comments.send(
+      {
+        workspaceId: intent.workspaceId,
+        accountId: intent.accountId,
+        postUuid: intent.postUuid,
+        clientActionId: intent.clientActionId,
+        text: intent.text,
+        actor: {
+          type: intent.actorType === 'api_key' ? 'api-key' : intent.actorType,
+          id: intent.actorId,
+        },
       },
-    });
+      intent.leaseOwner ?? '',
+    );
     return result.state;
   } catch (error) {
     const action = await existingActionState(runtime.database, intent);

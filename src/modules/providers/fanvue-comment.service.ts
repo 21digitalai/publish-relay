@@ -112,7 +112,10 @@ export class FanvueCommentService {
     };
   }
 
-  async send(input: z.input<typeof sendInput>): Promise<FanvueCommentResult> {
+  async send(
+    input: z.input<typeof sendInput>,
+    scheduledLeaseOwner?: string,
+  ): Promise<FanvueCommentResult> {
     const command = sendInput.parse(input);
     let accessToken: string;
     let targetLabel: string | null;
@@ -150,6 +153,9 @@ export class FanvueCommentService {
       requestFingerprint,
       textBody: command.text,
       targetLabel,
+      actorType: command.actor.type === 'api-key' ? 'api_key' : command.actor.type,
+      actorId: command.actor.id,
+      scheduledLeaseOwner,
     };
     const reservation = await reserveFanvueAction(this.database, intent);
     if (reservation.kind !== 'new') return replayResult(reservation);

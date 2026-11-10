@@ -17,6 +17,8 @@ import { dispatchDueFanvueComments } from '../src/modules/providers/fanvue-comme
 import { listFanvueActionHistory } from '../src/modules/providers/fanvue-action-history.repository.js';
 import { reserveFanvueAction } from '../src/modules/providers/fanvue-action-intent.repository.js';
 import {
+  cancelPendingFanvueDm,
+  claimDueFanvueDm,
   scheduleFanvueDm,
   FanvueDmScheduleConflictError,
 } from '../src/modules/providers/fanvue-dm-pending.repository.js';
@@ -158,6 +160,134 @@ describe('Fanvue supported-comment pending intents', () => {
       expect(history[0]?.status).toBe('pending');
     } finally {
       await pg.close();
+    }
+  });
+  it('fences direct comment reservation before due and after cancellation, but admits its claimed worker', async () => {
+    const { pg, database } = await fixture();
+    try {
+      await scheduleFanvueComment(database, input);
+      const action = {
+        workspaceId,
+        accountId,
+        clientActionId: input.clientActionId,
+        actionKind: 'comment' as const,
+        targetUuid: postUuid,
+        requestFingerprint: 'a'.repeat(64),
+        textBody: input.text,
+        actorType: 'api_key',
+        actorId: input.actor.id,
+      };
+      expect(await reserveFanvueAction(database, action)).toEqual({ kind: 'conflict' });
+      const claim = await claimDueFanvueComment(database, {
+        workerId: 'comment-worker',
+        now: new Date('2026-11-12T10:00:00Z'),
+        leaseMs: 60_000,
+      });
+      expect(claim?.leaseOwner).toBeTruthy();
+      expect(await reserveFanvueAction(database, action)).toEqual({ kind: 'conflict' });
+      expect(
+        await reserveFanvueAction(database, {
+          ...action,
+          scheduledLeaseOwner: claim?.leaseOwner ?? '',
+        }),
+      ).toMatchObject({ kind: 'new' });
+    } finally {
+      await pg.close();
+    }
+    const cancelled = await fixture();
+    try {
+      await scheduleFanvueComment(cancelled.database, input);
+      expect(await cancelPendingFanvueComment(cancelled.database, input)).toBe(true);
+      expect(
+        await reserveFanvueAction(cancelled.database, {
+          workspaceId,
+          accountId,
+          clientActionId: input.clientActionId,
+          actionKind: 'comment',
+          targetUuid: postUuid,
+          requestFingerprint: 'a'.repeat(64),
+          textBody: input.text,
+          actorType: 'api_key',
+          actorId: input.actor.id,
+        }),
+      ).toEqual({ kind: 'conflict' });
+    } finally {
+      await cancelled.pg.close();
+    }
+  });
+  it('fences direct DM reservation and changed same-count media before claimed dispatch', async () => {
+    const { pg, database } = await fixture();
+    try {
+      const mediaId = '00000000-0000-4000-8000-000000000020';
+      const otherMediaId = '00000000-0000-4000-8000-000000000021';
+      const { postUuid: fanUuid, ...shared } = input;
+      await scheduleFanvueDm(database, { ...shared, fanUuid, mediaIds: [mediaId], price: 300 });
+      const action = {
+        workspaceId,
+        accountId,
+        clientActionId: input.clientActionId,
+        actionKind: 'message' as const,
+        targetUuid: fanUuid,
+        requestFingerprint: 'a'.repeat(64),
+        textBody: input.text,
+        mediaCount: 1,
+        priceCents: 300,
+        actorType: 'api_key',
+        actorId: input.actor.id,
+      };
+      expect(await reserveFanvueAction(database, { ...action, mediaIds: [mediaId] })).toEqual({
+        kind: 'conflict',
+      });
+      const claim = await claimDueFanvueDm(database, {
+        workerId: 'dm-worker',
+        now: new Date('2026-11-12T10:00:00Z'),
+        leaseMs: 60_000,
+      });
+      expect(claim?.leaseOwner).toBeTruthy();
+      expect(
+        await reserveFanvueAction(database, {
+          ...action,
+          mediaIds: [otherMediaId],
+          scheduledLeaseOwner: claim?.leaseOwner ?? '',
+        }),
+      ).toEqual({ kind: 'conflict' });
+      expect(
+        await reserveFanvueAction(database, {
+          ...action,
+          mediaIds: [mediaId],
+          scheduledLeaseOwner: claim?.leaseOwner ?? '',
+        }),
+      ).toMatchObject({ kind: 'new' });
+    } finally {
+      await pg.close();
+    }
+    const cancelled = await fixture();
+    try {
+      const { postUuid: fanUuid, ...shared } = input;
+      await scheduleFanvueDm(cancelled.database, { ...shared, fanUuid });
+      expect(
+        await cancelPendingFanvueDm(cancelled.database, {
+          workspaceId,
+          accountId,
+          fanUuid,
+          clientActionId: input.clientActionId,
+        }),
+      ).toBe(true);
+      expect(
+        await reserveFanvueAction(cancelled.database, {
+          workspaceId,
+          accountId,
+          clientActionId: input.clientActionId,
+          actionKind: 'message',
+          targetUuid: fanUuid,
+          requestFingerprint: 'a'.repeat(64),
+          textBody: input.text,
+          actorType: 'api_key',
+          actorId: input.actor.id,
+        }),
+      ).toEqual({ kind: 'conflict' });
+    } finally {
+      await cancelled.pg.close();
     }
   });
   it('keeps immutable exact-action replay, tenant isolation and pending-only cancellation', async () => {

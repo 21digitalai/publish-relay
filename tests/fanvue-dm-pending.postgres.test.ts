@@ -327,6 +327,7 @@ describe('Fanvue DM pending intent foundation', () => {
           fanUuid: third.fanUuid,
           text: third.text,
         }),
+        expect.stringMatching(/^worker:/),
       );
     } finally {
       await pg.close();

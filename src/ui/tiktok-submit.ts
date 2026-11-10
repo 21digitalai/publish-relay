@@ -5,6 +5,7 @@ export interface TikTokAttempt {
   files: File[];
   submission: string;
   scheduledAt: string;
+  approvalRequired: boolean;
   draftKey: string;
   consentKey: string;
   scheduleKey: string;
@@ -75,12 +76,14 @@ export function createTikTokAttempt(input: {
   files: File[];
   submission: TikTokSubmission;
   scheduledAt: string;
+  approvalRequired: boolean;
 }): TikTokAttempt {
   return {
     form: input.form,
     files: [...input.files],
     submission: JSON.stringify(input.submission),
     scheduledAt: input.scheduledAt,
+    approvalRequired: input.approvalRequired,
     draftKey: crypto.randomUUID(),
     consentKey: crypto.randomUUID(),
     scheduleKey: crypto.randomUUID(),
@@ -98,8 +101,15 @@ export function tikTokAttemptMatches(
   form: string,
   files: File[],
   current: TikTokSubmission | null,
+  approvalRequired: boolean,
 ): boolean {
-  if (!current || attempt.form !== form || attempt.files.length !== files.length) return false;
+  if (
+    !current ||
+    attempt.form !== form ||
+    attempt.approvalRequired !== approvalRequired ||
+    attempt.files.length !== files.length
+  )
+    return false;
   if (attempt.files.some((file, index) => file !== files[index])) return false;
   const original = JSON.parse(attempt.submission) as TikTokSubmission;
   return JSON.stringify(tikTokChoice(original)) === JSON.stringify(tikTokChoice(current));
@@ -213,6 +223,7 @@ export async function submitTikTokAttempt(input: {
       accountId,
       receiptId: attempt.receiptId,
       scheduledAt: attempt.scheduledAt,
+      approvalRequired: attempt.approvalRequired,
     },
     csrfToken,
     attempt.scheduleKey,

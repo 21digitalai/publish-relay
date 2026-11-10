@@ -1,6 +1,7 @@
 # Publish Relay Backend Guide
 
 Publication job approval hold is opt-in per job (`approval_required`, default false). The canonical `publication_jobs` row binds the exact revision and destination; browser and machine create contracts may request the hold, and browser and machine detail/collection responses project `approvalRequired` and `approvalStatus` (`not_required`, `awaiting_approval`, `approved`). Machine job lists may filter by that status server-side, with the filter bound into signed cursor state; the CLI exposes the same bounded field and filter. A workspace owner/admin may approve a still-scheduled held job through the CSRF-protected job approval command; repeated approval returns the same receipt. Both due-claim paths exclude held jobs without `approved_at`, including overdue jobs. Editing or rescheduling supersedes the old job and creates a new held job with approval unset, so the exact changed revision/time requires fresh approval. Legacy default-off jobs follow the existing dispatch path unchanged.
+The separate staged TikTok schedule command accepts the same optional default-off flag and inserts it on the canonical publication job, after exact revision/consent checks. The browser immutable TikTok schedule attempt captures that flag before any draft/consent mutation; an ambiguous retry must retain it. The existing due-claim guard applies without a TikTok-specific sender or approval state machine.
 
 ## Page DM conversation links
 

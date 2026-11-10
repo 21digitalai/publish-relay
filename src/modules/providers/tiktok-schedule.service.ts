@@ -20,6 +20,7 @@ export const tiktokScheduleRequestSchema = z.strictObject({
   accountId: z.uuid(),
   receiptId: z.uuid(),
   scheduledAt: z.iso.datetime({ offset: true }),
+  approvalRequired: z.boolean().optional(),
 });
 const commandSchema = tiktokScheduleRequestSchema.extend({
   workspaceId: z.uuid(),
@@ -83,6 +84,7 @@ export async function scheduleTikTokDraftInTransaction(
     revisionId: input.revisionId,
     accountId: input.accountId,
     scheduledAt,
+    approvalRequired: input.approvalRequired ?? false,
     actorId: input.userId,
     effectivePayload: {
       schemaVersion: 1,

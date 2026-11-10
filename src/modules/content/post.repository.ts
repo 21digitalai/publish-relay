@@ -585,6 +585,7 @@ export async function schedulePreparedTikTokRevision(
     revisionId: string;
     accountId: string;
     scheduledAt: Date;
+    approvalRequired: boolean;
     effectivePayload: Record<string, unknown>;
     actorId: string;
   },
@@ -614,6 +615,7 @@ export async function schedulePreparedTikTokRevision(
       providerAccountId: input.accountId,
       effectivePayload: input.effectivePayload,
       scheduledAt: input.scheduledAt,
+      approvalRequired: input.approvalRequired,
     })
     .returning({ id: publicationJobs.id });
   await database

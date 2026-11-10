@@ -1108,6 +1108,7 @@ function Composer({ onClose }: { onClose: () => void }) {
     privacyStatus,
     scheduleOption,
     scheduled,
+    approvalRequired,
     selectedAccounts,
     draftMediaIds,
     videoDescription,
@@ -1476,7 +1477,10 @@ function Composer({ onClose }: { onClose: () => void }) {
         return;
       }
     }
-    if (existing && !tikTokAttemptMatches(existing, formSnapshot, mediaFiles, tiktokSubmission)) {
+    if (
+      existing &&
+      !tikTokAttemptMatches(existing, formSnapshot, mediaFiles, tiktokSubmission, approvalRequired)
+    ) {
       setError(
         'The previous TikTok request may have succeeded. Confirm it unchanged before editing.',
       );
@@ -1497,6 +1501,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         files: mediaFiles,
         submission: tiktokSubmission,
         scheduledAt: targetTime.toISOString(),
+        approvalRequired,
       });
       if (preparedTikTokDraft) {
         attempt.postId = preparedTikTokDraft.postId;
@@ -2384,19 +2389,17 @@ function Composer({ onClose }: { onClose: () => void }) {
                     Schedule
                   </button>
                 </fieldset>
-                {!isTikTok && (
-                  <button
-                    type="button"
-                    className={`secondary-button composer-approval-toggle ${approvalRequired ? 'selected' : ''}`}
-                    aria-pressed={approvalRequired}
-                    disabled={hasUncertainPost}
-                    onClick={() => {
-                      setApprovalRequired((current) => !current);
-                    }}
-                  >
-                    Require approval before publishing: {approvalRequired ? 'On' : 'Off'}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className={`secondary-button composer-approval-toggle ${approvalRequired ? 'selected' : ''}`}
+                  aria-pressed={approvalRequired}
+                  disabled={hasUncertainPost}
+                  onClick={() => {
+                    setApprovalRequired((current) => !current);
+                  }}
+                >
+                  Require approval before publishing: {approvalRequired ? 'On' : 'Off'}
+                </button>
                 {scheduled && (
                   <div className="schedule-fields" inert={hasUncertainPost}>
                     <label className="field-label">
@@ -2574,7 +2577,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                   ? 'Scheduling…'
                   : hasUncertainPost
                     ? 'Confirm previous request'
-                    : approvalRequired && !isTikTok
+                    : approvalRequired
                       ? 'Create awaiting-approval post'
                       : isTikTok
                         ? scheduled

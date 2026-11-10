@@ -45,6 +45,8 @@ export async function listPageCommentHistory(
         postId: facebookPageCommentActions.postId,
         commentId: facebookPageCommentActions.commentId,
         outboundText: facebookPageCommentActions.textBody,
+        targetText: facebookPageCommentPendingIntents.targetText,
+        dueAt: facebookPageCommentPendingIntents.dueAt,
         status: facebookPageCommentActions.state,
         createdAt: facebookPageCommentActions.createdAt,
         updatedAt: facebookPageCommentActions.updatedAt,
@@ -55,6 +57,17 @@ export async function listPageCommentHistory(
         and(
           eq(providerAccounts.workspaceId, facebookPageCommentActions.workspaceId),
           eq(providerAccounts.id, facebookPageCommentActions.accountId),
+        ),
+      )
+      .leftJoin(
+        facebookPageCommentPendingIntents,
+        and(
+          eq(facebookPageCommentPendingIntents.workspaceId, facebookPageCommentActions.workspaceId),
+          eq(facebookPageCommentPendingIntents.accountId, facebookPageCommentActions.accountId),
+          eq(
+            facebookPageCommentPendingIntents.clientActionId,
+            facebookPageCommentActions.clientActionId,
+          ),
         ),
       )
       .where(
@@ -126,8 +139,6 @@ export async function listPageCommentHistory(
       ...actions.map((row) => ({
         ...row,
         kind: 'send' as const,
-        targetText: null,
-        dueAt: null,
       })),
       ...pending.map((row) => ({ ...row, kind: 'scheduled' as const })),
     ]

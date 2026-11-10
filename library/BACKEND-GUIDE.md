@@ -1,5 +1,7 @@
 # Publish Relay Backend Guide
 
+Publication job approval hold is opt-in per job (`approval_required`, default false). The canonical `publication_jobs` row binds the exact revision and destination; browser and machine create contracts may request the hold, and browser detail/collection responses project only `approvalRequired` and `approvalStatus`. A workspace owner/admin may approve a still-scheduled held job through the CSRF-protected job approval command; repeated approval returns the same receipt. Both due-claim paths exclude held jobs without `approved_at`, including overdue jobs. Editing or rescheduling supersedes the old job and creates a new held job with approval unset, so the exact changed revision/time requires fresh approval. Legacy default-off jobs follow the existing dispatch path unchanged. Agent-facing status and CLI projection remain a follow-up before final acceptance.
+
 ## Page DM conversation links
 
 The browser-only `GET /api/facebook-page-dm-link/:kind/:id` resolves a tenant-owned proposal or send-action row ID after `content:read` authorization. It reuses the enabled Page DMs grant and verifies the exact Graph conversation participants contain the selected Page and one recipient before returning only Graph's validated `link` or `null`. It never fabricates a Page inbox or thread URL when Graph omits the link. No provider conversation ID or token is exposed in the browser link URL; absent grant and foreign rows fail closed. This on-click read avoids Graph polling per list row.

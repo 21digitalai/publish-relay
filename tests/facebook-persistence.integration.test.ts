@@ -48,6 +48,7 @@ const migrations = [
   '0054_tiktok_media_grants.sql',
   '0077_publication_attempt_external_url.sql',
   '0078_tiktok_one_shot_init.sql',
+  '0114_publication_approval_hold.sql',
 ] as const;
 
 const workspaceA = '00000000-0000-4000-8000-000000000701';

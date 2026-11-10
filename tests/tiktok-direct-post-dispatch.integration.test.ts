@@ -54,6 +54,7 @@ const migrations = [
   '0059_provider_account_exposures',
   '0077_publication_attempt_external_url',
   '0078_tiktok_one_shot_init',
+  '0114_publication_approval_hold',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

@@ -52,6 +52,7 @@ interface Job {
   postId?: string | undefined;
   providerAccountId?: string | undefined;
   state: JobState;
+  approvalStatus?: 'not_required' | 'awaiting_approval' | 'approved';
   scheduledAt: string;
   text: string;
   account: string;
@@ -108,10 +109,17 @@ const STATE_LABELS: Record<JobState, string> = {
   superseded: 'Superseded',
 };
 
+function jobStateLabel(job: Job): string {
+  return job.state === 'scheduled' && job.approvalStatus === 'awaiting_approval'
+    ? 'Awaiting approval'
+    : STATE_LABELS[job.state];
+}
+
 interface QueueJobDto {
   id: string;
   postId?: string;
   state: string;
+  approvalStatus?: 'not_required' | 'awaiting_approval' | 'approved';
   needsAttention: boolean;
   scheduledAt: string;
   contentPreview: string;
@@ -121,6 +129,7 @@ interface QueueJobDto {
 }
 
 interface JobDetailDto extends Omit<QueueJobDto, 'contentPreview' | 'media'> {
+  canApprove?: boolean;
   content: { text?: string; kind?: string; posts?: string[] };
   media?: DetailMediaDto[];
   attempts?: AttemptDto[];
@@ -431,6 +440,7 @@ function toJob(dto: QueueJobDto): Job {
     ...(dto.postId ? { postId: dto.postId } : {}),
     providerAccountId: dto.providerAccount.id,
     state,
+    ...(dto.approvalStatus ? { approvalStatus: dto.approvalStatus } : {}),
     scheduledAt: dto.scheduledAt,
     text: dto.contentPreview,
     account: dto.providerAccount.displayName,
@@ -450,6 +460,7 @@ function detailToJob(dto: JobDetailDto): Job {
     id: dto.id,
     ...(dto.postId ? { postId: dto.postId } : {}),
     state: dto.state,
+    ...(dto.approvalStatus ? { approvalStatus: dto.approvalStatus } : {}),
     needsAttention: dto.needsAttention,
     scheduledAt: dto.scheduledAt,
     contentPreview: contentParts(dto.content).join('\n\n'),
@@ -569,11 +580,18 @@ function cookieValue(name: string): string {
   );
 }
 
-function Status({ state }: { state: JobState }) {
+function Status({
+  state,
+  approvalStatus,
+}: {
+  state: JobState;
+  approvalStatus?: Job['approvalStatus'];
+}) {
+  const awaitingApproval = state === 'scheduled' && approvalStatus === 'awaiting_approval';
   return (
-    <span className={`job-status ${state}`}>
+    <span className={`job-status ${awaitingApproval ? 'awaiting-approval' : state}`}>
       <span aria-hidden="true">●</span>
-      {STATE_LABELS[state]}
+      {awaitingApproval ? 'Awaiting approval' : STATE_LABELS[state]}
     </span>
   );
 }
@@ -738,6 +756,7 @@ function Composer({ onClose }: { onClose: () => void }) {
   );
   const [notifySubscribers, setNotifySubscribers] = useState<'default' | 'yes' | 'no'>('default');
   const [scheduled, setScheduled] = useState(true);
+  const [approvalRequired, setApprovalRequired] = useState(false);
   const [receipt, setReceipt] = useState<{
     count: number;
     scheduledAt: string;
@@ -1346,6 +1365,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                   price: fanvuePrice,
                 }),
                 scheduledAt: targetTime.toISOString(),
+                approvalRequired,
                 ...(draftId ? { externalDraftId: draftId } : {}),
               }
             : {
@@ -1377,6 +1397,7 @@ function Composer({ onClose }: { onClose: () => void }) {
                 mediaIds,
                 providerAccountIds: selectedAccounts,
                 scheduledAt: targetTime.toISOString(),
+                approvalRequired,
                 ...(draftId ? { externalDraftId: draftId } : {}),
               },
         ),
@@ -2363,6 +2384,19 @@ function Composer({ onClose }: { onClose: () => void }) {
                     Schedule
                   </button>
                 </fieldset>
+                {!isTikTok && (
+                  <button
+                    type="button"
+                    className={`secondary-button composer-approval-toggle ${approvalRequired ? 'selected' : ''}`}
+                    aria-pressed={approvalRequired}
+                    disabled={hasUncertainPost}
+                    onClick={() => {
+                      setApprovalRequired((current) => !current);
+                    }}
+                  >
+                    Require approval before publishing: {approvalRequired ? 'On' : 'Off'}
+                  </button>
+                )}
                 {scheduled && (
                   <div className="schedule-fields" inert={hasUncertainPost}>
                     <label className="field-label">
@@ -2540,13 +2574,15 @@ function Composer({ onClose }: { onClose: () => void }) {
                   ? 'Scheduling…'
                   : hasUncertainPost
                     ? 'Confirm previous request'
-                    : isTikTok
-                      ? scheduled
-                        ? 'Confirm and schedule'
-                        : 'Confirm and publish'
-                      : scheduled
-                        ? 'Schedule 1 post'
-                        : 'Publish now'}
+                    : approvalRequired && !isTikTok
+                      ? 'Create awaiting-approval post'
+                      : isTikTok
+                        ? scheduled
+                          ? 'Confirm and schedule'
+                          : 'Confirm and publish'
+                        : scheduled
+                          ? 'Schedule 1 post'
+                          : 'Publish now'}
               </button>
             </footer>
           </>
@@ -2848,7 +2884,7 @@ export function QueuePage() {
                 </div>
                 {jobs.map((job) => (
                   <a className="queue-row" href={`${workspacePath()}/jobs/${job.id}`} key={job.id}>
-                    <Status state={job.state} />
+                    <Status state={job.state} approvalStatus={job.approvalStatus} />
                     <time dateTime={job.scheduledAt}>{formatTime(job.scheduledAt)}</time>
                     <span className="post-excerpt">
                       <span>
@@ -3392,13 +3428,14 @@ function MonthCalendar({
                   className={`calendar-job ${job.state}${job.originWorkspaceName ? ' mirrored' : ''}`}
                   href={jobPath(job)}
                   key={job.id}
-                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
+                  aria-label={`${job.account}, ${jobStateLabel(job)}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
                 >
                   <strong>{formatTime(job.scheduledAt, timeZone).split(', ').at(-1)}</strong>
                   {job.originWorkspaceName && (
                     <CalendarOriginBadge name={job.originWorkspaceName} />
                   )}
                   {job.account}
+                  {job.approvalStatus === 'awaiting_approval' && <span>Awaiting approval</span>}
                   {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               ))}
@@ -3467,11 +3504,12 @@ function TimeCalendar({
                 }}
                 href={jobPath(job)}
                 key={job.id}
-                aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
+                aria-label={`${job.account}, ${jobStateLabel(job)}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
               >
                 {job.originWorkspaceName && <CalendarOriginBadge name={job.originWorkspaceName} />}
                 <strong>{job.account}</strong>
                 <span>{job.text}</span>
+                {job.approvalStatus === 'awaiting_approval' && <span>Awaiting approval</span>}
                 {job.state === 'published' && <CalendarPublishedMark />}
               </a>
             ))}
@@ -3529,12 +3567,13 @@ function TimelineCalendar({
                     gridRow: String(jobIndex + 1),
                   }}
                   key={job.id}
-                  aria-label={`${job.account}, ${STATE_LABELS[job.state]}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
+                  aria-label={`${job.account}, ${jobStateLabel(job)}, ${formatTime(job.scheduledAt, timeZone)}${job.originWorkspaceName ? `, from ${job.originWorkspaceName}` : ''}`}
                 >
                   {job.originWorkspaceName && (
                     <CalendarOriginBadge name={job.originWorkspaceName} />
                   )}
                   {job.text}
+                  {job.approvalStatus === 'awaiting_approval' && <span>Awaiting approval</span>}
                   {job.state === 'published' && <CalendarPublishedMark />}
                 </a>
               );
@@ -3659,7 +3698,7 @@ export function JobDetailPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'cancel' | 'retry' | null>(null);
+  const [dialog, setDialog] = useState<'cancel' | 'retry' | 'approve' | null>(null);
   const confirmationTrigger = useRef<HTMLElement | null>(null);
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
   const [editSchedule, setEditSchedule] = useState('');
@@ -3747,7 +3786,7 @@ export function JobDetailPage() {
         <section className="job-detail">
           <header>
             <div>
-              <Status state={job.state} />
+              <Status state={job.state} approvalStatus={job.approvalStatus} />
               <h1>{job.account}</h1>
               <p>
                 {job.id} · {job.provider}
@@ -3922,6 +3961,18 @@ export function JobDetailPage() {
             </div>
           )}
           <footer className="detail-actions">
+            {job.approvalStatus === 'awaiting_approval' && detail?.canApprove && (
+              <button
+                className="primary-button job-approve-publication"
+                disabled={isMutating}
+                onClick={(event) => {
+                  confirmationTrigger.current = event.currentTarget;
+                  setDialog('approve');
+                }}
+              >
+                Approve publication
+              </button>
+            )}
             <button
               className="secondary-button"
               disabled={job.state !== 'scheduled'}
@@ -4070,28 +4121,36 @@ export function JobDetailPage() {
           titleId="job-dialog-title"
           icon={
             <span className={dialog === 'cancel' ? 'danger-icon' : 'info-icon'}>
-              {dialog === 'cancel' ? '!' : '↻'}
+              {dialog === 'cancel' ? '!' : dialog === 'approve' ? '✓' : '↻'}
             </span>
           }
           title={
             dialog === 'cancel'
               ? `Cancel ${job.account} publication?`
-              : 'Retry this publication now?'
+              : dialog === 'approve'
+                ? `Approve ${job.account} publication?`
+                : 'Retry this publication now?'
           }
           description={
             dialog === 'cancel'
               ? 'It will be removed from dispatch. Published external content cannot be undone.'
-              : 'The same publication job will be reused, preventing a duplicate post.'
+              : dialog === 'approve'
+                ? `Approve the current post for ${job.account}. It remains scheduled for ${formatTime(job.scheduledAt)} and becomes eligible through the normal worker, not this click.`
+                : 'The same publication job will be reused, preventing a duplicate post.'
           }
           cancelLabel="Keep job"
           confirmLabel={
             isMutating
               ? dialog === 'cancel'
                 ? 'Cancelling…'
-                : 'Retrying…'
+                : dialog === 'approve'
+                  ? 'Approving…'
+                  : 'Retrying…'
               : dialog === 'cancel'
                 ? 'Cancel job'
-                : 'Retry safely'
+                : dialog === 'approve'
+                  ? 'Approve publication'
+                  : 'Retry safely'
           }
           confirmTone={dialog === 'cancel' ? 'danger' : 'primary'}
           disabled={isMutating}
@@ -4104,7 +4163,11 @@ export function JobDetailPage() {
             setIsMutating(true);
             setMutationError(null);
             setMutationAnnouncement(
-              action === 'cancel' ? 'Cancelling publication' : 'Retrying publication',
+              action === 'cancel'
+                ? 'Cancelling publication'
+                : action === 'approve'
+                  ? 'Approving publication'
+                  : 'Retrying publication',
             );
             void fetch(`/api/workflow/jobs/${encodeURIComponent(job.id)}/${action}`, {
               method: 'POST',
@@ -4115,17 +4178,25 @@ export function JobDetailPage() {
             })
               .then(async (response) => {
                 const result = (await response.json()) as {
-                  data: { state: string } | null;
+                  data: { state?: string; approvalStatus?: string } | null;
                   error: string | null;
                 };
                 if (!response.ok || !result.data)
                   throw new Error(result.error ?? `Could not ${action} this job`);
-                setJob({ ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' });
+                setJob(
+                  action === 'approve'
+                    ? { ...job, approvalStatus: 'approved' }
+                    : { ...job, state: action === 'cancel' ? 'cancelled' : 'retrying' },
+                );
+                if (action === 'approve' && detail)
+                  setDetail({ ...detail, approvalStatus: 'approved' });
                 setDialog(null);
                 setMutationAnnouncement(
                   action === 'cancel'
                     ? 'Publication cancelled successfully'
-                    : 'Publication retry queued successfully',
+                    : action === 'approve'
+                      ? 'Publication approved for scheduled dispatch'
+                      : 'Publication retry queued successfully',
                 );
               })
               .catch((error: unknown) => {
@@ -4133,7 +4204,7 @@ export function JobDetailPage() {
                   error instanceof Error ? error.message : `Could not ${action} this job`;
                 showAnalyticsError(setMutationError, message, 'publishing', 'unknown');
                 setMutationAnnouncement(
-                  `${action === 'cancel' ? 'Cancellation' : 'Retry'} failed: ${message}`,
+                  `${action === 'cancel' ? 'Cancellation' : action === 'approve' ? 'Approval' : 'Retry'} failed: ${message}`,
                 );
                 setDialog(null);
               })

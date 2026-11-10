@@ -77,6 +77,7 @@ const migrations = [
   '0067_browser_shared_page_job_account.sql',
   '0068_browser_shared_page_machine_job_read.sql',
   '0077_publication_attempt_external_url.sql',
+  '0114_publication_approval_hold.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000801';
 const userId = '00000000-0000-4000-8000-000000000802';
@@ -678,6 +679,72 @@ describe('browser workflow PostgreSQL boundary', () => {
   const browserHeaders = {
     cookie: `publish_relay_session=${workspaceId}.browser-token`,
   };
+
+  it('holds an opted-in job until exact workspace operator approval and preserves default-off jobs', async () => {
+    const headers = {
+      ...browserHeaders,
+      cookie: `${browserHeaders.cookie}; publish_relay_csrf=approval-csrf`,
+      'x-csrf-token': 'approval-csrf',
+    };
+    const created = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: { ...headers, 'idempotency-key': 'approval-held-create' },
+      payload: { ...requestPayload('Held exact revision'), approvalRequired: true },
+    });
+    expect(created.statusCode).toBe(201);
+    const jobId = created.json<{ data: { jobIds: string[] } }>().data.jobIds[0];
+    expect(jobId).toBeTruthy();
+    const url = `/api/workflow/jobs/${jobId ?? ''}`;
+    const detail = await application.inject({ method: 'GET', url, headers: browserHeaders });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json<{ data: Record<string, unknown> }>().data).toMatchObject({
+      approvalRequired: true,
+      approvalStatus: 'awaiting_approval',
+      canApprove: true,
+    });
+    browserAuthenticate.mockResolvedValueOnce({ workspaceId, userId, role: 'viewer' });
+    expect(
+      (await application.inject({ method: 'POST', url: `${url}/approve`, headers })).statusCode,
+    ).toBe(403);
+    const approved = await application.inject({ method: 'POST', url: `${url}/approve`, headers });
+    expect(approved.statusCode).toBe(200);
+    expect(approved.json<{ data: { approvalStatus: string } }>().data.approvalStatus).toBe(
+      'approved',
+    );
+    expect(
+      (await application.inject({ method: 'POST', url: `${url}/approve`, headers })).json(),
+    ).toEqual(approved.json());
+    const after = await application.inject({ method: 'GET', url, headers: browserHeaders });
+    expect(after.json<{ data: { approvalStatus: string } }>().data.approvalStatus).toBe('approved');
+    expect(
+      (
+        await application.inject({
+          method: 'POST',
+          url: `/api/workflow/jobs/${foreignJobId}/approve`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(404);
+
+    const legacy = await application.inject({
+      method: 'POST',
+      url: '/api/workflow/posts',
+      headers: { ...headers, 'idempotency-key': 'approval-default-create' },
+      payload: requestPayload('Legacy default'),
+    });
+    expect(legacy.statusCode).toBe(201);
+    const legacyJobId = legacy.json<{ data: { jobIds: string[] } }>().data.jobIds[0];
+    const legacyDetail = await application.inject({
+      method: 'GET',
+      url: `/api/workflow/jobs/${legacyJobId ?? ''}`,
+      headers: browserHeaders,
+    });
+    expect(legacyDetail.json<{ data: Record<string, unknown> }>().data).toMatchObject({
+      approvalRequired: false,
+      approvalStatus: 'not_required',
+    });
+  });
 
   it('admits a paid Fanvue media post only for its ready selected account', async () => {
     const mediaId = '00000000-0000-4000-8000-000000000890';

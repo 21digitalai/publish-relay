@@ -43,6 +43,8 @@ const browserJobProjection = {
   id: publicationJobs.id,
   postId: publicationJobs.postId,
   state: publicationJobs.state,
+  approvalRequired: publicationJobs.approvalRequired,
+  approvedAt: publicationJobs.approvedAt,
   needsAttention: sql<boolean>`case when ${publicationJobs.state} = 'dispatching'
     and ${publicationJobs.reconciliationRequired} = true
     and ${publicationJobs.effectivePayload}->>'kind' in ('story_image', 'story_video')
@@ -393,8 +395,15 @@ export async function getJobDetail(
 ) {
   const detail = await getBrowserJobDetail(database, workspaceId, jobId, undefined, machineActor);
   if (!detail) return null;
-  const { needsAttention: _needsAttention, ...job } = detail;
+  const {
+    needsAttention: _needsAttention,
+    approvalRequired: _approvalRequired,
+    approvedAt: _approvedAt,
+    ...job
+  } = detail;
   void _needsAttention;
+  void _approvalRequired;
+  void _approvedAt;
   return {
     ...job,
     attempts: job.attempts.map(({ providerRequestId: _providerRequestId, ...attempt }) => {

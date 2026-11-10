@@ -98,6 +98,7 @@ export interface PostRevisionInput {
   providerAccountIds: readonly string[];
   selectedDestination?: string;
   scheduledAt: Date;
+  approvalRequired?: boolean;
   actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
 }
 
@@ -430,6 +431,7 @@ async function createRevisionTargets(
         effectivePayload: effectivePayloads.get(providerAccountId),
         effectiveProviderSettings: effectiveSettings.get(providerAccountId),
         scheduledAt: input.scheduledAt,
+        approvalRequired: input.approvalRequired ?? false,
       })),
     )
     .returning({ id: publicationJobs.id });
@@ -660,14 +662,23 @@ async function revisePostIntentInternal(
         inArray(publicationJobs.state, ['scheduled']),
       ),
     )
-    .returning({ id: publicationJobs.id });
+    .returning({ id: publicationJobs.id, approvalRequired: publicationJobs.approvalRequired });
   if (
     input.expectedSupersededJobCount !== undefined &&
     superseded.length !== input.expectedSupersededJobCount
   )
     throw new PostValidationError('Schedule changed after dispatch started; no changes were saved');
+  const priorApproval = superseded[0]?.approvalRequired;
+  if (
+    input.approvalRequired === undefined &&
+    superseded.some((job) => job.approvalRequired !== priorApproval)
+  )
+    throw new PostValidationError(
+      'Targets have different approval settings; choose one explicitly',
+    );
   const targets = await createRevisionTargets(database, {
     ...input,
+    approvalRequired: input.approvalRequired ?? priorApproval ?? false,
     revisionNumber: current.revisionNumber + 1,
   });
   await database

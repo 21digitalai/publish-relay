@@ -12,7 +12,9 @@ import { encryptCredential } from '../src/modules/credentials/envelope.js';
 import { credentials } from '../src/database/schema.js';
 
 import {
+  approvePublicationJob,
   claimDueJobs,
+  claimExactDueJob,
   claimReconciliationJobs,
   cancelPendingJob,
   finishDispatchAttempt,
@@ -54,6 +56,7 @@ const migrations = [
   '0054_tiktok_media_grants.sql',
   '0077_publication_attempt_external_url.sql',
   '0078_tiktok_one_shot_init.sql',
+  '0114_publication_approval_hold.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const jobId = '00000000-0000-4000-8000-000000000307';
@@ -101,6 +104,60 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 describe('scheduler repository', () => {
+  it('keeps approval-required jobs unclaimable until approved without changing legacy jobs', async () => {
+    const now = new Date('2026-08-31T16:00:00Z');
+    await database.exec(
+      `UPDATE publication_jobs SET approval_required = true WHERE id = '${jobId}'`,
+    );
+    expect(
+      await claimDueJobs(db, { workerId: 'worker-1', now, leaseMs: 30_000, limit: 10 }),
+    ).toEqual([]);
+    expect(
+      await claimExactDueJob(db, {
+        jobId,
+        workspaceId,
+        workerId: 'worker-1',
+        now,
+        leaseMs: 30_000,
+      }),
+    ).toBeNull();
+
+    const approved = await approvePublicationJob(db, {
+      workspaceId,
+      jobId,
+      userId: '00000000-0000-4000-8000-000000000302',
+    });
+    expect(approved.kind).toBe('approved');
+    expect(
+      await approvePublicationJob(db, {
+        workspaceId,
+        jobId,
+        userId: '00000000-0000-4000-8000-000000000302',
+      }),
+    ).toEqual(approved);
+    expect(
+      await approvePublicationJob(db, {
+        workspaceId: '00000000-0000-4000-8000-000000000399',
+        jobId,
+        userId: '00000000-0000-4000-8000-000000000302',
+      }),
+    ).toEqual({ kind: 'not_found' });
+    expect(
+      await claimExactDueJob(db, {
+        jobId,
+        workspaceId,
+        workerId: 'worker-1',
+        now,
+        leaseMs: 30_000,
+      }),
+    ).toMatchObject({ id: jobId });
+
+    await database.exec(`UPDATE publication_jobs SET approval_required = false, approved_at = NULL,
+      state = 'scheduled', lease_owner = NULL, lease_expires_at = NULL WHERE id = '${jobId}'`);
+    expect(
+      await claimDueJobs(db, { workerId: 'worker-2', now, leaseMs: 30_000, limit: 10 }),
+    ).toMatchObject([{ id: jobId }]);
+  });
   it.each([
     { status: 400, state: 'failed', code: 'validation', retrySeconds: null },
     { status: 422, state: 'failed', code: 'validation', retrySeconds: null },

@@ -55,6 +55,7 @@ const migrationNames = [
   '0052_provider_capability_snapshots',
   '0053_publication_consents',
   '0055_x_long_post_declaration',
+  '0114_publication_approval_hold',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000201';

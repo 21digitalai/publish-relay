@@ -26,6 +26,7 @@ const migrations = [
   '0013_illegal_texas_twister.sql',
   '0031_graceful_photon.sql',
   '0077_publication_attempt_external_url.sql',
+  '0114_publication_approval_hold.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000701';
 const apiKeyId = '00000000-0000-4000-8000-000000000703';

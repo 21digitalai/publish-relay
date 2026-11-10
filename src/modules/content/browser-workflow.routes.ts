@@ -14,7 +14,11 @@ import {
 } from '../policy/action-policy.js';
 import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
-import { cancelPendingJob, requestOperatorRetry } from '../scheduler/job.repository.js';
+import {
+  approvePublicationJob,
+  cancelPendingJob,
+  requestOperatorRetry,
+} from '../scheduler/job.repository.js';
 import { executeBrowserMutation } from './browser-idempotency.repository.js';
 import {
   getExposedPageCalendarJob,
@@ -157,6 +161,12 @@ function serializeJob(job: Awaited<ReturnType<typeof getBrowserJobDetail>>) {
     id: job.id,
     postId: job.postId,
     state: job.state,
+    approvalRequired: job.approvalRequired,
+    approvalStatus: job.approvalRequired
+      ? job.approvedAt
+        ? 'approved'
+        : 'awaiting_approval'
+      : 'not_required',
     needsAttention: job.needsAttention,
     scheduledAt: job.scheduledAt,
     createdAt: job.createdAt,
@@ -184,6 +194,12 @@ function serializeJobSummary(job: Awaited<ReturnType<typeof listBrowserJobSummar
     id: job.id,
     postId: job.postId,
     state: job.state,
+    approvalRequired: job.approvalRequired,
+    approvalStatus: job.approvalRequired
+      ? job.approvedAt
+        ? 'approved'
+        : 'awaiting_approval'
+      : 'not_required',
     needsAttention: job.needsAttention,
     scheduledAt: job.scheduledAt,
     updatedAt: job.updatedAt,
@@ -867,8 +883,47 @@ export function registerBrowserWorkflowRoutes(
       identity.userId,
     );
     return job
-      ? { data: serializeJob(job), error: null }
+      ? {
+          data: {
+            ...serializeJob(job),
+            canApprove: identity.role === 'owner' || identity.role === 'admin',
+          },
+          error: null,
+        }
       : reply.code(404).send({ data: null, error: 'Job was not found' });
+  });
+
+  application.post('/api/workflow/jobs/:jobId/approve', async (request, reply) => {
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+    } catch (error) {
+      return mutationError(request, reply, error);
+    }
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    if (identity.role !== 'owner' && identity.role !== 'admin')
+      return reply.code(403).send({ data: null, error: 'Operator approval is required' });
+    if (!authorizeMutation(request))
+      return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+    const params = jobParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid job' });
+    const result = await approvePublicationJob(dependencies.database, {
+      workspaceId: identity.workspaceId,
+      jobId: params.data.jobId,
+      userId: identity.userId,
+    });
+    if (result.kind === 'not_found')
+      return reply.code(404).send({ data: null, error: 'Job was not found' });
+    if (result.kind === 'conflict')
+      return reply.code(409).send({ data: null, error: 'Job no longer awaits approval' });
+    return {
+      data: {
+        id: params.data.jobId,
+        approvalStatus: 'approved',
+        approvedAt: result.approvedAt.toISOString(),
+      },
+      error: null,
+    };
   });
 
   application.post('/api/workflow/jobs/:jobId/cancel', async (request, reply) => {

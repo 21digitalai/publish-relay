@@ -27,6 +27,8 @@ export const DEFAULT_API_KEY_CAPABILITIES = [
 ] as const;
 
 export const PAGE_ENGAGEMENT_CAPABILITIES = [
+  'facebook:guidance:read',
+  'facebook:guidance:write',
   'comments:read',
   'comments:propose',
   'comments:send',

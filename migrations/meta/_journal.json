@@ -743,6 +743,13 @@
       "when": 1794318480000,
       "tag": "0105_facebook_page_guidance",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1794319800000,
+      "tag": "0106_facebook_page_guidance_grants",
+      "breakpoints": true
     }
   ]
 }

@@ -165,7 +165,11 @@ export async function authorizePageEngagement(
   },
 ): Promise<boolean> {
   if (input.principal.workspaceId !== input.workspaceId) return false;
-  const module = input.capability.startsWith('comments:') ? 'comments' : 'dms';
+  const module = input.capability.startsWith('facebook:guidance:')
+    ? null
+    : input.capability.startsWith('comments:')
+      ? 'comments'
+      : 'dms';
   return withTenantTransaction(
     database,
     { workspaceId: input.workspaceId },
@@ -237,7 +241,11 @@ export async function authorizePageEngagement(
         )
         .where(pageAccountCriteria(input.workspaceId, input.accountId))
         .limit(1);
-      if (!result?.enabled || result.providerGrant !== 'verified') return false;
+      if (!result) return false;
+      // Page guidance is account-local context; it does not require either optional
+      // provider consent. Its explicit Page-local principal grant remains mandatory.
+      if (module === null) return true;
+      if (!result.enabled || result.providerGrant !== 'verified') return false;
       if (module === 'comments')
         return (
           result.commentsCredentialId !== null &&

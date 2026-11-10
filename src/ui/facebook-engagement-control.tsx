@@ -8,7 +8,14 @@ type Module = 'comments' | 'dms';
 type GrantEvidence = 'unknown' | 'missing' | 'verified';
 type State = Record<Module, { localEnabled: boolean; providerGrant: GrantEvidence }>;
 type Capability =
-  'comments:read' | 'comments:propose' | 'comments:send' | 'dms:read' | 'dms:propose' | 'dms:send';
+  | 'comments:read'
+  | 'comments:propose'
+  | 'comments:send'
+  | 'dms:read'
+  | 'dms:propose'
+  | 'dms:send'
+  | 'facebook:guidance:read'
+  | 'facebook:guidance:write';
 interface Principal {
   kind: 'api-key' | 'delegated';
   id: string;
@@ -17,6 +24,8 @@ interface Principal {
   eligibleCapabilities: Capability[];
 }
 const capabilityChoices: { value: Capability; label: string }[] = [
+  { value: 'facebook:guidance:read', label: 'Read Page guidance' },
+  { value: 'facebook:guidance:write', label: 'Edit Page guidance' },
   { value: 'comments:read', label: 'Read comments' },
   { value: 'comments:propose', label: 'Suggest comment replies' },
   { value: 'comments:send', label: 'Send comment replies' },

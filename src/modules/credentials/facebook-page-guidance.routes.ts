@@ -8,7 +8,10 @@ import type { DelegatedAuthorizationService } from '../delegated-authorization/d
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { ApiKeyAuthorizationError, type ApiKeyService } from '../identity/api-key.service.js';
-import { authorizeMachineRequest, MachineAuthorizationError } from '../identity/machine-auth.js';
+import {
+  authorizePageEngagementRequest,
+  MachineAuthorizationError,
+} from '../identity/machine-auth.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import {
   PAGE_GUIDANCE_LIMIT,
@@ -56,10 +59,14 @@ export function registerFacebookPageGuidanceRoutes(
       url: '/api/v1/facebook-pages/:accountId/guidance',
       handler: async (request, reply) => {
         try {
-          const principal = await authorizeMachineRequest(
+          const params = paramsSchema.safeParse(request.params);
+          if (!params.success) return await invalid(request, reply);
+          const principal = await authorizePageEngagementRequest(
             request,
             apiKeys,
             delegatedAuthorization,
+            database,
+            params.data.accountId,
             method === 'GET' ? 'facebook:guidance:read' : 'facebook:guidance:write',
           );
           if (!principal)
@@ -79,8 +86,6 @@ export function registerFacebookPageGuidanceRoutes(
               .code(429)
               .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
           }
-          const params = paramsSchema.safeParse(request.params);
-          if (!params.success) return await invalid(request, reply);
           if (method === 'GET')
             return await sendResult(
               await getFacebookPageGuidance(database, {

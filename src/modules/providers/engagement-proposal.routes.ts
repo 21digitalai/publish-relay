@@ -382,6 +382,7 @@ export function registerEngagementProposalRoutes(
           accountDisplayName: row.accountDisplayName,
           conversationId: row.conversationId,
           receiverLabel: row.receiverLabel,
+          ...(row.kind === 'send' ? { outboundText: row.outboundText } : {}),
           status: row.status,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),

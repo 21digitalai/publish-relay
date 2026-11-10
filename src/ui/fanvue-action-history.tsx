@@ -5,7 +5,6 @@ interface FanvueHistoryRow {
   accountId: string;
   accountDisplayName: string;
   kind: 'message' | 'comment';
-  targetUuid: string;
   outboundText: string | null;
   mediaCount: number | null;
   priceCents: number | null;
@@ -81,7 +80,7 @@ export function FanvueActionHistory() {
           <button
             key={choice}
             type="button"
-            className="secondary-button"
+            className="fanvue-action-history-channel secondary-button"
             aria-pressed={kind === choice}
             onClick={() => setKind(choice)}
           >
@@ -89,7 +88,11 @@ export function FanvueActionHistory() {
           </button>
         ))}
         {accountId && (
-          <button type="button" className="secondary-button" onClick={() => setAccountId(null)}>
+          <button
+            type="button"
+            className="fanvue-action-history-clear-account secondary-button"
+            onClick={() => setAccountId(null)}
+          >
             Clear account filter
           </button>
         )}
@@ -100,7 +103,7 @@ export function FanvueActionHistory() {
           {error}{' '}
           <button
             type="button"
-            className="secondary-button"
+            className="fanvue-action-history-retry secondary-button"
             onClick={() => {
               const generation = ++generationRef.current;
               setLoading(true);
@@ -118,12 +121,12 @@ export function FanvueActionHistory() {
       )}
       {!loading && !error && rows.length === 0 && <p>No Fanvue actions match these filters.</p>}
       {!error && rows.length > 0 && (
-        <ul className="page-dm-history-rows">
+        <ul className="fanvue-action-history-rows page-dm-history-rows">
           {rows.map((row) => (
-            <li className="page-dm-history-row" key={row.id}>
+            <li className="fanvue-action-history-row page-dm-history-row" key={row.id}>
               <button
                 type="button"
-                className="secondary-button"
+                className="fanvue-action-history-account secondary-button"
                 aria-pressed={accountId === row.accountId}
                 onClick={() => setAccountId(row.accountId)}
               >
@@ -132,7 +135,7 @@ export function FanvueActionHistory() {
               <strong>
                 {row.kind === 'message' ? 'DM' : 'Comment'} · {row.status}
               </strong>
-              <p className="page-dm-history-text">
+              <p className="fanvue-action-history-text page-dm-history-text">
                 {row.outboundText ??
                   (row.mediaCount ? 'Media-only send' : 'Text unavailable for this older action')}
               </p>
@@ -150,7 +153,12 @@ export function FanvueActionHistory() {
                 </span>
               )}
               {row.destinationUrl ? (
-                <a href={row.destinationUrl} target="_blank" rel="noopener noreferrer">
+                <a
+                  className="fanvue-action-history-link"
+                  href={row.destinationUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   Open on Fanvue
                 </a>
               ) : (
@@ -173,7 +181,7 @@ export function FanvueActionHistory() {
       {cursor && !loading && !error && (
         <button
           type="button"
-          className="secondary-button"
+          className="fanvue-action-history-load-more secondary-button"
           onClick={() => {
             const generation = generationRef.current;
             setLoading(true);

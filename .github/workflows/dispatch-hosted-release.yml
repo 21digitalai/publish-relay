@@ -1,0 +1,22 @@
+name: Dispatch reviewed Core main to Hosted
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request exact-SHA Hosted release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLISH_RELAY_HOSTED_DISPATCH_TOKEN }}
+          CORE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ -n "$GH_TOKEN" && "$CORE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          gh api repos/21digitalai/publish-relay-hosted/dispatches \
+            -f event_type=reviewed-core-main \
+            -f "client_payload[core_sha]=$CORE_SHA"

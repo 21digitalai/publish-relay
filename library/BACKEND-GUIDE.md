@@ -1,5 +1,9 @@
 # Publish Relay Backend Guide
 
+## Reviewed Core-main Hosted dispatch
+
+The `dispatch-hosted-release` GitHub Action sends only the exact public Core `main` push SHA to the private Hosted repository via a scoped dispatch credential. It does not publish, package, or deploy from a feature branch. The release owner must keep Core `main` protected by independent review and advance the Core patch version in the reviewed candidate. Hosted owns artifact pinning, guarded staging, and production activation; its workflow independently rejects stale SHAs and live-predecessor drift. The cross-repo dispatch secret is configured only by the release owner, not stored in Core source.
+
 Fanvue DM proposal approval preflights the current selected chat, local media, and send policy without a provider POST, then locks the exact pending proposal revision and inserts its immutable pending intent in one tenant transaction. The same action ID joins timing with the canonical Fanvue action ledger. Approval retains a future planned time or uses the approval time if overdue; per-account worker pacing still gates dispatch. Pending-only cancellation changes proposal and intent together. Claim and fenced settlement keep proposal status aligned with actual action truth; no approval or scheduled row implies sent. The separately scoped Fanvue comment scheduling candidate applies this contract only to creator-owned top-level posts, using `fanvue_comment_pending_intents` and the same account pacing cursor, but is not released until its independent review and cumulative integration.
 
 ## Scheduled Facebook Page comment replies

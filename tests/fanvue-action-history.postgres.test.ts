@@ -95,7 +95,7 @@ describe('Fanvue action history', () => {
         destinationUrl: null,
       });
       expect(JSON.stringify(body)).not.toMatch(
-        /Foreign private|fingerprint|credential|sourceContext/,
+        /Foreign private|fingerprint|credential|sourceContext|targetUuid/,
       );
       expect(Buffer.byteLength(response.body)).toBeLessThan(4096);
     } finally {

@@ -26,7 +26,6 @@ export async function listFanvueActionHistory(
         accountId: fanvueActionIntents.accountId,
         accountDisplayName: providerAccounts.displayName,
         kind: fanvueActionIntents.actionKind,
-        targetUuid: fanvueActionIntents.targetUuid,
         outboundText: fanvueActionIntents.textBody,
         mediaCount: fanvueActionIntents.mediaCount,
         priceCents: fanvueActionIntents.priceCents,

@@ -32,7 +32,6 @@ test('Fanvue direct action history shows exact text, safe media and price with n
                     accountId: '00000000-0000-4000-8000-000000000902',
                     accountDisplayName: 'Eli Fanvue',
                     kind: 'message',
-                    targetUuid: '00000000-0000-4000-8000-000000000903',
                     outboundText: 'Exact direct agent DM',
                     mediaCount: 1,
                     priceCents: 300,

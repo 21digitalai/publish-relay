@@ -47,6 +47,12 @@ import { dispatchDuePageDms } from '../modules/providers/facebook-dm-pending.wor
 import { dispatchDuePageComments } from '../modules/providers/facebook-comment-pending.worker.js';
 import { expireScheduledEngagementProposals } from '../modules/providers/engagement-proposal.repository.js';
 import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
+import { FanvueReadClient } from '../modules/providers/fanvue-read-client.js';
+import { FanvueReadService } from '../modules/providers/fanvue-read.service.js';
+import { FanvueMessageClient } from '../modules/providers/fanvue-message-client.js';
+import { FanvueMessageService } from '../modules/providers/fanvue-message.service.js';
+import { dispatchDueFanvueDms } from '../modules/providers/fanvue-dm-pending.worker.js';
+import { allowAllActionPolicy } from '../modules/policy/action-policy.js';
 import { FanvueMediaUploadClient } from '../modules/providers/fanvue-media-upload-client.js';
 import { FanvuePostClient } from '../modules/providers/fanvue-post-client.js';
 import { dispatchDueFanvueJobs } from '../modules/providers/fanvue-post-dispatch.service.js';
@@ -332,6 +338,33 @@ while (!shutdownController.signal.aborted) {
     } catch (error) {
       process.stderr.write(
         `${JSON.stringify({ event: 'facebook_page_dm_cycle_failed', error: String(error) })}\n`,
+      );
+    }
+  }
+  if (fanvueRuntime) {
+    try {
+      const reads = new FanvueReadService(
+        database,
+        keys,
+        fanvueRuntime.oauthClient,
+        new FanvueReadClient(),
+      );
+      const result = await dispatchDueFanvueDms({
+        database,
+        messages: new FanvueMessageService(
+          database,
+          reads,
+          new FanvueMessageClient(),
+          allowAllActionPolicy,
+        ),
+        workerId: fanvueRuntime.workerId,
+        leaseMs: fanvueRuntime.leaseMs,
+      });
+      if (result)
+        process.stdout.write(`${JSON.stringify({ event: 'fanvue_dm_cycle', ...result })}\n`);
+    } catch (error) {
+      process.stderr.write(
+        `${JSON.stringify({ event: 'fanvue_dm_cycle_failed', error: String(error) })}\n`,
       );
     }
   }

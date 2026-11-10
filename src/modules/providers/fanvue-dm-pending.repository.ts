@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import {
   fanvueActionIntents,
+  fanvueDmDispatchPacing,
   fanvueDmPendingIntents,
   providerAccounts,
 } from '../../database/schema.js';
@@ -58,6 +59,7 @@ const projection = {
   price: fanvueDmPendingIntents.priceCents,
   dueAt: fanvueDmPendingIntents.dueAt,
   status: fanvueDmPendingIntents.status,
+  leaseOwner: fanvueDmPendingIntents.leaseOwner,
 };
 
 function pendingFingerprint(value: {
@@ -221,5 +223,182 @@ export async function findPendingFanvueDm(
       )
       .limit(1);
     return intent ?? null;
+  });
+}
+
+/** Worker BYPASSRLS is used only to choose a due row; the account lock serializes pacing. */
+export async function claimDueFanvueDm(
+  database: NodePgDatabase,
+  input: { workerId: string; now: Date; leaseMs: number },
+) {
+  return database.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select({
+        id: fanvueDmPendingIntents.id,
+        workspaceId: fanvueDmPendingIntents.workspaceId,
+        accountId: fanvueDmPendingIntents.accountId,
+      })
+      .from(fanvueDmPendingIntents)
+      .leftJoin(
+        fanvueDmDispatchPacing,
+        and(
+          eq(fanvueDmDispatchPacing.workspaceId, fanvueDmPendingIntents.workspaceId),
+          eq(fanvueDmDispatchPacing.accountId, fanvueDmPendingIntents.accountId),
+        ),
+      )
+      .where(
+        and(
+          lte(fanvueDmPendingIntents.dueAt, input.now),
+          or(
+            isNull(fanvueDmDispatchPacing.accountId),
+            lte(fanvueDmDispatchPacing.nextAt, input.now),
+          ),
+          or(
+            eq(fanvueDmPendingIntents.status, 'pending'),
+            and(
+              eq(fanvueDmPendingIntents.status, 'claimed'),
+              lte(fanvueDmPendingIntents.leaseUntil, input.now),
+            ),
+          ),
+        ),
+      )
+      .orderBy(fanvueDmPendingIntents.dueAt, fanvueDmPendingIntents.id)
+      .limit(1);
+    if (!candidate) return null;
+    const [account] = await tx
+      .select({ id: providerAccounts.id })
+      .from(providerAccounts)
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, candidate.workspaceId),
+          eq(providerAccounts.id, candidate.accountId),
+        ),
+      )
+      .limit(1)
+      .for('update', { skipLocked: true });
+    if (!account) return null;
+    const [pacing] = await tx
+      .select({ nextAt: fanvueDmDispatchPacing.nextAt })
+      .from(fanvueDmDispatchPacing)
+      .where(
+        and(
+          eq(fanvueDmDispatchPacing.workspaceId, candidate.workspaceId),
+          eq(fanvueDmDispatchPacing.accountId, candidate.accountId),
+        ),
+      )
+      .limit(1);
+    if (pacing && pacing.nextAt > input.now) return null;
+    const [claimed] = await tx
+      .update(fanvueDmPendingIntents)
+      .set({
+        status: 'claimed',
+        leaseOwner: `${input.workerId}:${randomUUID()}`,
+        leaseUntil: new Date(input.now.getTime() + input.leaseMs),
+        updatedAt: input.now,
+      })
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.id, candidate.id),
+          lte(fanvueDmPendingIntents.dueAt, input.now),
+          or(
+            eq(fanvueDmPendingIntents.status, 'pending'),
+            and(
+              eq(fanvueDmPendingIntents.status, 'claimed'),
+              lte(fanvueDmPendingIntents.leaseUntil, input.now),
+            ),
+          ),
+        ),
+      )
+      .returning(projection);
+    if (!claimed) return null;
+    const nextAt = new Date(input.now.getTime() + randomInt(60, 121) * 1000);
+    await tx
+      .insert(fanvueDmDispatchPacing)
+      .values({ workspaceId: candidate.workspaceId, accountId: candidate.accountId, nextAt })
+      .onConflictDoUpdate({
+        target: [fanvueDmDispatchPacing.workspaceId, fanvueDmDispatchPacing.accountId],
+        set: { nextAt },
+      });
+    return claimed;
+  });
+}
+
+export async function renewClaimedFanvueDm(
+  database: NodePgDatabase,
+  input: { workspaceId: string; id: string; leaseOwner: string; leaseMs: number },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [renewed] = await tx
+      .update(fanvueDmPendingIntents)
+      .set({ leaseUntil: new Date(Date.now() + input.leaseMs), updatedAt: new Date() })
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.id, input.id),
+          eq(fanvueDmPendingIntents.status, 'claimed'),
+          eq(fanvueDmPendingIntents.leaseOwner, input.leaseOwner),
+        ),
+      )
+      .returning({ id: fanvueDmPendingIntents.id });
+    return Boolean(renewed);
+  });
+}
+
+/** A pre-reservation failure may retry; a durable action must never be sent again. */
+export async function finishClaimedFanvueDm(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    id: string;
+    leaseOwner: string;
+    state: 'confirmed' | 'failed' | 'unknown' | 'pending';
+  },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [intent] = await tx
+      .select({ clientActionId: fanvueDmPendingIntents.clientActionId })
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.id, input.id),
+          eq(fanvueDmPendingIntents.status, 'claimed'),
+          eq(fanvueDmPendingIntents.leaseOwner, input.leaseOwner),
+        ),
+      )
+      .for('update');
+    if (!intent) return false;
+    if (input.state === 'pending') {
+      const [action] = await tx
+        .select({ id: fanvueActionIntents.id })
+        .from(fanvueActionIntents)
+        .where(
+          and(
+            eq(fanvueActionIntents.workspaceId, input.workspaceId),
+            eq(fanvueActionIntents.clientActionId, intent.clientActionId),
+          ),
+        )
+        .limit(1);
+      if (action) throw new Error('Cannot retry Fanvue DM after action reservation');
+    }
+    const [settled] = await tx
+      .update(fanvueDmPendingIntents)
+      .set({
+        status: input.state,
+        leaseOwner: null,
+        leaseUntil: null,
+        dueAt: input.state === 'pending' ? new Date(Date.now() + 30_000) : undefined,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.id, input.id),
+          eq(fanvueDmPendingIntents.status, 'claimed'),
+          eq(fanvueDmPendingIntents.leaseOwner, input.leaseOwner),
+        ),
+      )
+      .returning({ id: fanvueDmPendingIntents.id });
+    return Boolean(settled);
   });
 }

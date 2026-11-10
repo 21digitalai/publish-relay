@@ -493,7 +493,7 @@ export class FacebookHttpClient {
       const subtype = ['image/', 'video/', 'audio/'].find((prefix) => mime.startsWith(prefix));
       return {
         contentKind: 'attachment' as const,
-        contentSubtype: subtype ? subtype.slice(0, -1) : 'file',
+        contentSubtype: subtype ? subtype.slice(0, -1) : null,
       };
     } catch {
       // A missing or denied optional edge must never fabricate a content label.

@@ -230,6 +230,8 @@ describe('Facebook Messenger read transport', () => {
             { id: 'mid_1', created_time: '2026-10-25T02:01:00+0000' },
             { id: 'mid_2', created_time: '2026-10-25T02:02:00+0000' },
             { id: 'mid_3', created_time: '2026-10-25T02:03:00+0000' },
+            { id: 'mid_4', created_time: '2026-10-25T02:04:00+0000' },
+            { id: 'mid_5', created_time: '2026-10-25T02:05:00+0000' },
           ],
         }),
       )
@@ -246,7 +248,11 @@ describe('Facebook Messenger read transport', () => {
         }),
       )
       .mockResolvedValueOnce(Response.json({ data: [] }))
-      .mockResolvedValueOnce(Response.json({ data: [{ id: 'a_3', mime_type: 'x'.repeat(129) }] }));
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'a_3', mime_type: 'x'.repeat(129) }] }))
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'a_4' }] }))
+      .mockResolvedValueOnce(
+        Response.json({ data: [{ id: 'a_5', mime_type: 'application/pdf' }] }),
+      );
     const result = await clientWith(request).listConversationMessages({
       conversationId: 't_123',
       accessToken: 'token',
@@ -256,13 +262,15 @@ describe('Facebook Messenger read transport', () => {
         ['attachment', 'image'],
         ['unknown', null],
         ['unknown', null],
+        ['attachment', null],
+        ['attachment', null],
       ],
     );
     expect(JSON.stringify(result)).not.toMatch(/private.example|private/);
     for (const call of request.mock.calls.slice(1)) {
       const target = call[0];
       if (!(target instanceof URL)) throw new Error('Expected Graph URL');
-      expect(target.pathname).toMatch(/\/mid_[123]\/attachments$/);
+      expect(target.pathname).toMatch(/\/mid_[12345]\/attachments$/);
       expect(target.searchParams.get('fields')).toBe('id,mime_type');
       expect(target.searchParams.get('limit')).toBe('1');
     }

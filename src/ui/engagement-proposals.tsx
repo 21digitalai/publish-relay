@@ -250,6 +250,20 @@ export function EngagementProposalsPage() {
     [providerFilter, kindFilter, view],
   );
 
+  const loadMore = () => {
+    if (!nextCursor || loadingMore) return;
+    const generation = listRequestGeneration.current + 1;
+    setLoadingMore(true);
+    setError(null);
+    void loadPage(nextCursor)
+      .catch((failure: unknown) => {
+        setError(failure instanceof Error ? failure.message : 'More proposals could not be loaded');
+      })
+      .finally(() => {
+        if (generation === listRequestGeneration.current) setLoadingMore(false);
+      });
+  };
+
   const loadNoGo = useCallback(async (cursor?: string) => {
     const result = await readApi<{
       items: NoGoEntry[];
@@ -996,22 +1010,7 @@ export function EngagementProposalsPage() {
                     className="secondary-button engagement-proposals-more"
                     type="button"
                     disabled={loadingMore}
-                    onClick={() => {
-                      const generation = listRequestGeneration.current + 1;
-                      setLoadingMore(true);
-                      setError(null);
-                      void loadPage(nextCursor)
-                        .catch((failure: unknown) => {
-                          setError(
-                            failure instanceof Error
-                              ? failure.message
-                              : 'More proposals could not be loaded',
-                          );
-                        })
-                        .finally(() => {
-                          if (generation === listRequestGeneration.current) setLoadingMore(false);
-                        });
-                    }}
+                    onClick={loadMore}
                   >
                     {loadingMore ? 'Loading…' : 'Load more'}
                   </button>
@@ -1612,25 +1611,36 @@ export function EngagementProposalsPage() {
               Provider histories retain their own filters and pagination; no combined chronology is
               implied.
             </p>
-            {scheduledItems.length > 0 && (
-              <section className="engagement-scheduled-management" aria-label="Scheduled proposals">
-                <h2>Scheduled proposals</h2>
-                {scheduledItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => {
-                      setSelectedId(item.id);
-                      setView('review');
-                      changeQuery('view', 'review');
-                    }}
-                  >
-                    Manage scheduled {proposalLabel(item)} · {item.accountDisplayName}
-                  </button>
-                ))}
-              </section>
-            )}
+            <section className="engagement-scheduled-management" aria-label="Scheduled proposals">
+              <h2>Scheduled proposals</h2>
+              {!loading && !listFailed && scheduledItems.length === 0 && (
+                <p>No scheduled proposals match this filter.</p>
+              )}
+              {scheduledItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setSelectedId(item.id);
+                    setView('review');
+                    changeQuery('view', 'review');
+                  }}
+                >
+                  Manage scheduled {proposalLabel(item)} · {item.accountDisplayName}
+                </button>
+              ))}
+              {nextCursor && (
+                <button
+                  className="secondary-button engagement-proposals-more"
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={loadMore}
+                >
+                  {loadingMore ? 'Loading…' : 'Load more scheduled proposals'}
+                </button>
+              )}
+            </section>
             <div hidden={providerFilter === 'fanvue'}>
               <PageDmHistory />
               <PageCommentHistory />

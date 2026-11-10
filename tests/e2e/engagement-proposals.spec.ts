@@ -589,6 +589,115 @@ test('Page comment proposal schedules at its planned time and can be cancelled a
   expect(approvalCount).toBe(1);
 });
 
+test('scheduled management reaches an older proposal beyond the first page', async ({
+  page,
+}, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Scheduled Pagination Owner',
+      email: `scheduled-pagination-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Scheduled Pagination Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const olderId = '00000000-0000-4000-8000-000000000951';
+  const dueAt = new Date(Date.now() + 3_600_000).toISOString();
+  const queries: URL[] = [];
+  let cancelled = false;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    let data: unknown;
+    if (path.endsWith('/cancel-scheduled')) {
+      cancelled = true;
+      data = { status: 'cancelled' };
+    } else if (path.endsWith('/api/engagement-proposals')) {
+      queries.push(url);
+      const olderPage = url.searchParams.has('cursor');
+      data = {
+        items: olderPage
+          ? [
+              {
+                id: olderId,
+                accountDisplayName: 'Older Page',
+                provider: 'facebook_page',
+                kind: 'comment',
+                status: 'scheduled',
+                sourcePreview: 'Older comment',
+                contentPreview: 'Older scheduled reply',
+                createdAt: new Date(Date.now() - 100_000).toISOString(),
+              },
+            ]
+          : Array.from({ length: 50 }, (_, index) => ({
+              id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+              accountDisplayName: 'Recent Page',
+              provider: 'facebook_page',
+              kind: 'comment',
+              status: 'scheduled',
+              sourcePreview: 'Recent comment',
+              contentPreview: 'Recent scheduled reply',
+              createdAt: new Date(Date.now() - index * 1000).toISOString(),
+            })),
+        nextCursor: olderPage ? null : 'older-scheduled',
+      };
+    } else {
+      data = {
+        id: olderId,
+        accountDisplayName: 'Older Page',
+        provider: 'facebook_page',
+        kind: 'comment',
+        targetId: '123_456_789',
+        sourceContext: { text: 'Older comment', postId: '123_456' },
+        content: { text: 'Older scheduled reply' },
+        revision: 1,
+        status: cancelled ? 'cancelled' : 'scheduled',
+        canApprove: true,
+        noGo: false,
+        schedule: { dueAt, status: 'pending' },
+      };
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page
+    .getByRole('group', { name: 'Filter proposals by provider' })
+    .getByRole('button', { name: 'Facebook Page' })
+    .click();
+  await page
+    .getByRole('group', { name: 'Filter by action kind' })
+    .getByRole('button', { name: 'Comments' })
+    .click();
+  await page.getByRole('tab', { name: 'Scheduled & sent' }).click();
+  const management = page.getByRole('region', { name: 'Scheduled proposals' });
+  await expect(management.getByRole('button', { name: /Manage scheduled/ })).toHaveCount(50);
+  await expect(management.getByRole('button', { name: /Older Page/ })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('scheduled-management-first-page.png') });
+  await management.getByRole('button', { name: 'Load more scheduled proposals' }).click();
+  await expect(management.getByRole('button', { name: /Older Page/ })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('scheduled-management-older-page.png') });
+  expect(queries.at(-1)?.searchParams.get('view')).toBe('history');
+  expect(queries.at(-1)?.searchParams.get('provider')).toBe('facebook_page');
+  expect(queries.at(-1)?.searchParams.get('kind')).toBe('comment');
+  await management.getByRole('button', { name: /Older Page/ }).click();
+  await expect(page.getByRole('button', { name: 'Cancel scheduled reply' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Cancel scheduled reply' }).click();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Cancel scheduled reply' })
+    .click();
+  await expect(
+    page.getByText('Scheduled reply cancelled before dispatch. No message was sent.'),
+  ).toBeVisible();
+  expect(cancelled).toBe(true);
+});
+
 test('closed Page DM window hides approval on desktop and mobile', async ({ page }, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {

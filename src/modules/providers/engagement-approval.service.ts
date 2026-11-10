@@ -26,11 +26,15 @@ import {
   type sendAccountPageConversationMessage,
 } from './facebook-messenger-send.service.js';
 import { ActionPolicyDeniedError } from '../policy/action-policy.js';
+import type { scheduleApprovedPageComment } from './facebook-comment-approval.service.js';
 
 export interface EngagementSendCommands {
   comments?: Pick<FanvueCommentService, 'send'>;
   messages?: Pick<FanvueMessageService, 'sendText' | 'sendMessage'>;
   facebook?: {
+    scheduleComment?: (
+      input: Parameters<typeof scheduleApprovedPageComment>[1],
+    ) => ReturnType<typeof scheduleApprovedPageComment>;
     sendComment: (
       input: Parameters<typeof sendAccountPageCommentReply>[1],
     ) => ReturnType<typeof sendAccountPageCommentReply>;

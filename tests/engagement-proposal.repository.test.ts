@@ -157,6 +157,13 @@ describe('engagement proposal foundation', () => {
         .fn()
         .mockResolvedValue({ state: 'confirmed', messageUuid: fanvuePost });
       const sendPageComment = vi.fn().mockResolvedValue({ state: 'confirmed', commentId: '900_3' });
+      const schedulePageComment = vi
+        .fn()
+        .mockResolvedValue({
+          id: '00000000-0000-4000-8000-000000000998',
+          status: 'scheduled',
+          dueAt: new Date(Date.now() + 60_000).toISOString(),
+        });
       const sendPageDm = vi.fn().mockResolvedValue({ state: 'confirmed', messageId: 'mid_7' });
       registerEngagementProposalRoutes(app, {
         database,
@@ -180,6 +187,7 @@ describe('engagement proposal foundation', () => {
         comments: { send: sendComment },
         messages: { sendText, sendMessage },
         facebook: {
+          scheduleComment: schedulePageComment,
           sendComment: sendPageComment,
           sendDm: sendPageDm,
           previewDmWindow: vi.fn().mockResolvedValue({
@@ -814,7 +822,7 @@ describe('engagement proposal foundation', () => {
             method: 'POST',
             url: pageCommentUrl,
             headers: approvedHeaders,
-            payload: approvalPayload,
+            payload: { ...approvalPayload, sendMode: 'immediate' },
           })
         ).statusCode,
       ).toBe(200);
@@ -839,6 +847,34 @@ describe('engagement proposal foundation', () => {
           })
         ).statusCode,
       ).toBe(409);
+      expect(sendPageComment).toHaveBeenCalledTimes(1);
+      const scheduledComment = await createEngagementProposal(database, {
+        workspaceId: workspace,
+        accountId: account,
+        clientActionId: '00000000-0000-4000-8000-000000000998',
+        provider: 'facebook_page',
+        kind: 'comment',
+        targetId: '900_4',
+        sourceContext: { postId: '900_1', text: 'Another visitor comment' },
+        content: { text: 'Paced Page reply' },
+        plannedDueAt: new Date(Date.now() + 60_000),
+        proposerType: 'api_key',
+        proposerId: proposer,
+      });
+      const scheduledResponse = await app.inject({
+        method: 'POST',
+        url: `/api/engagement-proposals/${scheduledComment.id}/approve`,
+        headers: approvedHeaders,
+        payload: approvalPayload,
+      });
+      expect(scheduledResponse.statusCode).toBe(202);
+      expect(scheduledResponse.json().data.status).toBe('scheduled');
+      expect(schedulePageComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          proposalId: scheduledComment.id,
+          expectedRevision: scheduledComment.revision,
+        }),
+      );
       expect(sendPageComment).toHaveBeenCalledTimes(1);
       const pageDm = await createEngagementProposal(database, {
         workspaceId: workspace,
@@ -1341,7 +1377,7 @@ describe('engagement proposal foundation', () => {
             'SELECT count(*)::text AS count FROM engagement_proposals',
           )
         ).rows[0]?.count,
-      ).toBe('16');
+      ).toBe('17');
     } finally {
       await client.close();
     }

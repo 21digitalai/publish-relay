@@ -26,6 +26,10 @@ import {
 } from './facebook-messenger-send.service.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
 import {
+  cancelScheduledProposalPageComment,
+  PendingCommentConflictError,
+} from './facebook-comment-pending.repository.js';
+import {
   approveEngagementProposal,
   type EngagementSendCommands,
 } from './engagement-approval.service.js';
@@ -148,10 +152,20 @@ export function registerEngagementApprovalRoutes(
         return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
       const params = paramsSchema.safeParse(request.params);
       if (!params.success) return reply.code(400).send({ data: null, error: 'Invalid proposal' });
-      const cancelled = await cancelScheduledProposalPageDm(dependencies.database, {
-        workspaceId: identity.workspaceId,
-        proposalId: params.data.proposalId,
-      });
+      const proposal = await getEngagementProposal(
+        dependencies.database,
+        identity.workspaceId,
+        params.data.proposalId,
+      );
+      const cancelled = await (proposal?.provider === 'facebook_page' && proposal.kind === 'comment'
+        ? cancelScheduledProposalPageComment(dependencies.database, {
+            workspaceId: identity.workspaceId,
+            proposalId: params.data.proposalId,
+          })
+        : cancelScheduledProposalPageDm(dependencies.database, {
+            workspaceId: identity.workspaceId,
+            proposalId: params.data.proposalId,
+          }));
       if (!cancelled)
         return reply
           .code(409)
@@ -234,6 +248,27 @@ export function registerEngagementApprovalRoutes(
         });
         return await reply.code(202).send({ data: scheduled, error: null });
       }
+      if (
+        proposal?.provider === 'facebook_page' &&
+        proposal.kind === 'comment' &&
+        body.data.sendMode !== 'immediate'
+      ) {
+        if (proposal.status !== 'pending' || proposal.revision !== body.data.expectedRevision)
+          return await reply
+            .code(409)
+            .send({ data: null, error: 'Proposal is stale or unavailable' });
+        if (!dependencies.facebook?.scheduleComment)
+          return await reply
+            .code(409)
+            .send({ data: null, error: 'Page comment scheduling is unavailable' });
+        const scheduled = await dependencies.facebook.scheduleComment({
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          proposalId: params.data.proposalId,
+          expectedRevision: body.data.expectedRevision,
+        });
+        return await reply.code(202).send({ data: scheduled, error: null });
+      }
       const outcome = await approveEngagementProposal(dependencies.database, dependencies, {
         workspaceId: identity.workspaceId,
         userId: identity.userId,
@@ -248,6 +283,7 @@ export function registerEngagementApprovalRoutes(
         return reply.code(error.statusCode).send({ data: null, error: error.message });
       if (
         error instanceof PendingDmConflictError ||
+        error instanceof PendingCommentConflictError ||
         error instanceof PendingDmNoGoError ||
         error instanceof PageReadUnavailableError ||
         error instanceof FacebookDmWindowClosedError ||

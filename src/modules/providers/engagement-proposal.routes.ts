@@ -30,6 +30,7 @@ import {
   getScheduledProposalPageDm,
   setPageDmDelayWindow,
 } from './facebook-dm-pending.repository.js';
+import { getScheduledProposalPageComment } from './facebook-comment-pending.repository.js';
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1).max(5000),
@@ -528,11 +529,16 @@ export function registerEngagementProposalRoutes(
           })
         : false;
     const schedule =
-      row.provider === 'facebook_page' && row.kind === 'dm' && row.status === 'scheduled'
-        ? await getScheduledProposalPageDm(database, {
-            workspaceId: identity.workspaceId,
-            clientActionId: row.clientActionId,
-          })
+      row.provider === 'facebook_page' && row.status === 'scheduled'
+        ? row.kind === 'comment'
+          ? await getScheduledProposalPageComment(database, {
+              workspaceId: identity.workspaceId,
+              clientActionId: row.clientActionId,
+            })
+          : await getScheduledProposalPageDm(database, {
+              workspaceId: identity.workspaceId,
+              clientActionId: row.clientActionId,
+            })
         : null;
     const scheduleWindow =
       row.provider === 'facebook_page' && row.kind === 'dm'

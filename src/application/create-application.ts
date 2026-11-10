@@ -42,6 +42,7 @@ import { registerFacebookPageReadRoutes } from '../modules/providers/facebook-pa
 import { registerFacebookDmMemoryRoutes } from '../modules/providers/facebook-dm-memory.routes.js';
 import { registerFacebookPageCommentSendRoute } from '../modules/providers/facebook-comment-send.routes.js';
 import { registerFacebookPageCommentScheduleRoutes } from '../modules/providers/facebook-comment-schedule.routes.js';
+import { scheduleApprovedPageComment } from '../modules/providers/facebook-comment-approval.service.js';
 import { registerFacebookPageDmSendRoute } from '../modules/providers/facebook-messenger-send.routes.js';
 import { sendAccountPageCommentReply } from '../modules/providers/facebook-comment-send.service.js';
 import {
@@ -410,6 +411,8 @@ function registerBrowserRoutes(
       ...(facebookRuntime
         ? {
             facebook: {
+              scheduleComment: (input: Parameters<typeof scheduleApprovedPageComment>[1]) =>
+                scheduleApprovedPageComment(facebookRuntime, input),
               previewDmWindow: (input: {
                 workspaceId: string;
                 accountId: string;

@@ -7,6 +7,7 @@ import {
   facebookPageCommentActions,
   facebookPageCommentDispatchPacing,
   facebookPageCommentPendingIntents,
+  engagementProposals,
   providerAccounts,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -53,60 +54,67 @@ const projection = {
 };
 
 export async function schedulePageComment(database: NodePgDatabase, input: PendingCommentInput) {
-  return withTenantTransaction(database, input, async (tx) => {
-    const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
-    const [action] = await tx
-      .select({ id: facebookPageCommentActions.id })
-      .from(facebookPageCommentActions)
-      .where(
-        and(
-          eq(facebookPageCommentActions.workspaceId, input.workspaceId),
-          eq(facebookPageCommentActions.clientActionId, input.clientActionId),
-        ),
-      )
-      .limit(1);
-    if (action) throw new PendingCommentConflictError();
-    const [inserted] = await tx
-      .insert(facebookPageCommentPendingIntents)
-      .values({
-        workspaceId: input.workspaceId,
-        accountId: input.accountId,
-        postId: input.postId,
-        commentId: input.commentId,
-        clientActionId: input.clientActionId,
-        requestFingerprint: input.requestFingerprint,
-        actorType,
-        actorId: input.actor.id,
-        textBody: input.text,
-        targetText: input.targetText,
-        targetCreatedAt: input.targetCreatedAt,
-        threadFingerprint: input.threadFingerprint,
-        dueAt: input.dueAt,
-      })
-      .onConflictDoNothing()
-      .returning(projection);
-    if (inserted) return inserted;
-    const [existing] = await tx
-      .select(projection)
-      .from(facebookPageCommentPendingIntents)
-      .where(
-        and(
-          eq(facebookPageCommentPendingIntents.workspaceId, input.workspaceId),
-          eq(facebookPageCommentPendingIntents.clientActionId, input.clientActionId),
-        ),
-      )
-      .limit(1);
-    if (
-      existing?.accountId !== input.accountId ||
-      existing.postId !== input.postId ||
-      existing.commentId !== input.commentId ||
-      existing.requestFingerprint !== input.requestFingerprint ||
-      existing.actorType !== actorType ||
-      existing.actorId !== input.actor.id
+  return withTenantTransaction(database, input, (tx) =>
+    schedulePageCommentInTransaction(tx, input),
+  );
+}
+
+export async function schedulePageCommentInTransaction(
+  tx: NodePgDatabase,
+  input: PendingCommentInput,
+) {
+  const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
+  const [action] = await tx
+    .select({ id: facebookPageCommentActions.id })
+    .from(facebookPageCommentActions)
+    .where(
+      and(
+        eq(facebookPageCommentActions.workspaceId, input.workspaceId),
+        eq(facebookPageCommentActions.clientActionId, input.clientActionId),
+      ),
     )
-      throw new PendingCommentConflictError();
-    return existing;
-  });
+    .limit(1);
+  if (action) throw new PendingCommentConflictError();
+  const [inserted] = await tx
+    .insert(facebookPageCommentPendingIntents)
+    .values({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      postId: input.postId,
+      commentId: input.commentId,
+      clientActionId: input.clientActionId,
+      requestFingerprint: input.requestFingerprint,
+      actorType,
+      actorId: input.actor.id,
+      textBody: input.text,
+      targetText: input.targetText,
+      targetCreatedAt: input.targetCreatedAt,
+      threadFingerprint: input.threadFingerprint,
+      dueAt: input.dueAt,
+    })
+    .onConflictDoNothing()
+    .returning(projection);
+  if (inserted) return inserted;
+  const [existing] = await tx
+    .select(projection)
+    .from(facebookPageCommentPendingIntents)
+    .where(
+      and(
+        eq(facebookPageCommentPendingIntents.workspaceId, input.workspaceId),
+        eq(facebookPageCommentPendingIntents.clientActionId, input.clientActionId),
+      ),
+    )
+    .limit(1);
+  if (
+    existing?.accountId !== input.accountId ||
+    existing.postId !== input.postId ||
+    existing.commentId !== input.commentId ||
+    existing.requestFingerprint !== input.requestFingerprint ||
+    existing.actorType !== actorType ||
+    existing.actorId !== input.actor.id
+  )
+    throw new PendingCommentConflictError();
+  return existing;
 }
 
 export async function getPageCommentIntent(
@@ -145,6 +153,54 @@ export async function getPageCommentIntentByAction(
       )
       .limit(1);
     return row ?? null;
+  });
+}
+
+export async function getScheduledProposalPageComment(
+  database: NodePgDatabase,
+  input: { workspaceId: string; clientActionId: string },
+) {
+  const row = await getPageCommentIntentByAction(database, input);
+  return row ? { status: row.status, dueAt: row.dueAt.toISOString() } : null;
+}
+
+export async function cancelScheduledProposalPageComment(
+  database: NodePgDatabase,
+  input: { workspaceId: string; proposalId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [proposal] = await tx
+      .select({ id: engagementProposals.id, clientActionId: engagementProposals.clientActionId })
+      .from(engagementProposals)
+      .where(
+        and(
+          eq(engagementProposals.workspaceId, input.workspaceId),
+          eq(engagementProposals.id, input.proposalId),
+          eq(engagementProposals.provider, 'facebook_page'),
+          eq(engagementProposals.kind, 'comment'),
+          eq(engagementProposals.status, 'scheduled'),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (!proposal) return false;
+    const [intent] = await tx
+      .update(facebookPageCommentPendingIntents)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(facebookPageCommentPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageCommentPendingIntents.clientActionId, proposal.clientActionId),
+          eq(facebookPageCommentPendingIntents.status, 'pending'),
+        ),
+      )
+      .returning({ id: facebookPageCommentPendingIntents.id });
+    if (!intent) return false;
+    await tx
+      .update(engagementProposals)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(engagementProposals.id, proposal.id));
+    return true;
   });
 }
 
@@ -370,6 +426,20 @@ export async function finishClaimedPageComment(
       })
       .where(eq(facebookPageCommentPendingIntents.id, input.id))
       .returning({ id: facebookPageCommentPendingIntents.id });
+    if (state !== 'pending') {
+      await tx
+        .update(engagementProposals)
+        .set({ status: state === 'confirmed' ? 'sent' : state, updatedAt: new Date() })
+        .where(
+          and(
+            eq(engagementProposals.workspaceId, input.workspaceId),
+            eq(engagementProposals.clientActionId, intent.clientActionId),
+            eq(engagementProposals.provider, 'facebook_page'),
+            eq(engagementProposals.kind, 'comment'),
+            eq(engagementProposals.status, 'scheduled'),
+          ),
+        );
+    }
     return Boolean(updated);
   });
 }

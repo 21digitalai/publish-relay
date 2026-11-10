@@ -2,6 +2,8 @@
 
 ## Scheduled Facebook Page comment replies
 
+For review-first Facebook Page comments, the owner/admin approval route defaults to scheduling rather than direct Meta send. `scheduleApprovedPageComment` reads the current selected-Page target, then atomically inserts the canonical pending comment intent and moves the proposal to `scheduled` under revision/status compare-and-set. A past or absent bot-selected time becomes a due-now intent, still subject to the persistent per-Page pacing cursor. The existing explicit `sendMode: immediate` path remains separate. Pending-only browser cancellation and worker settlement update both proposal and intent in one tenant transaction; the proposal detail resolves due/status by its action ID without exposing an intent ID.
+
 Migration 0107 adds `facebook_page_comment_pending_intents` for immutable due replies and `facebook_page_comment_dispatch_pacing` for a durable per-Page 60–120-second send cursor. Schedule, status, and pending-only cancel use selected-Page `comments:send` authorization and bounded receipts. Scheduling captures the target's text, creation time, and complete reply-ID fingerprint after proving Page/post/comment ancestry; the due worker compares a fresh snapshot and stops on any changed context or Page-authored reply. One action ID flows into the existing `facebook_page_comment_actions` sender ledger. A reserved or unknown action never retries; only pre-reservation transient failures retry (up to three attempts), with fenced claims and lease renewal. Direct replies store post/text in that same action ledger; scheduled intents are timing state, not a second send path. No migration or branch push is a live Meta-send authorization.
 
 ## Page DM conversation links

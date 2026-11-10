@@ -42,6 +42,7 @@ beforeEach(async () => {
   await postgres.exec(`
     CREATE TYPE audit_actor_type AS ENUM ('user','api_key','delegated','system');
     CREATE TABLE provider_accounts (id uuid NOT NULL, workspace_id uuid NOT NULL, PRIMARY KEY (workspace_id,id));
+    CREATE TABLE engagement_proposals (workspace_id uuid NOT NULL, client_action_id uuid NOT NULL, provider text NOT NULL, kind text NOT NULL, status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL,
       actor_type audit_actor_type NOT NULL, actor_id uuid, action text NOT NULL, target_type text NOT NULL,
       target_id uuid, request_id text NOT NULL, metadata jsonb NOT NULL DEFAULT '{}',

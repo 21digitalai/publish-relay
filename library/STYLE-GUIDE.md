@@ -405,6 +405,8 @@ LinkedIn member video reuses the destination-first Composer sheet and its existi
 
 # Page DM scheduling on Proposed replies
 
+Facebook Page comment proposals reuse the Proposed replies detail, `.engagement-proposal-timing` fieldset and shared confirmation dialog. The ordinary choice is scheduled approval at the bot-selected time or, for a past/missing time, the next paced Page slot; `Send immediately instead` is an explicit alternative. The scheduled receipt shows local due time and pending-only cancellation, while the worker rechecks current comment context before sending. Do not display scheduled as sent or expose provider IDs/intent IDs in normal controls.
+
 The shared `PageDmConversationLink` component (`.page-dm-open-link`) appears on active/inactive proposal entries and Page DM history rows. Its on-click check uses the workspace-authorized row resolver; an exact Graph link opens in a new tab and becomes the anchor destination. If Graph omits the link, the control becomes a non-interactive grey "Link unavailable" state with an explanation, never a misleading Page inbox fallback. `.engagement-proposal-entry` groups the selection button and separate control so interactive controls are never nested.
 
 `.page-dm-history` sits below the review inbox and uses server-side Page/receiver filters, friendly recipient labels, separate started/updated timezone timestamps, and bounded load-more. It is distinct from the proposal editing lifecycle; it reuses the workspace shell and existing secondary controls.

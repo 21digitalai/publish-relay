@@ -33,6 +33,7 @@ export interface BrowserJobFilters {
   machineActor?: { type: 'api-key' | 'delegated'; id: string; capability: 'schedules:read' };
   limit: number;
   states?: BrowserJobState[];
+  approvalStatus?: 'not_required' | 'awaiting_approval' | 'approved';
   providerAccountId?: string;
   scheduledAfter?: Date;
   scheduledBefore?: Date;
@@ -43,6 +44,8 @@ const browserJobProjection = {
   id: publicationJobs.id,
   postId: publicationJobs.postId,
   state: publicationJobs.state,
+  approvalRequired: publicationJobs.approvalRequired,
+  approvedAt: publicationJobs.approvedAt,
   needsAttention: sql<boolean>`case when ${publicationJobs.state} = 'dispatching'
     and ${publicationJobs.reconciliationRequired} = true
     and ${publicationJobs.effectivePayload}->>'kind' in ('story_image', 'story_video')
@@ -104,6 +107,8 @@ const machineJobProjection = {
   id: publicationJobs.id,
   postId: publicationJobs.postId,
   state: publicationJobs.state,
+  approvalRequired: publicationJobs.approvalRequired,
+  approvedAt: publicationJobs.approvedAt,
   scheduledAt: publicationJobs.scheduledAt,
   updatedAt: publicationJobs.updatedAt,
   providerAccount: {
@@ -161,6 +166,19 @@ function jobListConditions(input: BrowserJobFilters) {
   return and(
     eq(publicationJobs.workspaceId, input.workspaceId),
     input.states?.length ? inArray(publicationJobs.state, input.states) : undefined,
+    input.approvalStatus === 'not_required'
+      ? eq(publicationJobs.approvalRequired, false)
+      : input.approvalStatus === 'awaiting_approval'
+        ? and(
+            eq(publicationJobs.approvalRequired, true),
+            sql`${publicationJobs.approvedAt} is null`,
+          )
+        : input.approvalStatus === 'approved'
+          ? and(
+              eq(publicationJobs.approvalRequired, true),
+              sql`${publicationJobs.approvedAt} is not null`,
+            )
+          : undefined,
     input.providerAccountId
       ? eq(publicationJobs.providerAccountId, input.providerAccountId)
       : undefined,
@@ -376,12 +394,27 @@ export async function getPostDetail(database: NodePgDatabase, workspaceId: strin
       .select({
         id: publicationJobs.id,
         state: publicationJobs.state,
+        approvalRequired: publicationJobs.approvalRequired,
+        approvedAt: publicationJobs.approvedAt,
         scheduledAt: publicationJobs.scheduledAt,
       })
       .from(publicationJobs)
       .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.postId, postId)))
       .orderBy(desc(publicationJobs.createdAt), desc(publicationJobs.id));
-    return { ...post, jobs };
+    return {
+      ...post,
+      jobs: jobs.map((job) => ({
+        id: job.id,
+        state: job.state,
+        scheduledAt: job.scheduledAt,
+        approvalRequired: job.approvalRequired,
+        approvalStatus: job.approvalRequired
+          ? job.approvedAt
+            ? 'approved'
+            : 'awaiting_approval'
+          : 'not_required',
+      })),
+    };
   });
 }
 
@@ -393,10 +426,15 @@ export async function getJobDetail(
 ) {
   const detail = await getBrowserJobDetail(database, workspaceId, jobId, undefined, machineActor);
   if (!detail) return null;
-  const { needsAttention: _needsAttention, ...job } = detail;
+  const { needsAttention: _needsAttention, approvedAt, ...job } = detail;
   void _needsAttention;
   return {
     ...job,
+    approvalStatus: job.approvalRequired
+      ? approvedAt
+        ? 'approved'
+        : 'awaiting_approval'
+      : 'not_required',
     attempts: job.attempts.map(({ providerRequestId: _providerRequestId, ...attempt }) => {
       void _providerRequestId;
       return attempt;

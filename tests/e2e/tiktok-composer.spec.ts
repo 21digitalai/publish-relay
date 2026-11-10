@@ -628,7 +628,11 @@ test('TikTok confirmation uses one exact draft and consent with stable schedule 
   await page.getByRole('textbox', { name: 'Caption' }).fill('Exact TikTok caption');
   await page.getByRole('radio', { name: 'No' }).check();
   await page.getByRole('checkbox', { name: /Music Usage Confirmation/ }).check();
-  const confirm = page.getByRole('button', { name: 'Confirm and schedule' });
+  const hold = page.getByRole('button', { name: /Require approval before publishing/ });
+  await expect(hold).toHaveAttribute('aria-pressed', 'false');
+  await hold.click();
+  await expect(hold).toHaveAttribute('aria-pressed', 'true');
+  const confirm = page.getByRole('button', { name: 'Create awaiting-approval post' });
   await expect(confirm).toBeEnabled();
   await confirm.click();
   await expect(page.getByRole('button', { name: 'Confirm previous request' })).toBeVisible();
@@ -661,6 +665,7 @@ test('TikTok confirmation uses one exact draft and consent with stable schedule 
   expect(stages[1]?.body).toEqual(stages[2]?.body);
   expect(stages[1]?.key).toBe(stages[2]?.key);
   expect(stages[3]?.body).toEqual(stages[4]?.body);
+  expect(stages[3]?.body).toMatchObject({ approvalRequired: true });
   expect(stages[3]?.key).toBe(stages[4]?.key);
   expect(stages[0]?.key).toBeTruthy();
   expect(uploadKeys).toHaveLength(2);

@@ -17,6 +17,7 @@ const baselineMigrations = [
   '0016_common_barracuda.sql',
   '0025_lucky_legion.sql',
   '0019_media_retention_lifecycle.sql',
+  '0114_publication_approval_hold.sql',
 ] as const;
 const migrationUrl = new URL('../migrations/0045_meta_destination_foundation.sql', import.meta.url);
 

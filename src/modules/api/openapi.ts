@@ -1469,6 +1469,11 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               description: 'Comma-separated publication states',
               schema: { type: 'string' },
             },
+            {
+              name: 'approvalStatus',
+              in: 'query',
+              schema: { type: 'string', enum: ['not_required', 'awaiting_approval', 'approved'] },
+            },
             { name: 'providerAccountId', in: 'query', schema: { type: 'string', format: 'uuid' } },
             {
               name: 'scheduledAfter',

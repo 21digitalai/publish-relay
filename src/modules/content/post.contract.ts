@@ -11,6 +11,7 @@ export const legacyCreatePostRequestSchema = z.object({
   mediaIds: z.array(z.uuid()).max(20).default([]),
   providerAccountIds: z.array(z.uuid()).min(1).max(50),
   scheduledAt: z.iso.datetime(),
+  approvalRequired: z.boolean().optional(),
 });
 
 const targetOptions = publicationTargetSchema.options;
@@ -22,6 +23,7 @@ function destinationRequestFor<T extends (typeof targetOptions)[number]>(target:
     content: target.shape.content,
     providerAccountIds: z.never().optional(),
     scheduledAt: z.iso.datetime(),
+    approvalRequired: z.boolean().optional(),
   });
 }
 
@@ -55,12 +57,16 @@ export function normalizeCreatePostRequest(request: z.infer<typeof createPostReq
   mediaIds: string[];
   providerAccountIds: string[];
   selectedDestination?: NormalizedPublicationTarget['provider'];
+  approvalRequired?: boolean;
 } {
   if (!('destination' in request)) {
     return {
       content: request.content,
       mediaIds: request.mediaIds,
       providerAccountIds: request.providerAccountIds,
+      ...(request.approvalRequired !== undefined
+        ? { approvalRequired: request.approvalRequired }
+        : {}),
     };
   }
   const target = publicationTargetSchema.parse({
@@ -73,6 +79,9 @@ export function normalizeCreatePostRequest(request: z.infer<typeof createPostReq
     mediaIds: normalized.mediaIds,
     providerAccountIds: [normalized.providerAccountId],
     selectedDestination: normalized.provider,
+    ...(request.approvalRequired !== undefined
+      ? { approvalRequired: request.approvalRequired }
+      : {}),
   };
 }
 
@@ -119,6 +128,8 @@ export const jobDetailResponseSchema = z.object({
   postId: z.uuid(),
   revisionId: z.uuid(),
   state: z.string(),
+  approvalRequired: z.boolean(),
+  approvalStatus: z.enum(['not_required', 'awaiting_approval', 'approved']),
   scheduledAt: timestampSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
@@ -134,6 +145,8 @@ export const jobCollectionResponseSchema = z.object({
         id: z.uuid(),
         postId: z.uuid(),
         state: z.string(),
+        approvalRequired: z.boolean(),
+        approvalStatus: z.enum(['not_required', 'awaiting_approval', 'approved']),
         scheduledAt: timestampSchema,
         updatedAt: timestampSchema,
         destination: z.object({ id: z.uuid(), displayName: z.string(), provider: z.string() }),
@@ -151,6 +164,8 @@ export const postDetailResponseSchema = postSummarySchema.extend({
     z.object({
       id: z.uuid(),
       state: z.string(),
+      approvalRequired: z.boolean(),
+      approvalStatus: z.enum(['not_required', 'awaiting_approval', 'approved']),
       scheduledAt: timestampSchema,
       links: z.object({ self: z.string() }),
     }),

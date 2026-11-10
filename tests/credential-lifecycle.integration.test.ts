@@ -121,6 +121,7 @@ const migrations = [
   '0093_facebook_page_comments_grant.sql',
   '0105_facebook_page_guidance.sql',
   '0106_facebook_page_guidance_grants.sql',
+  '0114_publication_approval_hold.sql',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

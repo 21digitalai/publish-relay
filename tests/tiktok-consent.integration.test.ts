@@ -55,6 +55,7 @@ const migrationNames = [
   '0052_provider_capability_snapshots',
   '0053_publication_consents',
   '0055_x_long_post_declaration',
+  '0114_publication_approval_hold',
 ];
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000201';
@@ -400,6 +401,7 @@ it('admits one consent-bound TikTok job through the tenant application boundary'
     accountId,
     receiptId: receipt.id,
     scheduledAt: new Date(Date.now() + 3600_000).toISOString(),
+    approvalRequired: true,
     requestId: 'schedule-fixture',
     idempotencyKey: 'schedule-fixture',
   };
@@ -469,6 +471,7 @@ it('requires browser session, CSRF and stable idempotency for TikTok schedule ad
     accountId,
     receiptId: receipt.id,
     scheduledAt: new Date(Date.now() + 3600_000).toISOString(),
+    approvalRequired: true,
   };
   const headers = {
     cookie: `publish_relay_session=${workspaceId}.token; publish_relay_csrf=csrf`,
@@ -486,6 +489,10 @@ it('requires browser session, CSRF and stable idempotency for TikTok schedule ad
   ).toBe(400);
   const first = await app.inject({ method: 'POST', url, payload, headers });
   expect(first.statusCode, first.body).toBe(201);
+  const held = await pg.query<{ approval_required: boolean; approved_at: Date | null }>(
+    `SELECT approval_required, approved_at FROM publication_jobs WHERE post_id = '${postId}'`,
+  );
+  expect(held.rows[0]).toMatchObject({ approval_required: true, approved_at: null });
   expect(Buffer.byteLength(first.body)).toBeLessThan(256);
   const replay = await app.inject({ method: 'POST', url, payload, headers });
   expect(replay.json()).toEqual(first.json());

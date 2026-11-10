@@ -568,7 +568,9 @@ Production releases install production dependencies without building on the host
 
 # Engagement proposal account label
 
-`GET /api/facebook-page-dm-history` is the tenant-bound bounded Page DM proposal/send timeline. Its repository filters by Page and receiver before a descending cursor merge, projects only kind, friendly labels, status and timestamps, and never returns message text or actor/provider secrets. The canonical sender resolves and stores the exact recipient label with its action reservation (migration 0096); older send rows remain explicitly unnamed.
+`GET /api/facebook-page-dm-history` is the tenant-bound bounded Page DM proposal/send timeline. Its repository filters by Page and receiver before a descending cursor merge and allowlists friendly labels, exact stored outbound send text, status and timestamps, never actor/provider secrets. The canonical sender resolves and stores the exact recipient label with its action reservation (migration 0096); older send rows remain explicitly unnamed or text-unavailable.
+
+`GET /api/facebook-page-comment-history` is the authenticated workspace's bounded Page comment reply history. It filters by selected Page and status before a descending cursor merge of the canonical action ledger and pending scheduling intents; a pending row is suppressed once its client action has an action row. The allowlisted summary includes exact stored outbound text, a bounded target excerpt when captured by scheduling, state and due/started/updated times. A Facebook post link is derived only from the selected-Page-proved numeric post ID; comment-specific links are not guessed. Actor, fingerprint, provider credential and private inbound context are never projected.
 
 Pending proposal summaries and exact browser detail join the workspace-bound provider
 account to project only its friendly display name. The page does not download all

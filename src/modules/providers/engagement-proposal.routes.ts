@@ -31,6 +31,10 @@ import {
   setPageDmDelayWindow,
 } from './facebook-dm-pending.repository.js';
 import { getScheduledProposalPageComment } from './facebook-comment-pending.repository.js';
+import {
+  listPageCommentHistory,
+  pageCommentPostLink,
+} from './facebook-comment-history.repository.js';
 
 const contentSchema = z.strictObject({
   text: z.string().trim().min(1).max(5000),
@@ -386,6 +390,71 @@ export function registerEngagementProposalRoutes(
           status: row.status,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
+        })),
+        nextCursor,
+      },
+      error: null,
+    };
+  });
+  application.get('/api/facebook-page-comment-history', async (request, reply) => {
+    void reply.header('Cache-Control', 'no-store');
+    const identity = await authorizeRequest(request, auth, 'content:read');
+    if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const query = z
+      .strictObject({
+        accountId: z.uuid().optional(),
+        status: z
+          .enum(['pending', 'claimed', 'cancelled', 'reserved', 'confirmed', 'failed', 'unknown'])
+          .optional(),
+        cursor: z.string().max(512).optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success)
+      return reply.code(400).send({ data: null, error: 'Invalid comment history filter' });
+    let cursor: { createdAt: Date; id: string } | null = null;
+    if (query.data.cursor) {
+      try {
+        const parsed: unknown = JSON.parse(
+          Buffer.from(query.data.cursor, 'base64url').toString('utf8'),
+        );
+        const value = cursorSchema.parse(parsed);
+        cursor = { createdAt: new Date(value.createdAt), id: value.id };
+      } catch {
+        return reply.code(400).send({ data: null, error: 'Invalid comment history cursor' });
+      }
+    }
+    const rows = await listPageCommentHistory(database, {
+      workspaceId: identity.workspaceId,
+      accountId: query.data.accountId,
+      status: query.data.status,
+      beforeCreatedAt: cursor?.createdAt,
+      beforeId: cursor?.id,
+      limit: PAGE_SIZE + 1,
+    });
+    const page = rows.slice(0, PAGE_SIZE);
+    const last = page.at(-1);
+    const nextCursor =
+      rows.length > PAGE_SIZE && last
+        ? Buffer.from(
+            JSON.stringify({ createdAt: last.createdAt.toISOString(), id: last.id }),
+          ).toString('base64url')
+        : null;
+    return {
+      data: {
+        items: page.map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          accountId: row.accountId,
+          accountDisplayName: row.accountDisplayName,
+          postId: row.postId,
+          commentId: row.commentId,
+          targetExcerpt: row.targetText?.slice(0, 280) ?? null,
+          outboundText: row.outboundText,
+          status: row.status,
+          dueAt: row.dueAt?.toISOString() ?? null,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+          postUrl: pageCommentPostLink(row.postId),
         })),
         nextCursor,
       },

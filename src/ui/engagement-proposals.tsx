@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConfirmationDialog } from './confirmation-dialog.js';
 import { PageDmConversationLink } from './page-dm-conversation-link.js';
 import { PageDmHistory } from './page-dm-history.js';
+import { PageCommentHistory } from './page-comment-history.js';
 import { getCsrfToken } from './posting-adapter-connection.js';
 import { WorkspaceLayout } from './workflow.js';
 
@@ -1327,6 +1328,7 @@ export function EngagementProposalsPage() {
           )}
         </section>
         <PageDmHistory />
+        <PageCommentHistory />
       </section>
       {confirmDismiss && (
         <ConfirmationDialog

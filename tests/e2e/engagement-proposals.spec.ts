@@ -1,5 +1,75 @@
 import { expect, test } from '@playwright/test';
 
+test('Page comment history shows direct and scheduled truth with filters and safe links', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Comment History Owner',
+      email: `comment-history-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Comment History Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const queries: string[] = [];
+  await page.route('**/api/facebook-page-comment-history**', async (route) => {
+    const url = new URL(route.request().url());
+    queries.push(url.search);
+    const status = url.searchParams.get('status');
+    const items = [
+      {
+        id: '00000000-0000-4000-8000-000000000801',
+        kind: 'send',
+        accountId: '00000000-0000-4000-8000-000000000802',
+        accountDisplayName: 'Christina Page',
+        targetExcerpt: null,
+        outboundText: 'Exact direct reply',
+        status: 'confirmed',
+        dueAt: null,
+        createdAt: '2026-11-05T09:00:00Z',
+        updatedAt: '2026-11-05T09:01:00Z',
+        postUrl: 'https://www.facebook.com/123_456',
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000803',
+        kind: 'scheduled',
+        accountId: '00000000-0000-4000-8000-000000000802',
+        accountDisplayName: 'Christina Page',
+        targetExcerpt: 'Visitor said hello',
+        outboundText: 'Exact future reply',
+        status: 'pending',
+        dueAt: '2026-11-05T10:00:00Z',
+        createdAt: '2026-11-05T09:02:00Z',
+        updatedAt: '2026-11-05T09:02:00Z',
+        postUrl: null,
+      },
+    ].filter((row) => !status || row.status === status);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items, nextCursor: null }, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  const history = page.locator('.page-comment-history');
+  await expect(history.getByText('Exact direct reply')).toBeVisible();
+  await expect(history.getByText('Exact future reply')).toBeVisible();
+  await expect(history.getByRole('link', { name: 'Open post on Facebook' })).toHaveAttribute(
+    'href',
+    'https://www.facebook.com/123_456',
+  );
+  await expect(history.getByText('Post link unavailable')).toBeVisible();
+  await history.getByRole('button', { name: 'pending', exact: true }).click();
+  await expect.poll(() => queries.at(-1)).toContain('status=pending');
+  await expect(history.getByText('Exact direct reply')).toHaveCount(0);
+  await expect(history.getByText('Exact future reply')).toBeVisible();
+  await history.getByRole('button', { name: 'Christina Page' }).click();
+  await expect.poll(() => queries.at(-1)).toContain('accountId=00000000-0000-4000-8000-000000000802');
+});
+
 test('Page comment proposal schedules at its planned time and can be cancelled after reload', async ({
   page,
 }, testInfo) => {

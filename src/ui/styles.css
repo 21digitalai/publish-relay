@@ -3352,6 +3352,15 @@ textarea:focus-visible {
   border-radius: 12px;
   background: var(--surface-1, #11131a);
 }
+.page-comment-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+.page-comment-history-filters [aria-pressed='true'] {
+  border-color: var(--brand);
+}
 .page-dm-history-rows {
   list-style: none;
   margin: 0;

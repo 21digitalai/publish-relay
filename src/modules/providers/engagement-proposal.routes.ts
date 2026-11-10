@@ -628,7 +628,10 @@ export function registerEngagementProposalRoutes(
     const identity = await authorizeRequest(request, auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     const query = z
-      .strictObject({ cursor: z.string().max(512).optional() })
+      .strictObject({
+        cursor: z.string().max(512).optional(),
+        provider: z.enum(['facebook_page', 'fanvue']).optional(),
+      })
       .safeParse(request.query);
     if (!query.success)
       return reply.code(400).send({ data: null, error: 'Invalid proposal cursor' });
@@ -640,6 +643,7 @@ export function registerEngagementProposalRoutes(
     }
     const rows = await listEngagementReviewQueue(database, identity.workspaceId, {
       ...(cursor ? { beforeCreatedAt: new Date(cursor.createdAt), beforeId: cursor.id } : {}),
+      ...(query.data.provider ? { provider: query.data.provider } : {}),
       limit: PAGE_SIZE + 1,
     });
     const page = rows.slice(0, PAGE_SIZE);

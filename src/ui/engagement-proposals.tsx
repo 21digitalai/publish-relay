@@ -46,6 +46,14 @@ interface NoGoEntry {
   createdAt: string;
 }
 
+type ProviderFilter = 'all' | 'facebook_page' | 'fanvue';
+
+const providerFilters: { value: ProviderFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'facebook_page', label: 'Facebook Page' },
+  { value: 'fanvue', label: 'Fanvue' },
+];
+
 type ReplyWindow =
   | { state: 'open'; latestInboundAt: string; windowDeadline: string }
   | { state: 'closed' }
@@ -91,6 +99,9 @@ export function EngagementProposalsPage() {
   const terminalWindowKey = `page-dm-terminal-windows:${window.location.pathname.split('/')[2] ?? ''}`;
   const [now, setNow] = useState(Date.now());
   const [items, setItems] = useState<ProposalSummary[]>([]);
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all');
+  const providerFilterRef = useRef(providerFilter);
+  providerFilterRef.current = providerFilter;
   const [noGoEntries, setNoGoEntries] = useState<NoGoEntry[]>([]);
   const [noGoCursor, setNoGoCursor] = useState<string | null>(null);
   const [noGoLoadingMore, setNoGoLoadingMore] = useState(false);
@@ -155,13 +166,21 @@ export function EngagementProposalsPage() {
     window.sessionStorage.setItem(terminalWindowKey, JSON.stringify(terminalWindows));
   }, [terminalWindowKey, terminalWindows]);
 
-  const loadPage = useCallback(async (cursor?: string) => {
-    const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
-      `/api/engagement-proposals${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
-    );
-    setItems((current) => (cursor ? [...current, ...page.items] : page.items));
-    setNextCursor(page.nextCursor);
-  }, []);
+  const loadPage = useCallback(
+    async (cursor?: string) => {
+      const requestedProvider = providerFilter;
+      const params = new URLSearchParams();
+      if (requestedProvider !== 'all') params.set('provider', requestedProvider);
+      if (cursor) params.set('cursor', cursor);
+      const page = await readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
+        `/api/engagement-proposals${params.size ? `?${params.toString()}` : ''}`,
+      );
+      if (providerFilterRef.current !== requestedProvider) return;
+      setItems((current) => (cursor ? [...current, ...page.items] : page.items));
+      setNextCursor(page.nextCursor);
+    },
+    [providerFilter],
+  );
 
   const loadNoGo = useCallback(async (cursor?: string) => {
     const result = await readApi<{
@@ -209,14 +228,11 @@ export function EngagementProposalsPage() {
 
   useEffect(() => {
     let active = true;
-    void readApi<{ items: ProposalSummary[]; nextCursor: string | null }>(
-      '/api/engagement-proposals',
-    )
-      .then((page) => {
-        if (!active) return;
-        setItems(page.items);
-        setNextCursor(page.nextCursor);
-      })
+    setItems([]);
+    setNextCursor(null);
+    setLoading(true);
+    setListFailed(false);
+    void loadPage()
       .catch((failure: unknown) => {
         if (active) {
           setListFailed(true);
@@ -229,7 +245,7 @@ export function EngagementProposalsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [loadPage]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -707,6 +723,26 @@ export function EngagementProposalsPage() {
             {error}
           </p>
         )}
+        <div
+          className="engagement-provider-filters"
+          role="group"
+          aria-label="Filter proposals by provider"
+        >
+          {providerFilters.map((choice) => (
+            <button
+              key={choice.value}
+              type="button"
+              className="secondary-button"
+              aria-pressed={providerFilter === choice.value}
+              onClick={() => {
+                setSelectedId(null);
+                setProviderFilter(choice.value);
+              }}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
         <div className="engagement-proposals-layout">
           <section
             className="engagement-proposals-list"
@@ -738,7 +774,11 @@ export function EngagementProposalsPage() {
                 Retry loading proposals
               </button>
             ) : items.length === 0 ? (
-              <p>No replies await review or reconciliation.</p>
+              <p>
+                {providerFilter === 'all'
+                  ? 'No replies await review or reconciliation.'
+                  : `No ${providerFilter === 'fanvue' ? 'Fanvue' : 'Facebook Page'} replies match this filter.`}
+              </p>
             ) : (
               <>
                 <div className="engagement-proposals-active" aria-label="Awaiting approval">
@@ -1259,7 +1299,11 @@ export function EngagementProposalsPage() {
             )}
           </section>
         </div>
-        <section className="engagement-no-go-list" aria-labelledby="engagement-no-go-title">
+        <section
+          className="engagement-no-go-list"
+          aria-labelledby="engagement-no-go-title"
+          hidden={providerFilter === 'fanvue'}
+        >
           <h2 id="engagement-no-go-title">Page DM no-go list</h2>
           {noGoFailed ? (
             <button
@@ -1347,9 +1391,13 @@ export function EngagementProposalsPage() {
             </>
           )}
         </section>
-        <PageDmHistory />
-        <PageCommentHistory />
-        <FanvueActionHistory refreshRevision={fanvueHistoryRevision} />
+        <div hidden={providerFilter === 'fanvue'}>
+          <PageDmHistory />
+          <PageCommentHistory />
+        </div>
+        <div hidden={providerFilter === 'facebook_page'}>
+          <FanvueActionHistory refreshRevision={fanvueHistoryRevision} />
+        </div>
       </section>
       {confirmDismiss && (
         <ConfirmationDialog

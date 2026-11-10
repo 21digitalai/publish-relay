@@ -247,7 +247,12 @@ export async function createEngagementProposal(
 export async function listEngagementReviewQueue(
   database: NodePgDatabase,
   workspaceId: string,
-  page?: { beforeCreatedAt?: Date; beforeId?: string; limit: number },
+  page?: {
+    beforeCreatedAt?: Date;
+    beforeId?: string;
+    provider?: 'facebook_page' | 'fanvue';
+    limit: number;
+  },
 ) {
   return withTenantTransaction(database, { workspaceId }, async (tx) => {
     await expirePendingScheduledProposals(tx, new Date(), workspaceId);
@@ -274,6 +279,7 @@ export async function listEngagementReviewQueue(
             'expired',
             'superseded',
           ]),
+          ...(page?.provider ? [eq(engagementProposals.provider, page.provider)] : []),
           ...(page?.beforeCreatedAt && page.beforeId
             ? [
                 or(

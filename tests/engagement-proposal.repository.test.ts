@@ -509,6 +509,40 @@ describe('engagement proposal foundation', () => {
       expect(seenIds).toHaveLength(53);
       expect(new Set(seenIds).size).toBe(53);
       expect(seenIds).toEqual(expect.arrayContaining([createdBody.data.id, ...pageFixtureIds]));
+      const fanvueOnly = await app.inject({
+        method: 'GET',
+        url: '/api/engagement-proposals?provider=fanvue',
+        headers: browserHeaders,
+      });
+      expect(fanvueOnly.statusCode).toBe(200);
+      expect(
+        fanvueOnly.json<{ data: { items: { id: string }[]; nextCursor: string | null } }>().data,
+      ).toEqual({
+        items: [expect.objectContaining({ id: createdBody.data.id })],
+        nextCursor: null,
+      });
+      const facebookOnly = await app.inject({
+        method: 'GET',
+        url: '/api/engagement-proposals?provider=facebook_page',
+        headers: browserHeaders,
+      });
+      expect(facebookOnly.statusCode).toBe(200);
+      expect(
+        facebookOnly.json<{ data: { items: { id: string }[]; nextCursor: string | null } }>().data
+          .items,
+      ).toHaveLength(50);
+      expect(
+        facebookOnly.json<{ data: { nextCursor: string | null } }>().data.nextCursor,
+      ).not.toBeNull();
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/api/engagement-proposals?provider=unknown',
+            headers: browserHeaders,
+          })
+        ).statusCode,
+      ).toBe(400);
       await client.exec(
         `DELETE FROM engagement_proposals WHERE id IN (${pageFixtureIds.map((id) => `'${id}'`).join(',')})`,
       );

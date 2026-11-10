@@ -978,6 +978,7 @@ test('Page DM plan shows the verified window before approval', async ({ page }, 
   expect(approvals).toBe(1);
   status = 'superseded';
   await page.reload();
+  await page.getByRole('tab', { name: 'Needs attention' }).click();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(page.getByText(/A newer draft replaced this one/)).toBeVisible();
   await expect(page.getByLabel('Unsent suggestions')).toContainText('Superseded by a newer draft');
@@ -1386,6 +1387,8 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
   await expect(page.getByRole('alertdialog')).toContainText('Eli Page');
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and send' }).click();
   await expect(page.getByText('Reply sent through Facebook Page.')).toBeVisible();
+  if (testInfo.project.name.includes('mobile'))
+    await page.getByRole('button', { name: 'Back to Review' }).click();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await page.getByRole('button', { name: 'Send immediately' }).click();
   await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toBeEnabled();
@@ -1394,6 +1397,7 @@ test('Facebook Page proposals use the shared review panel on desktop and mobile'
   await expect(page.getByText(/Send outcome is unknown/).first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('facebook-dm-unknown.png') });
   await page.reload();
+  await page.getByRole('tab', { name: 'Needs attention' }).click();
   await page.getByRole('button', { name: /Facebook Page message/ }).click();
   await expect(page.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0);
   expect(approvals).toBe(2);

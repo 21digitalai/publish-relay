@@ -827,6 +827,16 @@ export function EngagementProposalsPage() {
               }}
             >
               {label}
+              {key !== 'history' && (
+                <span className="engagement-tab-count">
+                  {' · '}
+                  {key === 'review'
+                    ? activeItems.length
+                    : outcomeItems.filter((item) => item.status !== 'scheduled').length +
+                      inactiveItems.length}
+                  {nextCursor ? '+' : ''} loaded
+                </span>
+              )}
             </button>
           ))}
         </div>

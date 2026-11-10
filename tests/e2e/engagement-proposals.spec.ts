@@ -1,5 +1,103 @@
 import { expect, test } from '@playwright/test';
 
+test('Page comment proposal schedules at its planned time and can be cancelled after reload', async ({
+  page,
+}, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Comment Scheduling Owner',
+      email: `comment-schedule-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Comment Scheduling Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const id = '00000000-0000-4000-8000-000000000810';
+  const plannedDueAt = new Date(Date.now() + 3_600_000).toISOString();
+  let status = 'pending';
+  let approvalCount = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let data: unknown;
+    if (path.endsWith('/approve')) {
+      approvalCount += 1;
+      expect(route.request().postDataJSON()).toEqual({
+        expectedRevision: 1,
+        sendMode: 'scheduled',
+      });
+      status = 'scheduled';
+      data = { id, status, dueAt: plannedDueAt };
+    } else if (path.endsWith('/cancel-scheduled')) {
+      status = 'cancelled';
+      data = { status };
+    } else if (path.endsWith('/api/engagement-proposals')) {
+      data = {
+        items:
+          status === 'cancelled'
+            ? []
+            : [
+                {
+                  id,
+                  accountDisplayName: 'Christina Page',
+                  provider: 'facebook_page',
+                  kind: 'comment',
+                  status,
+                  sourcePreview: 'A visitor comment',
+                  contentPreview: 'A playful reply',
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+        nextCursor: null,
+      };
+    } else {
+      data = {
+        id,
+        accountDisplayName: 'Christina Page',
+        provider: 'facebook_page',
+        kind: 'comment',
+        targetId: '123_456_789',
+        sourceContext: { text: 'A visitor comment', postId: '123_456' },
+        content: { text: 'A playful reply' },
+        plannedDueAt,
+        revision: 1,
+        status,
+        canApprove: true,
+        noGo: false,
+        schedule: status === 'scheduled' ? { dueAt: plannedDueAt, status: 'pending' } : null,
+      };
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: /Facebook Page comment/ }).click();
+  await expect(page.locator('.engagement-planned-due-at')).toContainText(
+    new Date(plannedDueAt).toLocaleString(),
+  );
+  await page.screenshot({ path: testInfo.outputPath('comment-schedule-ready.png') });
+  await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Christina Page');
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and schedule' }).click();
+  await page.reload();
+  await page.getByRole('button', { name: /Facebook Page comment/ }).click();
+  await expect(page.getByRole('button', { name: 'Cancel scheduled reply' })).toBeEnabled();
+  await expect(page.getByText(/Scheduled for/).first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('comment-schedule-pending.png') });
+  await page.getByRole('button', { name: 'Cancel scheduled reply' }).click();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Cancel scheduled reply' })
+    .click();
+  await page.reload();
+  await expect(page.getByText('No replies await review or reconciliation.')).toBeVisible();
+  expect(approvalCount).toBe(1);
+});
+
 test('closed Page DM window hides approval on desktop and mobile', async ({ page }, testInfo) => {
   const registered = await page.request.post('/api/auth/register', {
     data: {

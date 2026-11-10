@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
+import { ActionPolicyDeniedError } from '../policy/action-policy.js';
 import {
   EngagementProposalError,
   getEngagementProposal,
@@ -25,6 +26,7 @@ import {
   FacebookDmWindowClosedError,
 } from './facebook-messenger-send.service.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
+import { FacebookRequestError } from './facebook-http-client.js';
 import {
   cancelScheduledProposalPageComment,
   PendingCommentConflictError,
@@ -281,6 +283,10 @@ export function registerEngagementApprovalRoutes(
     } catch (error) {
       if (error instanceof EngagementProposalError)
         return reply.code(error.statusCode).send({ data: null, error: error.message });
+      if (error instanceof ActionPolicyDeniedError)
+        return reply.code(403).send({ data: null, error: 'Page comment access denied' });
+      if (error instanceof FacebookRequestError)
+        return reply.code(502).send({ data: null, error: 'Facebook comment preflight failed' });
       if (
         error instanceof PendingDmConflictError ||
         error instanceof PendingCommentConflictError ||

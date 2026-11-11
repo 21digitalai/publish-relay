@@ -2,6 +2,7 @@ export interface PendingRootSlot {
   id: string;
   dueAt: Date;
   windowDeadline: Date | null;
+  immovable: boolean;
 }
 
 /** Keep normal append order; use an earlier free slot only when the window needs it. */
@@ -36,8 +37,8 @@ export function planPageDmRootPriority(input: {
   // spend its remaining reply window. Leave the Page queue intact instead.
   if (pending.some((root) => !root.windowDeadline)) return null;
   const ordered = [
-    ...pending.map((root) => ({ ...root, isNew: false })),
-    { id: '', dueAt: input.appendAt, windowDeadline: input.newDeadline, isNew: true },
+    ...pending.map((root) => ({ ...root, isNew: false as const })),
+    { id: '', dueAt: input.appendAt, windowDeadline: input.newDeadline, isNew: true as const },
   ].sort(
     (a, b) =>
       (a.windowDeadline?.getTime() ?? Infinity) - (b.windowDeadline?.getTime() ?? Infinity) ||
@@ -49,9 +50,12 @@ export function planPageDmRootPriority(input: {
   for (const root of ordered) {
     // Existing promises never move earlier; the new root uses the first free
     // paced slot permitted by the durable cursor and any earlier windows.
-    const slot = new Date(
-      Math.max(root.isNew ? input.earliestAt.getTime() : root.dueAt.getTime(), previous + 60_000),
+    const earliestSlot = Math.max(
+      root.isNew ? input.earliestAt.getTime() : root.dueAt.getTime(),
+      previous + 60_000,
     );
+    if (!root.isNew && root.immovable && earliestSlot > root.dueAt.getTime()) return null;
+    const slot = new Date(earliestSlot);
     if (slot > (root.windowDeadline ?? new Date(0))) return null;
     previous = slot.getTime();
     if (root.isNew) dueAt = slot;

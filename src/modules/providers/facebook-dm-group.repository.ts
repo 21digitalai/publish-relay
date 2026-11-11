@@ -172,6 +172,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         dueAt: facebookPageDmPendingIntents.dueAt,
         windowDeadline: facebookPageDmPendingIntents.windowDeadline,
         status: facebookPageDmPendingIntents.status,
+        preSendAttempts: facebookPageDmPendingIntents.preSendAttempts,
       })
       .from(facebookPageDmPendingIntents)
       .where(
@@ -211,7 +212,9 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         randomInt(60, 121) * 1000,
     );
     const plan = planPageDmRootPriority({
-      pending: roots.filter((root) => root.status === 'pending'),
+      pending: roots
+        .filter((root) => root.status === 'pending')
+        .map((root) => ({ ...root, immovable: root.preSendAttempts > 0 })),
       newDeadline: input.windowDeadline,
       earliestAt,
       appendAt,
@@ -271,7 +274,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         throw new PendingDmConflictError('One Page DM group per Sofia day is already scheduled');
     }
     for (const change of plan.changes) {
-      await tx
+      const moved = await tx
         .update(facebookPageDmPendingIntents)
         .set({ dueAt: change.dueAt, updatedAt: new Date() })
         .where(
@@ -279,8 +282,12 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
             eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
             eq(facebookPageDmPendingIntents.id, change.id),
             eq(facebookPageDmPendingIntents.status, 'pending'),
+            eq(facebookPageDmPendingIntents.preSendAttempts, 0),
           ),
-        );
+        )
+        .returning({ id: facebookPageDmPendingIntents.id });
+      if (moved.length !== 1)
+        throw new PendingDmConflictError('Page DM root changed during priority scheduling');
     }
     const groupId = randomUUID();
     const root = await tx

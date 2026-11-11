@@ -1642,6 +1642,60 @@ describe('Page DM pending intent', () => {
     }
   });
 
+  it('does not move a pending root after a claimed pre-send retry', async () => {
+    const { pg, database } = await setup();
+    try {
+      const schedule = (conversationId: string, minutes: number) =>
+        schedulePageDmGroup(database, {
+          workspaceId,
+          accountId,
+          conversationId,
+          clientActionId: randomUUID(),
+          texts: ['Reply'],
+          expectedLatestInboundMessageId: `inbound-${conversationId}`,
+          windowDeadline: new Date(Date.now() + minutes * 60_000),
+          actor: { type: 'api-key', id: actorId },
+        });
+      const retry = await schedule('retry-root', 240);
+      const [claimed] = await claimDuePageDms(database, {
+        workerId: 'retry-worker',
+        now: new Date(retry.dueAt.getTime() + 1000),
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      if (!claimed?.leaseOwner) throw new Error('Expected claimed root with a lease');
+      expect(
+        await finishClaimedPageDm(database, {
+          workspaceId,
+          id: claimed.id,
+          workerId: claimed.leaseOwner,
+          state: 'pending',
+        }),
+      ).toBe(true);
+      const before = await pg.query<{ due_at: Date; pre_send_attempts: number }>(
+        'SELECT due_at, pre_send_attempts FROM facebook_page_dm_pending_intents WHERE id=$1',
+        [retry.id],
+      );
+      const retryDue = new Date(before.rows[0]?.due_at ?? 0).getTime();
+      expect(before.rows[0]?.pre_send_attempts).toBe(1);
+      const urgent = await schedule('urgent-after-retry', 20).catch((error: unknown) => {
+        expect(error).toBeInstanceOf(PendingDmConflictError);
+        return null;
+      });
+      const after = await pg.query<{ status: string; due_at: Date; pre_send_attempts: number }>(
+        'SELECT status, due_at, pre_send_attempts FROM facebook_page_dm_pending_intents WHERE id=$1',
+        [retry.id],
+      );
+      expect(after.rows[0]?.status).toBe('pending');
+      expect(after.rows[0]?.pre_send_attempts).toBe(1);
+      expect(new Date(after.rows[0]?.due_at ?? 0).getTime()).toBe(retryDue);
+      if (urgent)
+        expect(Math.abs(urgent.dueAt.getTime() - retryDue)).toBeGreaterThanOrEqual(60_000);
+    } finally {
+      await pg.close();
+    }
+  });
+
   it('does not let a paced Page starve an overdue root on another Page', async () => {
     const { pg, database } = await setup();
     try {

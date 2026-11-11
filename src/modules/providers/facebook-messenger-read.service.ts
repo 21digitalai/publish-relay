@@ -3,6 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import type { FacebookHttpClient } from './facebook-http-client.js';
 import { pageNoGoConversationIds } from './facebook-dm-no-go.repository.js';
+import { terminalPageConversationIds } from './facebook-dm-memory.repository.js';
 import {
   PageReadUnavailableError,
   withPageReadToken,
@@ -10,7 +11,13 @@ import {
 
 export async function listAccountPageConversations(
   runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
-  input: { workspaceId: string; accountId: string; limit?: number; after?: string },
+  input: {
+    workspaceId: string;
+    accountId: string;
+    limit?: number;
+    after?: string;
+    filter?: 'all' | 'eligible';
+  },
 ) {
   return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, accessToken) => {
     const result = await runtime.client.listPageConversations({
@@ -19,14 +26,24 @@ export async function listAccountPageConversations(
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...(input.after === undefined ? {} : { after: input.after }),
     });
-    const blocked = await pageNoGoConversationIds(runtime.database, {
+    const selection = {
       workspaceId: input.workspaceId,
       accountId: input.accountId,
       conversationIds: result.conversations.map((item) => item.id),
-    });
+    };
+    const blocked = await pageNoGoConversationIds(runtime.database, selection);
+    const terminal = await terminalPageConversationIds(runtime.database, selection);
+    const conversations = result.conversations.map((item) => ({
+      ...item,
+      noGo: blocked.has(item.id),
+      terminal: terminal.has(item.id),
+    }));
     return {
       ...result,
-      conversations: result.conversations.map((item) => ({ ...item, noGo: blocked.has(item.id) })),
+      conversations:
+        input.filter === 'eligible'
+          ? conversations.filter((item) => !item.noGo && !item.terminal)
+          : conversations,
     };
   });
 }

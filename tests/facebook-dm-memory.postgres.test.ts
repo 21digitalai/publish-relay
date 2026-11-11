@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   getPageDmMemoryMany,
+  terminalPageConversationIds,
   upsertPageDmMemory,
 } from '../src/modules/providers/facebook-dm-memory.repository.js';
 
@@ -102,6 +103,19 @@ describe('Page DM working memory', () => {
         }),
       ).toMatchObject([{ facts: [] }]);
       expect(JSON.stringify(records)).not.toMatch(/providerToken|messageText|accessToken/);
+      expect(
+        await terminalPageConversationIds(database, {
+          ...key,
+          conversationIds: ['t_1', 't_missing'],
+        }),
+      ).toEqual(new Set(['t_1']));
+      expect(
+        await terminalPageConversationIds(database, {
+          workspaceId,
+          accountId: otherAccountId,
+          conversationIds: ['t_1'],
+        }),
+      ).toEqual(new Set());
     } finally {
       await pg.close();
     }

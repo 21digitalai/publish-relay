@@ -92,6 +92,30 @@ export async function getPageDmMemoryMany(
   });
 }
 
+/** One bounded Page-local lookup before any per-thread message reads. */
+export async function terminalPageConversationIds(
+  database: NodePgDatabase,
+  input: PageDmMemoryKey & { conversationIds: string[] },
+): Promise<Set<string>> {
+  if (!input.conversationIds.length) return new Set();
+  return withTenantTransaction(database, input, async (tx) => {
+    await requirePageAccount(tx, input);
+    const rows = await tx
+      .select({ conversationId: facebookPageDmMemory.conversationId })
+      .from(facebookPageDmMemory)
+      .where(
+        and(
+          eq(facebookPageDmMemory.workspaceId, input.workspaceId),
+          eq(facebookPageDmMemory.accountId, input.accountId),
+          eq(facebookPageDmMemory.terminal, true),
+          inArray(facebookPageDmMemory.conversationId, input.conversationIds),
+        ),
+      )
+      .limit(100);
+    return new Set(rows.map((row) => row.conversationId));
+  });
+}
+
 export async function upsertPageDmMemory(
   database: NodePgDatabase,
   input: PageDmMemoryKey & { conversationId: string; patch: PageDmMemoryPatch },

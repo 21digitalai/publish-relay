@@ -52,6 +52,27 @@ afterEach(() => {
 });
 
 describe('Facebook Page read machine API', () => {
+  it('passes the selected-Page eligible filter to the bounded inbox read', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: 'key' });
+      mocks.conversations.mockResolvedValue({ conversations: [], nextCursor: 'opaque-next' });
+      const response = await app.inject(`${path}/facebook-conversations?filter=eligible&limit=25`);
+      expect(response.statusCode).toBe(200);
+      expect(mocks.conversations).toHaveBeenCalledWith(expect.anything(), {
+        workspaceId,
+        accountId,
+        limit: 25,
+        filter: 'eligible',
+      });
+      expect(response.json().data.nextCursor).toBe('opaque-next');
+      expect((await app.inject(`${path}/facebook-conversations?filter=untrusted`)).statusCode).toBe(
+        400,
+      );
+    } finally {
+      await app.close();
+    }
+  });
   it('requires authentication and validates bounded query before provider access', async () => {
     const app = await createApp();
     try {

@@ -184,6 +184,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'updatedAt',
     'displayName',
     'noGo',
+    'terminal',
     'link',
   ]),
   'facebook-dms:messages': new Set([
@@ -669,7 +670,9 @@ function routePath(route, command, id, flags) {
           command === 'facebook-dms:messages' ||
           command === 'facebook-comments:posts' ||
           command === 'facebook-comments:list'
-        ? ['limit', 'after']
+        ? command === 'facebook-dms:list'
+          ? ['limit', 'after', 'filter']
+          : ['limit', 'after']
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
           : command === 'publishes:list'

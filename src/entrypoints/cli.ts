@@ -194,6 +194,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'updatedAt',
     'displayName',
     'noGo',
+    'terminal',
     'link',
   ]),
   'facebook-dms:messages': new Set([
@@ -708,7 +709,9 @@ function routePath(
           command === 'facebook-dms:messages' ||
           command === 'facebook-comments:posts' ||
           command === 'facebook-comments:list'
-        ? ['limit', 'after']
+        ? command === 'facebook-dms:list'
+          ? ['limit', 'after', 'filter']
+          : ['limit', 'after']
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
           : command === 'publishes:list'

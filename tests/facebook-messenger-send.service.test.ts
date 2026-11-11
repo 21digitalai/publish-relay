@@ -22,6 +22,7 @@ vi.mock('../src/modules/providers/facebook-dm-action.repository.js', () => ({
   findFacebookDmAction: mocks.find,
   reserveFacebookDmAction: mocks.reserve,
   settleFacebookDmAction: mocks.settle,
+  settleFacebookDmActionInTransaction: mocks.settle,
 }));
 vi.mock('../src/modules/providers/facebook-dm-no-go.repository.js', () => ({
   isPageConversationNoGo: mocks.noGo,
@@ -51,13 +52,13 @@ function runtime(messages: { id?: string; senderId: string | null; createdAt: st
         { id: 'psid_7', name: 'Alexandra' },
       ]),
       listConversationMessages: vi.fn().mockResolvedValue({ messages, nextCursor: null }),
-      sendPageMessage: vi.fn().mockResolvedValue('mid_9'),
+      sendPageMessage: vi.fn<() => Promise<string>>().mockResolvedValue('mid_9'),
     },
   };
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.tenant.mockImplementation(
     (_db: unknown, _input: unknown, callback: (tx: unknown) => Promise<unknown>) => callback({}),
   );
@@ -75,6 +76,64 @@ beforeEach(() => {
 });
 
 describe('Facebook inbound-only send command', () => {
+  it('keeps confirmed final settlement under the Page lock before another send can POST', async () => {
+    let releaseProvider: ((messageId: string) => void) | undefined;
+    let previousLock = Promise.resolve();
+    let noGo = false;
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    vi.mocked(client.client.sendPageMessage).mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          releaseProvider = resolve;
+        }),
+    );
+    mocks.noGoInTransaction.mockImplementation(() => noGo);
+    mocks.lock.mockImplementation(async (tx: { release?: () => void }) => {
+      const waitForPrior = previousLock;
+      let unlock: (() => void) | undefined;
+      previousLock = new Promise<void>((resolve) => {
+        unlock = resolve;
+      });
+      await waitForPrior;
+      if (!unlock) throw new Error('Page lock release unavailable');
+      tx.release = unlock;
+    });
+    mocks.tenant.mockImplementation(
+      async (
+        _db: unknown,
+        _input: unknown,
+        callback: (tx: { release?: () => void }) => Promise<unknown>,
+      ) => {
+        const tx: { release?: () => void } = {};
+        try {
+          return await callback(tx);
+        } finally {
+          tx.release?.();
+        }
+      },
+    );
+    mocks.settle.mockImplementation((_tx: unknown, settlement: { outcome: { state: string } }) => {
+      if (settlement.outcome.state === 'confirmed') noGo = true;
+    });
+    const final = sendAccountPageConversationMessage(client as never, {
+      ...input,
+      finalExit: true,
+    });
+    await vi.waitFor(() => {
+      expect(releaseProvider).toBeDefined();
+    });
+    const second = sendAccountPageConversationMessage(client as never, {
+      ...input,
+      clientActionId: '00000000-0000-4000-8000-000000000099',
+    });
+    await vi.waitFor(() => {
+      expect(mocks.reserve).toHaveBeenCalledTimes(2);
+    });
+    releaseProvider?.('mid_final');
+    await expect(final).resolves.toMatchObject({ state: 'confirmed' });
+    await expect(second).rejects.toThrow('no-go list');
+    expect(client.client.sendPageMessage).toHaveBeenCalledTimes(1);
+  });
   it('settles a definite Graph rejection with safe diagnostics but returns only status', async () => {
     const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
     vi.mocked(client.client.sendPageMessage).mockRejectedValue(

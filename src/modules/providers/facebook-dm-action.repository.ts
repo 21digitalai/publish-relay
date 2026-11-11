@@ -126,147 +126,156 @@ export async function reserveFacebookDmAction(
   });
 }
 
+export type FacebookDmSettlement = FacebookDmActionKey & {
+  reservationId: string;
+  outcome: FacebookDmOutcome;
+  failureEvidence?: FacebookDmFailureEvidence;
+};
+
 export async function settleFacebookDmAction(
   database: NodePgDatabase,
-  input: FacebookDmActionKey & {
-    reservationId: string;
-    outcome: FacebookDmOutcome;
-    failureEvidence?: FacebookDmFailureEvidence;
-  },
+  input: FacebookDmSettlement,
 ): Promise<void> {
   await withTenantTransaction(database, input, async (transaction) => {
     await lockPageDmAccount(transaction, input);
-    const [updated] = await transaction
-      .update(facebookPageDmActions)
-      .set({
-        state: input.outcome.state,
-        providerMessageId: input.outcome.state === 'confirmed' ? input.outcome.messageId : null,
-        failureStatus: input.outcome.state === 'failed' ? input.outcome.failureStatus : null,
-        failureCode:
-          input.outcome.state === 'failed'
-            ? boundedDiagnosticNumber(input.failureEvidence?.code)
-            : null,
-        failureSubcode:
-          input.outcome.state === 'failed'
-            ? boundedDiagnosticNumber(input.failureEvidence?.subcode)
-            : null,
-        failureTraceId:
-          input.outcome.state === 'failed' &&
-          typeof input.failureEvidence?.traceId === 'string' &&
-          /^[A-Za-z0-9_-]{1,128}$/.test(input.failureEvidence.traceId)
-            ? input.failureEvidence.traceId
-            : null,
-        failureTransient:
-          input.outcome.state === 'failed' &&
-          typeof input.failureEvidence?.isTransient === 'boolean'
-            ? input.failureEvidence.isTransient
-            : null,
-        updatedAt: new Date(),
+    await settleFacebookDmActionInTransaction(transaction, input);
+  });
+}
+
+/** Caller must hold the selected Page lock until this settlement commits. */
+export async function settleFacebookDmActionInTransaction(
+  transaction: NodePgDatabase,
+  input: FacebookDmSettlement,
+): Promise<void> {
+  const [updated] = await transaction
+    .update(facebookPageDmActions)
+    .set({
+      state: input.outcome.state,
+      providerMessageId: input.outcome.state === 'confirmed' ? input.outcome.messageId : null,
+      failureStatus: input.outcome.state === 'failed' ? input.outcome.failureStatus : null,
+      failureCode:
+        input.outcome.state === 'failed'
+          ? boundedDiagnosticNumber(input.failureEvidence?.code)
+          : null,
+      failureSubcode:
+        input.outcome.state === 'failed'
+          ? boundedDiagnosticNumber(input.failureEvidence?.subcode)
+          : null,
+      failureTraceId:
+        input.outcome.state === 'failed' &&
+        typeof input.failureEvidence?.traceId === 'string' &&
+        /^[A-Za-z0-9_-]{1,128}$/.test(input.failureEvidence.traceId)
+          ? input.failureEvidence.traceId
+          : null,
+      failureTransient:
+        input.outcome.state === 'failed' && typeof input.failureEvidence?.isTransient === 'boolean'
+          ? input.failureEvidence.isTransient
+          : null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(facebookPageDmActions.workspaceId, input.workspaceId),
+        eq(facebookPageDmActions.id, input.reservationId),
+        eq(facebookPageDmActions.state, 'reserved'),
+        eq(facebookPageDmActions.finalExit, input.finalExit ?? false),
+      ),
+    )
+    .returning({ id: facebookPageDmActions.id });
+  if (!updated) throw new Error('Facebook DM settlement lost reservation');
+  if (input.finalExit && input.outcome.state === 'confirmed') {
+    await transaction
+      .insert(facebookPageDmNoGo)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        displayName: input.receiverLabel?.trim().slice(0, 200) ?? null,
+        reason: 'campaign_final',
+        finalActionId: input.clientActionId,
+        finalMessageId: input.outcome.messageId,
       })
-      .where(
-        and(
-          eq(facebookPageDmActions.workspaceId, input.workspaceId),
-          eq(facebookPageDmActions.id, input.reservationId),
-          eq(facebookPageDmActions.state, 'reserved'),
-          eq(facebookPageDmActions.finalExit, input.finalExit ?? false),
-        ),
-      )
-      .returning({ id: facebookPageDmActions.id });
-    if (!updated) throw new Error('Facebook DM settlement lost reservation');
-    if (input.finalExit && input.outcome.state === 'confirmed') {
-      await transaction
-        .insert(facebookPageDmNoGo)
-        .values({
-          workspaceId: input.workspaceId,
-          accountId: input.accountId,
-          conversationId: input.conversationId,
-          displayName: input.receiverLabel?.trim().slice(0, 200) ?? null,
-          reason: 'campaign_final',
-          finalActionId: input.clientActionId,
-          finalMessageId: input.outcome.messageId,
-        })
-        .onConflictDoNothing();
-      await transaction
-        .insert(facebookPageDmMemory)
-        .values({
-          workspaceId: input.workspaceId,
-          accountId: input.accountId,
-          conversationId: input.conversationId,
+      .onConflictDoNothing();
+    await transaction
+      .insert(facebookPageDmMemory)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        terminal: true,
+        finalExitAt: new Date(),
+        finalActionId: input.clientActionId,
+        finalMessageId: input.outcome.messageId,
+        lastOutboundReceiptRef: input.outcome.messageId,
+      })
+      .onConflictDoUpdate({
+        target: [
+          facebookPageDmMemory.workspaceId,
+          facebookPageDmMemory.accountId,
+          facebookPageDmMemory.conversationId,
+        ],
+        set: {
           terminal: true,
           finalExitAt: new Date(),
           finalActionId: input.clientActionId,
           finalMessageId: input.outcome.messageId,
           lastOutboundReceiptRef: input.outcome.messageId,
-        })
-        .onConflictDoUpdate({
-          target: [
-            facebookPageDmMemory.workspaceId,
-            facebookPageDmMemory.accountId,
-            facebookPageDmMemory.conversationId,
-          ],
-          set: {
-            terminal: true,
-            finalExitAt: new Date(),
-            finalActionId: input.clientActionId,
-            finalMessageId: input.outcome.messageId,
-            lastOutboundReceiptRef: input.outcome.messageId,
-            updatedAt: new Date(),
-          },
-        });
-    }
-    if (
-      input.outcome.state === 'confirmed' ||
-      (input.outcome.state === 'failed' && input.failureEvidence)
-    ) {
-      await transaction
-        .insert(facebookPageDmFailureCircuit)
-        .values({
-          workspaceId: input.workspaceId,
-          accountId: input.accountId,
-        })
-        .onConflictDoNothing();
-      const [circuit] = await transaction
-        .select({
-          consecutiveFailures: facebookPageDmFailureCircuit.consecutiveFailures,
-          haltedAt: facebookPageDmFailureCircuit.haltedAt,
-        })
-        .from(facebookPageDmFailureCircuit)
-        .where(
-          and(
-            eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
-            eq(facebookPageDmFailureCircuit.accountId, input.accountId),
-          ),
-        )
-        .limit(1)
-        .for('update');
-      if (!circuit) throw new Error('Facebook DM circuit state unavailable');
-      const failures = input.outcome.state === 'confirmed' ? 0 : circuit.consecutiveFailures + 1;
-      await transaction
-        .update(facebookPageDmFailureCircuit)
-        .set({
-          consecutiveFailures: circuit.haltedAt ? circuit.consecutiveFailures : failures,
-          haltedAt:
-            circuit.haltedAt ?? (failures >= MAX_CONSECUTIVE_DEFINITE_FAILURES ? new Date() : null),
-          lastActionId: input.clientActionId,
           updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
-            eq(facebookPageDmFailureCircuit.accountId, input.accountId),
-          ),
-        );
-    }
-    await transaction.insert(auditEvents).values({
-      workspaceId: input.workspaceId,
-      actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
-      actorId: input.actor.id,
-      action: 'facebook_page.dm_send',
-      targetType: 'provider_account',
-      targetId: input.accountId,
-      requestId: input.clientActionId,
-      metadata: { outcome: input.outcome.state, conversationId: input.conversationId },
-    });
+        },
+      });
+  }
+  if (
+    input.outcome.state === 'confirmed' ||
+    (input.outcome.state === 'failed' && input.failureEvidence)
+  ) {
+    await transaction
+      .insert(facebookPageDmFailureCircuit)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+      })
+      .onConflictDoNothing();
+    const [circuit] = await transaction
+      .select({
+        consecutiveFailures: facebookPageDmFailureCircuit.consecutiveFailures,
+        haltedAt: facebookPageDmFailureCircuit.haltedAt,
+      })
+      .from(facebookPageDmFailureCircuit)
+      .where(
+        and(
+          eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
+          eq(facebookPageDmFailureCircuit.accountId, input.accountId),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (!circuit) throw new Error('Facebook DM circuit state unavailable');
+    const failures = input.outcome.state === 'confirmed' ? 0 : circuit.consecutiveFailures + 1;
+    await transaction
+      .update(facebookPageDmFailureCircuit)
+      .set({
+        consecutiveFailures: circuit.haltedAt ? circuit.consecutiveFailures : failures,
+        haltedAt:
+          circuit.haltedAt ?? (failures >= MAX_CONSECUTIVE_DEFINITE_FAILURES ? new Date() : null),
+        lastActionId: input.clientActionId,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
+          eq(facebookPageDmFailureCircuit.accountId, input.accountId),
+        ),
+      );
+  }
+  await transaction.insert(auditEvents).values({
+    workspaceId: input.workspaceId,
+    actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
+    actorId: input.actor.id,
+    action: 'facebook_page.dm_send',
+    targetType: 'provider_account',
+    targetId: input.accountId,
+    requestId: input.clientActionId,
+    metadata: { outcome: input.outcome.state, conversationId: input.conversationId },
   });
 }
 

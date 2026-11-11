@@ -15,6 +15,7 @@ import {
   findFacebookDmAction,
   reserveFacebookDmAction,
   settleFacebookDmAction,
+  settleFacebookDmActionInTransaction,
   type FacebookDmActionKey,
   type FacebookDmOutcome,
   type FacebookDmReservation,
@@ -213,6 +214,18 @@ export async function sendAccountPageConversationMessage(
     const dispatch = await withTenantTransaction(runtime.database, command, async (tx) => {
       await lockPageDmAccount(tx, command);
       if (await isPageConversationNoGoInTransaction(tx, command)) return null;
+      let result:
+        | { outcome: { state: 'confirmed'; messageId: string } }
+        | {
+            outcome: { state: 'failed'; failureStatus: number };
+            failureEvidence: {
+              code: number | undefined;
+              subcode: number | undefined;
+              traceId: string | undefined;
+              isTransient: boolean | undefined;
+            };
+          }
+        | { outcome: { state: 'unknown' } };
       try {
         const messageId = await runtime.client.sendPageMessage({
           pageId,
@@ -220,36 +233,43 @@ export async function sendAccountPageConversationMessage(
           text: command.text,
           accessToken: token,
         });
-        return { outcome: { state: 'confirmed', messageId } as const };
+        result = { outcome: { state: 'confirmed', messageId } };
       } catch (error) {
         const isDefiniteFailure =
           error instanceof FacebookRequestError &&
           !error.outcomeUnknown &&
           error.evidence.status >= 400 &&
           error.evidence.status < 500;
-        return isDefiniteFailure && error instanceof FacebookRequestError
-          ? {
-              outcome: { state: 'failed', failureStatus: error.evidence.status } as const,
-              failureEvidence: {
-                code: error.evidence.code,
-                subcode: error.evidence.subcode,
-                traceId: error.evidence.traceId,
-                isTransient: error.evidence.isTransient,
-              },
-            }
-          : { outcome: { state: 'unknown' } as const };
+        result =
+          isDefiniteFailure && error instanceof FacebookRequestError
+            ? {
+                outcome: { state: 'failed', failureStatus: error.evidence.status } as const,
+                failureEvidence: {
+                  code: error.evidence.code,
+                  subcode: error.evidence.subcode,
+                  traceId: error.evidence.traceId,
+                  isTransient: error.evidence.isTransient,
+                },
+              }
+            : { outcome: { state: 'unknown' } as const };
       }
+      await settleFacebookDmActionInTransaction(tx, {
+        ...action,
+        receiverLabel: recipient.label,
+        reservationId: reservation.id,
+        outcome: result.outcome,
+        ...('failureEvidence' in result ? { failureEvidence: result.failureEvidence } : {}),
+      });
+      return result;
     });
-    const outcome: FacebookDmOutcome = dispatch?.outcome ?? { state: 'failed', failureStatus: 403 };
-    await settleFacebookDmAction(runtime.database, {
-      ...action,
-      reservationId: reservation.id,
-      outcome,
-      ...(dispatch && 'failureEvidence' in dispatch
-        ? { failureEvidence: dispatch.failureEvidence }
-        : {}),
-    });
-    if (!dispatch) throw new FacebookDmNoGoError();
-    return outcome;
+    if (!dispatch) {
+      await settleFacebookDmAction(runtime.database, {
+        ...action,
+        reservationId: reservation.id,
+        outcome: { state: 'failed', failureStatus: 403 },
+      });
+      throw new FacebookDmNoGoError();
+    }
+    return dispatch.outcome;
   });
 }

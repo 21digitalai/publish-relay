@@ -69,6 +69,43 @@ async function appForTest() {
 }
 
 describe('Facebook Page DM send machine route', () => {
+  it('accepts one guarded bubble but rejects an empty group', async () => {
+    const app = await appForTest();
+    const base = `/api/v1/destinations/${accountId}/facebook-conversations/t_123/scheduled-groups`;
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: clientActionId, kind: 'api-key' });
+      mocks.approvalWindow.mockResolvedValue({
+        latestInboundMessageId: 'mid-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+      });
+      mocks.groupSchedule.mockResolvedValue({
+        id: clientActionId,
+        status: 'pending',
+        dueAt: new Date(Date.now() + 60_000),
+      });
+      const body = {
+        clientActionId,
+        texts: ['Brief reply'],
+        expectedLatestInboundMessageId: 'mid-1',
+      };
+      const accepted = await app.inject({ method: 'POST', url: base, payload: body });
+      expect(accepted.statusCode).toBe(202);
+      expect(mocks.groupSchedule).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ texts: ['Brief reply'] }),
+      );
+      expect(mocks.send).not.toHaveBeenCalled();
+      const rejected = await app.inject({
+        method: 'POST',
+        url: base,
+        payload: { ...body, texts: [] },
+      });
+      expect(rejected.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('schedules a guarded multi-bubble group without a provider call and exposes only bounded state', async () => {
     const app = await appForTest();
     const rootId = '00000000-0000-4000-8000-000000000006';

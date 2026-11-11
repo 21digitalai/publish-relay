@@ -824,13 +824,13 @@ async function run() {
     if (
       parsed.command === 'facebook-dms:group-schedule' &&
       (!Array.isArray(payload.texts) ||
-        payload.texts.length < 2 ||
+        payload.texts.length < 1 ||
         payload.texts.length > 4 ||
         typeof payload.expectedLatestInboundMessageId !== 'string')
     )
       throw new CliError(
         EXIT.usage,
-        'Page DM group requires 2–4 texts and expectedLatestInboundMessageId',
+        'Page DM group requires 1–4 texts and expectedLatestInboundMessageId',
       );
     if (
       parsed.command === 'facebook-dms:schedule' &&

@@ -730,7 +730,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         post: {
           operationId: 'scheduleFacebookPageDmGroup',
           description:
-            'Atomically schedule 2–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; no provider send on this request.',
+            'Atomically schedule 1–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; no provider send on this request.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
             {

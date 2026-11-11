@@ -81,11 +81,11 @@ export async function findPageDmGroupReplay(
 /** One Page-locked transaction owns the exact root and every waiting tail. */
 export async function schedulePageDmGroup(database: NodePgDatabase, input: GroupRequest) {
   if (
-    input.texts.length < 2 ||
+    input.texts.length < 1 ||
     input.texts.length > 4 ||
     input.texts.some((text) => !text.trim() || text.length > 2000)
   )
-    throw new PendingDmConflictError('A Page DM group requires 2–4 nonempty bubbles');
+    throw new PendingDmConflictError('A Page DM group requires 1–4 nonempty bubbles');
   return withTenantTransaction(database, input, async (tx) => {
     await lockPageDmAccount(tx, input);
     const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;

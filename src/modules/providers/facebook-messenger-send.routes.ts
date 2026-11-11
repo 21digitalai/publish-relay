@@ -58,7 +58,7 @@ const cancelParamsSchema = paramsSchema.extend({ intentId: z.uuid() });
 const groupParamsSchema = paramsSchema.extend({ rootId: z.uuid() });
 export const facebookDmGroupRequestSchema = z.strictObject({
   clientActionId: z.uuid(),
-  texts: z.array(z.string().trim().min(1).max(2000)).min(2).max(4),
+  texts: z.array(z.string().trim().min(1).max(2000)).min(1).max(4),
   expectedLatestInboundMessageId: z.string().trim().min(1).max(256),
 });
 

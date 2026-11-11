@@ -697,67 +697,120 @@ describe('Page DM pending intent', () => {
     }
   });
 
-  it.each([2, 3, 4])('arms exactly %i bubbles atomically and replays the root', async (count) => {
+  it.each([1, 2, 3, 4])(
+    'arms exactly %i bubbles atomically and replays the root',
+    async (count) => {
+      const { pg, database } = await setup();
+      try {
+        const input = {
+          workspaceId,
+          accountId,
+          conversationId: 't_123',
+          clientActionId: actionId,
+          texts: Array.from({ length: count }, (_, index) => `Bubble ${String(index)}`),
+          expectedLatestInboundMessageId: 'inbound-1',
+          windowDeadline: new Date(Date.now() + 3600_000),
+          actor: { type: 'user' as const, id: actorId },
+        };
+        const first = await schedulePageDmGroup(database, input);
+        const next = await schedulePageDmGroup(database, {
+          ...input,
+          conversationId: 't_456',
+          clientActionId: randomUUID(),
+        });
+        const gapSeconds = (next.dueAt.getTime() - first.dueAt.getTime()) / 1000;
+        expect(gapSeconds).toBeGreaterThanOrEqual(60);
+        expect(gapSeconds).toBeLessThanOrEqual(120);
+        expect((await schedulePageDmGroup(database, input)).id).toBe(first.id);
+        await expect(
+          schedulePageDmGroup(database, { ...input, texts: ['Different', 'Reply'] }),
+        ).rejects.toBeInstanceOf(PendingDmConflictError);
+        const rows = await pg.query<{
+          status: string;
+          gap_seconds: number;
+          expected_latest_inbound_message_id: string;
+        }>(
+          'SELECT status, gap_seconds, expected_latest_inbound_message_id FROM facebook_page_dm_pending_intents WHERE group_id = $1 ORDER BY sequence_index',
+          [first.groupId],
+        );
+        expect(rows.rows.map((row) => row.status)).toEqual([
+          'pending',
+          ...Array.from({ length: count - 1 }, () => 'waiting'),
+        ]);
+        expect(
+          rows.rows.every((row) => row.expected_latest_inbound_message_id === 'inbound-1'),
+        ).toBe(true);
+        expect(
+          rows.rows.slice(1).every((row) => row.gap_seconds >= 4 && row.gap_seconds <= 10),
+        ).toBe(true);
+        const status = await getPageDmGroupStatus(database, {
+          workspaceId,
+          accountId,
+          conversationId: 't_123',
+          rootId: first.id,
+        });
+        expect(status?.bubbles).toHaveLength(count);
+        expect(
+          await getPageDmGroupStatus(database, {
+            workspaceId: otherWorkspaceId,
+            accountId,
+            conversationId: 't_123',
+            rootId: first.id,
+          }),
+        ).toBeNull();
+      } finally {
+        await pg.close();
+      }
+    },
+  );
+
+  it('dispatches a one-bubble group through the guarded due worker without a tail', async () => {
     const { pg, database } = await setup();
     try {
-      const input = {
+      sendMock.mockReset();
+      sendMock.mockResolvedValue({ state: 'confirmed', messageId: 'provider-1' });
+      await pg.query('INSERT INTO memberships (workspace_id, user_id, role) VALUES ($1, $2, $3)', [
+        workspaceId,
+        actorId,
+        'owner',
+      ]);
+      const group = await schedulePageDmGroup(database, {
         workspaceId,
         accountId,
         conversationId: 't_123',
         clientActionId: actionId,
-        texts: Array.from({ length: count }, (_, index) => `Bubble ${String(index)}`),
+        texts: ['A short reply'],
         expectedLatestInboundMessageId: 'inbound-1',
         windowDeadline: new Date(Date.now() + 3600_000),
-        actor: { type: 'user' as const, id: actorId },
-      };
-      const first = await schedulePageDmGroup(database, input);
-      const next = await schedulePageDmGroup(database, {
-        ...input,
-        conversationId: 't_456',
-        clientActionId: randomUUID(),
+        actor: { type: 'user', id: actorId },
       });
-      const gapSeconds = (next.dueAt.getTime() - first.dueAt.getTime()) / 1000;
-      expect(gapSeconds).toBeGreaterThanOrEqual(60);
-      expect(gapSeconds).toBeLessThanOrEqual(120);
-      expect((await schedulePageDmGroup(database, input)).id).toBe(first.id);
-      await expect(
-        schedulePageDmGroup(database, { ...input, texts: ['Different', 'Reply'] }),
-      ).rejects.toBeInstanceOf(PendingDmConflictError);
-      const rows = await pg.query<{
-        status: string;
-        gap_seconds: number;
-        expected_latest_inbound_message_id: string;
-      }>(
-        'SELECT status, gap_seconds, expected_latest_inbound_message_id FROM facebook_page_dm_pending_intents WHERE group_id = $1 ORDER BY sequence_index',
-        [first.groupId],
+      await pg.query(
+        "UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '1 second' WHERE id = $1",
+        [group.id],
       );
-      expect(rows.rows.map((row) => row.status)).toEqual([
-        'pending',
-        ...Array.from({ length: count - 1 }, () => 'waiting'),
-      ]);
-      expect(rows.rows.every((row) => row.expected_latest_inbound_message_id === 'inbound-1')).toBe(
-        true,
-      );
-      expect(rows.rows.slice(1).every((row) => row.gap_seconds >= 4 && row.gap_seconds <= 10)).toBe(
-        true,
-      );
+      const counts = await dispatchDuePageDms({
+        database,
+        keys: {} as never,
+        client: {} as never,
+        workerId: 'w',
+        leaseMs: 30_000,
+      });
+      expect(counts.confirmed).toBe(1);
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(sendMock.mock.calls[0]?.[1]).toMatchObject({
+        text: 'A short reply',
+        expectedLatestInboundMessageId: 'inbound-1',
+      });
       const status = await getPageDmGroupStatus(database, {
         workspaceId,
         accountId,
         conversationId: 't_123',
-        rootId: first.id,
+        rootId: group.id,
       });
-      expect(status?.bubbles).toHaveLength(count);
-      expect(
-        await getPageDmGroupStatus(database, {
-          workspaceId: otherWorkspaceId,
-          accountId,
-          conversationId: 't_123',
-          rootId: first.id,
-        }),
-      ).toBeNull();
+      expect(status?.bubbles.map((bubble) => bubble.status)).toEqual(['confirmed']);
     } finally {
       await pg.close();
+      sendMock.mockReset();
     }
   });
 

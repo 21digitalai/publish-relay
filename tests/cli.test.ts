@@ -99,6 +99,56 @@ async function cli(
 
 describe('Publish Relay CLI', () => {
   it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'schedules a one-bubble Page DM group through %s',
+    async (entrypoint) => {
+      const accountId = '00000000-0000-4000-8000-000000000402';
+      const clientActionId = '00000000-0000-4000-8000-000000000403';
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        202,
+        {
+          data: { id: clientActionId, status: 'pending', dueAt: '2026-11-11T02:00:00.000Z' },
+          error: null,
+        },
+        undefined,
+        paths,
+      );
+      const folder = await mkdtemp(join(tmpdir(), 'relay-dm-one-bubble-'));
+      const bodyFile = join(folder, 'group.json');
+      await writeFile(
+        bodyFile,
+        JSON.stringify({
+          clientActionId,
+          texts: ['Brief reply'],
+          expectedLatestInboundMessageId: 'mid-1',
+        }),
+      );
+      const result = await cli(
+        [
+          'facebook-dms',
+          'group-schedule',
+          accountId,
+          '--conversation-id',
+          't_123',
+          '--body-file',
+          bodyFile,
+          '--idempotency-key',
+          clientActionId,
+          '--base-url',
+          baseUrl,
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(result.code).toBe(0);
+      expect(paths).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-conversations/t_123/scheduled-groups`,
+      ]);
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { status: 'pending' } });
+    },
+  );
+
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
     'batches Page memory and upserts a compact patch in %s',
     async (entrypoint) => {
       const accountId = '00000000-0000-4000-8000-000000000402';

@@ -22,7 +22,7 @@ import {
 } from './facebook-dm-action.repository.js';
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
-import { isClaimedPageDmGroupInTransaction } from './facebook-dm-pending.repository.js';
+import { isAllowedPageDmGroupDispatchInTransaction } from './facebook-dm-pending.repository.js';
 import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
 import {
   PageReadUnavailableError,
@@ -224,7 +224,7 @@ export async function sendAccountPageConversationMessage(
       if (
         command.actor.type !== 'user' &&
         (await isPageDmDailyGroupLimitEnabledInTransaction(tx, command)) &&
-        !(await isClaimedPageDmGroupInTransaction(tx, command))
+        !(await isAllowedPageDmGroupDispatchInTransaction(tx, command))
       ) {
         const outcome = { state: 'failed' as const, failureStatus: 409 };
         await settleFacebookDmActionInTransaction(tx, {

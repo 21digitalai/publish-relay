@@ -1,6 +1,6 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 
-import { and, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -20,6 +20,7 @@ import {
 } from './facebook-dm-no-go.repository.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
 import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
+import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
 
 export interface PendingDmInput {
   workspaceId: string;
@@ -244,8 +245,8 @@ function matchingPendingPageDm<
   return existing;
 }
 
-/** A claimed group intent is the only machine send allowed while the Page cap is on. */
-export async function isClaimedPageDmGroupInTransaction(
+/** A claimed group intent must still own its Sofia-day slot at provider dispatch. */
+export async function isAllowedPageDmGroupDispatchInTransaction(
   tx: NodePgDatabase,
   input: Pick<
     PendingDmInput,
@@ -263,7 +264,12 @@ export async function isClaimedPageDmGroupInTransaction(
 ): Promise<boolean> {
   if (!input.scheduledIntentId) return false;
   const [row] = await tx
-    .select({ id: facebookPageDmPendingIntents.id })
+    .select({
+      id: facebookPageDmPendingIntents.id,
+      dueAt: facebookPageDmPendingIntents.dueAt,
+      sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
+      expectedInboundId: facebookPageDmPendingIntents.expectedLatestInboundMessageId,
+    })
     .from(facebookPageDmPendingIntents)
     .where(
       and(
@@ -285,7 +291,44 @@ export async function isClaimedPageDmGroupInTransaction(
       ),
     )
     .limit(1);
-  return Boolean(row);
+  if (!row) return false;
+  if (row.sequenceIndex !== 0) return true;
+  const day = pageDmCivilDay(row.dueAt);
+  const [occupied] = await tx
+    .select({ id: facebookPageDmPendingIntents.id })
+    .from(facebookPageDmPendingIntents)
+    .where(
+      and(
+        eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+        eq(facebookPageDmPendingIntents.accountId, input.accountId),
+        eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+        eq(facebookPageDmPendingIntents.sequenceIndex, 0),
+        ne(facebookPageDmPendingIntents.id, row.id),
+        or(
+          and(
+            sql`(${facebookPageDmPendingIntents.dueAt} AT TIME ZONE 'Europe/Sofia')::date = ${day}::date`,
+            or(
+              inArray(facebookPageDmPendingIntents.status, ['confirmed', 'unknown']),
+              and(
+                inArray(facebookPageDmPendingIntents.status, ['pending', 'claimed']),
+                or(
+                  lt(facebookPageDmPendingIntents.dueAt, row.dueAt),
+                  and(
+                    eq(facebookPageDmPendingIntents.dueAt, row.dueAt),
+                    lt(facebookPageDmPendingIntents.id, row.id),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          row.expectedInboundId
+            ? eq(facebookPageDmPendingIntents.expectedLatestInboundMessageId, row.expectedInboundId)
+            : undefined,
+        ),
+      ),
+    )
+    .limit(1);
+  return !occupied;
 }
 
 export async function schedulePageDm(database: NodePgDatabase, input: PendingDmInput) {

@@ -20,7 +20,7 @@ import {
   getPageDmDelayWindow,
   PendingDmConflictError,
   PendingDmNoGoError,
-  isClaimedPageDmGroupInTransaction,
+  isAllowedPageDmGroupDispatchInTransaction,
   renewClaimedPageDm,
   scheduleApprovedPageDm,
   schedulePageDm,
@@ -173,13 +173,62 @@ describe('Page DM pending intent', () => {
         scheduledIntentId: group.id,
       };
       await withTenantTransaction(database, exact, async (tx) => {
-        expect(await isClaimedPageDmGroupInTransaction(tx, exact)).toBe(true);
-        expect(await isClaimedPageDmGroupInTransaction(tx, { ...exact, text: 'Different' })).toBe(
-          false,
-        );
+        expect(await isAllowedPageDmGroupDispatchInTransaction(tx, exact)).toBe(true);
         expect(
-          await isClaimedPageDmGroupInTransaction(tx, { ...exact, scheduledIntentId: undefined }),
+          await isAllowedPageDmGroupDispatchInTransaction(tx, { ...exact, text: 'Different' }),
         ).toBe(false);
+        expect(
+          await isAllowedPageDmGroupDispatchInTransaction(tx, {
+            ...exact,
+            scheduledIntentId: undefined,
+          }),
+        ).toBe(false);
+      });
+    } finally {
+      await pg.close();
+    }
+  });
+  it('blocks a preexisting second same-day group after the Page cap turns on', async () => {
+    const { pg, database } = await setup();
+    try {
+      const request = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        texts: ['Hello'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'api-key' as const, id: actorId },
+      };
+      const first = await schedulePageDmGroup(database, { ...request, clientActionId: actionId });
+      await pg.query("UPDATE facebook_page_dm_pending_intents SET status='confirmed' WHERE id=$1", [
+        first.id,
+      ]);
+      const secondActionId = randomUUID();
+      const second = await schedulePageDmGroup(database, {
+        ...request,
+        clientActionId: secondActionId,
+        expectedLatestInboundMessageId: 'inbound-2',
+      });
+      await pg.query(
+        "UPDATE facebook_page_dm_pending_intents SET status='claimed', lease_owner='test-worker', lease_until=now() + interval '1 minute' WHERE id=$1",
+        [second.id],
+      );
+      await pg.query(
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1, $2, true)',
+        [workspaceId, accountId],
+      );
+      const candidate = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: secondActionId,
+        actor: request.actor,
+        text: 'Hello',
+        scheduledIntentId: second.id,
+      };
+      await withTenantTransaction(database, candidate, async (tx) => {
+        expect(await isAllowedPageDmGroupDispatchInTransaction(tx, candidate)).toBe(false);
       });
     } finally {
       await pg.close();

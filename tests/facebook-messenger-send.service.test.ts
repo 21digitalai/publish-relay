@@ -39,7 +39,7 @@ vi.mock('../src/modules/providers/facebook-page-engagement.service.js', () => ({
   isPageDmDailyGroupLimitEnabledInTransaction: mocks.dailyLimit,
 }));
 vi.mock('../src/modules/providers/facebook-dm-pending.repository.js', () => ({
-  isClaimedPageDmGroupInTransaction: mocks.claimedGroup,
+  isAllowedPageDmGroupDispatchInTransaction: mocks.claimedGroup,
 }));
 vi.mock('../src/database/tenant-transaction.js', () => ({ withTenantTransaction: mocks.tenant }));
 vi.mock('../src/modules/policy/action-policy.js', () => ({ enforceWorkspaceAction: mocks.policy }));
@@ -101,6 +101,19 @@ describe('Facebook inbound-only send command', () => {
       }),
     ).resolves.toEqual({ state: 'failed', failureStatus: 409 });
     expect(mocks.claimedGroup).toHaveBeenCalledOnce();
+    expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not call Meta for a preexisting second group whose day slot is occupied at dispatch', async () => {
+    mocks.dailyLimit.mockResolvedValue(true);
+    mocks.claimedGroup.mockResolvedValue(false);
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    await expect(
+      sendAccountPageConversationMessage(client as never, {
+        ...input,
+        scheduledIntentId: '00000000-0000-4000-8000-000000000006',
+      }),
+    ).resolves.toEqual({ state: 'failed', failureStatus: 409 });
     expect(client.client.sendPageMessage).not.toHaveBeenCalled();
   });
 

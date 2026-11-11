@@ -34,7 +34,7 @@ const paramsSchema = z.object({
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   after: z.string().min(1).max(2048).optional(),
-  filter: z.enum(['all', 'eligible']).optional(),
+  filter: z.literal('eligible').optional(),
 });
 
 export function registerFacebookPageReadRoutes(
@@ -103,9 +103,6 @@ export function registerFacebookPageReadRoutes(
             accountId: params.data.accountId,
             ...(query.data.limit === undefined ? {} : { limit: query.data.limit }),
             ...(query.data.after === undefined ? {} : { after: query.data.after }),
-            ...(endpoint.kind !== 'conversations' || query.data.filter === undefined
-              ? {}
-              : { filter: query.data.filter }),
           };
           const result =
             endpoint.kind === 'posts'
@@ -113,7 +110,7 @@ export function registerFacebookPageReadRoutes(
               : endpoint.kind === 'comments'
                 ? await listAccountPostComments(runtime, { ...input, postId })
                 : endpoint.kind === 'conversations'
-                  ? await listAccountPageConversations(runtime, input)
+                  ? await listAccountPageConversations(runtime, { ...input, filter: 'eligible' })
                   : await listAccountConversationMessages(runtime, {
                       ...input,
                       conversationId: params.data.conversationId ?? '',

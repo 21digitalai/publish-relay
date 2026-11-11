@@ -637,7 +637,7 @@ Textless Page DM reads retain the existing selected-Page ownership and `dms:read
 
 ## Page conversation agent memory
 
-The selected-Page inbox read accepts `filter=eligible|all` (default all for existing browser/agent consumers). After one bounded Meta conversation page, Core batch-reads the Page-local no-go and terminal-memory keys; eligible excludes either key before callers request per-thread messages or build LLM context. Filtering preserves Meta's original next cursor and can yield a short/empty page without implying exhaustion. The unfiltered view retains `noGo` and `terminal` flags for owner audit. This is workflow filtering, not send authorization: the canonical sender still enforces no-go and provider preflight, and a bare memory terminal flag does not authorize a final send or create a no-go row.
+The selected-Page machine inbox always uses eligible filtering; it cannot request an unfiltered override. After one bounded Meta conversation page, Core batch-reads the Page-local no-go and terminal-memory keys and excludes either key before callers request per-thread messages or build LLM context. Filtering preserves Meta's original next cursor and can yield a short/empty page without implying exhaustion. The authenticated human browser read defaults to the unfiltered audit view with `noGo` and `terminal` flags; it may explicitly request eligible filtering. This is workflow filtering, not send authorization: the canonical sender still enforces no-go and provider preflight, and a bare memory terminal flag does not authorize a final send or create a no-go row.
 
 ### Autonomous Page DM groups
 

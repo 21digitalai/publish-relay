@@ -65,7 +65,7 @@ describe('Facebook Page read machine API', () => {
         limit: 25,
         filter: 'eligible',
       });
-      expect(response.json().data.nextCursor).toBe('opaque-next');
+      expect(response.json()).toMatchObject({ data: { nextCursor: 'opaque-next' } });
       expect((await app.inject(`${path}/facebook-conversations?filter=all`)).statusCode).toBe(400);
     } finally {
       await app.close();

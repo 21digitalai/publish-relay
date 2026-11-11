@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   noGoInTransaction: vi.fn(),
   lock: vi.fn(),
   bioMention: vi.fn(),
+  dailyLimit: vi.fn(),
+  claimedGroup: vi.fn(),
 }));
 vi.mock('../src/modules/providers/facebook-page-read-context.service.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -32,6 +34,12 @@ vi.mock('../src/modules/providers/facebook-dm-no-go.repository.js', () => ({
 }));
 vi.mock('../src/modules/providers/facebook-dm-bio-link.repository.js', () => ({
   hasPageDmBioLinkMention: mocks.bioMention,
+}));
+vi.mock('../src/modules/providers/facebook-page-engagement.service.js', () => ({
+  isPageDmDailyGroupLimitEnabledInTransaction: mocks.dailyLimit,
+}));
+vi.mock('../src/modules/providers/facebook-dm-pending.repository.js', () => ({
+  isClaimedPageDmGroupInTransaction: mocks.claimedGroup,
 }));
 vi.mock('../src/database/tenant-transaction.js', () => ({ withTenantTransaction: mocks.tenant }));
 vi.mock('../src/modules/policy/action-policy.js', () => ({ enforceWorkspaceAction: mocks.policy }));
@@ -78,9 +86,56 @@ beforeEach(() => {
   mocks.noGoInTransaction.mockResolvedValue(false);
   mocks.reserve.mockResolvedValue({ kind: 'new', id: '00000000-0000-4000-8000-000000000005' });
   mocks.bioMention.mockResolvedValue(false);
+  mocks.dailyLimit.mockResolvedValue(false);
+  mocks.claimedGroup.mockResolvedValue(false);
 });
 
 describe('Facebook inbound-only send command', () => {
+  it('fails an already-claimed single-message machine intent after the Page cap is enabled', async () => {
+    mocks.dailyLimit.mockResolvedValue(true);
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    await expect(
+      sendAccountPageConversationMessage(client as never, {
+        ...input,
+        scheduledIntentId: '00000000-0000-4000-8000-000000000006',
+      }),
+    ).resolves.toEqual({ state: 'failed', failureStatus: 409 });
+    expect(mocks.claimedGroup).toHaveBeenCalledOnce();
+    expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a direct machine send after the Page toggle takes the lock', async () => {
+    let enabled = false;
+    mocks.lock.mockImplementation(() => {
+      enabled = true;
+    });
+    mocks.dailyLimit.mockImplementation(() => enabled);
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    await expect(sendAccountPageConversationMessage(client as never, input)).resolves.toEqual({
+      state: 'failed',
+      failureStatus: 409,
+    });
+    expect(mocks.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        outcome: { state: 'failed', failureStatus: 409 },
+      }),
+    );
+    expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+  });
+
+  it('allows only a claimed group bubble through an enabled Page cap', async () => {
+    mocks.dailyLimit.mockResolvedValue(true);
+    mocks.claimedGroup.mockResolvedValue(true);
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    await expect(
+      sendAccountPageConversationMessage(client as never, {
+        ...input,
+        scheduledIntentId: '00000000-0000-4000-8000-000000000006',
+      }),
+    ).resolves.toMatchObject({ state: 'confirmed' });
+    expect(client.client.sendPageMessage).toHaveBeenCalledOnce();
+  });
   it('refuses a second explicit bio mention before provider I/O', async () => {
     const client = runtime([
       { id: 'in_1', senderId: 'psid_7', createdAt: new Date().toISOString() },

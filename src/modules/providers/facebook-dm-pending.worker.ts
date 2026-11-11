@@ -119,6 +119,7 @@ async function dispatchOne(runtime: Runtime, intent: Intent, now: Date): Promise
         accountId: intent.accountId,
         conversationId: intent.conversationId,
         clientActionId: intent.clientActionId,
+        scheduledIntentId: intent.id,
         text: intent.text,
         ...(intent.finalExit ? { finalExit: true } : {}),
         ...(intent.bioLinkMention ? { bioLinkMention: true } : {}),

@@ -19,6 +19,7 @@ import {
   lockPageDmAccount,
 } from './facebook-dm-no-go.repository.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
+import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
 
 export interface PendingDmInput {
   workspaceId: string;
@@ -158,6 +159,19 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
     .limit(1);
   if (sent) throw new PendingDmConflictError();
   const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
+  const [prior] = await tx
+    .select(projection)
+    .from(facebookPageDmPendingIntents)
+    .where(
+      and(
+        eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+        eq(facebookPageDmPendingIntents.clientActionId, input.clientActionId),
+      ),
+    )
+    .limit(1);
+  if (prior) return matchingPendingPageDm(prior, input, actorType);
+  if (input.actor.type !== 'user' && (await isPageDmDailyGroupLimitEnabledInTransaction(tx, input)))
+    throw new PendingDmConflictError('This Page requires a scheduled DM reply group');
   const [activeGroup] = await tx
     .select({ id: facebookPageDmPendingIntents.id })
     .from(facebookPageDmPendingIntents)
@@ -201,6 +215,21 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
       ),
     )
     .limit(1);
+  return matchingPendingPageDm(existing, input, actorType);
+}
+
+function matchingPendingPageDm<
+  T extends {
+    accountId: string;
+    conversationId: string;
+    requestFingerprint: string;
+    actorType: string;
+    actorId: string;
+    text: string;
+    finalExit: boolean;
+    bioLinkMention: boolean;
+  },
+>(existing: T | undefined, input: PendingDmInput, actorType: 'user' | 'api_key' | 'delegated') {
   if (
     existing?.accountId !== input.accountId ||
     existing.conversationId !== input.conversationId ||
@@ -213,6 +242,50 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
   )
     throw new PendingDmConflictError();
   return existing;
+}
+
+/** A claimed group intent is the only machine send allowed while the Page cap is on. */
+export async function isClaimedPageDmGroupInTransaction(
+  tx: NodePgDatabase,
+  input: Pick<
+    PendingDmInput,
+    | 'workspaceId'
+    | 'accountId'
+    | 'conversationId'
+    | 'clientActionId'
+    | 'actor'
+    | 'text'
+    | 'finalExit'
+    | 'bioLinkMention'
+  > & {
+    scheduledIntentId?: string | undefined;
+  },
+): Promise<boolean> {
+  if (!input.scheduledIntentId) return false;
+  const [row] = await tx
+    .select({ id: facebookPageDmPendingIntents.id })
+    .from(facebookPageDmPendingIntents)
+    .where(
+      and(
+        eq(facebookPageDmPendingIntents.id, input.scheduledIntentId),
+        eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+        eq(facebookPageDmPendingIntents.accountId, input.accountId),
+        eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+        eq(facebookPageDmPendingIntents.clientActionId, input.clientActionId),
+        eq(
+          facebookPageDmPendingIntents.actorType,
+          input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
+        ),
+        eq(facebookPageDmPendingIntents.actorId, input.actor.id),
+        eq(facebookPageDmPendingIntents.textBody, input.text),
+        eq(facebookPageDmPendingIntents.finalExit, input.finalExit ?? false),
+        eq(facebookPageDmPendingIntents.bioLinkMention, input.bioLinkMention ?? false),
+        eq(facebookPageDmPendingIntents.status, 'claimed'),
+        sql`${facebookPageDmPendingIntents.groupId} IS NOT NULL`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
 }
 
 export async function schedulePageDm(database: NodePgDatabase, input: PendingDmInput) {

@@ -22,6 +22,8 @@ import {
 } from './facebook-dm-action.repository.js';
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
+import { isClaimedPageDmGroupInTransaction } from './facebook-dm-pending.repository.js';
+import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
 import {
   PageReadUnavailableError,
   withPageReadToken,
@@ -39,6 +41,7 @@ const commandSchema = z.strictObject({
   finalExit: z.boolean().optional(),
   bioLinkMention: z.boolean().optional(),
   expectedLatestInboundMessageId: z.string().trim().min(1).max(256).optional(),
+  scheduledIntentId: z.uuid().optional(),
   actor: z.strictObject({
     type: z.enum(['user', 'api-key', 'delegated']),
     id: z.uuid(),
@@ -218,6 +221,19 @@ export async function sendAccountPageConversationMessage(
     const dispatch = await withTenantTransaction(runtime.database, command, async (tx) => {
       await lockPageDmAccount(tx, command);
       if (await isPageConversationNoGoInTransaction(tx, command)) return null;
+      if (
+        command.actor.type !== 'user' &&
+        (await isPageDmDailyGroupLimitEnabledInTransaction(tx, command)) &&
+        !(await isClaimedPageDmGroupInTransaction(tx, command))
+      ) {
+        const outcome = { state: 'failed' as const, failureStatus: 409 };
+        await settleFacebookDmActionInTransaction(tx, {
+          ...action,
+          reservationId: reservation.id,
+          outcome,
+        });
+        return { outcome };
+      }
       if (command.bioLinkMention && (await hasPageDmBioLinkMention(tx, command))) {
         const outcome = { state: 'failed' as const, failureStatus: 409 };
         await settleFacebookDmActionInTransaction(tx, {

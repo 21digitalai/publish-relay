@@ -20,6 +20,7 @@ import {
   getPageDmDelayWindow,
   PendingDmConflictError,
   PendingDmNoGoError,
+  isClaimedPageDmGroupInTransaction,
   renewClaimedPageDm,
   scheduleApprovedPageDm,
   schedulePageDm,
@@ -34,6 +35,7 @@ import {
 } from '../src/modules/providers/facebook-dm-group.repository.js';
 import { FacebookDmConversationChangedError } from '../src/modules/providers/facebook-messenger-send.service.js';
 import { pageDmCivilDay } from '../src/modules/providers/facebook-dm-active-days.repository.js';
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const accountId = '00000000-0000-4000-8000-000000000002';
@@ -86,6 +88,103 @@ async function setup() {
 }
 
 describe('Page DM pending intent', () => {
+  it('rejects machine single-message scheduling under the Page lock after opt-in', async () => {
+    const { pg, database } = await setup();
+    try {
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'exact-request',
+        text: 'Hello',
+        dueAt: new Date(),
+        actor: { type: 'api-key' as const, id: actorId },
+      };
+      await pg.query(
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1, $2, true)',
+        [workspaceId, accountId],
+      );
+      await expect(schedulePageDm(database, input)).rejects.toThrow(
+        'requires a scheduled DM reply group',
+      );
+      const rows = await pg.query('SELECT id FROM facebook_page_dm_pending_intents');
+      expect(rows.rows).toHaveLength(0);
+      await expect(
+        schedulePageDm(database, {
+          ...input,
+          actor: { type: 'user', id: actorId },
+        }),
+      ).resolves.toMatchObject({ status: 'pending' });
+    } finally {
+      await pg.close();
+    }
+  });
+  it('preserves exact scheduled-action replay across a Page toggle', async () => {
+    const { pg, database } = await setup();
+    try {
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        requestFingerprint: 'exact-request',
+        text: 'Hello',
+        dueAt: new Date(),
+        actor: { type: 'api-key' as const, id: actorId },
+      };
+      const first = await schedulePageDm(database, input);
+      await pg.query(
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1, $2, true)',
+        [workspaceId, accountId],
+      );
+      expect((await schedulePageDm(database, input)).id).toBe(first.id);
+      await expect(schedulePageDm(database, { ...input, text: 'Changed' })).rejects.toBeInstanceOf(
+        PendingDmConflictError,
+      );
+    } finally {
+      await pg.close();
+    }
+  });
+  it('recognizes only the exact claimed group bubble as a capped machine send', async () => {
+    const { pg, database } = await setup();
+    try {
+      const group = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        texts: ['Hello'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'api-key', id: actorId },
+      });
+      await pg.query(
+        "UPDATE facebook_page_dm_pending_intents SET status='claimed', lease_owner='test-worker', lease_until=now() + interval '1 minute' WHERE id=$1",
+        [group.id],
+      );
+      const exact = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        actor: { type: 'api-key' as const, id: actorId },
+        text: 'Hello',
+        scheduledIntentId: group.id,
+      };
+      await withTenantTransaction(database, exact, async (tx) => {
+        expect(await isClaimedPageDmGroupInTransaction(tx, exact)).toBe(true);
+        expect(await isClaimedPageDmGroupInTransaction(tx, { ...exact, text: 'Different' })).toBe(
+          false,
+        );
+        expect(
+          await isClaimedPageDmGroupInTransaction(tx, { ...exact, scheduledIntentId: undefined }),
+        ).toBe(false);
+      });
+    } finally {
+      await pg.close();
+    }
+  });
   it('uses Sofia civil days across midnight and DST', () => {
     expect(pageDmCivilDay(new Date('2026-11-11T21:59:59Z'))).toBe('2026-11-11');
     expect(pageDmCivilDay(new Date('2026-11-11T22:00:00Z'))).toBe('2026-11-12');

@@ -3,7 +3,11 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { facebookPageDmActions, facebookPageDmPendingIntents } from '../../database/schema.js';
+import {
+  facebookPageDmActions,
+  facebookPageDmDispatchPacing,
+  facebookPageDmPendingIntents,
+} from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
   isPageConversationNoGoInTransaction,
@@ -13,6 +17,9 @@ import { PendingDmConflictError, PendingDmNoGoError } from './facebook-dm-pendin
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
 import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
 import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
+import { planPageDmRootPriority } from './facebook-dm-root-priority.js';
+
+const MAX_PRIORITY_ROOTS = 1000;
 
 interface GroupKey {
   workspaceId: string;
@@ -159,8 +166,13 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       )
       .limit(1);
     if (active) throw new PendingDmConflictError('Resolve the prior Page DM group first');
-    const [lastRoot] = await tx
-      .select({ dueAt: facebookPageDmPendingIntents.dueAt })
+    const roots = await tx
+      .select({
+        id: facebookPageDmPendingIntents.id,
+        dueAt: facebookPageDmPendingIntents.dueAt,
+        windowDeadline: facebookPageDmPendingIntents.windowDeadline,
+        status: facebookPageDmPendingIntents.status,
+      })
       .from(facebookPageDmPendingIntents)
       .where(
         and(
@@ -174,15 +186,49 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         ),
       )
       .orderBy(desc(facebookPageDmPendingIntents.dueAt))
+      .limit(MAX_PRIORITY_ROOTS + 1);
+    if (roots.length > MAX_PRIORITY_ROOTS)
+      throw new PendingDmConflictError('Page DM queue is too large to prioritize safely');
+    const now = Date.now();
+    const [cursor] = await tx
+      .select({ nextRootAt: facebookPageDmDispatchPacing.nextRootAt })
+      .from(facebookPageDmDispatchPacing)
+      .where(
+        and(
+          eq(facebookPageDmDispatchPacing.workspaceId, input.workspaceId),
+          eq(facebookPageDmDispatchPacing.accountId, input.accountId),
+        ),
+      )
       .limit(1);
-    const dueAt = new Date(
-      Math.max(Date.now(), lastRoot?.dueAt.getTime() ?? 0) + randomInt(60, 121) * 1000,
+    const claimedAt = roots
+      .filter((root) => root.status === 'claimed')
+      .reduce((latest, root) => Math.max(latest, root.dueAt.getTime() + 60_000), 0);
+    const earliestAt = new Date(
+      Math.max(now + 60_000, claimedAt, cursor?.nextRootAt.getTime() ?? 0),
     );
-    if (dueAt > input.windowDeadline)
+    const appendAt = new Date(
+      Math.max(now, roots[0]?.dueAt.getTime() ?? 0, earliestAt.getTime() - 60_000) +
+        randomInt(60, 121) * 1000,
+    );
+    const plan = planPageDmRootPriority({
+      pending: roots.filter((root) => root.status === 'pending'),
+      newDeadline: input.windowDeadline,
+      earliestAt,
+      appendAt,
+    });
+    if (!plan)
       throw new PendingDmConflictError(
-        'The Messenger reply window cannot fit another Page DM group',
+        'The Messenger reply window cannot fit an eligible paced Page DM slot',
       );
+    const dueAt = plan.dueAt;
     if (await isPageDmDailyGroupLimitEnabledInTransaction(tx, input)) {
+      for (const change of plan.changes) {
+        const original = roots.find((root) => root.id === change.id);
+        if (original && pageDmCivilDay(original.dueAt) !== pageDmCivilDay(change.dueAt))
+          throw new PendingDmConflictError(
+            'Page DM priority would move an existing group to another Sofia day',
+          );
+      }
       // Page lock serializes all group creations, including separate machine callers.
       const [sameInbound] = await tx
         .select({ id: facebookPageDmPendingIntents.id })
@@ -224,6 +270,18 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       if (usedDay)
         throw new PendingDmConflictError('One Page DM group per Sofia day is already scheduled');
     }
+    for (const change of plan.changes) {
+      await tx
+        .update(facebookPageDmPendingIntents)
+        .set({ dueAt: change.dueAt, updatedAt: new Date() })
+        .where(
+          and(
+            eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+            eq(facebookPageDmPendingIntents.id, change.id),
+            eq(facebookPageDmPendingIntents.status, 'pending'),
+          ),
+        );
+    }
     const groupId = randomUUID();
     const root = await tx
       .insert(facebookPageDmPendingIntents)
@@ -239,6 +297,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         finalExit: Boolean(input.finalExit && input.texts.length === 1),
         bioLinkMention: Boolean(input.bioLinkMention && input.texts.length === 1),
         dueAt,
+        windowDeadline: input.windowDeadline,
         groupId,
         sequenceIndex: 0,
         gapSeconds: 0,

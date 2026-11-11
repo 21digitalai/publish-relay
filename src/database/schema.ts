@@ -720,6 +720,7 @@ export const facebookPageDmPendingIntents = pgTable(
     actorId: uuid('actor_id').notNull(),
     textBody: text('text_body').notNull(),
     dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    windowDeadline: timestamp('window_deadline', { withTimezone: true }),
     groupId: uuid('group_id'),
     sequenceIndex: integer('sequence_index'),
     gapSeconds: integer('gap_seconds'),

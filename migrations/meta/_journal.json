@@ -855,6 +855,13 @@
       "when": 1794413500000,
       "tag": "0121_facebook_dm_daily_group_limit",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1794419000000,
+      "tag": "0122_facebook_dm_window_priority",
+      "breakpoints": true
     }
   ]
 }

@@ -81,6 +81,7 @@ async function setup() {
     '0117_facebook_dm_failure_circuit.sql',
     '0118_facebook_dm_final_exit_receipt.sql',
     '0120_facebook_dm_bio_link_receipt.sql',
+    '0122_facebook_dm_window_priority.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -1340,6 +1341,302 @@ describe('Page DM pending intent', () => {
       });
       expect(later[0]?.id).toBe(claim[0].id === first.id ? second.id : first.id);
       expect(first.id).not.toBe(second.id);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('moves a later-discovered near-expiry root ahead of unclaimed younger windows without a burst', async () => {
+    const { pg, database } = await setup();
+    try {
+      const schedule = (conversationId: string, hours: number) =>
+        schedulePageDmGroup(database, {
+          workspaceId,
+          accountId,
+          conversationId,
+          clientActionId: randomUUID(),
+          texts: ['Reply'],
+          expectedLatestInboundMessageId: `inbound-${conversationId}`,
+          windowDeadline: new Date(Date.now() + hours * 3600_000),
+          actor: { type: 'api-key', id: actorId },
+        });
+      const youngerA = await schedule('younger-a', 3);
+      const youngerB = await schedule('younger-b', 4);
+      // Appending behind two 60–120-second slots would miss this window.
+      const urgent = await schedule('urgent', 150 / 3600);
+      const rows = await pg.query<{ id: string; due_at: Date }>(
+        'SELECT id, due_at FROM facebook_page_dm_pending_intents WHERE sequence_index=0 ORDER BY due_at',
+      );
+      expect(rows.rows.map((row) => row.id)).toEqual([urgent.id, youngerA.id, youngerB.id]);
+      const [firstRoot, secondRoot] = rows.rows;
+      if (!firstRoot || !secondRoot) throw new Error('Expected prioritized roots');
+      const firstAt = new Date(new Date(firstRoot.due_at).getTime() + 1000);
+      const claimed = await claimDuePageDms(database, {
+        workerId: 'priority-worker',
+        now: firstAt,
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      expect(claimed[0]?.id).toBe(urgent.id);
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'priority-worker',
+          now: firstAt,
+          leaseMs: 30_000,
+          limit: 1,
+        }),
+      ).toEqual([]);
+      expect(
+        new Date(secondRoot.due_at).getTime() - new Date(firstRoot.due_at).getTime(),
+      ).toBeGreaterThanOrEqual(60_000);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('keeps normal non-urgent Page root order and due times stable', async () => {
+    const { pg, database } = await setup();
+    try {
+      const schedule = (conversationId: string, hours: number) =>
+        schedulePageDmGroup(database, {
+          workspaceId,
+          accountId,
+          conversationId,
+          clientActionId: randomUUID(),
+          texts: ['Reply'],
+          expectedLatestInboundMessageId: `inbound-${conversationId}`,
+          windowDeadline: new Date(Date.now() + hours * 3600_000),
+          actor: { type: 'api-key', id: actorId },
+        });
+      const first = await schedule('first-normal', 1);
+      const second = await schedule('second-normal', 2);
+      const firstDue = first.dueAt.getTime();
+      const secondDue = second.dueAt.getTime();
+      const third = await schedule('third-normal', 3);
+      const roots = await pg.query<{ id: string; due_at: Date }>(
+        'SELECT id, due_at FROM facebook_page_dm_pending_intents WHERE sequence_index=0 ORDER BY due_at',
+      );
+      expect(roots.rows.map((root) => root.id)).toEqual([first.id, second.id, third.id]);
+      expect(new Date(roots.rows[0]?.due_at ?? 0).getTime()).toBe(firstDue);
+      expect(new Date(roots.rows[1]?.due_at ?? 0).getTime()).toBe(secondDue);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('uses a free paced gap ahead of a legacy root without moving its unknown window', async () => {
+    const { pg, database } = await setup();
+    try {
+      const legacy = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 'legacy',
+        clientActionId: randomUUID(),
+        texts: ['Reply'],
+        expectedLatestInboundMessageId: 'legacy-inbound',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'api-key', id: actorId },
+      });
+      const legacyDue = new Date(Date.now() + 20 * 60_000);
+      await pg.query(
+        'UPDATE facebook_page_dm_pending_intents SET due_at=$1, window_deadline=NULL WHERE id=$2',
+        [legacyDue, legacy.id],
+      );
+      const urgent = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 'gap-urgent',
+        clientActionId: randomUUID(),
+        texts: ['Reply'],
+        expectedLatestInboundMessageId: 'gap-inbound',
+        windowDeadline: new Date(Date.now() + 10 * 60_000),
+        actor: { type: 'api-key', id: actorId },
+      });
+      expect(urgent.dueAt.getTime() + 60_000).toBeLessThanOrEqual(legacyDue.getTime());
+      const row = await pg.query<{ due_at: Date }>(
+        'SELECT due_at FROM facebook_page_dm_pending_intents WHERE id=$1',
+        [legacy.id],
+      );
+      expect(new Date(row.rows[0]?.due_at ?? 0).getTime()).toBe(legacyDue.getTime());
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('serializes competing priority insertions under the Page lock', async () => {
+    const { pg, database } = await setup();
+    try {
+      const schedule = (conversationId: string, hours: number) =>
+        schedulePageDmGroup(database, {
+          workspaceId,
+          accountId,
+          conversationId,
+          clientActionId: randomUUID(),
+          texts: ['Reply'],
+          expectedLatestInboundMessageId: `inbound-${conversationId}`,
+          windowDeadline: new Date(Date.now() + hours * 3600_000),
+          actor: { type: 'api-key', id: actorId },
+        });
+      const younger = await schedule('concurrent-younger', 4);
+      const [urgent, medium] = await Promise.all([
+        schedule('concurrent-urgent', 2),
+        schedule('concurrent-medium', 3),
+      ]);
+      const rows = await pg.query<{ id: string }>(
+        'SELECT id FROM facebook_page_dm_pending_intents WHERE sequence_index=0 ORDER BY due_at',
+      );
+      expect(rows.rows.map((row) => row.id)).toEqual([urgent.id, medium.id, younger.id]);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('does not jump ahead of an existing root with an even earlier window', async () => {
+    const { pg, database } = await setup();
+    try {
+      const schedule = (conversationId: string, hours: number) =>
+        schedulePageDmGroup(database, {
+          workspaceId,
+          accountId,
+          conversationId,
+          clientActionId: randomUUID(),
+          texts: ['Reply'],
+          expectedLatestInboundMessageId: `inbound-${conversationId}`,
+          windowDeadline: new Date(Date.now() + hours * 3600_000),
+          actor: { type: 'api-key', id: actorId },
+        });
+      const earliest = await schedule('earliest-window', 1);
+      const later = await schedule('later-window', 4);
+      await pg.query('UPDATE facebook_page_dm_pending_intents SET due_at=$1 WHERE id=$2', [
+        new Date(Date.now() + 10 * 60_000),
+        earliest.id,
+      ]);
+      await pg.query('UPDATE facebook_page_dm_pending_intents SET due_at=$1 WHERE id=$2', [
+        new Date(Date.now() + 11 * 60_000),
+        later.id,
+      ]);
+      const middle = await schedule('middle-window', 3);
+      const rows = await pg.query<{ id: string }>(
+        'SELECT id FROM facebook_page_dm_pending_intents WHERE sequence_index=0 ORDER BY due_at',
+      );
+      expect(rows.rows.map((row) => row.id)).toEqual([earliest.id, middle.id, later.id]);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('holds an urgent root when safe reordering cannot fit another window', async () => {
+    const { pg, database } = await setup();
+    try {
+      const common = {
+        workspaceId,
+        accountId,
+        texts: ['Reply'],
+        actor: { type: 'api-key' as const, id: actorId },
+      };
+      await schedulePageDmGroup(database, {
+        ...common,
+        conversationId: 'first',
+        clientActionId: randomUUID(),
+        expectedLatestInboundMessageId: 'first-inbound',
+        windowDeadline: new Date(Date.now() + 3600_000),
+      });
+      await expect(
+        schedulePageDmGroup(database, {
+          ...common,
+          conversationId: 'second',
+          clientActionId: randomUUID(),
+          expectedLatestInboundMessageId: 'second-inbound',
+          windowDeadline: new Date(Date.now() + 30_000),
+        }),
+      ).rejects.toThrow('eligible paced Page DM slot');
+      const rows = await pg.query(
+        'SELECT conversation_id FROM facebook_page_dm_pending_intents WHERE sequence_index=0',
+      );
+      expect(rows.rows).toHaveLength(1);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('uses the earliest paced slot when an existing root is too close to leave a gap', async () => {
+    const { pg, database } = await setup();
+    try {
+      const older = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 'young-window',
+        clientActionId: randomUUID(),
+        texts: ['Reply'],
+        expectedLatestInboundMessageId: 'young-inbound',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'api-key', id: actorId },
+      });
+      const nearDue = new Date(Date.now() + 100_000);
+      await pg.query('UPDATE facebook_page_dm_pending_intents SET due_at=$1 WHERE id=$2', [
+        nearDue,
+        older.id,
+      ]);
+      const urgent = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 'short-window',
+        clientActionId: randomUUID(),
+        texts: ['Reply'],
+        expectedLatestInboundMessageId: 'short-inbound',
+        windowDeadline: new Date(Date.now() + 90_000),
+        actor: { type: 'api-key', id: actorId },
+      });
+      expect(urgent.dueAt.getTime()).toBeLessThan(nearDue.getTime());
+      const rows = await pg.query<{ due_at: Date }>(
+        'SELECT due_at FROM facebook_page_dm_pending_intents WHERE id=$1',
+        [older.id],
+      );
+      expect(
+        new Date(rows.rows[0]?.due_at ?? 0).getTime() - urgent.dueAt.getTime(),
+      ).toBeGreaterThanOrEqual(60_000);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('leaves a claimed root and its dispatch cursor fixed when a more urgent root arrives', async () => {
+    const { pg, database } = await setup();
+    try {
+      const schedule = (conversationId: string, hours: number) =>
+        schedulePageDmGroup(database, {
+          workspaceId,
+          accountId,
+          conversationId,
+          clientActionId: randomUUID(),
+          texts: ['Reply'],
+          expectedLatestInboundMessageId: `inbound-${conversationId}`,
+          windowDeadline: new Date(Date.now() + hours * 3600_000),
+          actor: { type: 'api-key', id: actorId },
+        });
+      const first = await schedule('claimed', 4);
+      const firstDue = first.dueAt;
+      const claimed = await claimDuePageDms(database, {
+        workerId: 'priority-worker',
+        now: new Date(firstDue.getTime() + 1000),
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      expect(claimed[0]?.id).toBe(first.id);
+      const cursor = await pg.query<{ next_root_at: Date }>(
+        'SELECT next_root_at FROM facebook_page_dm_dispatch_pacing WHERE account_id=$1',
+        [accountId],
+      );
+      const nextRootAt = cursor.rows[0]?.next_root_at;
+      if (!nextRootAt) throw new Error('Expected persisted Page pacing cursor');
+      const urgent = await schedule('urgent-after-claim', 1);
+      expect(urgent.dueAt.getTime()).toBeGreaterThanOrEqual(new Date(nextRootAt).getTime());
+      const rows = await pg.query<{ status: string; due_at: Date }>(
+        'SELECT status, due_at FROM facebook_page_dm_pending_intents WHERE id=$1',
+        [first.id],
+      );
+      expect(rows.rows[0]?.status).toBe('claimed');
+      expect(new Date(rows.rows[0]?.due_at ?? 0).getTime()).toBe(firstDue.getTime());
     } finally {
       await pg.close();
     }

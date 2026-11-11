@@ -20,6 +20,19 @@ export type FacebookDmOutcome =
   | { state: 'failed'; failureStatus: number }
   | { state: 'unknown' };
 
+export interface FacebookDmFailureEvidence {
+  code?: number | undefined;
+  subcode?: number | undefined;
+  traceId?: string | undefined;
+  isTransient?: boolean | undefined;
+}
+
+function boundedDiagnosticNumber(value: number | undefined): number | null {
+  return Number.isSafeInteger(value) && value !== undefined && value >= 0 && value <= 2_147_483_647
+    ? value
+    : null;
+}
+
 export type FacebookDmReservation =
   | { kind: 'new'; id: string }
   | { kind: 'conflict' }
@@ -104,7 +117,11 @@ export async function reserveFacebookDmAction(
 
 export async function settleFacebookDmAction(
   database: NodePgDatabase,
-  input: FacebookDmActionKey & { reservationId: string; outcome: FacebookDmOutcome },
+  input: FacebookDmActionKey & {
+    reservationId: string;
+    outcome: FacebookDmOutcome;
+    failureEvidence?: FacebookDmFailureEvidence;
+  },
 ): Promise<void> {
   await withTenantTransaction(database, input, async (transaction) => {
     const [updated] = await transaction
@@ -113,6 +130,25 @@ export async function settleFacebookDmAction(
         state: input.outcome.state,
         providerMessageId: input.outcome.state === 'confirmed' ? input.outcome.messageId : null,
         failureStatus: input.outcome.state === 'failed' ? input.outcome.failureStatus : null,
+        failureCode:
+          input.outcome.state === 'failed'
+            ? boundedDiagnosticNumber(input.failureEvidence?.code)
+            : null,
+        failureSubcode:
+          input.outcome.state === 'failed'
+            ? boundedDiagnosticNumber(input.failureEvidence?.subcode)
+            : null,
+        failureTraceId:
+          input.outcome.state === 'failed' &&
+          typeof input.failureEvidence?.traceId === 'string' &&
+          /^[A-Za-z0-9_-]{1,128}$/.test(input.failureEvidence.traceId)
+            ? input.failureEvidence.traceId
+            : null,
+        failureTransient:
+          input.outcome.state === 'failed' &&
+          typeof input.failureEvidence?.isTransient === 'boolean'
+            ? input.failureEvidence.isTransient
+            : null,
         updatedAt: new Date(),
       })
       .where(

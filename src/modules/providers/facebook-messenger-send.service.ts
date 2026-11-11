@@ -217,21 +217,34 @@ export async function sendAccountPageConversationMessage(
           text: command.text,
           accessToken: token,
         });
-        return { state: 'confirmed', messageId } as const;
+        return { outcome: { state: 'confirmed', messageId } as const };
       } catch (error) {
-        return error instanceof FacebookRequestError &&
+        const isDefiniteFailure =
+          error instanceof FacebookRequestError &&
           !error.outcomeUnknown &&
           error.evidence.status >= 400 &&
-          error.evidence.status < 500
-          ? ({ state: 'failed', failureStatus: error.evidence.status } as const)
-          : ({ state: 'unknown' } as const);
+          error.evidence.status < 500;
+        return isDefiniteFailure && error instanceof FacebookRequestError
+          ? {
+              outcome: { state: 'failed', failureStatus: error.evidence.status } as const,
+              failureEvidence: {
+                code: error.evidence.code,
+                subcode: error.evidence.subcode,
+                traceId: error.evidence.traceId,
+                isTransient: error.evidence.isTransient,
+              },
+            }
+          : { outcome: { state: 'unknown' } as const };
       }
     });
-    const outcome: FacebookDmOutcome = dispatch ?? { state: 'failed', failureStatus: 403 };
+    const outcome: FacebookDmOutcome = dispatch?.outcome ?? { state: 'failed', failureStatus: 403 };
     await settleFacebookDmAction(runtime.database, {
       ...action,
       reservationId: reservation.id,
       outcome,
+      ...(dispatch && 'failureEvidence' in dispatch
+        ? { failureEvidence: dispatch.failureEvidence }
+        : {}),
     });
     if (!dispatch) throw new FacebookDmNoGoError();
     return outcome;

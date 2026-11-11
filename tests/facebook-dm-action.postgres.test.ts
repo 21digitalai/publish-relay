@@ -59,6 +59,12 @@ beforeEach(async () => {
       'utf8',
     ),
   );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0116_facebook_dm_failure_diagnostics.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   await postgres.exec(`
     CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
@@ -71,6 +77,57 @@ beforeEach(async () => {
 afterEach(async () => postgres.close());
 
 describe('Facebook DM action PostgreSQL ledger', () => {
+  it('persists only bounded safe definite-failure diagnostics and keeps replay idempotent', async () => {
+    const first = await reserveFacebookDmAction(database, key);
+    if (first.kind !== 'new') throw new Error('Expected new action');
+    await settleFacebookDmAction(database, {
+      ...key,
+      reservationId: first.id,
+      outcome: { state: 'failed', failureStatus: 400 },
+      failureEvidence: {
+        code: 100,
+        subcode: 2018001,
+        traceId: 'A-safe_trace-1',
+        isTransient: false,
+      },
+    });
+    expect(await findFacebookDmAction(database, key)).toEqual({
+      kind: 'existing',
+      outcome: { state: 'failed', failureStatus: 400 },
+    });
+    expect(await reserveFacebookDmAction(database, key)).toEqual({
+      kind: 'existing',
+      outcome: { state: 'failed', failureStatus: 400 },
+    });
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    const rows = await postgres.query(`SELECT failure_code, failure_subcode,
+      failure_trace_id, failure_transient FROM facebook_page_dm_actions`);
+    expect(rows.rows).toEqual([
+      {
+        failure_code: 100,
+        failure_subcode: 2018001,
+        failure_trace_id: 'A-safe_trace-1',
+        failure_transient: false,
+      },
+    ]);
+    expect(JSON.stringify(rows.rows)).not.toContain(key.text);
+    const unsafeKey = { ...key, clientActionId: '00000000-0000-4000-8000-000000000005' };
+    const unsafe = await reserveFacebookDmAction(database, unsafeKey);
+    if (unsafe.kind !== 'new') throw new Error('Expected second action');
+    await settleFacebookDmAction(database, {
+      ...unsafeKey,
+      reservationId: unsafe.id,
+      outcome: { state: 'failed', failureStatus: 400 },
+      failureEvidence: { code: 2_147_483_648, subcode: -1, traceId: 'secret/body with spaces' },
+    });
+    const redacted = await postgres.query(
+      'SELECT failure_code, failure_subcode, failure_trace_id FROM facebook_page_dm_actions WHERE client_action_id=$1',
+      [unsafeKey.clientActionId],
+    );
+    expect(redacted.rows).toEqual([
+      { failure_code: null, failure_subcode: null, failure_trace_id: null },
+    ]);
+  });
   it('reserves once, replays confirmed evidence and rejects changed input', async () => {
     const first = await reserveFacebookDmAction(database, { ...key, receiverLabel: 'Alexandra' });
     expect(first.kind).toBe('new');

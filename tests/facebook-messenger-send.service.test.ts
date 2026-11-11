@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { sendAccountPageConversationMessage } from '../src/modules/providers/facebook-messenger-send.service.js';
+import { FacebookRequestError } from '../src/modules/providers/facebook-http-client.js';
 
 const mocks = vi.hoisted(() => ({
   token: vi.fn(),
@@ -74,6 +75,35 @@ beforeEach(() => {
 });
 
 describe('Facebook inbound-only send command', () => {
+  it('settles a definite Graph rejection with safe diagnostics but returns only status', async () => {
+    const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
+    vi.mocked(client.client.sendPageMessage).mockRejectedValue(
+      new FacebookRequestError({
+        kind: 'validation',
+        status: 400,
+        code: 100,
+        subcode: 2018001,
+        traceId: 'A-safe_trace-1',
+        isTransient: false,
+      }),
+    );
+    await expect(sendAccountPageConversationMessage(client as never, input)).resolves.toEqual({
+      state: 'failed',
+      failureStatus: 400,
+    });
+    expect(mocks.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        outcome: { state: 'failed', failureStatus: 400 },
+        failureEvidence: {
+          code: 100,
+          subcode: 2018001,
+          traceId: 'A-safe_trace-1',
+          isTransient: false,
+        },
+      }),
+    );
+  });
   it('sends once to the selected Page participant and persists confirmation', async () => {
     const client = runtime([{ senderId: 'psid_7', createdAt: new Date().toISOString() }]);
     await expect(sendAccountPageConversationMessage(client as never, input)).resolves.toEqual({

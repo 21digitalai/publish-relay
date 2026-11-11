@@ -23,6 +23,7 @@ interface ProposalSummary {
 
 interface ProposalDetail {
   id: string;
+  accountId: string;
   accountDisplayName: string;
   provider: string;
   kind: 'dm' | 'comment';
@@ -34,6 +35,8 @@ interface ProposalDetail {
   status: string;
   canApprove: boolean;
   noGo: boolean;
+  noGoReason: 'manual' | 'campaign_final' | null;
+  canReopenCampaignFinal: boolean;
   schedule?: { dueAt: string; status: string } | null;
   scheduleWindow?: { earliestDelaySeconds: number; latestDelaySeconds: number } | null;
 }
@@ -43,6 +46,7 @@ interface NoGoEntry {
   conversationId: string;
   displayName: string | null;
   accountDisplayName: string;
+  reason: 'manual' | 'campaign_final';
   createdAt: string;
 }
 
@@ -123,6 +127,7 @@ export function EngagementProposalsPage() {
   const [noGoCursor, setNoGoCursor] = useState<string | null>(null);
   const [noGoLoadingMore, setNoGoLoadingMore] = useState(false);
   const [canManageNoGo, setCanManageNoGo] = useState(false);
+  const [canReopenCampaignFinal, setCanReopenCampaignFinal] = useState(false);
   const [noGoFailed, setNoGoFailed] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -267,12 +272,14 @@ export function EngagementProposalsPage() {
   const loadNoGo = useCallback(async (cursor?: string) => {
     const result = await readApi<{
       items: NoGoEntry[];
+      canReopenCampaignFinal: boolean;
       canManage: boolean;
       nextCursor: string | null;
     }>(`/api/facebook-page-dm-no-go${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
     setNoGoEntries((current) => (cursor ? [...current, ...result.items] : result.items));
     setNoGoCursor(result.nextCursor);
     setCanManageNoGo(result.canManage);
+    setCanReopenCampaignFinal(result.canReopenCampaignFinal);
     setNoGoFailed(false);
   }, []);
 
@@ -288,14 +295,20 @@ export function EngagementProposalsPage() {
     setSaving(true);
     setError(null);
     try {
-      await readApi<{ noGo: boolean }>(`/api/engagement-proposals/${detail.id}/no-go`, {
-        method: blocked ? 'POST' : 'DELETE',
+      const campaignReopen = detail.noGoReason === 'campaign_final';
+      const url = campaignReopen
+        ? `/api/facebook-page-dm-no-go/${encodeURIComponent(detail.accountId)}/${encodeURIComponent(detail.targetId)}/reopen`
+        : `/api/engagement-proposals/${detail.id}/no-go`;
+      await readApi<{ noGo: boolean }>(url, {
+        method: campaignReopen ? 'POST' : blocked ? 'POST' : 'DELETE',
         headers: { 'x-csrf-token': getCsrfToken() },
       });
       setNotice(
         blocked
           ? 'Conversation added to the no-go list. Pending replies were dismissed.'
-          : 'Conversation removed from the no-go list.',
+          : campaignReopen
+            ? 'Campaign-final conversation reopened for this Page. Any new reply still needs a fresh Messenger window.'
+            : 'Conversation removed from the no-go list.',
       );
       setDetailReload((current) => current + 1);
       await loadPage();
@@ -1446,7 +1459,9 @@ export function EngagementProposalsPage() {
                       </button>
                       {detail.provider === 'facebook_page' &&
                         detail.kind === 'dm' &&
-                        detail.canApprove && (
+                        detail.canApprove &&
+                        (detail.noGoReason !== 'campaign_final' ||
+                          detail.canReopenCampaignFinal) && (
                           <button
                             ref={noGoTrigger}
                             className={
@@ -1460,7 +1475,11 @@ export function EngagementProposalsPage() {
                               setConfirmNoGo(true);
                             }}
                           >
-                            {detail.noGo ? 'Remove from no-go list' : 'Do not message this person'}
+                            {detail.noGoReason === 'campaign_final'
+                              ? 'Reopen this conversation'
+                              : detail.noGo
+                                ? 'Remove from no-go list'
+                                : 'Do not message this person'}
                           </button>
                         )}
                     </div>
@@ -1537,8 +1556,13 @@ export function EngagementProposalsPage() {
                         <span>
                           {entry.displayName ?? 'Page conversation'} · {entry.accountDisplayName}
                         </span>
-                        <small>Blocked {new Date(entry.createdAt).toLocaleString()}</small>
-                        {canManageNoGo && (
+                        <small>
+                          {entry.reason === 'campaign_final' ? 'Final Facebook exit' : 'Blocked'} ·{' '}
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </small>
+                        {(entry.reason === 'campaign_final'
+                          ? canReopenCampaignFinal
+                          : canManageNoGo) && (
                           <button
                             className="secondary-button engagement-no-go-remove"
                             type="button"
@@ -1547,14 +1571,18 @@ export function EngagementProposalsPage() {
                               setSaving(true);
                               setError(null);
                               void readApi<{ noGo: boolean }>(
-                                `/api/facebook-page-dm-no-go/${encodeURIComponent(entry.accountId)}/${encodeURIComponent(entry.conversationId)}`,
+                                `/api/facebook-page-dm-no-go/${encodeURIComponent(entry.accountId)}/${encodeURIComponent(entry.conversationId)}${entry.reason === 'campaign_final' ? '/reopen' : ''}`,
                                 {
-                                  method: 'DELETE',
+                                  method: entry.reason === 'campaign_final' ? 'POST' : 'DELETE',
                                   headers: { 'x-csrf-token': getCsrfToken() },
                                 },
                               )
                                 .then(async () => {
-                                  setNotice('Conversation removed from the no-go list.');
+                                  setNotice(
+                                    entry.reason === 'campaign_final'
+                                      ? 'Campaign-final conversation reopened for this Page. Any new reply still needs a fresh Messenger window.'
+                                      : 'Conversation removed from the no-go list.',
+                                  );
                                   await loadNoGo();
                                   setDetailReload((current) => current + 1);
                                 })
@@ -1570,7 +1598,9 @@ export function EngagementProposalsPage() {
                                 });
                             }}
                           >
-                            Allow messages
+                            {entry.reason === 'campaign_final'
+                              ? 'Reopen this conversation'
+                              : 'Allow messages'}
                           </button>
                         )}
                       </li>
@@ -1673,15 +1703,29 @@ export function EngagementProposalsPage() {
         <ConfirmationDialog
           titleId="engagement-no-go-title"
           title={
-            detail.noGo ? 'Allow messages to this person again?' : 'Stop messaging this person?'
+            detail.noGoReason === 'campaign_final'
+              ? 'Reopen this final-exit conversation?'
+              : detail.noGo
+                ? 'Allow messages to this person again?'
+                : 'Stop messaging this person?'
           }
           description={
-            detail.noGo
-              ? 'New proposals and sends will be allowed again. Dismissed replies stay dismissed.'
-              : 'New proposals and sends to this Page conversation will be blocked. Pending replies will be dismissed.'
+            detail.noGoReason === 'campaign_final'
+              ? 'Only this person on this Page will be reopened. Their final-exit receipt remains audited; a new reply still needs a fresh Messenger window.'
+              : detail.noGo
+                ? 'New proposals and sends will be allowed again. Dismissed replies stay dismissed.'
+                : 'New proposals and sends to this Page conversation will be blocked. Pending replies will be dismissed.'
           }
           cancelLabel="Cancel"
-          confirmLabel={saving ? 'Updating…' : detail.noGo ? 'Remove block' : 'Block and dismiss'}
+          confirmLabel={
+            saving
+              ? 'Updating…'
+              : detail.noGoReason === 'campaign_final'
+                ? 'Reopen conversation'
+                : detail.noGo
+                  ? 'Remove block'
+                  : 'Block and dismiss'
+          }
           confirmTone={detail.noGo ? 'primary' : 'danger'}
           disabled={saving}
           returnFocusTo={noGoTrigger.current}

@@ -11,6 +11,11 @@ import {
   readPageDmFailureCircuit,
   clearPageDmFailureCircuit,
 } from '../src/modules/providers/facebook-dm-action.repository.js';
+import {
+  CampaignFinalReopenError,
+  reopenCampaignFinalConversation,
+  setPageConversationNoGo,
+} from '../src/modules/providers/facebook-dm-no-go.repository.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const accountId = '00000000-0000-4000-8000-000000000002';
@@ -42,7 +47,15 @@ beforeEach(async () => {
       request_id text NOT NULL, ip_address text, user_agent text,
       metadata jsonb NOT NULL DEFAULT '{}',
       created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE facebook_page_dm_pending_intents (id uuid PRIMARY KEY);
+    CREATE TABLE facebook_page_dm_pending_intents (id uuid PRIMARY KEY,
+      workspace_id uuid NOT NULL, account_id uuid NOT NULL,
+      conversation_id text NOT NULL, status text NOT NULL,
+      client_action_id uuid NOT NULL DEFAULT gen_random_uuid(), group_id uuid,
+      updated_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE engagement_proposals (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
+      account_id uuid NOT NULL, provider text NOT NULL, kind text NOT NULL,
+      target_id text NOT NULL, status text NOT NULL, client_action_id uuid NOT NULL DEFAULT gen_random_uuid(),
+      updated_at timestamptz NOT NULL DEFAULT now());
     INSERT INTO provider_accounts VALUES ('${accountId}','${workspaceId}','facebook_page');
   `);
   await postgres.exec(
@@ -93,7 +106,7 @@ beforeEach(async () => {
   await postgres.exec(`
     CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
-    GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO publish_relay_app;
     SET ROLE publish_relay_app;
   `);
   database = drizzle(postgres) as unknown as NodePgDatabase;
@@ -102,6 +115,64 @@ beforeEach(async () => {
 afterEach(async () => postgres.close());
 
 describe('Facebook DM action PostgreSQL ledger', () => {
+  it('reopens only a named confirmed final receipt and audits the owner action', async () => {
+    const final = { ...key, finalExit: true };
+    const reserved = await reserveFacebookDmAction(database, final);
+    if (reserved.kind !== 'new') throw new Error('Expected final reservation');
+    await settleFacebookDmAction(database, {
+      ...final,
+      reservationId: reserved.id,
+      outcome: { state: 'confirmed', messageId: 'mid_final' },
+    });
+    await expect(
+      setPageConversationNoGo(database, { ...key, blocked: false }),
+    ).rejects.toBeInstanceOf(CampaignFinalReopenError);
+    const ambiguous = { ...key, clientActionId: '00000000-0000-4000-8000-000000000088' };
+    await reserveFacebookDmAction(database, ambiguous);
+    const reopen = { ...key, actorId, requestId: 'owner-reopen-1' };
+    await expect(reopenCampaignFinalConversation(database, reopen)).rejects.toThrow(
+      'Unsettled Page message',
+    );
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    expect((await postgres.query('SELECT terminal FROM facebook_page_dm_memory')).rows).toEqual([
+      { terminal: true },
+    ]);
+    await postgres.query('DELETE FROM facebook_page_dm_actions WHERE client_action_id=$1', [
+      ambiguous.clientActionId,
+    ]);
+    await postgres.query(
+      `INSERT INTO facebook_page_dm_pending_intents
+      (id, workspace_id, account_id, conversation_id, status)
+      VALUES ('00000000-0000-4000-8000-000000000089', $1, $2, $3, 'unknown')`,
+      [workspaceId, accountId, key.conversationId],
+    );
+    await expect(reopenCampaignFinalConversation(database, reopen)).rejects.toThrow(
+      'Unsettled Page message',
+    );
+    await postgres.query('DELETE FROM facebook_page_dm_pending_intents');
+    await reopenCampaignFinalConversation(database, reopen);
+    expect((await postgres.query('SELECT * FROM facebook_page_dm_no_go')).rows).toHaveLength(0);
+    expect(
+      (await postgres.query('SELECT terminal, final_action_id FROM facebook_page_dm_memory')).rows,
+    ).toEqual([{ terminal: false, final_action_id: actionId }]);
+    expect(
+      (
+        await postgres.query(
+          "SELECT action, request_id FROM audit_events WHERE action='facebook_page.dm_campaign_final_reopen'",
+        )
+      ).rows,
+    ).toEqual([{ action: 'facebook_page.dm_campaign_final_reopen', request_id: 'owner-reopen-1' }]);
+    await expect(reopenCampaignFinalConversation(database, reopen)).rejects.toThrow(
+      'Confirmed campaign-final receipt required',
+    );
+    await setPageConversationNoGo(database, { ...key, blocked: true });
+    await expect(reopenCampaignFinalConversation(database, reopen)).rejects.toThrow(
+      'Confirmed campaign-final receipt required',
+    );
+    expect((await postgres.query('SELECT reason FROM facebook_page_dm_no_go')).rows).toEqual([
+      { reason: 'manual' },
+    ]);
+  });
   it('records Page-local terminal and no-go only after confirmed final delivery', async () => {
     const final = { ...key, finalExit: true, requestFingerprint: 'f'.repeat(64) };
     const reserved = await reserveFacebookDmAction(database, final);

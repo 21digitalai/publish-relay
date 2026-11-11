@@ -2,7 +2,10 @@ import { and, desc, eq, inArray, lt, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
+  auditEvents,
   engagementProposals,
+  facebookPageDmActions,
+  facebookPageDmMemory,
   facebookPageDmPendingIntents,
   facebookPageDmNoGo,
   providerAccounts,
@@ -15,8 +18,30 @@ interface Key {
   conversationId: string;
 }
 
+export class CampaignFinalReopenError extends Error {}
+
 export async function isPageConversationNoGo(database: NodePgDatabase, key: Key): Promise<boolean> {
-  return withTenantTransaction(database, key, (tx) => isPageConversationNoGoInTransaction(tx, key));
+  return (await getPageConversationNoGoReason(database, key)) !== null;
+}
+
+export async function getPageConversationNoGoReason(
+  database: NodePgDatabase,
+  key: Key,
+): Promise<'manual' | 'campaign_final' | null> {
+  return withTenantTransaction(database, key, async (tx) => {
+    const [row] = await tx
+      .select({ reason: facebookPageDmNoGo.reason })
+      .from(facebookPageDmNoGo)
+      .where(
+        and(
+          eq(facebookPageDmNoGo.workspaceId, key.workspaceId),
+          eq(facebookPageDmNoGo.accountId, key.accountId),
+          eq(facebookPageDmNoGo.conversationId, key.conversationId),
+        ),
+      )
+      .limit(1);
+    return row?.reason === 'campaign_final' ? 'campaign_final' : row ? 'manual' : null;
+  });
 }
 
 export async function isPageConversationNoGoInTransaction(
@@ -94,6 +119,7 @@ export async function listWorkspacePageNoGo(
         accountId: facebookPageDmNoGo.accountId,
         conversationId: facebookPageDmNoGo.conversationId,
         displayName: facebookPageDmNoGo.displayName,
+        reason: facebookPageDmNoGo.reason,
         accountDisplayName: providerAccounts.displayName,
         createdAt: facebookPageDmNoGo.createdAt,
       })
@@ -162,6 +188,19 @@ export async function setPageConversationNoGo(
   return withTenantTransaction(database, input, async (tx) => {
     await lockPageDmAccount(tx, input);
     if (!input.blocked) {
+      const [existing] = await tx
+        .select({ reason: facebookPageDmNoGo.reason })
+        .from(facebookPageDmNoGo)
+        .where(
+          and(
+            eq(facebookPageDmNoGo.workspaceId, input.workspaceId),
+            eq(facebookPageDmNoGo.accountId, input.accountId),
+            eq(facebookPageDmNoGo.conversationId, input.conversationId),
+          ),
+        )
+        .limit(1);
+      if (existing?.reason === 'campaign_final')
+        throw new CampaignFinalReopenError('Campaign-final conversations require owner reopening');
       await tx
         .delete(facebookPageDmNoGo)
         .where(
@@ -230,5 +269,110 @@ export async function setPageConversationNoGo(
             eq(engagementProposals.status, 'scheduled'),
           ),
         );
+  });
+}
+
+/** Clear only a confirmed campaign-final suppression, preserving its action receipt in the ledger. */
+export async function reopenCampaignFinalConversation(
+  database: NodePgDatabase,
+  input: Key & { actorId: string; requestId: string },
+): Promise<void> {
+  await withTenantTransaction(database, input, async (tx) => {
+    await lockPageDmAccount(tx, input);
+    const scope = and(
+      eq(facebookPageDmNoGo.workspaceId, input.workspaceId),
+      eq(facebookPageDmNoGo.accountId, input.accountId),
+      eq(facebookPageDmNoGo.conversationId, input.conversationId),
+    );
+    const [blocked] = await tx
+      .select({
+        reason: facebookPageDmNoGo.reason,
+        finalActionId: facebookPageDmNoGo.finalActionId,
+        finalMessageId: facebookPageDmNoGo.finalMessageId,
+      })
+      .from(facebookPageDmNoGo)
+      .where(scope)
+      .limit(1);
+    if (blocked?.reason !== 'campaign_final' || !blocked.finalActionId || !blocked.finalMessageId)
+      throw new CampaignFinalReopenError('Confirmed campaign-final receipt required');
+    const [unsettledAction] = await tx
+      .select({ id: facebookPageDmActions.id })
+      .from(facebookPageDmActions)
+      .where(
+        and(
+          eq(facebookPageDmActions.workspaceId, input.workspaceId),
+          eq(facebookPageDmActions.accountId, input.accountId),
+          eq(facebookPageDmActions.conversationId, input.conversationId),
+          inArray(facebookPageDmActions.state, ['reserved', 'unknown']),
+        ),
+      )
+      .limit(1);
+    const [unsettledIntent] = await tx
+      .select({ id: facebookPageDmPendingIntents.id })
+      .from(facebookPageDmPendingIntents)
+      .where(
+        and(
+          eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+          eq(facebookPageDmPendingIntents.accountId, input.accountId),
+          eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+          inArray(facebookPageDmPendingIntents.status, [
+            'pending',
+            'waiting',
+            'claimed',
+            'unknown',
+          ]),
+        ),
+      )
+      .limit(1);
+    if (unsettledAction || unsettledIntent)
+      throw new CampaignFinalReopenError(
+        'Unsettled Page message must be resolved before reopening',
+      );
+    const [memory] = await tx
+      .select({
+        finalActionId: facebookPageDmMemory.finalActionId,
+        finalMessageId: facebookPageDmMemory.finalMessageId,
+      })
+      .from(facebookPageDmMemory)
+      .where(
+        and(
+          eq(facebookPageDmMemory.workspaceId, input.workspaceId),
+          eq(facebookPageDmMemory.accountId, input.accountId),
+          eq(facebookPageDmMemory.conversationId, input.conversationId),
+        ),
+      )
+      .limit(1);
+    if (
+      memory?.finalActionId !== blocked.finalActionId ||
+      memory.finalMessageId !== blocked.finalMessageId
+    )
+      throw new CampaignFinalReopenError('Campaign-final memory receipt mismatch');
+    await tx
+      .delete(facebookPageDmNoGo)
+      .where(and(scope, eq(facebookPageDmNoGo.reason, 'campaign_final')));
+    await tx
+      .update(facebookPageDmMemory)
+      .set({ terminal: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(facebookPageDmMemory.workspaceId, input.workspaceId),
+          eq(facebookPageDmMemory.accountId, input.accountId),
+          eq(facebookPageDmMemory.conversationId, input.conversationId),
+        ),
+      );
+    await tx.insert(auditEvents).values({
+      workspaceId: input.workspaceId,
+      actorType: 'user',
+      actorId: input.actorId,
+      action: 'facebook_page.dm_campaign_final_reopen',
+      targetType: 'provider_account',
+      targetId: input.accountId,
+      requestId: input.requestId,
+      metadata: {
+        conversationId: input.conversationId,
+        finalActionId: blocked.finalActionId,
+        finalMessageId: blocked.finalMessageId,
+      },
+    });
   });
 }

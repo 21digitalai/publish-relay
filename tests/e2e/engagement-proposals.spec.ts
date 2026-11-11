@@ -1739,6 +1739,72 @@ test('Page DM no-go block survives reload and can be removed from the list', asy
   await expect(page.getByText('No Page conversations are blocked.')).toBeVisible();
 });
 
+test('owner can reopen one campaign-final Page conversation from attention list', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Final Exit Owner',
+      email: `final-exit-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Final Exit Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  let reopened = false;
+  let reopenCalls = 0;
+  await page.route('**/api/facebook-page-dm-no-go**', async (route) => {
+    if (route.request().method() === 'POST') {
+      expect(new URL(route.request().url()).pathname).toBe(
+        '/api/facebook-page-dm-no-go/00000000-0000-4000-8000-000000000602/t_900/reopen',
+      );
+      reopened = true;
+      reopenCalls += 1;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data:
+          route.request().method() === 'GET'
+            ? {
+                canManage: true,
+                canReopenCampaignFinal: true,
+                nextCursor: null,
+                items: reopened
+                  ? []
+                  : [
+                      {
+                        accountId: '00000000-0000-4000-8000-000000000602',
+                        conversationId: 't_900',
+                        displayName: 'Alexandra',
+                        accountDisplayName: 'Eli Page',
+                        reason: 'campaign_final',
+                        createdAt: '2026-11-05T09:00:00Z',
+                      },
+                    ],
+              }
+            : { noGo: false },
+        error: null,
+      }),
+    });
+  });
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [], nextCursor: null }, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('tab', { name: 'Needs attention' }).click();
+  await expect(page.getByText('Final Facebook exit')).toBeVisible();
+  await page.getByRole('button', { name: 'Reopen this conversation' }).click();
+  await expect(page.getByText('No Page conversations are blocked.')).toBeVisible();
+  expect(reopenCalls).toBe(1);
+});
+
 test('late stage result from another proposal cannot unlock reused media', async ({
   page,
 }, testInfo) => {

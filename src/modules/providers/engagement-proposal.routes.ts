@@ -21,8 +21,10 @@ import {
 import { authorizePageEngagement } from './facebook-page-engagement.service.js';
 import { listPageDmHistory } from './facebook-dm-history.repository.js';
 import {
-  isPageConversationNoGo,
+  CampaignFinalReopenError,
+  getPageConversationNoGoReason,
   listWorkspacePageNoGo,
+  reopenCampaignFinalConversation,
   setPageConversationNoGo,
 } from './facebook-dm-no-go.repository.js';
 import {
@@ -69,6 +71,13 @@ export const createEngagementProposalSchema = z.strictObject({
   plannedDueAt: z.iso.datetime({ offset: true }).optional(),
 });
 const paramsSchema = z.strictObject({ proposalId: z.uuid() });
+const pageConversationParamsSchema = z.strictObject({
+  accountId: z.uuid(),
+  conversationId: z
+    .string()
+    .regex(/^[A-Za-z0-9_]+$/)
+    .max(256),
+});
 const reviseSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
   content: contentSchema,
@@ -582,11 +591,13 @@ export function registerEngagementProposalRoutes(
     return {
       data: {
         canManage: identity.role === 'owner' || identity.role === 'admin',
+        canReopenCampaignFinal: identity.role === 'owner',
         nextCursor,
         items: page.map((row) => ({
           accountId: row.accountId,
           conversationId: row.conversationId,
           displayName: row.displayName,
+          reason: row.reason,
           accountDisplayName: row.accountDisplayName,
           createdAt: row.createdAt.toISOString(),
         })),
@@ -604,22 +615,48 @@ export function registerEngagementProposalRoutes(
         return reply.code(403).send({ data: null, error: 'Workspace admin required' });
       if (!validCsrf(request))
         return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
-      const params = z
-        .strictObject({
-          accountId: z.uuid(),
-          conversationId: z
-            .string()
-            .regex(/^[A-Za-z0-9_]+$/)
-            .max(256),
-        })
-        .safeParse(request.params);
+      const params = pageConversationParamsSchema.safeParse(request.params);
       if (!params.success)
         return reply.code(400).send({ data: null, error: 'Invalid Page conversation' });
-      await setPageConversationNoGo(database, {
-        workspaceId: identity.workspaceId,
-        ...params.data,
-        blocked: false,
-      });
+      try {
+        await setPageConversationNoGo(database, {
+          workspaceId: identity.workspaceId,
+          ...params.data,
+          blocked: false,
+        });
+      } catch (error) {
+        if (error instanceof CampaignFinalReopenError)
+          return reply.code(409).send({ data: null, error: error.message });
+        throw error;
+      }
+      return { data: { noGo: false }, error: null };
+    },
+  );
+  application.post(
+    '/api/facebook-page-dm-no-go/:accountId/:conversationId/reopen',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      const identity = await authorizeRequest(request, auth, 'content:write');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (identity.role !== 'owner')
+        return reply.code(403).send({ data: null, error: 'Workspace owner required' });
+      if (!validCsrf(request))
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = pageConversationParamsSchema.safeParse(request.params);
+      if (!params.success)
+        return reply.code(400).send({ data: null, error: 'Invalid Page conversation' });
+      try {
+        await reopenCampaignFinalConversation(database, {
+          workspaceId: identity.workspaceId,
+          ...params.data,
+          actorId: identity.userId,
+          requestId: request.id,
+        });
+      } catch (error) {
+        if (error instanceof CampaignFinalReopenError)
+          return reply.code(409).send({ data: null, error: error.message });
+        throw error;
+      }
       return { data: { noGo: false }, error: null };
     },
   );
@@ -669,14 +706,14 @@ export function registerEngagementProposalRoutes(
     if (!params.success) return reply.code(404).send({ data: null, error: 'Proposal not found' });
     const row = await getEngagementProposal(database, identity.workspaceId, params.data.proposalId);
     if (!row) return reply.code(404).send({ data: null, error: 'Proposal not found' });
-    const noGo =
+    const noGoReason =
       row.provider === 'facebook_page' && row.kind === 'dm'
-        ? await isPageConversationNoGo(database, {
+        ? await getPageConversationNoGoReason(database, {
             workspaceId: identity.workspaceId,
             accountId: row.accountId,
             conversationId: row.targetId,
           })
-        : false;
+        : null;
     const pageSchedule =
       row.provider === 'facebook_page' && row.status === 'scheduled'
         ? row.kind === 'comment'
@@ -719,7 +756,9 @@ export function registerEngagementProposalRoutes(
       data: {
         ...representation(row),
         canApprove: identity.role === 'owner' || identity.role === 'admin',
-        noGo,
+        noGo: noGoReason !== null,
+        noGoReason,
+        canReopenCampaignFinal: identity.role === 'owner',
         schedule,
         scheduleWindow,
       },
@@ -787,19 +826,25 @@ export function registerEngagementProposalRoutes(
         );
         if (row?.provider !== 'facebook_page' || row.kind !== 'dm')
           return reply.code(404).send({ data: null, error: 'Page conversation not found' });
-        await setPageConversationNoGo(database, {
-          workspaceId: identity.workspaceId,
-          accountId: row.accountId,
-          conversationId: row.targetId,
-          displayName:
-            typeof row.sourceContext === 'object' &&
-            row.sourceContext !== null &&
-            'authorLabel' in row.sourceContext &&
-            typeof row.sourceContext.authorLabel === 'string'
-              ? row.sourceContext.authorLabel
-              : undefined,
-          blocked,
-        });
+        try {
+          await setPageConversationNoGo(database, {
+            workspaceId: identity.workspaceId,
+            accountId: row.accountId,
+            conversationId: row.targetId,
+            displayName:
+              typeof row.sourceContext === 'object' &&
+              row.sourceContext !== null &&
+              'authorLabel' in row.sourceContext &&
+              typeof row.sourceContext.authorLabel === 'string'
+                ? row.sourceContext.authorLabel
+                : undefined,
+            blocked,
+          });
+        } catch (error) {
+          if (error instanceof CampaignFinalReopenError)
+            return reply.code(409).send({ data: null, error: error.message });
+          throw error;
+        }
         return { data: { noGo: blocked }, error: null };
       },
     });

@@ -1,8 +1,15 @@
 import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { auditEvents, facebookPageDmActions } from '../../database/schema.js';
+import {
+  auditEvents,
+  facebookPageDmActions,
+  facebookPageDmFailureCircuit,
+} from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { lockPageDmAccount } from './facebook-dm-no-go.repository.js';
+
+const MAX_CONSECUTIVE_DEFINITE_FAILURES = 3;
 
 export interface FacebookDmActionKey {
   workspaceId: string;
@@ -124,6 +131,7 @@ export async function settleFacebookDmAction(
   },
 ): Promise<void> {
   await withTenantTransaction(database, input, async (transaction) => {
+    await lockPageDmAccount(transaction, input);
     const [updated] = await transaction
       .update(facebookPageDmActions)
       .set({
@@ -160,6 +168,49 @@ export async function settleFacebookDmAction(
       )
       .returning({ id: facebookPageDmActions.id });
     if (!updated) throw new Error('Facebook DM settlement lost reservation');
+    if (
+      input.outcome.state === 'confirmed' ||
+      (input.outcome.state === 'failed' && input.failureEvidence)
+    ) {
+      await transaction
+        .insert(facebookPageDmFailureCircuit)
+        .values({
+          workspaceId: input.workspaceId,
+          accountId: input.accountId,
+        })
+        .onConflictDoNothing();
+      const [circuit] = await transaction
+        .select({
+          consecutiveFailures: facebookPageDmFailureCircuit.consecutiveFailures,
+          haltedAt: facebookPageDmFailureCircuit.haltedAt,
+        })
+        .from(facebookPageDmFailureCircuit)
+        .where(
+          and(
+            eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
+            eq(facebookPageDmFailureCircuit.accountId, input.accountId),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (!circuit) throw new Error('Facebook DM circuit state unavailable');
+      const failures = input.outcome.state === 'confirmed' ? 0 : circuit.consecutiveFailures + 1;
+      await transaction
+        .update(facebookPageDmFailureCircuit)
+        .set({
+          consecutiveFailures: circuit.haltedAt ? circuit.consecutiveFailures : failures,
+          haltedAt:
+            circuit.haltedAt ?? (failures >= MAX_CONSECUTIVE_DEFINITE_FAILURES ? new Date() : null),
+          lastActionId: input.clientActionId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
+            eq(facebookPageDmFailureCircuit.accountId, input.accountId),
+          ),
+        );
+    }
     await transaction.insert(auditEvents).values({
       workspaceId: input.workspaceId,
       actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
@@ -170,5 +221,66 @@ export async function settleFacebookDmAction(
       requestId: input.clientActionId,
       metadata: { outcome: input.outcome.state, conversationId: input.conversationId },
     });
+  });
+}
+
+export async function readPageDmFailureCircuit(
+  database: NodePgDatabase,
+  input: Pick<FacebookDmActionKey, 'workspaceId' | 'accountId'>,
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    await lockPageDmAccount(tx, input);
+    const [row] = await tx
+      .select({
+        consecutiveFailures: facebookPageDmFailureCircuit.consecutiveFailures,
+        haltedAt: facebookPageDmFailureCircuit.haltedAt,
+        updatedAt: facebookPageDmFailureCircuit.updatedAt,
+      })
+      .from(facebookPageDmFailureCircuit)
+      .where(
+        and(
+          eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
+          eq(facebookPageDmFailureCircuit.accountId, input.accountId),
+        ),
+      )
+      .limit(1);
+    return row ?? { consecutiveFailures: 0, haltedAt: null, updatedAt: null };
+  });
+}
+
+export async function clearPageDmFailureCircuit(
+  database: NodePgDatabase,
+  input: Pick<FacebookDmActionKey, 'workspaceId' | 'accountId'> & {
+    actorId: string;
+    requestId: string;
+  },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    await lockPageDmAccount(tx, input);
+    const [row] = await tx
+      .update(facebookPageDmFailureCircuit)
+      .set({
+        consecutiveFailures: 0,
+        haltedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(facebookPageDmFailureCircuit.workspaceId, input.workspaceId),
+          eq(facebookPageDmFailureCircuit.accountId, input.accountId),
+        ),
+      )
+      .returning({ haltedAt: facebookPageDmFailureCircuit.haltedAt });
+    await tx.insert(auditEvents).values({
+      workspaceId: input.workspaceId,
+      actorType: 'user',
+      actorId: input.actorId,
+      action: 'facebook_page.dm_failure_circuit_clear',
+      targetType: 'provider_account',
+      targetId: input.accountId,
+      requestId: input.requestId,
+      metadata: { hadCircuit: Boolean(row) },
+    });
+    return { consecutiveFailures: 0, haltedAt: null };
   });
 }

@@ -9,6 +9,7 @@ import {
   facebookPageDmActions,
   facebookPageDmDelaySettings,
   facebookPageDmDispatchPacing,
+  facebookPageDmFailureCircuit,
   facebookPageDmPendingIntents,
   providerAccounts,
 } from '../../database/schema.js';
@@ -600,8 +601,16 @@ export async function claimDuePageDms(
           eq(facebookPageDmDispatchPacing.accountId, facebookPageDmPendingIntents.accountId),
         ),
       )
+      .leftJoin(
+        facebookPageDmFailureCircuit,
+        and(
+          eq(facebookPageDmFailureCircuit.workspaceId, facebookPageDmPendingIntents.workspaceId),
+          eq(facebookPageDmFailureCircuit.accountId, facebookPageDmPendingIntents.accountId),
+        ),
+      )
       .where(
         and(
+          isNull(facebookPageDmFailureCircuit.haltedAt),
           lte(facebookPageDmPendingIntents.dueAt, input.now),
           or(
             sql`${facebookPageDmPendingIntents.sequenceIndex} > 0`,
@@ -639,6 +648,17 @@ export async function claimDuePageDms(
       )
       .limit(1)
       .for('update');
+    const [circuit] = await tx
+      .select({ haltedAt: facebookPageDmFailureCircuit.haltedAt })
+      .from(facebookPageDmFailureCircuit)
+      .where(
+        and(
+          eq(facebookPageDmFailureCircuit.workspaceId, candidate.workspaceId),
+          eq(facebookPageDmFailureCircuit.accountId, candidate.accountId),
+        ),
+      )
+      .limit(1);
+    if (circuit?.haltedAt) return [];
     const [locked] = await tx
       .select({ id: facebookPageDmPendingIntents.id })
       .from(facebookPageDmPendingIntents)

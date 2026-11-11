@@ -12,6 +12,10 @@ import {
   setPageEngagementModule,
 } from '../providers/facebook-page-engagement.service.js';
 import {
+  clearPageDmFailureCircuit,
+  readPageDmFailureCircuit,
+} from '../providers/facebook-dm-action.repository.js';
+import {
   IneligiblePageEngagementCapabilitiesError,
   listPageEngagementPrincipals,
   setPageEngagementPrincipalGrants,
@@ -63,6 +67,55 @@ export function registerProviderAccountRoutes(
     tiktok?: { keys: MasterKeyProvider; client: TikTokHttpClient };
   },
 ): void {
+  application.get(
+    '/api/provider-accounts/:accountId/facebook-dm-circuit',
+    async (request, reply) => {
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (identity.role !== 'owner' && identity.role !== 'admin')
+        return reply.code(403).send({ data: null, error: 'Workspace admin required' });
+      const params = accountParamsSchema.safeParse(request.params);
+      if (!params.success)
+        return reply.code(400).send({ data: null, error: 'Invalid Page account' });
+      void reply.header('Cache-Control', 'no-store');
+      return {
+        data: await readPageDmFailureCircuit(dependencies.database, {
+          workspaceId: identity.workspaceId,
+          accountId: params.data.accountId,
+        }),
+        error: null,
+      };
+    },
+  );
+  application.post(
+    '/api/provider-accounts/:accountId/facebook-dm-circuit/clear',
+    async (request, reply) => {
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (identity.role !== 'owner' && identity.role !== 'admin')
+        return reply.code(403).send({ data: null, error: 'Workspace admin required' });
+      if (
+        !verifyCsrfToken(
+          request.cookies[CSRF_COOKIE],
+          request.headers['x-csrf-token'] as string | undefined,
+        )
+      )
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = accountParamsSchema.safeParse(request.params);
+      if (!params.success)
+        return reply.code(400).send({ data: null, error: 'Invalid Page account' });
+      void reply.header('Cache-Control', 'no-store');
+      return {
+        data: await clearPageDmFailureCircuit(dependencies.database, {
+          workspaceId: identity.workspaceId,
+          accountId: params.data.accountId,
+          actorId: identity.userId,
+          requestId: request.id,
+        }),
+        error: null,
+      };
+    },
+  );
   application.get('/api/provider-accounts/:accountId/engagement', async (request, reply) => {
     const identity = await authorizeRequest(request, dependencies.auth, 'content:read');
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });

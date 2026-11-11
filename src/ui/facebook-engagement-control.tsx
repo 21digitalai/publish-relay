@@ -7,6 +7,10 @@ import { getPostingAdapter } from './posting-adapter-registry.js';
 type Module = 'comments' | 'dms';
 type GrantEvidence = 'unknown' | 'missing' | 'verified';
 type State = Record<Module, { localEnabled: boolean; providerGrant: GrantEvidence }>;
+interface DmCircuit {
+  consecutiveFailures: number;
+  haltedAt: string | null;
+}
 type Capability =
   | 'comments:read'
   | 'comments:propose'
@@ -48,6 +52,9 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
   const [savingGrants, setSavingGrants] = useState(false);
   const [connectingMessages, setConnectingMessages] = useState(false);
   const [connectingComments, setConnectingComments] = useState(false);
+  const [circuit, setCircuit] = useState<DmCircuit | null>(null);
+  const [confirmCircuitClear, setConfirmCircuitClear] = useState(false);
+  const [clearingCircuit, setClearingCircuit] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -56,6 +63,8 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
     setShowPrincipals(false);
     setEditing(null);
     setError(null);
+    setCircuit(null);
+    setConfirmCircuitClear(false);
     void fetch(`/api/provider-accounts/${accountId}/engagement`)
       .then(async (response) => {
         if (!response.ok) throw new Error('Page modules could not be loaded');
@@ -66,6 +75,17 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
       })
       .catch(() => {
         if (current) setError('Page modules could not be loaded');
+      });
+    void fetch(`/api/provider-accounts/${accountId}/facebook-dm-circuit`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Page DM sending status could not be loaded');
+        return (await response.json()) as { data: DmCircuit };
+      })
+      .then((result) => {
+        if (current) setCircuit(result.data);
+      })
+      .catch(() => {
+        if (current) setError('Page DM sending status could not be loaded');
       });
     return () => {
       current = false;
@@ -91,6 +111,31 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
       setError(cause instanceof Error ? cause.message : 'Page module could not be saved');
     } finally {
       setSaving(null);
+    }
+  }
+
+  async function clearCircuit() {
+    if (!circuit?.haltedAt || clearingCircuit) return;
+    setClearingCircuit(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/provider-accounts/${accountId}/facebook-dm-circuit/clear`,
+        {
+          method: 'POST',
+          headers: { 'x-csrf-token': getCsrfToken() },
+        },
+      );
+      const result = (await response.json()) as { data: DmCircuit | null; error: string | null };
+      if (!response.ok || !result.data)
+        throw new Error(result.error ?? 'Page DM sending could not resume');
+      setCircuit(result.data);
+      setConfirmCircuitClear(false);
+      setAnnouncement('Page DM sending resumed for this Page.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Page DM sending could not resume');
+    } finally {
+      setClearingCircuit(false);
     }
   }
 
@@ -174,6 +219,50 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
     >
       <strong>Optional Page modules</strong>
       <small>Local settings only. Provider permissions are shown separately.</small>
+      {circuit?.haltedAt && (
+        <div className="facebook-dm-circuit-status" role="status">
+          <strong>Page DM sending paused</strong>
+          <small>
+            Repeated provider rejections halted scheduled sends for this Page. Pending messages
+            remain queued. Check the provider issue before resuming.
+          </small>
+          {confirmCircuitClear ? (
+            <div className="facebook-dm-circuit-confirm">
+              <small>
+                Resuming permits pending Page DMs to dispatch again under their normal checks.
+              </small>
+              <button
+                type="button"
+                className="facebook-dm-circuit-resume secondary-button"
+                disabled={clearingCircuit}
+                onClick={() => void clearCircuit()}
+              >
+                {clearingCircuit ? 'Resuming…' : 'Confirm resume'}
+              </button>
+              <button
+                type="button"
+                className="facebook-dm-circuit-cancel secondary-button"
+                disabled={clearingCircuit}
+                onClick={() => {
+                  setConfirmCircuitClear(false);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="facebook-dm-circuit-review secondary-button"
+              onClick={() => {
+                setConfirmCircuitClear(true);
+              }}
+            >
+              Review resume
+            </button>
+          )}
+        </div>
+      )}
       {state &&
         (['comments', 'dms'] as const).map((module) => (
           <div key={module}>

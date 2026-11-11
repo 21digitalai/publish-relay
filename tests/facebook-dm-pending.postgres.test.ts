@@ -68,6 +68,7 @@ async function setup() {
     '0099_page_dm_pre_send_attempts.sql',
     '0100_page_dm_grouped_approval.sql',
     '0104_page_dm_autonomous_groups.sql',
+    '0117_facebook_dm_failure_circuit.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -75,6 +76,50 @@ async function setup() {
 }
 
 describe('Page DM pending intent', () => {
+  it('does not claim a halted Page and preserves its pending action for owner clearance', async () => {
+    const { pg, database } = await setup();
+    try {
+      await pg.query(
+        `INSERT INTO facebook_page_dm_failure_circuit
+        (workspace_id, account_id, consecutive_failures, halted_at)
+        VALUES ($1, $2, 3, now())`,
+        [workspaceId, accountId],
+      );
+      await pg.query(
+        `INSERT INTO facebook_page_dm_pending_intents
+        (workspace_id, account_id, conversation_id, client_action_id, request_fingerprint,
+         actor_type, actor_id, text_body, due_at)
+        VALUES ($1, $2, 't_123', $3, 'fingerprint', 'user', $4, 'Pending', now() - interval '1 minute')`,
+        [workspaceId, accountId, actionId, actorId],
+      );
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'w',
+          now: new Date(),
+          leaseMs: 30_000,
+          limit: 1,
+        }),
+      ).toEqual([]);
+      const rows = await pg.query(
+        'SELECT status, client_action_id FROM facebook_page_dm_pending_intents',
+      );
+      expect(rows.rows).toEqual([{ status: 'pending', client_action_id: actionId }]);
+      await pg.query(
+        'UPDATE facebook_page_dm_failure_circuit SET halted_at=NULL WHERE account_id=$1',
+        [accountId],
+      );
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'w',
+          now: new Date(),
+          leaseMs: 30_000,
+          limit: 1,
+        }),
+      ).toHaveLength(1);
+    } finally {
+      await pg.close();
+    }
+  });
   it('passes the reviewed inbound identity to the canonical sender', async () => {
     const { pg, database } = await setup();
     try {

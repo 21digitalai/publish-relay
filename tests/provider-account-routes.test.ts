@@ -31,6 +31,14 @@ vi.mock('../src/modules/providers/tiktok-capabilities.service.js', () => ({
   fetchTikTokCapabilitySnapshot: vi.fn(),
   TikTokCapabilityUnavailableError: class extends Error {},
 }));
+vi.mock('../src/modules/providers/facebook-dm-action.repository.js', () => ({
+  readPageDmFailureCircuit: vi.fn(() =>
+    Promise.resolve({ consecutiveFailures: 3, haltedAt: new Date('2026-11-11T13:00:00Z') }),
+  ),
+  clearPageDmFailureCircuit: vi.fn(() =>
+    Promise.resolve({ consecutiveFailures: 0, haltedAt: null }),
+  ),
+}));
 
 import { authorizeRequest } from '../src/modules/identity/auth.routes.js';
 import {
@@ -45,6 +53,10 @@ import {
   setExposedPageCalendarVisibility,
 } from '../src/modules/credentials/provider-account-exposure.service.js';
 import { fetchTikTokCapabilitySnapshot } from '../src/modules/providers/tiktok-capabilities.service.js';
+import {
+  clearPageDmFailureCircuit,
+  readPageDmFailureCircuit,
+} from '../src/modules/providers/facebook-dm-action.repository.js';
 
 const accountId = '00000000-0000-4000-8000-000000000204';
 const targetWorkspaceId = '00000000-0000-4000-8000-000000000205';
@@ -62,6 +74,35 @@ async function application(withTikTok = false) {
 }
 
 describe('provider account routes', () => {
+  it('keeps Page DM circuit recovery owner-scoped, CSRF-protected, and Page-bound', async () => {
+    const app = await application();
+    const path = `/api/provider-accounts/${accountId}/facebook-dm-circuit`;
+    vi.mocked(authorizeRequest).mockResolvedValue({ ...identity, role: 'member' } as never);
+    expect((await app.inject({ method: 'GET', url: path })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: `${path}/clear` })).statusCode).toBe(403);
+    vi.mocked(authorizeRequest).mockResolvedValue({ ...identity, role: 'owner' } as never);
+    expect((await app.inject({ method: 'GET', url: path })).statusCode).toBe(200);
+    expect(readPageDmFailureCircuit).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: identity.workspaceId,
+      accountId,
+    });
+    expect((await app.inject({ method: 'POST', url: `${path}/clear` })).statusCode).toBe(403);
+    const response = await app.inject({
+      method: 'POST',
+      url: `${path}/clear`,
+      headers: { cookie: 'publish_relay_csrf=token', 'x-csrf-token': 'token' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(clearPageDmFailureCircuit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: identity.workspaceId,
+        accountId,
+        actorId: identity.userId,
+      }),
+    );
+    await app.close();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(authorizeRequest).mockResolvedValue(identity as never);

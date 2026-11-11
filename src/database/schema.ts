@@ -795,6 +795,27 @@ export const facebookPageDmNoGo = pgTable(
   ],
 );
 
+export const facebookPageDmFailureCircuit = pgTable(
+  'facebook_page_dm_failure_circuit',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    haltedAt: timestamp('halted_at', { withTimezone: true }),
+    lastActionId: uuid('last_action_id'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_failure_circuit_account_fk',
+    }).onDelete('cascade'),
+    check('facebook_page_dm_failure_circuit_count_check', sql`${table.consecutiveFailures} >= 0`),
+  ],
+);
+
 export const facebookPageDmMemory = pgTable(
   'facebook_page_dm_memory',
   {

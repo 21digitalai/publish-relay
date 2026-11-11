@@ -131,6 +131,47 @@ beforeEach(async () => {
 afterEach(async () => postgres.close());
 
 describe('Facebook DM action PostgreSQL ledger', () => {
+  it('refuses campaign-final reopen without the exact confirmed action ledger row', async () => {
+    const final = { ...key, finalExit: true };
+    const reserved = await reserveFacebookDmAction(database, final);
+    if (reserved.kind !== 'new') throw new Error('Expected final reservation');
+    await settleFacebookDmAction(database, {
+      ...final,
+      reservationId: reserved.id,
+      outcome: { state: 'confirmed', messageId: 'mid_final' },
+    });
+    const reopen = { ...key, actorId, requestId: 'owner-reopen-missing-ledger' };
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    for (const [column, value, original] of [
+      ['state', 'failed', 'confirmed'],
+      ['provider_message_id', 'other_mid', 'mid_final'],
+      ['final_exit', false, true],
+    ] as const) {
+      await postgres.query(
+        `UPDATE facebook_page_dm_actions SET ${column}=$1 WHERE client_action_id=$2`,
+        [value, actionId],
+      );
+      await expect(reopenCampaignFinalConversation(database, reopen)).rejects.toThrow(
+        'Confirmed campaign-final action receipt required',
+      );
+      await postgres.query(
+        `UPDATE facebook_page_dm_actions SET ${column}=$1 WHERE client_action_id=$2`,
+        [original, actionId],
+      );
+    }
+    await postgres.query('DELETE FROM facebook_page_dm_actions WHERE client_action_id=$1', [
+      actionId,
+    ]);
+    await expect(reopenCampaignFinalConversation(database, reopen)).rejects.toThrow(
+      'Confirmed campaign-final action receipt required',
+    );
+    expect((await postgres.query('SELECT reason FROM facebook_page_dm_no_go')).rows).toEqual([
+      { reason: 'campaign_final' },
+    ]);
+    expect((await postgres.query('SELECT terminal FROM facebook_page_dm_memory')).rows).toEqual([
+      { terminal: true },
+    ]);
+  });
   it('settles a one-time bio-link receipt only on confirmed provider delivery', async () => {
     const mention = { ...key, bioLinkMention: true };
     const reserved = await reserveFacebookDmAction(database, mention);

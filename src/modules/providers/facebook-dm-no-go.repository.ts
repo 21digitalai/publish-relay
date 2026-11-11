@@ -295,6 +295,23 @@ export async function reopenCampaignFinalConversation(
       .limit(1);
     if (blocked?.reason !== 'campaign_final' || !blocked.finalActionId || !blocked.finalMessageId)
       throw new CampaignFinalReopenError('Confirmed campaign-final receipt required');
+    const [confirmedAction] = await tx
+      .select({ id: facebookPageDmActions.id })
+      .from(facebookPageDmActions)
+      .where(
+        and(
+          eq(facebookPageDmActions.workspaceId, input.workspaceId),
+          eq(facebookPageDmActions.accountId, input.accountId),
+          eq(facebookPageDmActions.conversationId, input.conversationId),
+          eq(facebookPageDmActions.clientActionId, blocked.finalActionId),
+          eq(facebookPageDmActions.providerMessageId, blocked.finalMessageId),
+          eq(facebookPageDmActions.state, 'confirmed'),
+          eq(facebookPageDmActions.finalExit, true),
+        ),
+      )
+      .limit(1);
+    if (!confirmedAction)
+      throw new CampaignFinalReopenError('Confirmed campaign-final action receipt required');
     const [unsettledAction] = await tx
       .select({ id: facebookPageDmActions.id })
       .from(facebookPageDmActions)

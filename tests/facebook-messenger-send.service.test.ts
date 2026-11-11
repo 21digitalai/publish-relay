@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   noGo: vi.fn(),
   noGoInTransaction: vi.fn(),
   lock: vi.fn(),
+  bioMention: vi.fn(),
 }));
 vi.mock('../src/modules/providers/facebook-page-read-context.service.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -28,6 +29,9 @@ vi.mock('../src/modules/providers/facebook-dm-no-go.repository.js', () => ({
   isPageConversationNoGo: mocks.noGo,
   isPageConversationNoGoInTransaction: mocks.noGoInTransaction,
   lockPageDmAccount: mocks.lock,
+}));
+vi.mock('../src/modules/providers/facebook-dm-bio-link.repository.js', () => ({
+  hasPageDmBioLinkMention: mocks.bioMention,
 }));
 vi.mock('../src/database/tenant-transaction.js', () => ({ withTenantTransaction: mocks.tenant }));
 vi.mock('../src/modules/policy/action-policy.js', () => ({ enforceWorkspaceAction: mocks.policy }));
@@ -73,9 +77,27 @@ beforeEach(() => {
   mocks.noGo.mockResolvedValue(false);
   mocks.noGoInTransaction.mockResolvedValue(false);
   mocks.reserve.mockResolvedValue({ kind: 'new', id: '00000000-0000-4000-8000-000000000005' });
+  mocks.bioMention.mockResolvedValue(false);
 });
 
 describe('Facebook inbound-only send command', () => {
+  it('refuses a second explicit bio mention before provider I/O', async () => {
+    const client = runtime([
+      { id: 'in_1', senderId: 'psid_7', createdAt: new Date().toISOString() },
+    ]);
+    mocks.bioMention.mockResolvedValue(true);
+    await expect(
+      sendAccountPageConversationMessage(client as never, { ...input, bioLinkMention: true }),
+    ).resolves.toEqual({ state: 'failed', failureStatus: 409 });
+    expect(client.client.sendPageMessage).not.toHaveBeenCalled();
+    expect(mocks.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        bioLinkMention: true,
+        outcome: { state: 'failed', failureStatus: 409 },
+      }),
+    );
+  });
   it('keeps confirmed final settlement under the Page lock before another send can POST', async () => {
     let releaseProvider: ((messageId: string) => void) | undefined;
     let previousLock = Promise.resolve();

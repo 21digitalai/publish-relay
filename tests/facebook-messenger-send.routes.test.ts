@@ -77,12 +77,17 @@ describe('Facebook Page DM send machine route', () => {
       const response = await app.inject({
         method: 'POST',
         url: path,
-        payload: { clientActionId, text: 'I will stop replying here', finalExit: true },
+        payload: {
+          clientActionId,
+          text: 'I will stop replying here',
+          finalExit: true,
+          bioLinkMention: true,
+        },
       });
       expect(response.statusCode).toBe(201);
       expect(mocks.send).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ finalExit: true, conversationId: 't_123' }),
+        expect.objectContaining({ finalExit: true, bioLinkMention: true, conversationId: 't_123' }),
       );
       expect(response.body).not.toContain('finalExit');
     } finally {
@@ -148,6 +153,7 @@ describe('Facebook Page DM send machine route', () => {
           clientActionId,
           texts: ['First', 'Second'],
           finalExit: true,
+          bioLinkMention: true,
           expectedLatestInboundMessageId: 'mid-1',
         },
       });
@@ -160,6 +166,7 @@ describe('Facebook Page DM send machine route', () => {
           conversationId: 't_123',
           texts: ['First', 'Second'],
           finalExit: true,
+          bioLinkMention: true,
           expectedLatestInboundMessageId: 'mid-1',
         }),
       );

@@ -834,6 +834,20 @@
       "when": 1794405000000,
       "tag": "0118_facebook_dm_final_exit_receipt",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1794405200000,
+      "tag": "0119_facebook_dm_active_days",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1794405300000,
+      "tag": "0120_facebook_dm_bio_link_receipt",
+      "breakpoints": true
     }
   ]
 }

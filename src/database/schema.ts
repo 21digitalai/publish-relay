@@ -684,6 +684,7 @@ export const facebookPageDmActions = pgTable(
     failureTraceId: text('failure_trace_id'),
     failureTransient: boolean('failure_transient'),
     finalExit: boolean('final_exit').notNull().default(false),
+    bioLinkMention: boolean('bio_link_mention').notNull().default(false),
     actorType: actorType('actor_type').notNull(),
     actorId: uuid('actor_id').notNull(),
     ...timestamps,
@@ -723,6 +724,7 @@ export const facebookPageDmPendingIntents = pgTable(
     gapSeconds: integer('gap_seconds'),
     expectedLatestInboundMessageId: text('expected_latest_inbound_message_id'),
     finalExit: boolean('final_exit').notNull().default(false),
+    bioLinkMention: boolean('bio_link_mention').notNull().default(false),
     preSendAttempts: integer('pre_send_attempts').notNull().default(0),
     status: text('status').notNull().default('pending'),
     leaseOwner: text('lease_owner'),
@@ -838,6 +840,9 @@ export const facebookPageDmMemory = pgTable(
     finalExitAt: timestamp('final_exit_at', { withTimezone: true }),
     finalActionId: uuid('final_action_id'),
     finalMessageId: text('final_message_id'),
+    bioLinkMentionAt: timestamp('bio_link_mention_at', { withTimezone: true }),
+    bioLinkActionId: uuid('bio_link_action_id'),
+    bioLinkMessageId: text('bio_link_message_id'),
     terminal: boolean('terminal').notNull().default(false),
     unansweredFollowUp: boolean('unanswered_follow_up').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -848,6 +853,31 @@ export const facebookPageDmMemory = pgTable(
       columns: [table.workspaceId, table.accountId],
       foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
       name: 'facebook_page_dm_memory_account_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
+export const facebookPageDmActiveDays = pgTable(
+  'facebook_page_dm_active_days',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    civilDay: text('civil_day').notNull(),
+    inboundMessageId: text('inbound_message_id').notNull(),
+    inboundAt: timestamp('inbound_at', { withTimezone: true }).notNull(),
+    outboundActionId: uuid('outbound_action_id').notNull(),
+    outboundMessageId: text('outbound_message_id').notNull(),
+    outboundAt: timestamp('outbound_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.workspaceId, table.accountId, table.conversationId, table.civilDay],
+    }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'facebook_page_dm_active_days_account_fk',
     }).onDelete('cascade'),
   ],
 );

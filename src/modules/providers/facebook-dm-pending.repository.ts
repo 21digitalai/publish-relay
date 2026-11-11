@@ -18,6 +18,7 @@ import {
   isPageConversationNoGoInTransaction,
   lockPageDmAccount,
 } from './facebook-dm-no-go.repository.js';
+import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
 
 export interface PendingDmInput {
   workspaceId: string;
@@ -28,6 +29,7 @@ export interface PendingDmInput {
   actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
   text: string;
   finalExit?: boolean | undefined;
+  bioLinkMention?: boolean | undefined;
   dueAt: Date;
 }
 
@@ -134,6 +136,7 @@ const projection = {
   sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
   expectedLatestInboundMessageId: facebookPageDmPendingIntents.expectedLatestInboundMessageId,
   finalExit: facebookPageDmPendingIntents.finalExit,
+  bioLinkMention: facebookPageDmPendingIntents.bioLinkMention,
   leaseOwner: facebookPageDmPendingIntents.leaseOwner,
 };
 
@@ -141,6 +144,8 @@ const projection = {
 async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmInput) {
   await lockPageDmAccount(tx, input);
   if (await isPageConversationNoGoInTransaction(tx, input)) throw new PendingDmNoGoError();
+  if (input.bioLinkMention && (await hasPageDmBioLinkMention(tx, input)))
+    throw new PendingDmConflictError('A Page bio-link mention is already confirmed or unresolved');
   const [sent] = await tx
     .select({ id: facebookPageDmActions.id })
     .from(facebookPageDmActions)
@@ -180,6 +185,7 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
       actorId: input.actor.id,
       textBody: input.text,
       finalExit: input.finalExit ?? false,
+      bioLinkMention: input.bioLinkMention ?? false,
       dueAt: input.dueAt,
     })
     .onConflictDoNothing()
@@ -202,7 +208,8 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
     existing.actorType !== actorType ||
     existing.actorId !== input.actor.id ||
     existing.text !== input.text ||
-    existing.finalExit !== (input.finalExit ?? false)
+    existing.finalExit !== (input.finalExit ?? false) ||
+    existing.bioLinkMention !== (input.bioLinkMention ?? false)
   )
     throw new PendingDmConflictError();
   return existing;

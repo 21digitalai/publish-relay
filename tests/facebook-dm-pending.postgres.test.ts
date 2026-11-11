@@ -56,7 +56,9 @@ async function setup() {
       status text NOT NULL, revision integer NOT NULL DEFAULT 1,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE facebook_page_dm_actions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id uuid NOT NULL, client_action_id uuid NOT NULL, request_fingerprint text NOT NULL DEFAULT 'other-request',
+      workspace_id uuid NOT NULL, account_id uuid NOT NULL DEFAULT '${accountId}',
+      conversation_id text NOT NULL DEFAULT 't_123', client_action_id uuid NOT NULL,
+      request_fingerprint text NOT NULL DEFAULT 'other-request',
       state text NOT NULL DEFAULT 'reserved');
     INSERT INTO workspaces VALUES ('${workspaceId}'), ('${otherWorkspaceId}');
     INSERT INTO provider_accounts VALUES ('${accountId}', '${workspaceId}', 'facebook_page');
@@ -71,6 +73,7 @@ async function setup() {
     '0104_page_dm_autonomous_groups.sql',
     '0117_facebook_dm_failure_circuit.sql',
     '0118_facebook_dm_final_exit_receipt.sql',
+    '0120_facebook_dm_bio_link_receipt.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -88,22 +91,30 @@ describe('Page DM pending intent', () => {
         clientActionId: actionId,
         texts: ['Opening', 'Final exit'],
         finalExit: true,
+        bioLinkMention: true,
         expectedLatestInboundMessageId: 'inbound-1',
         windowDeadline: new Date(Date.now() + 3600_000),
         actor: { type: 'user' as const, id: actorId },
       };
       const group = await schedulePageDmGroup(database, input);
-      const rows = await pg.query<{ final_exit: boolean; status: string }>(
-        'SELECT final_exit, status FROM facebook_page_dm_pending_intents WHERE group_id=$1 ORDER BY sequence_index',
+      const rows = await pg.query<{
+        final_exit: boolean;
+        bio_link_mention: boolean;
+        status: string;
+      }>(
+        'SELECT final_exit, bio_link_mention, status FROM facebook_page_dm_pending_intents WHERE group_id=$1 ORDER BY sequence_index',
         [group.groupId],
       );
       expect(rows.rows).toEqual([
-        { final_exit: false, status: 'pending' },
-        { final_exit: true, status: 'waiting' },
+        { final_exit: false, bio_link_mention: false, status: 'pending' },
+        { final_exit: true, bio_link_mention: true, status: 'waiting' },
       ]);
       expect((await schedulePageDmGroup(database, input)).id).toBe(group.id);
       await expect(
         schedulePageDmGroup(database, { ...input, finalExit: false }),
+      ).rejects.toBeInstanceOf(PendingDmConflictError);
+      await expect(
+        schedulePageDmGroup(database, { ...input, bioLinkMention: false }),
       ).rejects.toBeInstanceOf(PendingDmConflictError);
     } finally {
       await pg.close();

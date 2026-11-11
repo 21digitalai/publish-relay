@@ -713,7 +713,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           responses: {
             '201': {
               description:
-                'Provider message confirmed; projected action state and message ID. Explicit finalExit also records Page-local terminal/no-go in the same settlement transaction.',
+                'Provider message confirmed; projected action state and message ID. Explicit finalExit records Page-local terminal/no-go; explicit bioLinkMention records a one-time Page-local mention receipt only after confirmed delivery.',
             },
             '202': { description: 'Provider outcome unknown; no automatic resend' },
             '400': { description: 'Invalid Page message request' },
@@ -731,7 +731,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         post: {
           operationId: 'scheduleFacebookPageDmGroup',
           description:
-            'Atomically schedule 1–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; optional finalExit marks only the last bubble and does not suppress the conversation before confirmed delivery. No provider send on this request.',
+            'Atomically schedule 1–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; optional finalExit or bioLinkMention marks only the last bubble and has no confirmed effect before provider delivery. No provider send on this request.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
             {

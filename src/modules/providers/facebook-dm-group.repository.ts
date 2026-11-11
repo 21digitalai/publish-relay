@@ -10,6 +10,7 @@ import {
   lockPageDmAccount,
 } from './facebook-dm-no-go.repository.js';
 import { PendingDmConflictError, PendingDmNoGoError } from './facebook-dm-pending.repository.js';
+import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
 
 interface GroupKey {
   workspaceId: string;
@@ -21,6 +22,7 @@ interface GroupRequest extends GroupKey {
   clientActionId: string;
   texts: string[];
   finalExit?: boolean | undefined;
+  bioLinkMention?: boolean | undefined;
   expectedLatestInboundMessageId: string;
   windowDeadline: Date;
   actor: { type: 'api-key' | 'delegated' | 'user'; id: string };
@@ -35,6 +37,7 @@ function fingerprint(input: Omit<GroupRequest, 'windowDeadline'>) {
         texts: input.texts,
         expectedLatestInboundMessageId: input.expectedLatestInboundMessageId,
         ...(input.finalExit ? { finalExit: true } : {}),
+        ...(input.bioLinkMention ? { bioLinkMention: true } : {}),
       }),
     )
     .digest('hex');
@@ -132,6 +135,10 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       .limit(1);
     if (sent) throw new PendingDmConflictError();
     if (await isPageConversationNoGoInTransaction(tx, input)) throw new PendingDmNoGoError();
+    if (input.bioLinkMention && (await hasPageDmBioLinkMention(tx, input)))
+      throw new PendingDmConflictError(
+        'A Page bio-link mention is already confirmed or unresolved',
+      );
     const [active] = await tx
       .select({ id: facebookPageDmPendingIntents.id })
       .from(facebookPageDmPendingIntents)
@@ -186,6 +193,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         actorId: input.actor.id,
         textBody: input.texts[0] ?? '',
         finalExit: Boolean(input.finalExit && input.texts.length === 1),
+        bioLinkMention: Boolean(input.bioLinkMention && input.texts.length === 1),
         dueAt,
         groupId,
         sequenceIndex: 0,
@@ -206,6 +214,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         actorId: input.actor.id,
         textBody: input.texts[index] ?? '',
         finalExit: Boolean(input.finalExit && index === input.texts.length - 1),
+        bioLinkMention: Boolean(input.bioLinkMention && index === input.texts.length - 1),
         dueAt,
         groupId,
         sequenceIndex: index,

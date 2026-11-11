@@ -86,6 +86,7 @@ async function existingActionState(database: NodePgDatabase, intent: Intent) {
           conversationId: intent.conversationId,
           text: intent.text,
           ...(intent.finalExit ? { finalExit: true } : {}),
+          ...(intent.bioLinkMention ? { bioLinkMention: true } : {}),
         }),
       )
       .digest('hex');
@@ -108,6 +109,7 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<DispatchSt
         clientActionId: intent.clientActionId,
         text: intent.text,
         ...(intent.finalExit ? { finalExit: true } : {}),
+        ...(intent.bioLinkMention ? { bioLinkMention: true } : {}),
         ...(intent.expectedLatestInboundMessageId
           ? { expectedLatestInboundMessageId: intent.expectedLatestInboundMessageId }
           : {}),

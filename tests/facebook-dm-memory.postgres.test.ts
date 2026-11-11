@@ -41,6 +41,18 @@ describe('Page DM working memory', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0119_facebook_dm_active_days.sql', import.meta.url),
+          'utf8',
+        ),
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0120_facebook_dm_bio_link_receipt.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const key = { workspaceId, accountId };
       const firstContactAt = new Date('2026-11-01T00:00:00Z');

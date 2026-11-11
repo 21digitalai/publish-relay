@@ -10,6 +10,7 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { lockPageDmAccount } from './facebook-dm-no-go.repository.js';
+import { recordPageDmActiveDay } from './facebook-dm-active-days.repository.js';
 
 const MAX_CONSECUTIVE_DEFINITE_FAILURES = 3;
 
@@ -22,6 +23,7 @@ export interface FacebookDmActionKey {
   receiverLabel?: string | null;
   requestFingerprint: string;
   finalExit?: boolean;
+  bioLinkMention?: boolean;
   actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
 }
 
@@ -114,6 +116,7 @@ export async function reserveFacebookDmAction(
         receiverLabel: input.receiverLabel?.trim().slice(0, 200) ?? null,
         requestFingerprint: input.requestFingerprint,
         finalExit: input.finalExit ?? false,
+        bioLinkMention: input.bioLinkMention ?? false,
         actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
         actorId: input.actor.id,
       })
@@ -130,6 +133,8 @@ export type FacebookDmSettlement = FacebookDmActionKey & {
   reservationId: string;
   outcome: FacebookDmOutcome;
   failureEvidence?: FacebookDmFailureEvidence;
+  inboundReceipt?: { messageId: string; at: Date };
+  confirmedAt?: Date;
 };
 
 export async function settleFacebookDmAction(
@@ -179,10 +184,51 @@ export async function settleFacebookDmActionInTransaction(
         eq(facebookPageDmActions.id, input.reservationId),
         eq(facebookPageDmActions.state, 'reserved'),
         eq(facebookPageDmActions.finalExit, input.finalExit ?? false),
+        eq(facebookPageDmActions.bioLinkMention, input.bioLinkMention ?? false),
       ),
     )
     .returning({ id: facebookPageDmActions.id });
   if (!updated) throw new Error('Facebook DM settlement lost reservation');
+  if (input.outcome.state === 'confirmed' && input.inboundReceipt) {
+    await recordPageDmActiveDay(transaction, {
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      inboundMessageId: input.inboundReceipt.messageId,
+      inboundAt: input.inboundReceipt.at,
+      outboundActionId: input.clientActionId,
+      outboundMessageId: input.outcome.messageId,
+      outboundAt: input.confirmedAt ?? new Date(),
+    });
+  }
+  if (input.bioLinkMention && input.outcome.state === 'confirmed') {
+    const at = input.confirmedAt ?? new Date();
+    await transaction
+      .insert(facebookPageDmMemory)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        bioLinkMentionAt: at,
+        bioLinkActionId: input.clientActionId,
+        bioLinkMessageId: input.outcome.messageId,
+        lastOutboundReceiptRef: input.outcome.messageId,
+      })
+      .onConflictDoUpdate({
+        target: [
+          facebookPageDmMemory.workspaceId,
+          facebookPageDmMemory.accountId,
+          facebookPageDmMemory.conversationId,
+        ],
+        set: {
+          bioLinkMentionAt: at,
+          bioLinkActionId: input.clientActionId,
+          bioLinkMessageId: input.outcome.messageId,
+          lastOutboundReceiptRef: input.outcome.messageId,
+          updatedAt: new Date(),
+        },
+      });
+  }
   if (input.finalExit && input.outcome.state === 'confirmed') {
     await transaction
       .insert(facebookPageDmNoGo)

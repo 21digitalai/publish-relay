@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.9.7';
-const CLI_VERSION = '1.8.7';
+const CONTRACT_VERSION = '1.9.8';
+const CLI_VERSION = '1.8.8';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),

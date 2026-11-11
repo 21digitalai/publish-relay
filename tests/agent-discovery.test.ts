@@ -92,8 +92,8 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.9.7');
-    expect(manifest.data.cliVersion).toBe('1.8.7');
+    expect(manifest.data.contractVersion).toBe('1.9.8');
+    expect(manifest.data.cliVersion).toBe('1.8.8');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('proposals create --body-file');
     expect(skill.body).toContain('proposals status <proposal-id>');

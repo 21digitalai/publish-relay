@@ -21,6 +21,7 @@ import {
   type FacebookDmReservation,
 } from './facebook-dm-action.repository.js';
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
+import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
 import {
   PageReadUnavailableError,
   withPageReadToken,
@@ -36,6 +37,7 @@ const commandSchema = z.strictObject({
   clientActionId: z.uuid(),
   text: z.string().trim().min(1).max(2000),
   finalExit: z.boolean().optional(),
+  bioLinkMention: z.boolean().optional(),
   expectedLatestInboundMessageId: z.string().trim().min(1).max(256).optional(),
   actor: z.strictObject({
     type: z.enum(['user', 'api-key', 'delegated']),
@@ -169,6 +171,7 @@ export async function sendAccountPageConversationMessage(
     conversationId: command.conversationId,
     text: command.text,
     finalExit: command.finalExit ?? false,
+    bioLinkMention: command.bioLinkMention ?? false,
     clientActionId: command.clientActionId,
     actor: command.actor,
     requestFingerprint: createHash('sha256')
@@ -178,6 +181,7 @@ export async function sendAccountPageConversationMessage(
           conversationId: command.conversationId,
           text: command.text,
           ...(command.finalExit ? { finalExit: true } : {}),
+          ...(command.bioLinkMention ? { bioLinkMention: true } : {}),
         }),
       )
       .digest('hex'),
@@ -214,8 +218,17 @@ export async function sendAccountPageConversationMessage(
     const dispatch = await withTenantTransaction(runtime.database, command, async (tx) => {
       await lockPageDmAccount(tx, command);
       if (await isPageConversationNoGoInTransaction(tx, command)) return null;
+      if (command.bioLinkMention && (await hasPageDmBioLinkMention(tx, command))) {
+        const outcome = { state: 'failed' as const, failureStatus: 409 };
+        await settleFacebookDmActionInTransaction(tx, {
+          ...action,
+          reservationId: reservation.id,
+          outcome,
+        });
+        return { outcome };
+      }
       let result:
-        | { outcome: { state: 'confirmed'; messageId: string } }
+        | { outcome: { state: 'confirmed'; messageId: string }; confirmedAt: Date }
         | {
             outcome: { state: 'failed'; failureStatus: number };
             failureEvidence: {
@@ -233,7 +246,7 @@ export async function sendAccountPageConversationMessage(
           text: command.text,
           accessToken: token,
         });
-        result = { outcome: { state: 'confirmed', messageId } };
+        result = { outcome: { state: 'confirmed', messageId }, confirmedAt: new Date() };
       } catch (error) {
         const isDefiniteFailure =
           error instanceof FacebookRequestError &&
@@ -258,6 +271,15 @@ export async function sendAccountPageConversationMessage(
         receiverLabel: recipient.label,
         reservationId: reservation.id,
         outcome: result.outcome,
+        ...(result.outcome.state === 'confirmed' && recipient.latestInboundMessageId
+          ? {
+              inboundReceipt: {
+                messageId: recipient.latestInboundMessageId,
+                at: recipient.latestInboundAt,
+              },
+            }
+          : {}),
+        ...('confirmedAt' in result ? { confirmedAt: result.confirmedAt } : {}),
         ...('failureEvidence' in result ? { failureEvidence: result.failureEvidence } : {}),
       });
       return result;

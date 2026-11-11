@@ -16,6 +16,10 @@ import {
   reopenCampaignFinalConversation,
   setPageConversationNoGo,
 } from '../src/modules/providers/facebook-dm-no-go.repository.js';
+import { getPageDmMemoryMany } from '../src/modules/providers/facebook-dm-memory.repository.js';
+import { readPageDmActiveDayStreaks } from '../src/modules/providers/facebook-dm-active-days.repository.js';
+import { hasPageDmBioLinkMention } from '../src/modules/providers/facebook-dm-bio-link.repository.js';
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const accountId = '00000000-0000-4000-8000-000000000002';
@@ -103,6 +107,18 @@ beforeEach(async () => {
       'utf8',
     ),
   );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0119_facebook_dm_active_days.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0120_facebook_dm_bio_link_receipt.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   await postgres.exec(`
     CREATE ROLE publish_relay_app NOLOGIN NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO publish_relay_app;
@@ -115,6 +131,153 @@ beforeEach(async () => {
 afterEach(async () => postgres.close());
 
 describe('Facebook DM action PostgreSQL ledger', () => {
+  it('settles a one-time bio-link receipt only on confirmed provider delivery', async () => {
+    const mention = { ...key, bioLinkMention: true };
+    const reserved = await reserveFacebookDmAction(database, mention);
+    if (reserved.kind !== 'new') throw new Error('Expected new mention reservation');
+    const otherAction = { ...key, clientActionId: '00000000-0000-4000-8000-000000000087' };
+    expect(
+      await withTenantTransaction(database, mention, (tx) =>
+        hasPageDmBioLinkMention(tx, otherAction),
+      ),
+    ).toBe(true);
+    expect(
+      await withTenantTransaction(database, mention, (tx) =>
+        hasPageDmBioLinkMention(tx, {
+          ...otherAction,
+          accountId: '00000000-0000-4000-8000-000000000099',
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      (await getPageDmMemoryMany(database, { ...key, conversationIds: ['t_123'] }))[0],
+    ).toMatchObject({ bioLinkMentionAt: null, bioLinkActionId: null });
+    await settleFacebookDmAction(database, {
+      ...mention,
+      reservationId: reserved.id,
+      outcome: { state: 'confirmed', messageId: 'mid_bio' },
+      confirmedAt: new Date('2026-11-11T10:00:00Z'),
+    });
+    expect(
+      (await getPageDmMemoryMany(database, { ...key, conversationIds: ['t_123'] }))[0],
+    ).toMatchObject({
+      bioLinkMentionAt: new Date('2026-11-11T10:00:00Z'),
+      bioLinkActionId: actionId,
+      bioLinkMessageId: 'mid_bio',
+    });
+    expect(
+      await withTenantTransaction(database, mention, (tx) =>
+        hasPageDmBioLinkMention(tx, otherAction),
+      ),
+    ).toBe(true);
+    expect(await reserveFacebookDmAction(database, mention)).toMatchObject({
+      kind: 'existing',
+      outcome: { state: 'confirmed', messageId: 'mid_bio' },
+    });
+  });
+  it('keeps unknown bio intent unresolved but permits a new mention after definite failure', async () => {
+    const unknown = { ...key, bioLinkMention: true };
+    const first = await reserveFacebookDmAction(database, unknown);
+    if (first.kind !== 'new') throw new Error('Expected new reservation');
+    await settleFacebookDmAction(database, {
+      ...unknown,
+      reservationId: first.id,
+      outcome: { state: 'unknown' },
+    });
+    const next = { ...unknown, clientActionId: '00000000-0000-4000-8000-000000000091' };
+    expect(
+      await withTenantTransaction(database, next, (tx) => hasPageDmBioLinkMention(tx, next)),
+    ).toBe(true);
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    await postgres.query('DELETE FROM facebook_page_dm_actions WHERE client_action_id=$1', [
+      unknown.clientActionId,
+    ]);
+    const failed = await reserveFacebookDmAction(database, unknown);
+    if (failed.kind !== 'new') throw new Error('Expected replacement reservation');
+    await settleFacebookDmAction(database, {
+      ...unknown,
+      reservationId: failed.id,
+      outcome: { state: 'failed', failureStatus: 400 },
+    });
+    expect(
+      await withTenantTransaction(database, next, (tx) => hasPageDmBioLinkMention(tx, next)),
+    ).toBe(false);
+    expect(
+      (await getPageDmMemoryMany(database, { ...key, conversationIds: ['t_123'] }))[0],
+    ).toMatchObject({ bioLinkActionId: null });
+  });
+  it('counts only confirmed same-Sofia-day two-way receipts on consecutive days', async () => {
+    const days = [
+      ['2026-10-24T20:00:00Z', '2026-10-24T20:05:00Z'],
+      ['2026-10-25T21:30:00Z', '2026-10-25T21:35:00Z'],
+      ['2026-10-26T21:30:00Z', '2026-10-26T21:35:00Z'],
+    ] as const;
+    for (const [index, [inboundAt, confirmedAt]] of days.entries()) {
+      const action = {
+        ...key,
+        clientActionId: `00000000-0000-4000-8000-${String(index + 70).padStart(12, '0')}`,
+      };
+      const reserved = await reserveFacebookDmAction(database, action);
+      if (reserved.kind !== 'new') throw new Error('Expected new action');
+      await settleFacebookDmAction(database, {
+        ...action,
+        reservationId: reserved.id,
+        outcome: { state: 'confirmed', messageId: `out_${String(index)}` },
+        inboundReceipt: { messageId: `in_${String(index)}`, at: new Date(inboundAt) },
+        confirmedAt: new Date(confirmedAt),
+      });
+    }
+    const duplicate = { ...key, clientActionId: '00000000-0000-4000-8000-000000000079' };
+    const duplicateReservation = await reserveFacebookDmAction(database, duplicate);
+    if (duplicateReservation.kind !== 'new') throw new Error('Expected new action');
+    await settleFacebookDmAction(database, {
+      ...duplicate,
+      reservationId: duplicateReservation.id,
+      outcome: { state: 'confirmed', messageId: 'out_duplicate' },
+      inboundReceipt: { messageId: 'in_duplicate', at: new Date('2026-10-26T20:30:00Z') },
+      confirmedAt: new Date('2026-10-26T20:35:00Z'),
+    });
+    const mismatched = { ...key, clientActionId: '00000000-0000-4000-8000-000000000080' };
+    const mismatchedReservation = await reserveFacebookDmAction(database, mismatched);
+    if (mismatchedReservation.kind !== 'new') throw new Error('Expected new action');
+    await settleFacebookDmAction(database, {
+      ...mismatched,
+      reservationId: mismatchedReservation.id,
+      outcome: { state: 'confirmed', messageId: 'out_cross_day' },
+      inboundReceipt: { messageId: 'in_cross_day', at: new Date('2026-10-27T21:30:00Z') },
+      confirmedAt: new Date('2026-10-27T22:30:00Z'),
+    });
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    const receipts = await postgres.query(
+      'SELECT civil_day, inbound_message_id, outbound_message_id FROM facebook_page_dm_active_days ORDER BY civil_day',
+    );
+    expect(receipts.rows).toEqual([
+      { civil_day: '2026-10-24', inbound_message_id: 'in_0', outbound_message_id: 'out_0' },
+      { civil_day: '2026-10-25', inbound_message_id: 'in_1', outbound_message_id: 'out_1' },
+      { civil_day: '2026-10-26', inbound_message_id: 'in_2', outbound_message_id: 'out_2' },
+    ]);
+    expect(
+      (
+        await readPageDmActiveDayStreaks(database, {
+          ...key,
+          conversationIds: ['t_123'],
+          now: new Date('2026-10-27T10:00:00Z'),
+        })
+      ).get('t_123'),
+    ).toEqual({ activeDayStreak: 3, lastActiveDay: '2026-10-26' });
+    expect(
+      (
+        await readPageDmActiveDayStreaks(database, {
+          ...key,
+          conversationIds: ['t_123'],
+          now: new Date('2026-10-28T10:00:00Z'),
+        })
+      ).get('t_123'),
+    ).toEqual({ activeDayStreak: 0, lastActiveDay: null });
+    expect(
+      (await getPageDmMemoryMany(database, { ...key, conversationIds: ['t_123'] }))[0],
+    ).toMatchObject({ activeDayStreak: 0, lastActiveDay: null });
+  });
   it('reopens only a named confirmed final receipt and audits the owner action', async () => {
     const final = { ...key, finalExit: true };
     const reserved = await reserveFacebookDmAction(database, final);

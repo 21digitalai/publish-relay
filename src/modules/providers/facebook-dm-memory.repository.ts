@@ -3,6 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { facebookPageDmMemory, providerAccounts } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { readPageDmActiveDayStreaks } from './facebook-dm-active-days.repository.js';
 
 export interface PageDmMemoryKey {
   workspaceId: string;
@@ -40,6 +41,9 @@ function emptyMemory(conversationId: string) {
     conversationAgeDays: null as number | null,
     lastProcessedInboundId: null as string | null,
     lastOutboundReceiptRef: null as string | null,
+    bioLinkMentionAt: null as Date | null,
+    bioLinkActionId: null as string | null,
+    bioLinkMessageId: null as string | null,
     terminal: false,
     unansweredFollowUp: false,
   };
@@ -61,6 +65,9 @@ export async function getPageDmMemoryMany(
         firstContactAt: facebookPageDmMemory.firstContactAt,
         lastProcessedInboundId: facebookPageDmMemory.lastProcessedInboundId,
         lastOutboundReceiptRef: facebookPageDmMemory.lastOutboundReceiptRef,
+        bioLinkMentionAt: facebookPageDmMemory.bioLinkMentionAt,
+        bioLinkActionId: facebookPageDmMemory.bioLinkActionId,
+        bioLinkMessageId: facebookPageDmMemory.bioLinkMessageId,
         terminal: facebookPageDmMemory.terminal,
         unansweredFollowUp: facebookPageDmMemory.unansweredFollowUp,
       })
@@ -75,6 +82,7 @@ export async function getPageDmMemoryMany(
       .limit(100);
     const byId = new Map(rows.map((row) => [row.conversationId, row]));
     const now = Date.now();
+    const activeDays = await readPageDmActiveDayStreaks(tx, { ...input, now: new Date(now) });
     return input.conversationIds.flatMap((id) => {
       const row = byId.get(id);
       const memory = row
@@ -87,7 +95,7 @@ export async function getPageDmMemoryMany(
         : emptyMemory(id);
       if (input.terminal === 'exclude' && memory.terminal) return [];
       if (input.terminal === 'only' && !memory.terminal) return [];
-      return [memory];
+      return [{ ...memory, ...activeDays.get(id) }];
     });
   });
 }

@@ -6,7 +6,11 @@ import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../policy/action-policy.js';
 import { ActionPolicyDeniedError } from '../policy/action-policy.js';
-import { authorizePageEngagement } from './facebook-page-engagement.service.js';
+import {
+  authorizePageEngagement,
+  isPageDmDailyGroupLimitEnabled,
+} from './facebook-page-engagement.service.js';
+import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
 import { FacebookRequestError, type FacebookHttpClient } from './facebook-http-client.js';
 import {
   claimDuePageDms,
@@ -95,10 +99,18 @@ async function existingActionState(database: NodePgDatabase, intent: Intent) {
   });
 }
 
-async function dispatchOne(runtime: Runtime, intent: Intent): Promise<DispatchState> {
+async function dispatchOne(runtime: Runtime, intent: Intent, now: Date): Promise<DispatchState> {
   try {
     const prior = await existingActionState(runtime.database, intent);
     if (prior) return prior === 'reserved' ? 'unknown' : prior;
+    // A root delayed across midnight must not spend tomorrow's reply slot silently.
+    if (
+      intent.groupId &&
+      intent.sequenceIndex === 0 &&
+      (await isPageDmDailyGroupLimitEnabled(runtime.database, intent)) &&
+      pageDmCivilDay(intent.dueAt) !== pageDmCivilDay(now)
+    )
+      return 'failed';
     if (!(await hasCurrentAuthority(runtime.database, intent))) return 'failed';
     const outcome = await sendAccountPageConversationMessage(
       { ...runtime, policy: runtime.policy ?? allowAllActionPolicy },
@@ -170,7 +182,7 @@ export async function dispatchDuePageDms(runtime: Runtime, now = new Date()) {
     renewal.unref();
     let state: DispatchState;
     try {
-      state = await dispatchOne(runtime, intent);
+      state = await dispatchOne(runtime, intent, now);
     } finally {
       clearInterval(renewal);
     }

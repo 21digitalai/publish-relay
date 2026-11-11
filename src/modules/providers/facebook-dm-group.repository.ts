@@ -1,6 +1,6 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 
-import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { facebookPageDmActions, facebookPageDmPendingIntents } from '../../database/schema.js';
@@ -11,6 +11,8 @@ import {
 } from './facebook-dm-no-go.repository.js';
 import { PendingDmConflictError, PendingDmNoGoError } from './facebook-dm-pending.repository.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
+import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
+import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
 
 interface GroupKey {
   workspaceId: string;
@@ -180,6 +182,48 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       throw new PendingDmConflictError(
         'The Messenger reply window cannot fit another Page DM group',
       );
+    if (await isPageDmDailyGroupLimitEnabledInTransaction(tx, input)) {
+      // Page lock serializes all group creations, including separate machine callers.
+      const [sameInbound] = await tx
+        .select({ id: facebookPageDmPendingIntents.id })
+        .from(facebookPageDmPendingIntents)
+        .where(
+          and(
+            eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+            eq(facebookPageDmPendingIntents.accountId, input.accountId),
+            eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+            eq(facebookPageDmPendingIntents.sequenceIndex, 0),
+            eq(
+              facebookPageDmPendingIntents.expectedLatestInboundMessageId,
+              input.expectedLatestInboundMessageId,
+            ),
+          ),
+        )
+        .limit(1);
+      if (sameInbound) throw new PendingDmConflictError('This inbound already has a Page DM group');
+      const day = pageDmCivilDay(dueAt);
+      const [usedDay] = await tx
+        .select({ id: facebookPageDmPendingIntents.id })
+        .from(facebookPageDmPendingIntents)
+        .where(
+          and(
+            eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+            eq(facebookPageDmPendingIntents.accountId, input.accountId),
+            eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+            eq(facebookPageDmPendingIntents.sequenceIndex, 0),
+            inArray(facebookPageDmPendingIntents.status, [
+              'pending',
+              'claimed',
+              'unknown',
+              'confirmed',
+            ]),
+            sql`(${facebookPageDmPendingIntents.dueAt} AT TIME ZONE 'Europe/Sofia')::date = ${day}::date`,
+          ),
+        )
+        .limit(1);
+      if (usedDay)
+        throw new PendingDmConflictError('One Page DM group per Sofia day is already scheduled');
+    }
     const groupId = randomUUID();
     const root = await tx
       .insert(facebookPageDmPendingIntents)

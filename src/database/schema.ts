@@ -573,6 +573,7 @@ export const facebookPageEngagementModules = pgTable(
     accountId: uuid('account_id').notNull(),
     commentsEnabled: boolean('comments_enabled').notNull().default(false),
     dmsEnabled: boolean('dms_enabled').notNull().default(false),
+    dmDailyGroupLimitEnabled: boolean('dm_daily_group_limit_enabled').notNull().default(false),
     commentsProviderGrant: text('comments_provider_grant').notNull().default('unknown'),
     commentsCredentialId: uuid('comments_credential_id'),
     commentsGrantedScopes: jsonb('comments_granted_scopes').notNull().default([]),

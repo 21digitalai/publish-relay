@@ -6,7 +6,9 @@ import { getPostingAdapter } from './posting-adapter-registry.js';
 
 type Module = 'comments' | 'dms';
 type GrantEvidence = 'unknown' | 'missing' | 'verified';
-type State = Record<Module, { localEnabled: boolean; providerGrant: GrantEvidence }>;
+type State = Record<Module, { localEnabled: boolean; providerGrant: GrantEvidence }> & {
+  dmDailyGroupLimitEnabled: boolean;
+};
 interface DmCircuit {
   consecutiveFailures: number;
   haltedAt: string | null;
@@ -55,6 +57,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
   const [circuit, setCircuit] = useState<DmCircuit | null>(null);
   const [confirmCircuitClear, setConfirmCircuitClear] = useState(false);
   const [clearingCircuit, setClearingCircuit] = useState(false);
+  const [savingDailyLimit, setSavingDailyLimit] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -111,6 +114,31 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
       setError(cause instanceof Error ? cause.message : 'Page module could not be saved');
     } finally {
       setSaving(null);
+    }
+  }
+
+  async function toggleDailyLimit() {
+    if (!state || savingDailyLimit) return;
+    setSavingDailyLimit(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/provider-accounts/${accountId}/facebook-dm-daily-group-limit`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+          body: JSON.stringify({ enabled: !state.dmDailyGroupLimitEnabled }),
+        },
+      );
+      const result = (await response.json()) as { data: State | null; error: string | null };
+      if (!response.ok || !result.data)
+        throw new Error(result.error ?? 'Daily DM limit could not be saved');
+      setState(result.data);
+      setAnnouncement('Daily Page DM reply limit saved.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Daily DM limit could not be saved');
+    } finally {
+      setSavingDailyLimit(false);
     }
   }
 
@@ -219,6 +247,27 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
     >
       <strong>Optional Page modules</strong>
       <small>Local settings only. Provider permissions are shown separately.</small>
+      {state && (
+        <div>
+          <button
+            type="button"
+            className="defaults-toggle"
+            role="switch"
+            aria-checked={state.dmDailyGroupLimitEnabled}
+            disabled={savingDailyLimit}
+            onClick={() => void toggleDailyLimit()}
+          >
+            <span className="toggle-track" aria-hidden="true">
+              <span />
+            </span>
+            One autonomous DM reply group per person per Sofia day
+          </button>
+          <small>
+            Applies to scheduled agent reply groups on this Page. Other Pages and manual sends are
+            unchanged.
+          </small>
+        </div>
+      )}
       {circuit?.haltedAt && (
         <div className="facebook-dm-circuit-status" role="status">
           <strong>Page DM sending paused</strong>

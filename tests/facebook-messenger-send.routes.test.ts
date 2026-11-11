@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   groupStatus: vi.fn(),
   groupCancel: vi.fn(),
   approvalWindow: vi.fn(),
+  dailyLimit: vi.fn(),
+}));
+vi.mock('../src/modules/providers/facebook-page-engagement.service.js', async (loadOriginal) => ({
+  ...(await loadOriginal<object>()),
+  isPageDmDailyGroupLimitEnabled: mocks.dailyLimit,
 }));
 vi.mock('../src/modules/providers/facebook-dm-group.repository.js', async (loadOriginal) => ({
   ...(await loadOriginal<object>()),
@@ -48,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.hasPending.mockResolvedValue(false);
   mocks.groupReplay.mockResolvedValue(null);
+  mocks.dailyLimit.mockResolvedValue(false);
 });
 
 async function appForTest() {
@@ -69,6 +75,23 @@ async function appForTest() {
 }
 
 describe('Facebook Page DM send machine route', () => {
+  it('requires the guarded group path when this Page opts into the daily cap', async () => {
+    const app = await appForTest();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: clientActionId, kind: 'api-key' });
+      mocks.dailyLimit.mockResolvedValue(true);
+      const response = await app.inject({
+        method: 'POST',
+        url: path,
+        payload: { clientActionId, text: 'Hello' },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.body).toContain('group_required');
+      expect(mocks.send).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
   it('forwards explicit final-exit intent without changing the ordinary send response', async () => {
     const app = await appForTest();
     try {

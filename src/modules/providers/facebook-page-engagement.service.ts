@@ -22,6 +22,7 @@ export type ProviderGrantEvidence = 'unknown' | 'missing' | 'verified';
 export interface PageEngagementState {
   comments: { localEnabled: boolean; providerGrant: ProviderGrantEvidence };
   dms: { localEnabled: boolean; providerGrant: ProviderGrantEvidence };
+  dmDailyGroupLimitEnabled: boolean;
 }
 
 function pageAccountCriteria(workspaceId: string, accountId: string) {
@@ -68,6 +69,7 @@ export async function readPageEngagementState(
           )
         : false;
       return {
+        dmDailyGroupLimitEnabled: modules?.dmDailyGroupLimitEnabled ?? false,
         comments: {
           localEnabled: modules?.commentsEnabled ?? false,
           providerGrant: (modules
@@ -87,6 +89,80 @@ export async function readPageEngagementState(
       };
     },
   );
+}
+
+/** Owner-controlled Page-local autonomous group cap; unrelated Pages default off. */
+export async function setPageDmDailyGroupLimit(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    accountId: string;
+    userId: string;
+    requestId: string;
+    enabled: boolean;
+  },
+): Promise<PageEngagementState | null> {
+  const found = await withTenantTransaction(database, input, async (tx) => {
+    const [account] = await tx
+      .select({ id: providerAccounts.id })
+      .from(providerAccounts)
+      .where(pageAccountCriteria(input.workspaceId, input.accountId))
+      .for('update')
+      .limit(1);
+    if (!account) return false;
+    await tx
+      .insert(facebookPageEngagementModules)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        dmDailyGroupLimitEnabled: input.enabled,
+      })
+      .onConflictDoUpdate({
+        target: [
+          facebookPageEngagementModules.workspaceId,
+          facebookPageEngagementModules.accountId,
+        ],
+        set: { dmDailyGroupLimitEnabled: input.enabled, updatedAt: new Date() },
+      });
+    await tx.insert(auditEvents).values({
+      workspaceId: input.workspaceId,
+      actorType: 'user',
+      actorId: input.userId,
+      action: 'provider_account.dm_daily_group_limit_updated',
+      targetType: 'provider_account',
+      targetId: input.accountId,
+      requestId: input.requestId,
+      metadata: { enabled: input.enabled },
+    });
+    return true;
+  });
+  return found ? readPageEngagementState(database, input) : null;
+}
+
+export async function isPageDmDailyGroupLimitEnabled(
+  database: NodePgDatabase,
+  input: { workspaceId: string; accountId: string },
+): Promise<boolean> {
+  return withTenantTransaction(database, input, (tx) =>
+    isPageDmDailyGroupLimitEnabledInTransaction(tx, input),
+  );
+}
+
+export async function isPageDmDailyGroupLimitEnabledInTransaction(
+  tx: NodePgDatabase,
+  input: { workspaceId: string; accountId: string },
+): Promise<boolean> {
+  const [row] = await tx
+    .select({ enabled: facebookPageEngagementModules.dmDailyGroupLimitEnabled })
+    .from(facebookPageEngagementModules)
+    .where(
+      and(
+        eq(facebookPageEngagementModules.workspaceId, input.workspaceId),
+        eq(facebookPageEngagementModules.accountId, input.accountId),
+      ),
+    )
+    .limit(1);
+  return row?.enabled ?? false;
 }
 
 export async function setPageEngagementModule(

@@ -125,6 +125,7 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
       ).toEqual({
         comments: { localEnabled: false, providerGrant: 'unknown' },
         dms: { localEnabled: false, providerGrant: 'unknown' },
+        dmDailyGroupLimitEnabled: false,
       });
       expect(
         await readPageEngagementState(database, { workspaceId: other, accountId: page }),

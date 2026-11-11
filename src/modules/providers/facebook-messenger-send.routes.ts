@@ -29,6 +29,7 @@ import {
   schedulePageDmGroup,
 } from './facebook-dm-group.repository.js';
 import { PageReadUnavailableError } from './facebook-page-read-context.service.js';
+import { isPageDmDailyGroupLimitEnabled } from './facebook-page-engagement.service.js';
 import {
   cancelPendingPageDm,
   hasPendingPageDmAction,
@@ -277,6 +278,21 @@ export function registerFacebookPageDmSendRoute(
             .code(429)
             .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
         }
+        if (
+          await isPageDmDailyGroupLimitEnabled(runtime.database, {
+            workspaceId: principal.workspaceId,
+            accountId: path.data.accountId,
+          })
+        )
+          return await reply
+            .code(409)
+            .send(
+              errorEnvelope(
+                'group_required',
+                'This Page requires a scheduled DM reply group',
+                request.id,
+              ),
+            );
         if (body.data.schedule) {
           const { earliestDelaySeconds, latestDelaySeconds } = body.data.schedule;
           if (latestDelaySeconds < earliestDelaySeconds)

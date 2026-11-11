@@ -33,6 +33,7 @@ import {
   schedulePageDmGroup,
 } from '../src/modules/providers/facebook-dm-group.repository.js';
 import { FacebookDmConversationChangedError } from '../src/modules/providers/facebook-messenger-send.service.js';
+import { pageDmCivilDay } from '../src/modules/providers/facebook-dm-active-days.repository.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const accountId = '00000000-0000-4000-8000-000000000002';
@@ -60,6 +61,10 @@ async function setup() {
       conversation_id text NOT NULL DEFAULT 't_123', client_action_id uuid NOT NULL,
       request_fingerprint text NOT NULL DEFAULT 'other-request',
       state text NOT NULL DEFAULT 'reserved');
+    CREATE TABLE facebook_page_engagement_modules (
+      workspace_id uuid NOT NULL, account_id uuid NOT NULL,
+      dm_daily_group_limit_enabled boolean NOT NULL DEFAULT false,
+      PRIMARY KEY (workspace_id, account_id));
     INSERT INTO workspaces VALUES ('${workspaceId}'), ('${otherWorkspaceId}');
     INSERT INTO provider_accounts VALUES ('${accountId}', '${workspaceId}', 'facebook_page');
   `);
@@ -81,6 +86,12 @@ async function setup() {
 }
 
 describe('Page DM pending intent', () => {
+  it('uses Sofia civil days across midnight and DST', () => {
+    expect(pageDmCivilDay(new Date('2026-11-11T21:59:59Z'))).toBe('2026-11-11');
+    expect(pageDmCivilDay(new Date('2026-11-11T22:00:00Z'))).toBe('2026-11-12');
+    expect(pageDmCivilDay(new Date('2026-03-28T21:59:59Z'))).toBe('2026-03-28');
+    expect(pageDmCivilDay(new Date('2026-03-28T22:00:00Z'))).toBe('2026-03-29');
+  });
   it('persists final-exit intent only on the last bubble and rejects changed replay', async () => {
     const { pg, database } = await setup();
     try {
@@ -853,6 +864,111 @@ describe('Page DM pending intent', () => {
     },
   );
 
+  it('limits enabled Pages to one Sofia-day group and preserves inbound idempotence after cancellation', async () => {
+    const { pg, database } = await setup();
+    try {
+      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+        workspaceId,
+        accountId,
+      ]);
+      const base = {
+        workspaceId,
+        accountId,
+        conversationId: 'daily-person',
+        texts: ['Hello'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'api-key' as const, id: actorId },
+      };
+      const first = await schedulePageDmGroup(database, { ...base, clientActionId: randomUUID() });
+      await expect(
+        schedulePageDmGroup(database, {
+          ...base,
+          clientActionId: randomUUID(),
+          expectedLatestInboundMessageId: 'inbound-2',
+        }),
+      ).rejects.toBeInstanceOf(PendingDmConflictError);
+      await cancelPageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: base.conversationId,
+        rootId: first.id,
+      });
+      await expect(
+        schedulePageDmGroup(database, {
+          ...base,
+          clientActionId: randomUUID(),
+        }),
+      ).rejects.toThrow('This inbound already has a Page DM group');
+      const second = await schedulePageDmGroup(database, {
+        ...base,
+        clientActionId: randomUUID(),
+        expectedLatestInboundMessageId: 'inbound-2',
+      });
+      await pg.query("UPDATE facebook_page_dm_pending_intents SET status='confirmed' WHERE id=$1", [
+        second.id,
+      ]);
+      await expect(
+        schedulePageDmGroup(database, {
+          ...base,
+          clientActionId: randomUUID(),
+          expectedLatestInboundMessageId: 'inbound-3',
+        }),
+      ).rejects.toThrow('One Page DM group per Sofia day');
+      const otherAccount = randomUUID();
+      await pg.query('INSERT INTO provider_accounts VALUES ($1,$2,$3)', [
+        otherAccount,
+        workspaceId,
+        'facebook_page',
+      ]);
+      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+        workspaceId,
+        otherAccount,
+      ]);
+      await schedulePageDmGroup(database, {
+        ...base,
+        accountId: otherAccount,
+        clientActionId: randomUUID(),
+      });
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('serializes competing action IDs for one enabled Page conversation', async () => {
+    const { pg, database } = await setup();
+    try {
+      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+        workspaceId,
+        accountId,
+      ]);
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 'race-person',
+        texts: ['Reply'],
+        expectedLatestInboundMessageId: 'race-inbound',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'api-key' as const, id: actorId },
+      };
+      const outcomes = await Promise.allSettled(
+        [1, 2].map(() =>
+          schedulePageDmGroup(database, {
+            ...input,
+            clientActionId: randomUUID(),
+          }),
+        ),
+      );
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+      const roots = await pg.query(
+        "SELECT id FROM facebook_page_dm_pending_intents WHERE sequence_index=0 AND conversation_id='race-person'",
+      );
+      expect(roots.rows).toHaveLength(1);
+    } finally {
+      await pg.close();
+    }
+  });
+
   it('dispatches a one-bubble group through the guarded due worker without a tail', async () => {
     const { pg, database } = await setup();
     try {
@@ -900,6 +1016,42 @@ describe('Page DM pending intent', () => {
     } finally {
       await pg.close();
       sendMock.mockReset();
+    }
+  });
+
+  it('fails an enabled Page root that slipped into the next Sofia day without provider I/O', async () => {
+    const { pg, database } = await setup();
+    try {
+      sendMock.mockReset();
+      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+        workspaceId,
+        accountId,
+      ]);
+      const group = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId: 'stale-day',
+        clientActionId: randomUUID(),
+        texts: ['Reply'],
+        expectedLatestInboundMessageId: 'inbound-stale',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user', id: actorId },
+      });
+      await pg.query(
+        "UPDATE facebook_page_dm_pending_intents SET due_at = now() - interval '2 days' WHERE id=$1",
+        [group.id],
+      );
+      const counts = await dispatchDuePageDms({
+        database,
+        keys: {} as never,
+        client: {} as never,
+        workerId: 'w',
+        leaseMs: 30_000,
+      });
+      expect(counts.failed).toBe(1);
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      await pg.close();
     }
   });
 

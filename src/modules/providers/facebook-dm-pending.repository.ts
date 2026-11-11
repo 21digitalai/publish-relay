@@ -27,6 +27,7 @@ export interface PendingDmInput {
   requestFingerprint: string;
   actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
   text: string;
+  finalExit?: boolean | undefined;
   dueAt: Date;
 }
 
@@ -132,6 +133,7 @@ const projection = {
   groupId: facebookPageDmPendingIntents.groupId,
   sequenceIndex: facebookPageDmPendingIntents.sequenceIndex,
   expectedLatestInboundMessageId: facebookPageDmPendingIntents.expectedLatestInboundMessageId,
+  finalExit: facebookPageDmPendingIntents.finalExit,
   leaseOwner: facebookPageDmPendingIntents.leaseOwner,
 };
 
@@ -177,6 +179,7 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
       actorType,
       actorId: input.actor.id,
       textBody: input.text,
+      finalExit: input.finalExit ?? false,
       dueAt: input.dueAt,
     })
     .onConflictDoNothing()
@@ -198,7 +201,8 @@ async function schedulePageDmInTransaction(tx: NodePgDatabase, input: PendingDmI
     existing.requestFingerprint !== input.requestFingerprint ||
     existing.actorType !== actorType ||
     existing.actorId !== input.actor.id ||
-    existing.text !== input.text
+    existing.text !== input.text ||
+    existing.finalExit !== (input.finalExit ?? false)
   )
     throw new PendingDmConflictError();
   return existing;

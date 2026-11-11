@@ -85,6 +85,7 @@ async function existingActionState(database: NodePgDatabase, intent: Intent) {
           accountId: intent.accountId,
           conversationId: intent.conversationId,
           text: intent.text,
+          ...(intent.finalExit ? { finalExit: true } : {}),
         }),
       )
       .digest('hex');
@@ -106,6 +107,7 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<DispatchSt
         conversationId: intent.conversationId,
         clientActionId: intent.clientActionId,
         text: intent.text,
+        ...(intent.finalExit ? { finalExit: true } : {}),
         ...(intent.expectedLatestInboundMessageId
           ? { expectedLatestInboundMessageId: intent.expectedLatestInboundMessageId }
           : {}),

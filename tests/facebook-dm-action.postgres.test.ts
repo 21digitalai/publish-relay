@@ -42,6 +42,7 @@ beforeEach(async () => {
       request_id text NOT NULL, ip_address text, user_agent text,
       metadata jsonb NOT NULL DEFAULT '{}',
       created_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE facebook_page_dm_pending_intents (id uuid PRIMARY KEY);
     INSERT INTO provider_accounts VALUES ('${accountId}','${workspaceId}','facebook_page');
   `);
   await postgres.exec(
@@ -63,6 +64,15 @@ beforeEach(async () => {
     ),
   );
   await postgres.exec(
+    readFileSync(new URL('../migrations/0095_facebook_page_dm_no_go.sql', import.meta.url), 'utf8'),
+  );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0103_facebook_page_dm_memory.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await postgres.exec(
     readFileSync(
       new URL('../migrations/0116_facebook_dm_failure_diagnostics.sql', import.meta.url),
       'utf8',
@@ -71,6 +81,12 @@ beforeEach(async () => {
   await postgres.exec(
     readFileSync(
       new URL('../migrations/0117_facebook_dm_failure_circuit.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  await postgres.exec(
+    readFileSync(
+      new URL('../migrations/0118_facebook_dm_final_exit_receipt.sql', import.meta.url),
       'utf8',
     ),
   );
@@ -86,6 +102,53 @@ beforeEach(async () => {
 afterEach(async () => postgres.close());
 
 describe('Facebook DM action PostgreSQL ledger', () => {
+  it('records Page-local terminal and no-go only after confirmed final delivery', async () => {
+    const final = { ...key, finalExit: true, requestFingerprint: 'f'.repeat(64) };
+    const reserved = await reserveFacebookDmAction(database, final);
+    if (reserved.kind !== 'new') throw new Error('Expected final reservation');
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    expect((await postgres.query('SELECT * FROM facebook_page_dm_no_go')).rows).toHaveLength(0);
+    await settleFacebookDmAction(database, {
+      ...final,
+      reservationId: reserved.id,
+      outcome: { state: 'confirmed', messageId: 'mid_final' },
+    });
+    const noGo = await postgres.query(
+      'SELECT reason, final_action_id, final_message_id FROM facebook_page_dm_no_go',
+    );
+    expect(noGo.rows).toEqual([
+      { reason: 'campaign_final', final_action_id: actionId, final_message_id: 'mid_final' },
+    ]);
+    const memory = await postgres.query(
+      'SELECT terminal, final_action_id, final_message_id FROM facebook_page_dm_memory',
+    );
+    expect(memory.rows).toEqual([
+      { terminal: true, final_action_id: actionId, final_message_id: 'mid_final' },
+    ]);
+    expect(await reserveFacebookDmAction(database, final)).toMatchObject({
+      kind: 'existing',
+      outcome: { state: 'confirmed' },
+    });
+  });
+
+  it('never suppresses an unknown or failed final exit', async () => {
+    for (const [index, outcome] of [
+      { state: 'unknown' as const },
+      { state: 'failed' as const, failureStatus: 400 },
+    ].entries()) {
+      const final = {
+        ...key,
+        clientActionId: `00000000-0000-4000-8000-${String(index + 50).padStart(12, '0')}`,
+        finalExit: true,
+      };
+      const reserved = await reserveFacebookDmAction(database, final);
+      if (reserved.kind !== 'new') throw new Error('Expected final reservation');
+      await settleFacebookDmAction(database, { ...final, reservationId: reserved.id, outcome });
+    }
+    await postgres.query(`SELECT set_config('app.workspace_id', '${workspaceId}', false)`);
+    expect((await postgres.query('SELECT * FROM facebook_page_dm_no_go')).rows).toHaveLength(0);
+    expect((await postgres.query('SELECT * FROM facebook_page_dm_memory')).rows).toHaveLength(0);
+  });
   it('halts one Page after three definite Graph failures until explicit owner clearance', async () => {
     for (let index = 0; index < 3; index += 1) {
       const action = {

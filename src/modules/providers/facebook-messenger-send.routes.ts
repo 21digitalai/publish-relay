@@ -47,6 +47,7 @@ const paramsSchema = z.strictObject({
 export const facebookDmSendRequestSchema = z.strictObject({
   clientActionId: z.uuid(),
   text: z.string().trim().min(1).max(2000),
+  finalExit: z.boolean().optional(),
   schedule: z
     .strictObject({
       earliestDelaySeconds: z.number().int().min(0).max(82_800),
@@ -59,6 +60,7 @@ const groupParamsSchema = paramsSchema.extend({ rootId: z.uuid() });
 export const facebookDmGroupRequestSchema = z.strictObject({
   clientActionId: z.uuid(),
   texts: z.array(z.string().trim().min(1).max(2000)).min(1).max(4),
+  finalExit: z.boolean().optional(),
   expectedLatestInboundMessageId: z.string().trim().min(1).max(256),
 });
 
@@ -290,6 +292,7 @@ export function registerFacebookPageDmSendRoute(
                 text: body.data.text,
                 earliestDelaySeconds,
                 latestDelaySeconds,
+                ...(body.data.finalExit ? { finalExit: true } : {}),
               }),
             )
             .digest('hex');
@@ -300,6 +303,7 @@ export function registerFacebookPageDmSendRoute(
             clientActionId: body.data.clientActionId,
             requestFingerprint: fingerprint,
             text: body.data.text,
+            finalExit: body.data.finalExit,
             dueAt: new Date(Date.now() + delay * 1000),
             actor: { type: principal.kind, id: principal.actorId },
           });
@@ -327,6 +331,7 @@ export function registerFacebookPageDmSendRoute(
           conversationId: path.data.conversationId,
           clientActionId: body.data.clientActionId,
           text: body.data.text,
+          finalExit: body.data.finalExit,
           actor: { type: principal.kind, id: principal.actorId },
         });
         const status = result.state === 'confirmed' ? 201 : result.state === 'unknown' ? 202 : 409;

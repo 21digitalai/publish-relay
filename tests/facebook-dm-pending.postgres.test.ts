@@ -67,8 +67,10 @@ async function setup() {
     '0098_engagement_proposal_planned_due_at.sql',
     '0099_page_dm_pre_send_attempts.sql',
     '0100_page_dm_grouped_approval.sql',
+    '0103_facebook_page_dm_memory.sql',
     '0104_page_dm_autonomous_groups.sql',
     '0117_facebook_dm_failure_circuit.sql',
+    '0118_facebook_dm_final_exit_receipt.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -76,6 +78,37 @@ async function setup() {
 }
 
 describe('Page DM pending intent', () => {
+  it('persists final-exit intent only on the last bubble and rejects changed replay', async () => {
+    const { pg, database } = await setup();
+    try {
+      const input = {
+        workspaceId,
+        accountId,
+        conversationId: 't_123',
+        clientActionId: actionId,
+        texts: ['Opening', 'Final exit'],
+        finalExit: true,
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user' as const, id: actorId },
+      };
+      const group = await schedulePageDmGroup(database, input);
+      const rows = await pg.query<{ final_exit: boolean; status: string }>(
+        'SELECT final_exit, status FROM facebook_page_dm_pending_intents WHERE group_id=$1 ORDER BY sequence_index',
+        [group.groupId],
+      );
+      expect(rows.rows).toEqual([
+        { final_exit: false, status: 'pending' },
+        { final_exit: true, status: 'waiting' },
+      ]);
+      expect((await schedulePageDmGroup(database, input)).id).toBe(group.id);
+      await expect(
+        schedulePageDmGroup(database, { ...input, finalExit: false }),
+      ).rejects.toBeInstanceOf(PendingDmConflictError);
+    } finally {
+      await pg.close();
+    }
+  });
   it('does not claim a halted Page and preserves its pending action for owner clearance', async () => {
     const { pg, database } = await setup();
     try {

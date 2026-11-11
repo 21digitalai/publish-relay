@@ -5,6 +5,8 @@ import {
   auditEvents,
   facebookPageDmActions,
   facebookPageDmFailureCircuit,
+  facebookPageDmMemory,
+  facebookPageDmNoGo,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { lockPageDmAccount } from './facebook-dm-no-go.repository.js';
@@ -19,6 +21,7 @@ export interface FacebookDmActionKey {
   text: string;
   receiverLabel?: string | null;
   requestFingerprint: string;
+  finalExit?: boolean;
   actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
 }
 
@@ -110,6 +113,7 @@ export async function reserveFacebookDmAction(
         textBody: input.text,
         receiverLabel: input.receiverLabel?.trim().slice(0, 200) ?? null,
         requestFingerprint: input.requestFingerprint,
+        finalExit: input.finalExit ?? false,
         actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
         actorId: input.actor.id,
       })
@@ -164,10 +168,52 @@ export async function settleFacebookDmAction(
           eq(facebookPageDmActions.workspaceId, input.workspaceId),
           eq(facebookPageDmActions.id, input.reservationId),
           eq(facebookPageDmActions.state, 'reserved'),
+          eq(facebookPageDmActions.finalExit, input.finalExit ?? false),
         ),
       )
       .returning({ id: facebookPageDmActions.id });
     if (!updated) throw new Error('Facebook DM settlement lost reservation');
+    if (input.finalExit && input.outcome.state === 'confirmed') {
+      await transaction
+        .insert(facebookPageDmNoGo)
+        .values({
+          workspaceId: input.workspaceId,
+          accountId: input.accountId,
+          conversationId: input.conversationId,
+          displayName: input.receiverLabel?.trim().slice(0, 200) ?? null,
+          reason: 'campaign_final',
+          finalActionId: input.clientActionId,
+          finalMessageId: input.outcome.messageId,
+        })
+        .onConflictDoNothing();
+      await transaction
+        .insert(facebookPageDmMemory)
+        .values({
+          workspaceId: input.workspaceId,
+          accountId: input.accountId,
+          conversationId: input.conversationId,
+          terminal: true,
+          finalExitAt: new Date(),
+          finalActionId: input.clientActionId,
+          finalMessageId: input.outcome.messageId,
+          lastOutboundReceiptRef: input.outcome.messageId,
+        })
+        .onConflictDoUpdate({
+          target: [
+            facebookPageDmMemory.workspaceId,
+            facebookPageDmMemory.accountId,
+            facebookPageDmMemory.conversationId,
+          ],
+          set: {
+            terminal: true,
+            finalExitAt: new Date(),
+            finalActionId: input.clientActionId,
+            finalMessageId: input.outcome.messageId,
+            lastOutboundReceiptRef: input.outcome.messageId,
+            updatedAt: new Date(),
+          },
+        });
+    }
     if (
       input.outcome.state === 'confirmed' ||
       (input.outcome.state === 'failed' && input.failureEvidence)

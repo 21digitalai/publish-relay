@@ -712,7 +712,8 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
           responses: {
             '201': {
-              description: 'Provider message confirmed; projected action state and message ID',
+              description:
+                'Provider message confirmed; projected action state and message ID. Explicit finalExit also records Page-local terminal/no-go in the same settlement transaction.',
             },
             '202': { description: 'Provider outcome unknown; no automatic resend' },
             '400': { description: 'Invalid Page message request' },
@@ -730,7 +731,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         post: {
           operationId: 'scheduleFacebookPageDmGroup',
           description:
-            'Atomically schedule 1–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; no provider send on this request.',
+            'Atomically schedule 1–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; optional finalExit marks only the last bubble and does not suppress the conversation before confirmed delivery. No provider send on this request.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
             {

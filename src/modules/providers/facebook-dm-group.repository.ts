@@ -20,6 +20,7 @@ interface GroupKey {
 interface GroupRequest extends GroupKey {
   clientActionId: string;
   texts: string[];
+  finalExit?: boolean | undefined;
   expectedLatestInboundMessageId: string;
   windowDeadline: Date;
   actor: { type: 'api-key' | 'delegated' | 'user'; id: string };
@@ -33,6 +34,7 @@ function fingerprint(input: Omit<GroupRequest, 'windowDeadline'>) {
         conversationId: input.conversationId,
         texts: input.texts,
         expectedLatestInboundMessageId: input.expectedLatestInboundMessageId,
+        ...(input.finalExit ? { finalExit: true } : {}),
       }),
     )
     .digest('hex');
@@ -183,6 +185,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         actorType,
         actorId: input.actor.id,
         textBody: input.texts[0] ?? '',
+        finalExit: Boolean(input.finalExit && input.texts.length === 1),
         dueAt,
         groupId,
         sequenceIndex: 0,
@@ -202,6 +205,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         actorType,
         actorId: input.actor.id,
         textBody: input.texts[index] ?? '',
+        finalExit: Boolean(input.finalExit && index === input.texts.length - 1),
         dueAt,
         groupId,
         sequenceIndex: index,

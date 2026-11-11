@@ -69,6 +69,26 @@ async function appForTest() {
 }
 
 describe('Facebook Page DM send machine route', () => {
+  it('forwards explicit final-exit intent without changing the ordinary send response', async () => {
+    const app = await appForTest();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: clientActionId, kind: 'api-key' });
+      mocks.send.mockResolvedValue({ state: 'confirmed', messageId: 'mid_final' });
+      const response = await app.inject({
+        method: 'POST',
+        url: path,
+        payload: { clientActionId, text: 'I will stop replying here', finalExit: true },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(mocks.send).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ finalExit: true, conversationId: 't_123' }),
+      );
+      expect(response.body).not.toContain('finalExit');
+    } finally {
+      await app.close();
+    }
+  });
   it('accepts one guarded bubble but rejects an empty group', async () => {
     const app = await appForTest();
     const base = `/api/v1/destinations/${accountId}/facebook-conversations/t_123/scheduled-groups`;
@@ -127,6 +147,7 @@ describe('Facebook Page DM send machine route', () => {
         payload: {
           clientActionId,
           texts: ['First', 'Second'],
+          finalExit: true,
           expectedLatestInboundMessageId: 'mid-1',
         },
       });
@@ -138,6 +159,7 @@ describe('Facebook Page DM send machine route', () => {
           accountId,
           conversationId: 't_123',
           texts: ['First', 'Second'],
+          finalExit: true,
           expectedLatestInboundMessageId: 'mid-1',
         }),
       );

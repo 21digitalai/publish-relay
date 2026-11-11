@@ -32,6 +32,15 @@ describe('Page DM working memory', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        'CREATE TABLE facebook_page_dm_actions (id uuid PRIMARY KEY); CREATE TABLE facebook_page_dm_pending_intents (id uuid PRIMARY KEY); CREATE TABLE facebook_page_dm_no_go (id uuid PRIMARY KEY);',
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0118_facebook_dm_final_exit_receipt.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const key = { workspaceId, accountId };
       const firstContactAt = new Date('2026-11-01T00:00:00Z');

@@ -827,6 +827,13 @@
       "when": 1794404000000,
       "tag": "0117_facebook_dm_failure_circuit",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1794405000000,
+      "tag": "0118_facebook_dm_final_exit_receipt",
+      "breakpoints": true
     }
   ]
 }

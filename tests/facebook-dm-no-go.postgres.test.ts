@@ -53,6 +53,15 @@ describe('Page DM no-go list', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        'CREATE TABLE facebook_page_dm_actions (id uuid PRIMARY KEY); CREATE TABLE facebook_page_dm_memory (id uuid PRIMARY KEY);',
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0118_facebook_dm_final_exit_receipt.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const db = drizzle(pg) as unknown as NodePgDatabase;
       await setPageConversationNoGo(db, { ...key, blocked: true, displayName: 'Alexandra' });
       expect(await isPageConversationNoGo(db, key)).toBe(true);

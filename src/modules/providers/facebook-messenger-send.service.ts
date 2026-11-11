@@ -34,6 +34,7 @@ const commandSchema = z.strictObject({
     .max(256),
   clientActionId: z.uuid(),
   text: z.string().trim().min(1).max(2000),
+  finalExit: z.boolean().optional(),
   expectedLatestInboundMessageId: z.string().trim().min(1).max(256).optional(),
   actor: z.strictObject({
     type: z.enum(['user', 'api-key', 'delegated']),
@@ -166,6 +167,7 @@ export async function sendAccountPageConversationMessage(
     accountId: command.accountId,
     conversationId: command.conversationId,
     text: command.text,
+    finalExit: command.finalExit ?? false,
     clientActionId: command.clientActionId,
     actor: command.actor,
     requestFingerprint: createHash('sha256')
@@ -174,6 +176,7 @@ export async function sendAccountPageConversationMessage(
           accountId: command.accountId,
           conversationId: command.conversationId,
           text: command.text,
+          ...(command.finalExit ? { finalExit: true } : {}),
         }),
       )
       .digest('hex'),

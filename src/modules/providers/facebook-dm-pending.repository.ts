@@ -19,7 +19,10 @@ import {
   lockPageDmAccount,
 } from './facebook-dm-no-go.repository.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
-import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
+import {
+  getPageDmDailyGroupLimitInTransaction,
+  isPageDmDailyGroupLimitEnabledInTransaction,
+} from './facebook-page-engagement.service.js';
 import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
 
 export interface PendingDmInput {
@@ -294,8 +297,12 @@ export async function isAllowedPageDmGroupDispatchInTransaction(
   if (!row) return false;
   if (row.sequenceIndex !== 0) return true;
   const day = pageDmCivilDay(row.dueAt);
-  const [occupied] = await tx
-    .select({ id: facebookPageDmPendingIntents.id })
+  const dailyLimit = await getPageDmDailyGroupLimitInTransaction(tx, input);
+  const occupied = await tx
+    .select({
+      id: facebookPageDmPendingIntents.id,
+      status: facebookPageDmPendingIntents.status,
+    })
     .from(facebookPageDmPendingIntents)
     .where(
       and(
@@ -327,8 +334,10 @@ export async function isAllowedPageDmGroupDispatchInTransaction(
         ),
       ),
     )
-    .limit(1);
-  return !occupied;
+    .limit(3);
+  if (occupied.length >= dailyLimit.maximum) return false;
+  if (occupied.length === 0) return true;
+  return occupied.every((entry) => entry.status === 'confirmed');
 }
 
 export async function schedulePageDm(database: NodePgDatabase, input: PendingDmInput) {

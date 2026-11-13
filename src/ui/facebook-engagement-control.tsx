@@ -8,6 +8,7 @@ type Module = 'comments' | 'dms';
 type GrantEvidence = 'unknown' | 'missing' | 'verified';
 type State = Record<Module, { localEnabled: boolean; providerGrant: GrantEvidence }> & {
   dmDailyGroupLimitEnabled: boolean;
+  dmDailyGroupMaximum: 1 | 2;
 };
 interface DmCircuit {
   consecutiveFailures: number;
@@ -117,7 +118,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
     }
   }
 
-  async function toggleDailyLimit() {
+  async function saveDailyLimit(enabled: boolean, maximum: 1 | 2) {
     if (!state || savingDailyLimit) return;
     setSavingDailyLimit(true);
     setError(null);
@@ -127,7 +128,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
         {
           method: 'PATCH',
           headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
-          body: JSON.stringify({ enabled: !state.dmDailyGroupLimitEnabled }),
+          body: JSON.stringify({ enabled, maximum }),
         },
       );
       const result = (await response.json()) as { data: State | null; error: string | null };
@@ -255,7 +256,9 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
             role="switch"
             aria-checked={state.dmDailyGroupLimitEnabled}
             disabled={savingDailyLimit}
-            onClick={() => void toggleDailyLimit()}
+            onClick={() =>
+              void saveDailyLimit(!state.dmDailyGroupLimitEnabled, state.dmDailyGroupMaximum)
+            }
           >
             <span className="toggle-track" aria-hidden="true">
               <span />
@@ -266,6 +269,23 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
             Applies to scheduled agent reply groups on this Page. Other Pages and manual sends are
             unchanged.
           </small>
+          {state.dmDailyGroupLimitEnabled && (
+            <button
+              type="button"
+              className="defaults-toggle"
+              role="switch"
+              aria-checked={state.dmDailyGroupMaximum === 2}
+              disabled={savingDailyLimit}
+              onClick={() =>
+                void saveDailyLimit(true, state.dmDailyGroupMaximum === 2 ? 1 : 2)
+              }
+            >
+              <span className="toggle-track" aria-hidden="true">
+                <span />
+              </span>
+              Allow one second group after a fresh reply
+            </button>
+          )}
         </div>
       )}
       {circuit?.haltedAt && (

@@ -23,6 +23,7 @@ export interface PageEngagementState {
   comments: { localEnabled: boolean; providerGrant: ProviderGrantEvidence };
   dms: { localEnabled: boolean; providerGrant: ProviderGrantEvidence };
   dmDailyGroupLimitEnabled: boolean;
+  dmDailyGroupMaximum: 1 | 2;
 }
 
 function pageAccountCriteria(workspaceId: string, accountId: string) {
@@ -70,6 +71,7 @@ export async function readPageEngagementState(
         : false;
       return {
         dmDailyGroupLimitEnabled: modules?.dmDailyGroupLimitEnabled ?? false,
+        dmDailyGroupMaximum: modules?.dmDailyGroupMaximum === 2 ? 2 : 1,
         comments: {
           localEnabled: modules?.commentsEnabled ?? false,
           providerGrant: (modules
@@ -100,6 +102,7 @@ export async function setPageDmDailyGroupLimit(
     userId: string;
     requestId: string;
     enabled: boolean;
+    maximum: 1 | 2;
   },
 ): Promise<PageEngagementState | null> {
   const found = await withTenantTransaction(database, input, async (tx) => {
@@ -116,13 +119,18 @@ export async function setPageDmDailyGroupLimit(
         workspaceId: input.workspaceId,
         accountId: input.accountId,
         dmDailyGroupLimitEnabled: input.enabled,
+        dmDailyGroupMaximum: input.maximum,
       })
       .onConflictDoUpdate({
         target: [
           facebookPageEngagementModules.workspaceId,
           facebookPageEngagementModules.accountId,
         ],
-        set: { dmDailyGroupLimitEnabled: input.enabled, updatedAt: new Date() },
+        set: {
+          dmDailyGroupLimitEnabled: input.enabled,
+          dmDailyGroupMaximum: input.maximum,
+          updatedAt: new Date(),
+        },
       });
     await tx.insert(auditEvents).values({
       workspaceId: input.workspaceId,
@@ -132,7 +140,7 @@ export async function setPageDmDailyGroupLimit(
       targetType: 'provider_account',
       targetId: input.accountId,
       requestId: input.requestId,
-      metadata: { enabled: input.enabled },
+      metadata: { enabled: input.enabled, maximum: input.maximum },
     });
     return true;
   });
@@ -163,6 +171,26 @@ export async function isPageDmDailyGroupLimitEnabledInTransaction(
     )
     .limit(1);
   return row?.enabled ?? false;
+}
+
+export async function getPageDmDailyGroupLimitInTransaction(
+  tx: NodePgDatabase,
+  input: { workspaceId: string; accountId: string },
+): Promise<{ enabled: boolean; maximum: 1 | 2 }> {
+  const [row] = await tx
+    .select({
+      enabled: facebookPageEngagementModules.dmDailyGroupLimitEnabled,
+      maximum: facebookPageEngagementModules.dmDailyGroupMaximum,
+    })
+    .from(facebookPageEngagementModules)
+    .where(
+      and(
+        eq(facebookPageEngagementModules.workspaceId, input.workspaceId),
+        eq(facebookPageEngagementModules.accountId, input.accountId),
+      ),
+    )
+    .limit(1);
+  return { enabled: row?.enabled ?? false, maximum: row?.maximum === 2 ? 2 : 1 };
 }
 
 export async function setPageEngagementModule(

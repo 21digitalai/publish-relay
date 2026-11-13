@@ -16,7 +16,7 @@ import {
 import { PendingDmConflictError, PendingDmNoGoError } from './facebook-dm-pending.repository.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
 import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
-import { isPageDmDailyGroupLimitEnabledInTransaction } from './facebook-page-engagement.service.js';
+import { getPageDmDailyGroupLimitInTransaction } from './facebook-page-engagement.service.js';
 import { planPageDmRootPriority } from './facebook-dm-root-priority.js';
 
 const MAX_PRIORITY_ROOTS = 1000;
@@ -224,7 +224,8 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         'The Messenger reply window cannot fit an eligible paced Page DM slot',
       );
     const dueAt = plan.dueAt;
-    if (await isPageDmDailyGroupLimitEnabledInTransaction(tx, input)) {
+    const dailyLimit = await getPageDmDailyGroupLimitInTransaction(tx, input);
+    if (dailyLimit.enabled) {
       for (const change of plan.changes) {
         const original = roots.find((root) => root.id === change.id);
         if (original && pageDmCivilDay(original.dueAt) !== pageDmCivilDay(change.dueAt))
@@ -251,8 +252,11 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         .limit(1);
       if (sameInbound) throw new PendingDmConflictError('This inbound already has a Page DM group');
       const day = pageDmCivilDay(dueAt);
-      const [usedDay] = await tx
-        .select({ id: facebookPageDmPendingIntents.id })
+      const usedDay = await tx
+        .select({
+          id: facebookPageDmPendingIntents.id,
+          status: facebookPageDmPendingIntents.status,
+        })
         .from(facebookPageDmPendingIntents)
         .where(
           and(
@@ -269,9 +273,17 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
             sql`(${facebookPageDmPendingIntents.dueAt} AT TIME ZONE 'Europe/Sofia')::date = ${day}::date`,
           ),
         )
-        .limit(1);
-      if (usedDay)
-        throw new PendingDmConflictError('One Page DM group per Sofia day is already scheduled');
+        .limit(3);
+      if (usedDay.length >= dailyLimit.maximum)
+        throw new PendingDmConflictError(
+          dailyLimit.maximum === 1
+            ? 'One Page DM group per Sofia day is already scheduled'
+            : 'Two Page DM groups per Sofia day are already scheduled',
+        );
+      if (usedDay.length === 1 && dailyLimit.maximum === 2 && usedDay[0]?.status !== 'confirmed')
+        throw new PendingDmConflictError(
+          'A second Page DM group requires the first group to be confirmed',
+        );
     }
     for (const change of plan.changes) {
       const moved = await tx

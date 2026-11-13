@@ -574,6 +574,7 @@ export const facebookPageEngagementModules = pgTable(
     commentsEnabled: boolean('comments_enabled').notNull().default(false),
     dmsEnabled: boolean('dms_enabled').notNull().default(false),
     dmDailyGroupLimitEnabled: boolean('dm_daily_group_limit_enabled').notNull().default(false),
+    dmDailyGroupMaximum: integer('dm_daily_group_maximum').notNull().default(1),
     commentsProviderGrant: text('comments_provider_grant').notNull().default('unknown'),
     commentsCredentialId: uuid('comments_credential_id'),
     commentsGrantedScopes: jsonb('comments_granted_scopes').notNull().default([]),
@@ -598,6 +599,10 @@ export const facebookPageEngagementModules = pgTable(
     check(
       'facebook_page_engagement_dms_grant_check',
       sql`${table.dmsProviderGrant} IN ('unknown', 'missing', 'verified')`,
+    ),
+    check(
+      'facebook_page_engagement_dm_daily_group_maximum_check',
+      sql`${table.dmDailyGroupMaximum} IN (1, 2)`,
     ),
     check(
       'facebook_page_engagement_comments_evidence_check',

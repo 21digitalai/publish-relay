@@ -66,6 +66,7 @@ async function setup() {
     CREATE TABLE facebook_page_engagement_modules (
       workspace_id uuid NOT NULL, account_id uuid NOT NULL,
       dm_daily_group_limit_enabled boolean NOT NULL DEFAULT false,
+      dm_daily_group_maximum integer NOT NULL DEFAULT 1 CHECK (dm_daily_group_maximum IN (1, 2)),
       PRIMARY KEY (workspace_id, account_id));
     INSERT INTO workspaces VALUES ('${workspaceId}'), ('${otherWorkspaceId}');
     INSERT INTO provider_accounts VALUES ('${accountId}', '${workspaceId}', 'facebook_page');
@@ -1013,10 +1014,10 @@ describe('Page DM pending intent', () => {
     },
   );
 
-  it('limits enabled Pages to one Sofia-day group and preserves inbound idempotence after cancellation', async () => {
+  it('keeps legacy one-group Pages and permits one fresh fallback under max two', async () => {
     const { pg, database } = await setup();
     try {
-      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
         workspaceId,
         accountId,
       ]);
@@ -1064,13 +1065,32 @@ describe('Page DM pending intent', () => {
           expectedLatestInboundMessageId: 'inbound-3',
         }),
       ).rejects.toThrow('One Page DM group per Sofia day');
+      await pg.query(
+        'UPDATE facebook_page_engagement_modules SET dm_daily_group_maximum=2 WHERE workspace_id=$1 AND account_id=$2',
+        [workspaceId, accountId],
+      );
+      const fallback = await schedulePageDmGroup(database, {
+        ...base,
+        clientActionId: randomUUID(),
+        expectedLatestInboundMessageId: 'inbound-3',
+      });
+      await pg.query("UPDATE facebook_page_dm_pending_intents SET status='confirmed' WHERE id=$1", [
+        fallback.id,
+      ]);
+      await expect(
+        schedulePageDmGroup(database, {
+          ...base,
+          clientActionId: randomUUID(),
+          expectedLatestInboundMessageId: 'inbound-4',
+        }),
+      ).rejects.toThrow('Two Page DM groups per Sofia day');
       const otherAccount = randomUUID();
       await pg.query('INSERT INTO provider_accounts VALUES ($1,$2,$3)', [
         otherAccount,
         workspaceId,
         'facebook_page',
       ]);
-      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
         workspaceId,
         otherAccount,
       ]);
@@ -1087,7 +1107,7 @@ describe('Page DM pending intent', () => {
   it('serializes competing action IDs for one enabled Page conversation', async () => {
     const { pg, database } = await setup();
     try {
-      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
         workspaceId,
         accountId,
       ]);
@@ -1172,7 +1192,7 @@ describe('Page DM pending intent', () => {
     const { pg, database } = await setup();
     try {
       sendMock.mockReset();
-      await pg.query('INSERT INTO facebook_page_engagement_modules VALUES ($1,$2,true)', [
+      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
         workspaceId,
         accountId,
       ]);

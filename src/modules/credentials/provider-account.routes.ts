@@ -147,7 +147,9 @@ export function registerProviderAccountRoutes(
       )
         return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
       const params = accountParamsSchema.safeParse(request.params);
-      const body = z.strictObject({ enabled: z.boolean() }).safeParse(request.body);
+      const body = z
+        .strictObject({ enabled: z.boolean(), maximum: z.union([z.literal(1), z.literal(2)]) })
+        .safeParse(request.body);
       if (!params.success || !body.success)
         return reply.code(400).send({ data: null, error: 'Invalid Page DM daily limit' });
       const state = await setPageDmDailyGroupLimit(dependencies.database, {
@@ -156,6 +158,7 @@ export function registerProviderAccountRoutes(
         userId: identity.userId,
         requestId: request.id,
         enabled: body.data.enabled,
+        maximum: body.data.maximum,
       });
       void reply.header('Cache-Control', 'no-store');
       return state

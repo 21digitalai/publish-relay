@@ -19,6 +19,7 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
   const current = await page.request.get('/api/workspaces/current');
   const workspace = (await current.json()) as { data: { slug: string } };
   let enabled = false;
+  let maximum: 1 | 2 = 1;
   let failNextSave = false;
   await page.route('**/api/provider-accounts', (route) =>
     route.fulfill({
@@ -50,6 +51,7 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
           comments: { localEnabled: false, providerGrant: 'missing' },
           dms: { localEnabled: true, providerGrant: 'verified' },
           dmDailyGroupLimitEnabled: enabled,
+          dmDailyGroupMaximum: maximum,
         },
         error: null,
       }),
@@ -72,7 +74,9 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
           body: JSON.stringify({ data: null, error: 'Daily limit save failed' }),
         });
       }
-      enabled = (route.request().postDataJSON() as { enabled: boolean }).enabled;
+      const request = route.request().postDataJSON() as { enabled: boolean; maximum: 1 | 2 };
+      enabled = request.enabled;
+      maximum = request.maximum;
       return route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
@@ -80,6 +84,7 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
             comments: { localEnabled: false, providerGrant: 'missing' },
             dms: { localEnabled: true, providerGrant: 'verified' },
             dmDailyGroupLimitEnabled: enabled,
+            dmDailyGroupMaximum: maximum,
           },
           error: null,
         }),
@@ -94,6 +99,15 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
   await page.screenshot({ path: testInfo.outputPath('daily-limit-off.png'), fullPage: true });
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  const fallback = row.getByRole('switch', {
+    name: 'Allow one second group after a fresh reply',
+  });
+  await expect(fallback).toHaveAttribute('aria-checked', 'false');
+  await fallback.click();
+  await expect(fallback).toHaveAttribute('aria-checked', 'true');
+  await page.reload();
+  await row.getByRole('button', { name: 'Manage', exact: true }).click();
+  await expect(fallback).toHaveAttribute('aria-checked', 'true');
   await page.reload();
   await row.getByRole('button', { name: 'Manage', exact: true }).click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');

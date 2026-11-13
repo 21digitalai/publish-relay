@@ -276,9 +276,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
               role="switch"
               aria-checked={state.dmDailyGroupMaximum === 2}
               disabled={savingDailyLimit}
-              onClick={() =>
-                void saveDailyLimit(true, state.dmDailyGroupMaximum === 2 ? 1 : 2)
-              }
+              onClick={() => void saveDailyLimit(true, state.dmDailyGroupMaximum === 2 ? 1 : 2)}
             >
               <span className="toggle-track" aria-hidden="true">
                 <span />

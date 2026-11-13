@@ -23,7 +23,10 @@ import {
   getPageDmDailyGroupLimitInTransaction,
   isPageDmDailyGroupLimitEnabledInTransaction,
 } from './facebook-page-engagement.service.js';
-import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
+import {
+  hasFreshInboundAfterFirstConfirmedDailyGroup,
+  pageDmCivilDay,
+} from './facebook-dm-active-days.repository.js';
 
 export interface PendingDmInput {
   workspaceId: string;
@@ -263,6 +266,7 @@ export async function isAllowedPageDmGroupDispatchInTransaction(
     | 'bioLinkMention'
   > & {
     scheduledIntentId?: string | undefined;
+    latestInboundAt: Date;
   },
 ): Promise<boolean> {
   if (!input.scheduledIntentId) return false;
@@ -337,7 +341,12 @@ export async function isAllowedPageDmGroupDispatchInTransaction(
     .limit(3);
   if (occupied.length >= dailyLimit.maximum) return false;
   if (occupied.length === 0) return true;
-  return occupied.every((entry) => entry.status === 'confirmed');
+  if (!occupied.every((entry) => entry.status === 'confirmed')) return false;
+  return hasFreshInboundAfterFirstConfirmedDailyGroup(tx, {
+    ...input,
+    dueAt: row.dueAt,
+    latestInboundAt: input.latestInboundAt,
+  });
 }
 
 export async function schedulePageDm(database: NodePgDatabase, input: PendingDmInput) {

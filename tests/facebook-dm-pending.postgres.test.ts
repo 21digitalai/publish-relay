@@ -62,7 +62,7 @@ async function setup() {
       workspace_id uuid NOT NULL, account_id uuid NOT NULL DEFAULT '${accountId}',
       conversation_id text NOT NULL DEFAULT 't_123', client_action_id uuid NOT NULL,
       request_fingerprint text NOT NULL DEFAULT 'other-request',
-      state text NOT NULL DEFAULT 'reserved');
+      state text NOT NULL DEFAULT 'reserved', updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE facebook_page_engagement_modules (
       workspace_id uuid NOT NULL, account_id uuid NOT NULL,
       dm_daily_group_limit_enabled boolean NOT NULL DEFAULT false,
@@ -173,6 +173,7 @@ describe('Page DM pending intent', () => {
         actor: { type: 'api-key' as const, id: actorId },
         text: 'Hello',
         scheduledIntentId: group.id,
+        latestInboundAt: new Date(),
       };
       await withTenantTransaction(database, exact, async (tx) => {
         expect(await isAllowedPageDmGroupDispatchInTransaction(tx, exact)).toBe(true);
@@ -203,9 +204,14 @@ describe('Page DM pending intent', () => {
         actor: { type: 'api-key' as const, id: actorId },
       };
       const first = await schedulePageDmGroup(database, { ...request, clientActionId: actionId });
+      const firstConfirmedAt = new Date(Date.now() + 30_000);
       await pg.query("UPDATE facebook_page_dm_pending_intents SET status='confirmed' WHERE id=$1", [
         first.id,
       ]);
+      await pg.query(
+        "INSERT INTO facebook_page_dm_actions (workspace_id, account_id, conversation_id, client_action_id, state, updated_at) VALUES ($1, $2, 't_123', $3, 'confirmed', $4)",
+        [workspaceId, accountId, actionId, firstConfirmedAt],
+      );
       const secondActionId = randomUUID();
       const second = await schedulePageDmGroup(database, {
         ...request,
@@ -217,7 +223,7 @@ describe('Page DM pending intent', () => {
         [second.id],
       );
       await pg.query(
-        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1, $2, true)',
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled, dm_daily_group_maximum) VALUES ($1, $2, true, 2)',
         [workspaceId, accountId],
       );
       const candidate = {
@@ -228,6 +234,7 @@ describe('Page DM pending intent', () => {
         actor: request.actor,
         text: 'Hello',
         scheduledIntentId: second.id,
+        latestInboundAt: new Date(firstConfirmedAt.getTime() - 1_000),
       };
       await withTenantTransaction(database, candidate, async (tx) => {
         expect(await isAllowedPageDmGroupDispatchInTransaction(tx, candidate)).toBe(false);
@@ -1017,10 +1024,10 @@ describe('Page DM pending intent', () => {
   it('keeps legacy one-group Pages and permits one fresh fallback under max two', async () => {
     const { pg, database } = await setup();
     try {
-      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
-        workspaceId,
-        accountId,
-      ]);
+      await pg.query(
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)',
+        [workspaceId, accountId],
+      );
       const base = {
         workspaceId,
         accountId,
@@ -1050,14 +1057,20 @@ describe('Page DM pending intent', () => {
           clientActionId: randomUUID(),
         }),
       ).rejects.toThrow('This inbound already has a Page DM group');
+      const secondActionId = randomUUID();
       const second = await schedulePageDmGroup(database, {
         ...base,
-        clientActionId: randomUUID(),
+        clientActionId: secondActionId,
         expectedLatestInboundMessageId: 'inbound-2',
       });
+      const firstConfirmedAt = new Date(Date.now() - 30_000);
       await pg.query("UPDATE facebook_page_dm_pending_intents SET status='confirmed' WHERE id=$1", [
         second.id,
       ]);
+      await pg.query(
+        "INSERT INTO facebook_page_dm_actions (workspace_id, account_id, conversation_id, client_action_id, state, updated_at) VALUES ($1, $2, 'daily-person', $3, 'confirmed', $4)",
+        [workspaceId, accountId, secondActionId, firstConfirmedAt],
+      );
       await expect(
         schedulePageDmGroup(database, {
           ...base,
@@ -1069,10 +1082,21 @@ describe('Page DM pending intent', () => {
         'UPDATE facebook_page_engagement_modules SET dm_daily_group_maximum=2 WHERE workspace_id=$1 AND account_id=$2',
         [workspaceId, accountId],
       );
+      await expect(
+        schedulePageDmGroup(database, {
+          ...base,
+          clientActionId: randomUUID(),
+          expectedLatestInboundMessageId: 'inbound-before-confirmation',
+          latestInboundAt: new Date(firstConfirmedAt.getTime() - 1_000),
+        }),
+      ).rejects.toThrow(
+        'A second Page DM group requires a fresh inbound after the first confirmed group',
+      );
       const fallback = await schedulePageDmGroup(database, {
         ...base,
         clientActionId: randomUUID(),
         expectedLatestInboundMessageId: 'inbound-3',
+        latestInboundAt: new Date(firstConfirmedAt.getTime() + 1_000),
       });
       await pg.query("UPDATE facebook_page_dm_pending_intents SET status='confirmed' WHERE id=$1", [
         fallback.id,
@@ -1090,10 +1114,10 @@ describe('Page DM pending intent', () => {
         workspaceId,
         'facebook_page',
       ]);
-      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
-        workspaceId,
-        otherAccount,
-      ]);
+      await pg.query(
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)',
+        [workspaceId, otherAccount],
+      );
       await schedulePageDmGroup(database, {
         ...base,
         accountId: otherAccount,
@@ -1107,10 +1131,10 @@ describe('Page DM pending intent', () => {
   it('serializes competing action IDs for one enabled Page conversation', async () => {
     const { pg, database } = await setup();
     try {
-      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
-        workspaceId,
-        accountId,
-      ]);
+      await pg.query(
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)',
+        [workspaceId, accountId],
+      );
       const input = {
         workspaceId,
         accountId,
@@ -1192,10 +1216,10 @@ describe('Page DM pending intent', () => {
     const { pg, database } = await setup();
     try {
       sendMock.mockReset();
-      await pg.query('INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)', [
-        workspaceId,
-        accountId,
-      ]);
+      await pg.query(
+        'INSERT INTO facebook_page_engagement_modules (workspace_id, account_id, dm_daily_group_limit_enabled) VALUES ($1,$2,true)',
+        [workspaceId, accountId],
+      );
       const group = await schedulePageDmGroup(database, {
         workspaceId,
         accountId,

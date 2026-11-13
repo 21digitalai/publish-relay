@@ -862,6 +862,13 @@
       "when": 1794419000000,
       "tag": "0122_facebook_dm_window_priority",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1794598000000,
+      "tag": "0123_facebook_dm_second_daily_group",
+      "breakpoints": true
     }
   ]
 }

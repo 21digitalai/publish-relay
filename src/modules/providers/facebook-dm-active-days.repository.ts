@@ -1,7 +1,11 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import { facebookPageDmActiveDays } from '../../database/schema.js';
+import {
+  facebookPageDmActions,
+  facebookPageDmActiveDays,
+  facebookPageDmPendingIntents,
+} from '../../database/schema.js';
 
 const PAGE_TIME_ZONE = 'Europe/Sofia';
 const dayFormatter = new Intl.DateTimeFormat('sv-SE', {
@@ -13,6 +17,45 @@ const dayFormatter = new Intl.DateTimeFormat('sv-SE', {
 
 export function pageDmCivilDay(at: Date): string {
   return dayFormatter.format(at);
+}
+
+/** Caller holds the Page lock; the first confirmed root owns the fallback freshness boundary. */
+export async function hasFreshInboundAfterFirstConfirmedDailyGroup(
+  tx: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    accountId: string;
+    conversationId: string;
+    dueAt: Date;
+    latestInboundAt: Date;
+  },
+): Promise<boolean> {
+  const day = pageDmCivilDay(input.dueAt);
+  const [first] = await tx
+    .select({ outboundAt: facebookPageDmActions.updatedAt })
+    .from(facebookPageDmPendingIntents)
+    .innerJoin(
+      facebookPageDmActions,
+      and(
+        eq(facebookPageDmActions.workspaceId, facebookPageDmPendingIntents.workspaceId),
+        eq(facebookPageDmActions.accountId, facebookPageDmPendingIntents.accountId),
+        eq(facebookPageDmActions.clientActionId, facebookPageDmPendingIntents.clientActionId),
+        eq(facebookPageDmActions.state, 'confirmed'),
+      ),
+    )
+    .where(
+      and(
+        eq(facebookPageDmPendingIntents.workspaceId, input.workspaceId),
+        eq(facebookPageDmPendingIntents.accountId, input.accountId),
+        eq(facebookPageDmPendingIntents.conversationId, input.conversationId),
+        eq(facebookPageDmPendingIntents.sequenceIndex, 0),
+        eq(facebookPageDmPendingIntents.status, 'confirmed'),
+        sql`(${facebookPageDmPendingIntents.dueAt} AT TIME ZONE 'Europe/Sofia')::date = ${day}::date`,
+      ),
+    )
+    .orderBy(asc(facebookPageDmPendingIntents.dueAt), asc(facebookPageDmPendingIntents.id))
+    .limit(1);
+  return Boolean(first && input.latestInboundAt.getTime() > first.outboundAt.getTime());
 }
 
 function previousCivilDay(day: string): string {

@@ -15,7 +15,10 @@ import {
 } from './facebook-dm-no-go.repository.js';
 import { PendingDmConflictError, PendingDmNoGoError } from './facebook-dm-pending.repository.js';
 import { hasPageDmBioLinkMention } from './facebook-dm-bio-link.repository.js';
-import { pageDmCivilDay } from './facebook-dm-active-days.repository.js';
+import {
+  hasFreshInboundAfterFirstConfirmedDailyGroup,
+  pageDmCivilDay,
+} from './facebook-dm-active-days.repository.js';
 import { getPageDmDailyGroupLimitInTransaction } from './facebook-page-engagement.service.js';
 import { planPageDmRootPriority } from './facebook-dm-root-priority.js';
 
@@ -33,11 +36,12 @@ interface GroupRequest extends GroupKey {
   finalExit?: boolean | undefined;
   bioLinkMention?: boolean | undefined;
   expectedLatestInboundMessageId: string;
+  latestInboundAt?: Date | undefined;
   windowDeadline: Date;
   actor: { type: 'api-key' | 'delegated' | 'user'; id: string };
 }
 
-function fingerprint(input: Omit<GroupRequest, 'windowDeadline'>) {
+function fingerprint(input: Omit<GroupRequest, 'windowDeadline' | 'latestInboundAt'>) {
   return createHash('sha256')
     .update(
       JSON.stringify({
@@ -55,7 +59,7 @@ function fingerprint(input: Omit<GroupRequest, 'windowDeadline'>) {
 /** Existing exact receipts remain replayable even if Meta is temporarily unavailable. */
 export async function findPageDmGroupReplay(
   database: NodePgDatabase,
-  input: Omit<GroupRequest, 'windowDeadline'>,
+  input: Omit<GroupRequest, 'windowDeadline' | 'latestInboundAt'>,
 ) {
   return withTenantTransaction(database, input, async (tx) => {
     const [row] = await tx
@@ -283,6 +287,19 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       if (usedDay.length === 1 && dailyLimit.maximum === 2 && usedDay[0]?.status !== 'confirmed')
         throw new PendingDmConflictError(
           'A second Page DM group requires the first group to be confirmed',
+        );
+      if (
+        usedDay.length === 1 &&
+        dailyLimit.maximum === 2 &&
+        (!input.latestInboundAt ||
+          !(await hasFreshInboundAfterFirstConfirmedDailyGroup(tx, {
+            ...input,
+            dueAt,
+            latestInboundAt: input.latestInboundAt,
+          })))
+      )
+        throw new PendingDmConflictError(
+          'A second Page DM group requires a fresh inbound after the first confirmed group',
         );
     }
     for (const change of plan.changes) {

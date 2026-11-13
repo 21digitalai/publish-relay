@@ -224,7 +224,10 @@ export async function sendAccountPageConversationMessage(
       if (
         command.actor.type !== 'user' &&
         (await isPageDmDailyGroupLimitEnabledInTransaction(tx, command)) &&
-        !(await isAllowedPageDmGroupDispatchInTransaction(tx, command))
+        !(await isAllowedPageDmGroupDispatchInTransaction(tx, {
+          ...command,
+          latestInboundAt: recipient.latestInboundAt,
+        }))
       ) {
         const outcome = { state: 'failed' as const, failureStatus: 409 };
         await settleFacebookDmActionInTransaction(tx, {

@@ -135,6 +135,7 @@ export function registerFacebookPageDmSendRoute(
         const group = await schedulePageDmGroup(runtime.database, {
           ...groupInput,
           windowDeadline: proof.windowDeadline,
+          latestInboundAt: proof.latestInboundAt,
         });
         return await reply
           .code(202)

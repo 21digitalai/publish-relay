@@ -13,6 +13,9 @@ import {
   listPageEngagementPrincipals,
   setPageEngagementPrincipalGrants,
 } from '../src/modules/providers/facebook-page-engagement-grants.service.js';
+import { schedulePageDmGroup } from '../src/modules/providers/facebook-dm-group.repository.js';
+import { isAllowedPageDmGroupDispatchInTransaction } from '../src/modules/providers/facebook-dm-pending.repository.js';
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 
 const connectionString = process.env.POSTGRES_FACEBOOK_ENGAGEMENT_TEST_URL;
 
@@ -385,6 +388,144 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
       await pool.query('DELETE FROM workspaces WHERE id = $1', [other]);
       await pool.query('DELETE FROM workspaces WHERE id = $1', [owner]);
       await pool.query('DELETE FROM users WHERE id = $1', [user]);
+      await pool.end();
+    }
+  });
+
+  it('serializes the second daily group and rechecks fresh inbound at dispatch', async () => {
+    const pool = new pg.Pool({ connectionString });
+    const database = drizzle(pool);
+    const workspaceId = randomUUID();
+    const userId = randomUUID();
+    const credentialId = randomUUID();
+    const connectionId = randomUUID();
+    const accountId = randomUUID();
+    const firstActionId = randomUUID();
+    const conversationId = `daily-${randomUUID()}`;
+    const actor = { type: 'api-key' as const, id: randomUUID() };
+    try {
+      await pool.query(
+        'INSERT INTO users (id, email, password_hash, display_name) VALUES ($1, $2, $3, $4)',
+        [userId, `${userId}@example.test`, 'hash', 'Daily fixture'],
+      );
+      await pool.query('INSERT INTO workspaces (id, name, slug) VALUES ($1, $2, $3)', [
+        workspaceId,
+        'Daily group fixture',
+        workspaceId,
+      ]);
+      await pool.query(
+        `INSERT INTO credentials
+          (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+          VALUES ($1, $2, 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06')`,
+        [credentialId, workspaceId],
+      );
+      await pool.query(
+        `INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+          VALUES ($1, $2, 'meta', $3)`,
+        [connectionId, workspaceId, credentialId],
+      );
+      await pool.query(
+        `INSERT INTO provider_accounts
+          (id, workspace_id, connection_id, provider_account_id, display_name, destination_provider, remote_account_id)
+          VALUES ($1, $2, $3, $4, 'Daily fixture', 'facebook_page', $4)`,
+        [accountId, workspaceId, connectionId, accountId],
+      );
+      await pool.query(
+        `INSERT INTO facebook_page_engagement_modules
+          (workspace_id, account_id, dm_daily_group_limit_enabled, dm_daily_group_maximum)
+          VALUES ($1, $2, true, 2)`,
+        [workspaceId, accountId],
+      );
+      const first = await schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId,
+        clientActionId: firstActionId,
+        texts: ['First'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        latestInboundAt: new Date(Date.now() - 120_000),
+        windowDeadline: new Date(Date.now() + 3_600_000),
+        actor,
+      });
+      const confirmedAt = new Date(Date.now() - 30_000);
+      await pool.query(
+        "UPDATE facebook_page_dm_pending_intents SET status='confirmed' WHERE id=$1",
+        [first.id],
+      );
+      await pool.query(
+        `INSERT INTO facebook_page_dm_actions
+          (workspace_id, account_id, client_action_id, conversation_id, request_fingerprint,
+           state, final_exit, bio_link_mention, actor_type, actor_id, updated_at)
+          VALUES ($1, $2, $3, $4, 'fixture', 'confirmed', false, false, 'api_key', $5, $6)`,
+        [workspaceId, accountId, firstActionId, conversationId, actor.id, confirmedAt],
+      );
+      const latestInboundAt = new Date(confirmedAt.getTime() + 1_000);
+      const attempts = await Promise.allSettled(
+        ['inbound-2', 'inbound-3'].map((expectedLatestInboundMessageId) =>
+          schedulePageDmGroup(database, {
+            workspaceId,
+            accountId,
+            conversationId,
+            clientActionId: randomUUID(),
+            texts: ['Fallback'],
+            expectedLatestInboundMessageId,
+            latestInboundAt,
+            windowDeadline: new Date(Date.now() + 3_600_000),
+            actor,
+          }),
+        ),
+      );
+      expect(attempts.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      const second = attempts.find((result) => result.status === 'fulfilled');
+      if (!second) throw new Error('Second group was not scheduled');
+      await pool.query(
+        `UPDATE facebook_page_dm_pending_intents
+          SET status='claimed', lease_owner='pg-test', lease_until=now() + interval '1 minute'
+          WHERE id=$1`,
+        [second.value.id],
+      );
+      const claimedResult = await pool.query<{
+        client_action_id: string;
+        text_body: string;
+      }>('SELECT client_action_id, text_body FROM facebook_page_dm_pending_intents WHERE id=$1', [
+        second.value.id,
+      ]);
+      const claimed = claimedResult.rows[0];
+      const candidate = {
+        workspaceId,
+        accountId,
+        conversationId,
+        clientActionId: claimed?.client_action_id ?? '',
+        text: claimed?.text_body ?? '',
+        actor,
+        scheduledIntentId: second.value.id,
+      };
+      await withTenantTransaction(database, candidate, async (tx) => {
+        expect(
+          await isAllowedPageDmGroupDispatchInTransaction(tx, {
+            ...candidate,
+            latestInboundAt: new Date(confirmedAt.getTime() - 1_000),
+          }),
+        ).toBe(false);
+        expect(
+          await isAllowedPageDmGroupDispatchInTransaction(tx, { ...candidate, latestInboundAt }),
+        ).toBe(true);
+      });
+    } finally {
+      await pool.query(
+        'DELETE FROM provider_account_exposures WHERE workspace_id=$1 OR provider_account_id=$2',
+        [workspaceId, accountId],
+      );
+      await pool.query('DELETE FROM facebook_page_dm_pending_intents WHERE workspace_id=$1', [
+        workspaceId,
+      ]);
+      await pool.query('DELETE FROM facebook_page_dm_actions WHERE workspace_id=$1', [workspaceId]);
+      await pool.query('DELETE FROM provider_accounts WHERE workspace_id=$1', [workspaceId]);
+      await pool.query('DELETE FROM provider_connections WHERE workspace_id=$1', [workspaceId]);
+      await pool.query('DELETE FROM credentials WHERE workspace_id=$1', [workspaceId]);
+      await deleteFixtureAudit(pool, workspaceId);
+      await pool.query('DELETE FROM workspaces WHERE id=$1', [workspaceId]);
+      await pool.query('DELETE FROM users WHERE id=$1', [userId]);
       await pool.end();
     }
   });

@@ -194,6 +194,8 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       .limit(MAX_PRIORITY_ROOTS + 1);
     if (roots.length > MAX_PRIORITY_ROOTS)
       throw new PendingDmConflictError('Page DM queue is too large to prioritize safely');
+    const dailyLimit = await getPageDmDailyGroupLimitInTransaction(tx, input);
+    const minimumGapMs = dailyLimit.pacingMinimumSeconds * 1000;
     const now = Date.now();
     const [cursor] = await tx
       .select({ nextRootAt: facebookPageDmDispatchPacing.nextRootAt })
@@ -207,13 +209,13 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       .limit(1);
     const claimedAt = roots
       .filter((root) => root.status === 'claimed')
-      .reduce((latest, root) => Math.max(latest, root.dueAt.getTime() + 60_000), 0);
+      .reduce((latest, root) => Math.max(latest, root.dueAt.getTime() + minimumGapMs), 0);
     const earliestAt = new Date(
-      Math.max(now + 60_000, claimedAt, cursor?.nextRootAt.getTime() ?? 0),
+      Math.max(now + minimumGapMs, claimedAt, cursor?.nextRootAt.getTime() ?? 0),
     );
     const appendAt = new Date(
-      Math.max(now, roots[0]?.dueAt.getTime() ?? 0, earliestAt.getTime() - 60_000) +
-        randomInt(60, 121) * 1000,
+      Math.max(now, roots[0]?.dueAt.getTime() ?? 0, earliestAt.getTime() - minimumGapMs) +
+        randomInt(dailyLimit.pacingMinimumSeconds, dailyLimit.pacingMaximumSeconds + 1) * 1000,
     );
     const plan = planPageDmRootPriority({
       pending: roots
@@ -222,13 +224,13 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       newDeadline: input.windowDeadline,
       earliestAt,
       appendAt,
+      minimumGapMs,
     });
     if (!plan)
       throw new PendingDmConflictError(
         'The Messenger reply window cannot fit an eligible paced Page DM slot',
       );
     const dueAt = plan.dueAt;
-    const dailyLimit = await getPageDmDailyGroupLimitInTransaction(tx, input);
     if (dailyLimit.enabled) {
       for (const change of plan.changes) {
         const original = roots.find((root) => root.id === change.id);

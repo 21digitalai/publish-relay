@@ -11,6 +11,8 @@ Status: accepted Builder direction. Changes to the operator-sensitive choices at
 
 The origin Page engagement control reuses its existing account-row status/error and secondary-button patterns for a Page DM failure circuit. When repeated definite provider rejections pause due sends, `.facebook-dm-circuit-status` names the paused Page, says pending messages remain queued, and exposes a two-step `Review resume` / `Confirm resume` with Cancel. Resume is owner/admin-scoped, CSRF-protected and audited; it never sends synchronously. The status is loaded from the same Page context and disappears after confirmed clearance, with inline error and live success feedback.
 
+The same Page engagement control exposes recovery pacing as a discoverable switch: standard 1–2-minute recipient spacing versus recovery 5–7-minute spacing. It uses the existing `.defaults-toggle` state, inline status/error, and live-region feedback; users never type timing values or internal IDs.
+
 Publish Relay is a focused scheduling cockpit: calm, precise, dense, fast, and trustworthy. It uses a midnight operational canvas with restrained electric-lime scheduling signals. It is not a marketing site and must keep its own visual identity.
 
 References:

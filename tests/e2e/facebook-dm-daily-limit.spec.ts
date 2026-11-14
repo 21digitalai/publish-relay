@@ -20,6 +20,7 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
   const workspace = (await current.json()) as { data: { slug: string } };
   let enabled = false;
   let maximum: 1 | 2 = 1;
+  let pacing: 'standard' | 'recovery' = 'standard';
   let failNextSave = false;
   await page.route('**/api/provider-accounts', (route) =>
     route.fulfill({
@@ -52,6 +53,7 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
           dms: { localEnabled: true, providerGrant: 'verified' },
           dmDailyGroupLimitEnabled: enabled,
           dmDailyGroupMaximum: maximum,
+          dmRootPacing: pacing,
         },
         error: null,
       }),
@@ -85,6 +87,27 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
             dms: { localEnabled: true, providerGrant: 'verified' },
             dmDailyGroupLimitEnabled: enabled,
             dmDailyGroupMaximum: maximum,
+            dmRootPacing: pacing,
+          },
+          error: null,
+        }),
+      });
+    },
+  );
+  await page.route(
+    `**/api/provider-accounts/${accountId}/facebook-dm-root-pacing`,
+    async (route) => {
+      const request = route.request().postDataJSON() as { mode: 'standard' | 'recovery' };
+      pacing = request.mode;
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            comments: { localEnabled: false, providerGrant: 'missing' },
+            dms: { localEnabled: true, providerGrant: 'verified' },
+            dmDailyGroupLimitEnabled: enabled,
+            dmDailyGroupMaximum: maximum,
+            dmRootPacing: pacing,
           },
           error: null,
         }),
@@ -96,6 +119,12 @@ test('Page DM daily limit persists, reverses, and reports a failed save', async 
   await row.getByRole('button', { name: 'Manage', exact: true }).click();
   const toggle = row.getByRole('switch', { name: label });
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  const pacingToggle = row.getByRole('switch', {
+    name: 'Recovery pacing: 5–7 minutes between people',
+  });
+  await expect(pacingToggle).toHaveAttribute('aria-checked', 'false');
+  await pacingToggle.click();
+  await expect(pacingToggle).toHaveAttribute('aria-checked', 'true');
   await page.screenshot({ path: testInfo.outputPath('daily-limit-off.png'), fullPage: true });
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');

@@ -13,6 +13,8 @@ import { lockPageDmAccount } from './facebook-dm-no-go.repository.js';
 import { recordPageDmActiveDay } from './facebook-dm-active-days.repository.js';
 
 const MAX_CONSECUTIVE_DEFINITE_FAILURES = 3;
+const TEMPORARY_PAGE_RESTRICTION_CODE = 10;
+const TEMPORARY_PAGE_RESTRICTION_SUBCODE = 1_893_063;
 
 export interface FacebookDmActionKey {
   workspaceId: string;
@@ -297,12 +299,19 @@ export async function settleFacebookDmActionInTransaction(
       .for('update');
     if (!circuit) throw new Error('Facebook DM circuit state unavailable');
     const failures = input.outcome.state === 'confirmed' ? 0 : circuit.consecutiveFailures + 1;
+    const explicitTemporaryRestriction =
+      input.outcome.state === 'failed' &&
+      input.failureEvidence?.code === TEMPORARY_PAGE_RESTRICTION_CODE &&
+      input.failureEvidence.subcode === TEMPORARY_PAGE_RESTRICTION_SUBCODE;
     await transaction
       .update(facebookPageDmFailureCircuit)
       .set({
         consecutiveFailures: circuit.haltedAt ? circuit.consecutiveFailures : failures,
         haltedAt:
-          circuit.haltedAt ?? (failures >= MAX_CONSECUTIVE_DEFINITE_FAILURES ? new Date() : null),
+          circuit.haltedAt ??
+          (explicitTemporaryRestriction || failures >= MAX_CONSECUTIVE_DEFINITE_FAILURES
+            ? new Date()
+            : null),
         lastActionId: input.clientActionId,
         updatedAt: new Date(),
       })

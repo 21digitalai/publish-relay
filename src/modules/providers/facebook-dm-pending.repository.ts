@@ -841,7 +841,11 @@ export async function claimDuePageDms(
         .limit(1);
       if (pacing?.lastRootId !== candidate.id) {
         if (pacing && pacing.nextRootAt > input.now) return [];
-        const nextRootAt = new Date(input.now.getTime() + randomInt(60, 121) * 1000);
+        const pagePacing = await getPageDmDailyGroupLimitInTransaction(tx, candidate);
+        const nextRootAt = new Date(
+          input.now.getTime() +
+            randomInt(pagePacing.pacingMinimumSeconds, pagePacing.pacingMaximumSeconds + 1) * 1000,
+        );
         await tx
           .insert(facebookPageDmDispatchPacing)
           .values({

@@ -130,6 +130,7 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
         dms: { localEnabled: false, providerGrant: 'unknown' },
         dmDailyGroupLimitEnabled: false,
         dmDailyGroupMaximum: 1,
+        dmRootPacing: 'standard',
       });
       expect(
         await readPageEngagementState(database, { workspaceId: other, accountId: page }),

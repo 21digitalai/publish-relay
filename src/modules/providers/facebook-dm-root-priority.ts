@@ -11,6 +11,7 @@ export function planPageDmRootPriority(input: {
   newDeadline: Date;
   earliestAt: Date;
   appendAt: Date;
+  minimumGapMs?: number;
 }): { dueAt: Date; changes: { id: string; dueAt: Date }[] } | null {
   const pending = [...input.pending].sort(
     (a, b) => a.dueAt.getTime() - b.dueAt.getTime() || a.id.localeCompare(b.id),
@@ -28,7 +29,7 @@ export function planPageDmRootPriority(input: {
   if (
     first &&
     (!first.windowDeadline || input.newDeadline <= first.windowDeadline) &&
-    input.earliestAt.getTime() + 60_000 <= first.dueAt.getTime() &&
+    input.earliestAt.getTime() + (input.minimumGapMs ?? 60_000) <= first.dueAt.getTime() &&
     input.earliestAt <= input.newDeadline
   ) {
     return { dueAt: input.earliestAt, changes: [] };
@@ -44,7 +45,8 @@ export function planPageDmRootPriority(input: {
       (a.windowDeadline?.getTime() ?? Infinity) - (b.windowDeadline?.getTime() ?? Infinity) ||
       a.dueAt.getTime() - b.dueAt.getTime(),
   );
-  let previous = input.earliestAt.getTime() - 60_000;
+  const minimumGapMs = input.minimumGapMs ?? 60_000;
+  let previous = input.earliestAt.getTime() - minimumGapMs;
   const changes: { id: string; dueAt: Date }[] = [];
   let dueAt = input.appendAt;
   for (const root of ordered) {
@@ -52,7 +54,7 @@ export function planPageDmRootPriority(input: {
     // paced slot permitted by the durable cursor and any earlier windows.
     const earliestSlot = Math.max(
       root.isNew ? input.earliestAt.getTime() : root.dueAt.getTime(),
-      previous + 60_000,
+      previous + minimumGapMs,
     );
     if (!root.isNew && root.immovable && earliestSlot > root.dueAt.getTime()) return null;
     const slot = new Date(earliestSlot);

@@ -575,6 +575,8 @@ export const facebookPageEngagementModules = pgTable(
     dmsEnabled: boolean('dms_enabled').notNull().default(false),
     dmDailyGroupLimitEnabled: boolean('dm_daily_group_limit_enabled').notNull().default(false),
     dmDailyGroupMaximum: integer('dm_daily_group_maximum').notNull().default(1),
+    dmRootPacingMinimumSeconds: integer('dm_root_pacing_minimum_seconds').notNull().default(60),
+    dmRootPacingMaximumSeconds: integer('dm_root_pacing_maximum_seconds').notNull().default(120),
     commentsProviderGrant: text('comments_provider_grant').notNull().default('unknown'),
     commentsCredentialId: uuid('comments_credential_id'),
     commentsGrantedScopes: jsonb('comments_granted_scopes').notNull().default([]),
@@ -603,6 +605,10 @@ export const facebookPageEngagementModules = pgTable(
     check(
       'facebook_page_engagement_dm_daily_group_maximum_check',
       sql`${table.dmDailyGroupMaximum} IN (1, 2)`,
+    ),
+    check(
+      'facebook_page_engagement_dm_root_pacing_check',
+      sql`${table.dmRootPacingMinimumSeconds} >= 60 AND ${table.dmRootPacingMaximumSeconds} >= ${table.dmRootPacingMinimumSeconds} AND ${table.dmRootPacingMaximumSeconds} <= 600`,
     ),
     check(
       'facebook_page_engagement_comments_evidence_check',

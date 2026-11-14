@@ -24,6 +24,7 @@ export interface PageEngagementState {
   dms: { localEnabled: boolean; providerGrant: ProviderGrantEvidence };
   dmDailyGroupLimitEnabled: boolean;
   dmDailyGroupMaximum: 1 | 2;
+  dmRootPacing: 'standard' | 'recovery';
 }
 
 function pageAccountCriteria(workspaceId: string, accountId: string) {
@@ -72,6 +73,10 @@ export async function readPageEngagementState(
       return {
         dmDailyGroupLimitEnabled: modules?.dmDailyGroupLimitEnabled ?? false,
         dmDailyGroupMaximum: modules?.dmDailyGroupMaximum === 2 ? 2 : 1,
+        dmRootPacing:
+          modules?.dmRootPacingMinimumSeconds === 300 && modules.dmRootPacingMaximumSeconds === 420
+            ? 'recovery'
+            : 'standard',
         comments: {
           localEnabled: modules?.commentsEnabled ?? false,
           providerGrant: (modules
@@ -91,6 +96,61 @@ export async function readPageEngagementState(
       };
     },
   );
+}
+
+/** Owner-controlled Page-local root pacing preset; unrelated Pages retain 60–120 seconds. */
+export async function setPageDmRootPacing(
+  database: NodePgDatabase,
+  input: {
+    workspaceId: string;
+    accountId: string;
+    userId: string;
+    requestId: string;
+    mode: 'standard' | 'recovery';
+  },
+): Promise<PageEngagementState | null> {
+  const pacing =
+    input.mode === 'recovery' ? { minimum: 300, maximum: 420 } : { minimum: 60, maximum: 120 };
+  const found = await withTenantTransaction(database, input, async (tx) => {
+    const [account] = await tx
+      .select({ id: providerAccounts.id })
+      .from(providerAccounts)
+      .where(pageAccountCriteria(input.workspaceId, input.accountId))
+      .for('update')
+      .limit(1);
+    if (!account) return false;
+    await tx
+      .insert(facebookPageEngagementModules)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        dmRootPacingMinimumSeconds: pacing.minimum,
+        dmRootPacingMaximumSeconds: pacing.maximum,
+      })
+      .onConflictDoUpdate({
+        target: [
+          facebookPageEngagementModules.workspaceId,
+          facebookPageEngagementModules.accountId,
+        ],
+        set: {
+          dmRootPacingMinimumSeconds: pacing.minimum,
+          dmRootPacingMaximumSeconds: pacing.maximum,
+          updatedAt: new Date(),
+        },
+      });
+    await tx.insert(auditEvents).values({
+      workspaceId: input.workspaceId,
+      actorType: 'user',
+      actorId: input.userId,
+      action: 'provider_account.dm_root_pacing_updated',
+      targetType: 'provider_account',
+      targetId: input.accountId,
+      requestId: input.requestId,
+      metadata: { mode: input.mode },
+    });
+    return true;
+  });
+  return found ? readPageEngagementState(database, input) : null;
 }
 
 /** Owner-controlled Page-local autonomous group cap; unrelated Pages default off. */
@@ -176,11 +236,18 @@ export async function isPageDmDailyGroupLimitEnabledInTransaction(
 export async function getPageDmDailyGroupLimitInTransaction(
   tx: NodePgDatabase,
   input: { workspaceId: string; accountId: string },
-): Promise<{ enabled: boolean; maximum: 1 | 2 }> {
+): Promise<{
+  enabled: boolean;
+  maximum: 1 | 2;
+  pacingMinimumSeconds: number;
+  pacingMaximumSeconds: number;
+}> {
   const [row] = await tx
     .select({
       enabled: facebookPageEngagementModules.dmDailyGroupLimitEnabled,
       maximum: facebookPageEngagementModules.dmDailyGroupMaximum,
+      pacingMinimumSeconds: facebookPageEngagementModules.dmRootPacingMinimumSeconds,
+      pacingMaximumSeconds: facebookPageEngagementModules.dmRootPacingMaximumSeconds,
     })
     .from(facebookPageEngagementModules)
     .where(
@@ -190,7 +257,12 @@ export async function getPageDmDailyGroupLimitInTransaction(
       ),
     )
     .limit(1);
-  return { enabled: row?.enabled ?? false, maximum: row?.maximum === 2 ? 2 : 1 };
+  return {
+    enabled: row?.enabled ?? false,
+    maximum: row?.maximum === 2 ? 2 : 1,
+    pacingMinimumSeconds: row?.pacingMinimumSeconds ?? 60,
+    pacingMaximumSeconds: row?.pacingMaximumSeconds ?? 120,
+  };
 }
 
 export async function setPageEngagementModule(

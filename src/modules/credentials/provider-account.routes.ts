@@ -11,6 +11,7 @@ import {
   readPageEngagementState,
   setPageEngagementModule,
   setPageDmDailyGroupLimit,
+  setPageDmRootPacing,
 } from '../providers/facebook-page-engagement.service.js';
 import {
   clearPageDmFailureCircuit,
@@ -86,6 +87,40 @@ export function registerProviderAccountRoutes(
         }),
         error: null,
       };
+    },
+  );
+
+  application.patch(
+    '/api/provider-accounts/:accountId/facebook-dm-root-pacing',
+    async (request, reply) => {
+      const identity = await authorizeRequest(request, dependencies.auth, 'workspace:manage');
+      if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+      if (identity.role !== 'owner' && identity.role !== 'admin')
+        return reply.code(403).send({ data: null, error: 'Workspace admin required' });
+      if (
+        !verifyCsrfToken(
+          request.cookies[CSRF_COOKIE],
+          request.headers['x-csrf-token'] as string | undefined,
+        )
+      )
+        return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
+      const params = accountParamsSchema.safeParse(request.params);
+      const body = z
+        .strictObject({ mode: z.enum(['standard', 'recovery']) })
+        .safeParse(request.body);
+      if (!params.success || !body.success)
+        return reply.code(400).send({ data: null, error: 'Invalid Page DM pacing' });
+      const state = await setPageDmRootPacing(dependencies.database, {
+        workspaceId: identity.workspaceId,
+        accountId: params.data.accountId,
+        userId: identity.userId,
+        requestId: request.id,
+        mode: body.data.mode,
+      });
+      void reply.header('Cache-Control', 'no-store');
+      return state
+        ? { data: state, error: null }
+        : reply.code(404).send({ data: null, error: 'Owned Facebook Page not found' });
     },
   );
   application.post(

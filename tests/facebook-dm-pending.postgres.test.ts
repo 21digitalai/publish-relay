@@ -67,6 +67,8 @@ async function setup() {
       workspace_id uuid NOT NULL, account_id uuid NOT NULL,
       dm_daily_group_limit_enabled boolean NOT NULL DEFAULT false,
       dm_daily_group_maximum integer NOT NULL DEFAULT 1 CHECK (dm_daily_group_maximum IN (1, 2)),
+      dm_root_pacing_minimum_seconds integer NOT NULL DEFAULT 60,
+      dm_root_pacing_maximum_seconds integer NOT NULL DEFAULT 120,
       PRIMARY KEY (workspace_id, account_id));
     INSERT INTO workspaces VALUES ('${workspaceId}'), ('${otherWorkspaceId}');
     INSERT INTO provider_accounts VALUES ('${accountId}', '${workspaceId}', 'facebook_page');
@@ -1020,6 +1022,47 @@ describe('Page DM pending intent', () => {
       }
     },
   );
+
+  it('uses the selected Page recovery pacing without changing group-tail cadence', async () => {
+    const { pg, database } = await setup();
+    try {
+      await pg.query(
+        `INSERT INTO facebook_page_engagement_modules
+          (workspace_id, account_id, dm_root_pacing_minimum_seconds, dm_root_pacing_maximum_seconds)
+          VALUES ($1, $2, 300, 420)`,
+        [workspaceId, accountId],
+      );
+      const base = {
+        workspaceId,
+        accountId,
+        texts: ['First', 'Tail'],
+        expectedLatestInboundMessageId: 'inbound-1',
+        windowDeadline: new Date(Date.now() + 3600_000),
+        actor: { type: 'user' as const, id: actorId },
+      };
+      const first = await schedulePageDmGroup(database, {
+        ...base,
+        conversationId: 'recovery-1',
+        clientActionId: randomUUID(),
+      });
+      const second = await schedulePageDmGroup(database, {
+        ...base,
+        conversationId: 'recovery-2',
+        clientActionId: randomUUID(),
+      });
+      const gapSeconds = (second.dueAt.getTime() - first.dueAt.getTime()) / 1000;
+      expect(gapSeconds).toBeGreaterThanOrEqual(300);
+      expect(gapSeconds).toBeLessThanOrEqual(420);
+      const tails = await pg.query<{ gap_seconds: number }>(
+        'SELECT gap_seconds FROM facebook_page_dm_pending_intents WHERE group_id=$1 AND sequence_index > 0',
+        [first.groupId],
+      );
+      expect(tails.rows[0]?.gap_seconds).toBeGreaterThanOrEqual(4);
+      expect(tails.rows[0]?.gap_seconds).toBeLessThanOrEqual(10);
+    } finally {
+      await pg.close();
+    }
+  });
 
   it('keeps legacy one-group Pages and permits one fresh fallback under max two', async () => {
     const { pg, database } = await setup();

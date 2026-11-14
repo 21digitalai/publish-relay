@@ -869,6 +869,13 @@
       "when": 1794598000000,
       "tag": "0123_facebook_dm_second_daily_group",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1794645600000,
+      "tag": "0124_facebook_dm_page_pacing",
+      "breakpoints": true
     }
   ]
 }

@@ -459,6 +459,32 @@ describe('Facebook DM action PostgreSQL ledger', () => {
       haltedAt: null,
     });
   });
+  it('halts immediately on Meta temporary restriction while keeping other failures on fallback', async () => {
+    const recipientUnavailable = { ...key, clientActionId: '00000000-0000-4000-8000-000000000061' };
+    const first = await reserveFacebookDmAction(database, recipientUnavailable);
+    if (first.kind !== 'new') throw new Error('Expected recipient-unavailable reservation');
+    await settleFacebookDmAction(database, {
+      ...recipientUnavailable,
+      reservationId: first.id,
+      outcome: { state: 'failed', failureStatus: 400 },
+      failureEvidence: { code: 551 },
+    });
+    expect(await readPageDmFailureCircuit(database, key)).toMatchObject({
+      consecutiveFailures: 1,
+      haltedAt: null,
+    });
+    const restricted = { ...key, clientActionId: '00000000-0000-4000-8000-000000000062' };
+    const second = await reserveFacebookDmAction(database, restricted);
+    if (second.kind !== 'new') throw new Error('Expected restriction reservation');
+    await settleFacebookDmAction(database, {
+      ...restricted,
+      reservationId: second.id,
+      outcome: { state: 'failed', failureStatus: 400 },
+      failureEvidence: { code: 10, subcode: 1_893_063 },
+    });
+    expect(await readPageDmFailureCircuit(database, key)).toMatchObject({ consecutiveFailures: 2 });
+    expect((await readPageDmFailureCircuit(database, key)).haltedAt).toBeInstanceOf(Date);
+  });
   it('persists only bounded safe definite-failure diagnostics and keeps replay idempotent', async () => {
     const first = await reserveFacebookDmAction(database, key);
     if (first.kind !== 'new') throw new Error('Expected new action');

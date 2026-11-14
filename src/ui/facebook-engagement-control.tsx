@@ -9,6 +9,7 @@ type GrantEvidence = 'unknown' | 'missing' | 'verified';
 type State = Record<Module, { localEnabled: boolean; providerGrant: GrantEvidence }> & {
   dmDailyGroupLimitEnabled: boolean;
   dmDailyGroupMaximum: 1 | 2;
+  dmRootPacing: 'standard' | 'recovery';
 };
 interface DmCircuit {
   consecutiveFailures: number;
@@ -59,6 +60,7 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
   const [confirmCircuitClear, setConfirmCircuitClear] = useState(false);
   const [clearingCircuit, setClearingCircuit] = useState(false);
   const [savingDailyLimit, setSavingDailyLimit] = useState(false);
+  const [savingPacing, setSavingPacing] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -165,6 +167,28 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
       setError(cause instanceof Error ? cause.message : 'Page DM sending could not resume');
     } finally {
       setClearingCircuit(false);
+    }
+  }
+
+  async function savePacing(mode: 'standard' | 'recovery') {
+    if (!state || savingPacing) return;
+    setSavingPacing(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/provider-accounts/${accountId}/facebook-dm-root-pacing`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': getCsrfToken() },
+        body: JSON.stringify({ mode }),
+      });
+      const result = (await response.json()) as { data: State | null; error: string | null };
+      if (!response.ok || !result.data)
+        throw new Error(result.error ?? 'Page DM pacing could not be saved');
+      setState(result.data);
+      setAnnouncement('Page DM pacing saved.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Page DM pacing could not be saved');
+    } finally {
+      setSavingPacing(false);
     }
   }
 
@@ -284,6 +308,25 @@ export function FacebookEngagementControl({ accountId }: { accountId: string }) 
               Allow one second group after a fresh reply
             </button>
           )}
+          <button
+            type="button"
+            className="defaults-toggle"
+            role="switch"
+            aria-checked={state.dmRootPacing === 'recovery'}
+            disabled={savingPacing}
+            onClick={() =>
+              void savePacing(state.dmRootPacing === 'recovery' ? 'standard' : 'recovery')
+            }
+          >
+            <span className="toggle-track" aria-hidden="true">
+              <span />
+            </span>
+            Recovery pacing: 5–7 minutes between people
+          </button>
+          <small>
+            Applies only to scheduled reply-group roots for this Page. Group bubbles and other Pages
+            are unchanged.
+          </small>
         </div>
       )}
       {circuit?.haltedAt && (

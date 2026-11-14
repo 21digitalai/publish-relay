@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   authorizePageEngagement,
   readPageEngagementState,
+  setPageDmRootPacing,
   setPageEngagementModule,
 } from '../src/modules/providers/facebook-page-engagement.service.js';
 import {
@@ -14,7 +15,15 @@ import {
   setPageEngagementPrincipalGrants,
 } from '../src/modules/providers/facebook-page-engagement-grants.service.js';
 import { schedulePageDmGroup } from '../src/modules/providers/facebook-dm-group.repository.js';
-import { isAllowedPageDmGroupDispatchInTransaction } from '../src/modules/providers/facebook-dm-pending.repository.js';
+import {
+  claimDuePageDms,
+  isAllowedPageDmGroupDispatchInTransaction,
+} from '../src/modules/providers/facebook-dm-pending.repository.js';
+import {
+  readPageDmFailureCircuit,
+  reserveFacebookDmAction,
+  settleFacebookDmAction,
+} from '../src/modules/providers/facebook-dm-action.repository.js';
 import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 
 const connectionString = process.env.POSTGRES_FACEBOOK_ENGAGEMENT_TEST_URL;
@@ -145,7 +154,7 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
       });
       expect(
         (await readPageEngagementState(database, { workspaceId: owner, accountId: page }))?.dms,
-      ).toEqual({ localEnabled: false, providerGrant: 'unknown' });
+      ).toEqual({ localEnabled: false, providerGrant: 'missing' });
       expect(
         (await readPageEngagementState(database, { workspaceId: owner, accountId: sibling }))
           ?.comments.localEnabled,
@@ -521,6 +530,226 @@ describe.skipIf(!connectionString)('Facebook Page engagement isolation on Postgr
         workspaceId,
       ]);
       await pool.query('DELETE FROM facebook_page_dm_actions WHERE workspace_id=$1', [workspaceId]);
+      await pool.query('DELETE FROM provider_accounts WHERE workspace_id=$1', [workspaceId]);
+      await pool.query('DELETE FROM provider_connections WHERE workspace_id=$1', [workspaceId]);
+      await pool.query('DELETE FROM credentials WHERE workspace_id=$1', [workspaceId]);
+      await deleteFixtureAudit(pool, workspaceId);
+      await pool.query('DELETE FROM workspaces WHERE id=$1', [workspaceId]);
+      await pool.query('DELETE FROM users WHERE id=$1', [userId]);
+      await pool.end();
+    }
+  });
+
+  it('serializes Page-local recovery pacing and halts claims on the first explicit restriction', async () => {
+    const pool = new pg.Pool({ connectionString });
+    const database = drizzle(pool);
+    const workspaceId = randomUUID();
+    const userId = randomUUID();
+    const credentialId = randomUUID();
+    const connectionId = randomUUID();
+    const recoveryPageId = randomUUID();
+    const standardPageId = randomUUID();
+    const actor = { type: 'api-key' as const, id: randomUUID() };
+    const schedule = (accountId: string, conversationId: string) =>
+      schedulePageDmGroup(database, {
+        workspaceId,
+        accountId,
+        conversationId,
+        clientActionId: randomUUID(),
+        texts: ['Fixture reply'],
+        expectedLatestInboundMessageId: `inbound-${conversationId}`,
+        latestInboundAt: new Date(Date.now() - 60_000),
+        windowDeadline: new Date(Date.now() + 7_200_000),
+        actor,
+      });
+    try {
+      await pool.query(
+        'INSERT INTO users (id, email, password_hash, display_name) VALUES ($1, $2, $3, $4)',
+        [userId, `${userId}@example.test`, 'hash', 'Pacing fixture'],
+      );
+      await pool.query('INSERT INTO workspaces (id, name, slug) VALUES ($1, $2, $3)', [
+        workspaceId,
+        'Pacing fixture',
+        workspaceId,
+      ]);
+      await pool.query(
+        `INSERT INTO credentials
+          (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+          VALUES ($1, $2, 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06')`,
+        [credentialId, workspaceId],
+      );
+      await pool.query(
+        `INSERT INTO provider_connections (id, workspace_id, provider, credential_id)
+          VALUES ($1, $2, 'meta', $3)`,
+        [connectionId, workspaceId, credentialId],
+      );
+      for (const accountId of [recoveryPageId, standardPageId])
+        await pool.query(
+          `INSERT INTO provider_accounts
+            (id, workspace_id, connection_id, provider_account_id, display_name, destination_provider, remote_account_id)
+            VALUES ($1, $2, $3, $4, 'Pacing fixture', 'facebook_page', $4)`,
+          [accountId, workspaceId, connectionId, accountId],
+        );
+      await setPageDmRootPacing(database, {
+        workspaceId,
+        accountId: recoveryPageId,
+        userId,
+        requestId: 'recovery-pacing',
+        mode: 'recovery',
+      });
+
+      const recoveryRoots = await Promise.all([
+        schedule(recoveryPageId, 'recovery-a'),
+        schedule(recoveryPageId, 'recovery-b'),
+      ]);
+      const recoveryDueTimes = recoveryRoots
+        .map((root) => root.dueAt.getTime())
+        .sort((left, right) => left - right);
+      const recoveryGap = (recoveryDueTimes[1] ?? 0) - (recoveryDueTimes[0] ?? 0);
+      expect(recoveryGap).toBeGreaterThanOrEqual(300_000);
+
+      const standardRoots = await Promise.all([
+        schedule(standardPageId, 'standard-a'),
+        schedule(standardPageId, 'standard-b'),
+      ]);
+      const standardDueTimes = standardRoots
+        .map((root) => root.dueAt.getTime())
+        .sort((left, right) => left - right);
+      const standardGap = (standardDueTimes[1] ?? 0) - (standardDueTimes[0] ?? 0);
+      expect(standardGap).toBeGreaterThanOrEqual(60_000);
+      expect(standardGap).toBeLessThan(300_000);
+      expect(
+        (
+          await readPageEngagementState(database, {
+            workspaceId,
+            accountId: standardPageId,
+          })
+        )?.dmRootPacing,
+      ).toBe('standard');
+
+      await pool.query(
+        `UPDATE facebook_page_dm_pending_intents
+          SET due_at=now() - interval '1 minute'
+          WHERE workspace_id=$1 AND account_id=$2 AND sequence_index=0`,
+        [workspaceId, recoveryPageId],
+      );
+      const claimAt = new Date();
+      const concurrentClaims = await Promise.all([
+        claimDuePageDms(database, {
+          workerId: 'recovery-a',
+          now: claimAt,
+          leaseMs: 30_000,
+          limit: 1,
+        }),
+        claimDuePageDms(database, {
+          workerId: 'recovery-b',
+          now: claimAt,
+          leaseMs: 30_000,
+          limit: 1,
+        }),
+      ]);
+      expect(concurrentClaims.flat()).toHaveLength(1);
+      const cursor = await pool.query<{ next_root_at: Date }>(
+        'SELECT next_root_at FROM facebook_page_dm_dispatch_pacing WHERE workspace_id=$1 AND account_id=$2',
+        [workspaceId, recoveryPageId],
+      );
+      const nextRootAt = new Date(cursor.rows[0]?.next_root_at ?? 0);
+      expect(nextRootAt.getTime() - claimAt.getTime()).toBeGreaterThanOrEqual(300_000);
+      expect(nextRootAt.getTime() - claimAt.getTime()).toBeLessThanOrEqual(420_000);
+
+      await pool.query(
+        `UPDATE facebook_page_dm_pending_intents
+          SET due_at=now() + interval '1 hour'
+          WHERE workspace_id=$1 AND account_id=$2`,
+        [workspaceId, standardPageId],
+      );
+      const restriction = {
+        workspaceId,
+        accountId: recoveryPageId,
+        clientActionId: randomUUID(),
+        conversationId: 'recovery-a',
+        text: 'Fixture reply',
+        requestFingerprint: 'a'.repeat(64),
+        actor,
+      };
+      const reservation = await reserveFacebookDmAction(database, restriction);
+      if (reservation.kind !== 'new') throw new Error('Expected a new restriction action');
+      const blocker = await pool.connect();
+      await blocker.query('BEGIN');
+      await blocker.query(
+        'SELECT id FROM provider_accounts WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
+        [workspaceId, recoveryPageId],
+      );
+      const settlement = settleFacebookDmAction(database, {
+        ...restriction,
+        reservationId: reservation.id,
+        outcome: { state: 'failed' as const, failureStatus: 400 },
+        failureEvidence: { code: 10, subcode: 1_893_063 },
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const competingClaim = claimDuePageDms(database, {
+        workerId: 'restriction-race',
+        now: new Date(nextRootAt.getTime() + 1_000),
+        leaseMs: 30_000,
+        limit: 1,
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await blocker.query('COMMIT');
+      blocker.release();
+      await settlement;
+      expect(await competingClaim).toEqual([]);
+      expect((await readPageDmFailureCircuit(database, restriction)).haltedAt).toBeInstanceOf(Date);
+
+      const unavailable = {
+        ...restriction,
+        accountId: standardPageId,
+        clientActionId: randomUUID(),
+        conversationId: 'standard-a',
+      };
+      const unavailableReservation = await reserveFacebookDmAction(database, unavailable);
+      if (unavailableReservation.kind !== 'new') throw new Error('Expected a new 551 action');
+      await settleFacebookDmAction(database, {
+        ...unavailable,
+        reservationId: unavailableReservation.id,
+        outcome: { state: 'failed', failureStatus: 400 },
+        failureEvidence: { code: 551 },
+      });
+      expect(await readPageDmFailureCircuit(database, unavailable)).toMatchObject({
+        consecutiveFailures: 1,
+        haltedAt: null,
+      });
+      await pool.query(
+        `UPDATE facebook_page_dm_pending_intents
+          SET due_at=now() - interval '1 minute'
+          WHERE workspace_id=$1 AND account_id=$2 AND sequence_index=0`,
+        [workspaceId, standardPageId],
+      );
+      expect(
+        await claimDuePageDms(database, {
+          workerId: 'standard-after-551',
+          now: new Date(),
+          leaseMs: 30_000,
+          limit: 1,
+        }),
+      ).toHaveLength(1);
+    } finally {
+      await pool.query('DELETE FROM facebook_page_dm_pending_intents WHERE workspace_id=$1', [
+        workspaceId,
+      ]);
+      await pool.query('DELETE FROM facebook_page_dm_actions WHERE workspace_id=$1', [workspaceId]);
+      await pool.query('DELETE FROM facebook_page_dm_failure_circuit WHERE workspace_id=$1', [
+        workspaceId,
+      ]);
+      await pool.query('DELETE FROM facebook_page_dm_dispatch_pacing WHERE workspace_id=$1', [
+        workspaceId,
+      ]);
+      await pool.query('DELETE FROM facebook_page_engagement_modules WHERE workspace_id=$1', [
+        workspaceId,
+      ]);
+      await pool.query(
+        'DELETE FROM provider_account_exposures WHERE workspace_id=$1 OR provider_account_id = ANY($2::uuid[])',
+        [workspaceId, [recoveryPageId, standardPageId]],
+      );
       await pool.query('DELETE FROM provider_accounts WHERE workspace_id=$1', [workspaceId]);
       await pool.query('DELETE FROM provider_connections WHERE workspace_id=$1', [workspaceId]);
       await pool.query('DELETE FROM credentials WHERE workspace_id=$1', [workspaceId]);

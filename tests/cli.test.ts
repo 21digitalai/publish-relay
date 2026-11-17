@@ -814,7 +814,8 @@ describe('Publish Relay CLI', () => {
     expect(paths).toEqual([
       `/api/v1/fanvue/accounts/${accountId}/vault/folders/DMs%20%2F%20%D0%91%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D1%81%D0%BA%D0%B8/media?page=2&size=50`,
     ]);
-    expect(JSON.parse(result.stdout).data.data[0]).toEqual({
+    const output = JSON.parse(result.stdout) as { data: { data: unknown[] } };
+    expect(output.data.data[0]).toEqual({
       uuid: mediaUuid,
       status: 'ready',
       name: 'Approved',

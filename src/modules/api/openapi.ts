@@ -171,6 +171,32 @@ const fanvuePaymentSignalCollectionSchema = z.object({
     .max(50),
   nextCursor: z.string().nullable(),
 });
+const fanvuePaginationSchema = z.object({
+  page: z.number().int().positive(),
+  size: z.number().int().nonnegative().max(50),
+  hasMore: z.boolean(),
+});
+const fanvueVaultFolderCollectionSchema = z.object({
+  data: z.array(
+    z.object({
+      name: z.string().min(1).max(255),
+      createdAt: z.string().nullable(),
+      mediaCount: z.number().int().nonnegative(),
+    }),
+  ),
+  pagination: fanvuePaginationSchema,
+});
+const fanvueVaultFolderMediaCollectionSchema = z.object({
+  data: z.array(
+    z.object({
+      uuid: z.uuid(),
+      status: z.enum(['created', 'processing', 'ready', 'error']),
+      name: z.string().max(1000).nullish(),
+      mediaType: z.enum(['image', 'video', 'audio', 'document']).optional(),
+    }),
+  ),
+  pagination: fanvuePaginationSchema,
+});
 const engagementProposalSchema = z.object({
   id: z.uuid(),
   accountId: z.uuid(),
@@ -816,6 +842,95 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
           },
         },
+      '/api/v1/fanvue/accounts/{accountId}/vault/folders': {
+        get: {
+          operationId: 'listFanvueVaultFolders',
+          description:
+            'List selected-creator vault folders through read:media without provider URLs or credentials.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            {
+              name: 'size',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 50 },
+            },
+            { name: 'mediaName', in: 'query', schema: { type: 'string', maxLength: 1000 } },
+          ],
+          responses: {
+            '200': {
+              description: 'Bounded folder page',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(
+                    successResponseSchema(fanvueVaultFolderCollectionSchema),
+                  ),
+                },
+              },
+            },
+            '400': { description: 'Invalid pagination or media-name filter' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:media:read capability' },
+            '404': { description: 'Selected account unavailable' },
+            '409': { description: 'read:media grant missing or reconnect required' },
+            '429': { description: 'Read rate limit exceeded' },
+            '502': { description: 'Provider read failed or returned a malformed response' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/vault/folders/{folderName}/media': {
+        get: {
+          operationId: 'listFanvueVaultFolderMedia',
+          description:
+            'List stable media identity and type in one URL-encoded selected-account vault folder; signed URLs are omitted.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'folderName',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1, maxLength: 255 },
+            },
+            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            {
+              name: 'size',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 50 },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Bounded folder-media page',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(
+                    successResponseSchema(fanvueVaultFolderMediaCollectionSchema),
+                  ),
+                },
+              },
+            },
+            '400': { description: 'Invalid folder name or pagination' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:media:read capability' },
+            '404': { description: 'Selected account or folder unavailable' },
+            '409': { description: 'read:media grant missing or reconnect required' },
+            '429': { description: 'Read rate limit exceeded' },
+            '502': { description: 'Provider read failed or returned a malformed response' },
+          },
+        },
+      },
       '/api/v1/fanvue/accounts/{accountId}/posts/{postUuid}/comments': {
         post: {
           operationId: 'sendFanvueComment',

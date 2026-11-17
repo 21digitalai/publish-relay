@@ -119,6 +119,28 @@ export class FanvueReadService {
     return this.readClient.getMediaStatus(token, input.mediaUuid);
   }
 
+  async listVaultFolders(input: {
+    workspaceId: string;
+    accountId: string;
+    page?: number;
+    size?: number;
+    mediaName?: string;
+  }) {
+    const token = await this.accessToken(input, 'media');
+    return this.readClient.listVaultFolders(token, input);
+  }
+
+  async listVaultFolderMedia(input: {
+    workspaceId: string;
+    accountId: string;
+    folderName: string;
+    page?: number;
+    size?: number;
+  }) {
+    const token = await this.accessToken(input, 'media');
+    return this.readClient.listVaultFolderMedia(token, input.folderName, input);
+  }
+
   /** DM media staging requires the selected creator's chat and media grants together. */
   async getDmMediaUploadToken(input: { workspaceId: string; accountId: string }) {
     return this.accessToken(input, 'media', ['write:media', 'read:chat', 'write:chat']);

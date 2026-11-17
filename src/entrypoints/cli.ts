@@ -114,6 +114,11 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   },
   'fanvue:followers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/followers' },
   'fanvue:subscribers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/subscribers' },
+  'fanvue:folders': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/vault/folders' },
+  'fanvue:folder-media': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/vault/folders/:folderName/media',
+  },
   'fanvue-guidance:show': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/guidance' },
   'fanvue-guidance:set': {
     method: 'PATCH',
@@ -262,6 +267,27 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'displayName',
     'relationship',
     'subscriptionStatus',
+  ]),
+  'fanvue:folders': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'pagination',
+    'page',
+    'size',
+    'hasMore',
+    'name',
+    'createdAt',
+    'mediaCount',
+  ]),
+  'fanvue:folder-media': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'pagination',
+    'page',
+    'size',
+    'hasMore',
+    'uuid',
+    'status',
+    'name',
+    'mediaType',
   ]),
   'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
@@ -668,6 +694,9 @@ function routePath(
 ): string {
   const conversationId = flags['conversation-id'];
   const postId = flags['post-id'];
+  const folderName = flags['folder-name'];
+  if (route.path.includes(':folderName') && typeof folderName !== 'string')
+    throw new CliError(EXIT.usage, 'Fanvue folder media command requires --folder-name');
   if (route.path.includes(':conversationId') && typeof conversationId !== 'string')
     throw new CliError(EXIT.usage, 'Facebook DM command requires --conversation-id');
   const intentId = flags['intent-id'];
@@ -694,18 +723,21 @@ function routePath(
     .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')))
     .replace(':intentId', encodeURIComponent(String(intentId ?? '')))
     .replace(':rootId', encodeURIComponent(String(rootId ?? '')));
+  const resourcePath = path.replace(':folderName', encodeURIComponent(String(folderName ?? '')));
   if (
     command !== 'posts:list' &&
     command !== 'destinations:list' &&
     command !== 'publishes:list' &&
     command !== 'fanvue:followers' &&
     command !== 'fanvue:subscribers' &&
+    command !== 'fanvue:folders' &&
+    command !== 'fanvue:folder-media' &&
     command !== 'facebook-comments:posts' &&
     command !== 'facebook-comments:list' &&
     command !== 'facebook-dms:list' &&
     command !== 'facebook-dms:messages'
   )
-    return path;
+    return resourcePath;
   const query = new URLSearchParams();
   const names =
     command === 'destinations:list'
@@ -717,23 +749,27 @@ function routePath(
         ? ['limit', 'after']
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
-          : command === 'publishes:list'
-            ? [
-                'cursor',
-                'limit',
-                'states',
-                'approvalStatus',
-                'providerAccountId',
-                'scheduledAfter',
-                'scheduledBefore',
-              ]
-            : ['cursor', 'limit'];
+          : command === 'fanvue:folders'
+            ? ['page', 'size', 'media-name']
+            : command === 'fanvue:folder-media'
+              ? ['page', 'size']
+              : command === 'publishes:list'
+                ? [
+                    'cursor',
+                    'limit',
+                    'states',
+                    'approvalStatus',
+                    'providerAccountId',
+                    'scheduledAfter',
+                    'scheduledBefore',
+                  ]
+                : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
-    if (typeof value === 'string') query.set(name, value);
+    if (typeof value === 'string') query.set(name === 'media-name' ? 'mediaName' : name, value);
   }
   const encoded = query.toString();
-  return encoded ? `${path}?${encoded}` : path;
+  return encoded ? `${resourcePath}?${encoded}` : resourcePath;
 }
 
 async function pollJob(
@@ -783,7 +819,7 @@ async function pollJob(
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.8.6' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.9' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);

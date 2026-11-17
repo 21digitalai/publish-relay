@@ -18,12 +18,14 @@ const paramsSchema = z.object({
   fanUuid: z.uuid().optional(),
   mediaUuid: z.uuid().optional(),
   postUuid: z.uuid().optional(),
+  folderName: z.string().min(1).max(255).optional(),
 });
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).max(1_000_000).optional(),
   size: z.coerce.number().int().min(1).max(50).optional(),
   unreadOnly: z.enum(['true', 'false']).optional(),
   cursor: z.string().min(1).max(1024).optional(),
+  mediaName: z.string().min(1).max(1000).optional(),
 });
 
 interface ReadInput {
@@ -36,6 +38,8 @@ interface ReadInput {
   mediaUuid?: string;
   postUuid?: string;
   cursor?: string;
+  folderName?: string;
+  mediaName?: string;
 }
 
 function parseReadInput(request: FastifyRequest, workspaceId: string): ReadInput | null {
@@ -48,9 +52,11 @@ function parseReadInput(request: FastifyRequest, workspaceId: string): ReadInput
     ...(params.data.fanUuid ? { fanUuid: params.data.fanUuid } : {}),
     ...(params.data.mediaUuid ? { mediaUuid: params.data.mediaUuid } : {}),
     ...(params.data.postUuid ? { postUuid: params.data.postUuid } : {}),
+    ...(params.data.folderName ? { folderName: params.data.folderName } : {}),
     ...(query.data.page === undefined ? {} : { page: query.data.page }),
     ...(query.data.size === undefined ? {} : { size: query.data.size }),
     ...(query.data.cursor === undefined ? {} : { cursor: query.data.cursor }),
+    ...(query.data.mediaName === undefined ? {} : { mediaName: query.data.mediaName }),
     unreadOnly: query.data.unreadOnly === 'true',
   };
 }
@@ -90,6 +96,17 @@ function readRoutes(service: FanvueReadService) {
       path: '/api/v1/fanvue/accounts/:accountId/media/:mediaUuid',
       capability: 'fanvue:media:read',
       read: (input) => service.getMediaStatus({ ...input, mediaUuid: requiredId(input.mediaUuid) }),
+    },
+    {
+      path: '/api/v1/fanvue/accounts/:accountId/vault/folders',
+      capability: 'fanvue:media:read',
+      read: (input) => service.listVaultFolders(input),
+    },
+    {
+      path: '/api/v1/fanvue/accounts/:accountId/vault/folders/:folderName/media',
+      capability: 'fanvue:media:read',
+      read: (input) =>
+        service.listVaultFolderMedia({ ...input, folderName: requiredId(input.folderName) }),
     },
     {
       path: '/api/v1/fanvue/accounts/:accountId/posts',
@@ -206,7 +223,13 @@ function sendReadError(error: unknown, request: FastifyRequest, reply: FastifyRe
   }
   if (error instanceof FanvueRequestError) {
     const status =
-      error.status === 429 ? 429 : error.status === 401 || error.status === 403 ? 409 : 502;
+      error.status === 429
+        ? 429
+        : error.status === 404
+          ? 404
+          : error.status === 401 || error.status === 403
+            ? 409
+            : 502;
     return reply
       .code(status)
       .send(

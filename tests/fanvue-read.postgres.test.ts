@@ -88,6 +88,9 @@ describe.skipIf(!connectionString)('Fanvue read and DM account isolation on Post
       await expect(
         service.listFollowers({ workspaceId: otherWorkspaceId, accountId }),
       ).rejects.toMatchObject({ reason: 'account_not_found' });
+      await expect(
+        service.listVaultFolders({ workspaceId: otherWorkspaceId, accountId }),
+      ).rejects.toMatchObject({ reason: 'account_not_found' });
       await expect(service.listFollowers({ workspaceId, accountId })).rejects.toMatchObject({
         reason: 'scope_missing',
       });

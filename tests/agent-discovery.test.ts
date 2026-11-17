@@ -67,6 +67,13 @@ describe('agent discovery', () => {
       paths['/api/v1/destinations/{accountId}/facebook-conversations/{conversationId}/messages']
         ?.post?.operationId,
     ).toBe('sendFacebookPageConversationMessage');
+    expect(paths['/api/v1/fanvue/accounts/{accountId}/vault/folders']?.get?.operationId).toBe(
+      'listFanvueVaultFolders',
+    );
+    expect(
+      paths['/api/v1/fanvue/accounts/{accountId}/vault/folders/{folderName}/media']?.get
+        ?.operationId,
+    ).toBe('listFanvueVaultFolderMedia');
   });
 
   it('documents sparse destination overrides and authoritative effective settings', async () => {
@@ -92,8 +99,8 @@ describe('agent discovery', () => {
         assets: { path: string; sha256: string }[];
       };
     }>();
-    expect(manifest.data.contractVersion).toBe('1.9.8');
-    expect(manifest.data.cliVersion).toBe('1.8.8');
+    expect(manifest.data.contractVersion).toBe('1.9.9');
+    expect(manifest.data.cliVersion).toBe('1.8.9');
     const skill = await application.inject({ method: 'GET', url: '/publish-relay-skill/SKILL.md' });
     expect(skill.body).toContain('proposals create --body-file');
     expect(skill.body).toContain('proposals status <proposal-id>');
@@ -114,6 +121,8 @@ describe('agent discovery', () => {
     expect(skill.body).toContain('facebook-dms memory-get-many <account-id>');
     expect(skill.body).toContain('facebook-dms memory-upsert <account-id>');
     expect(skill.body).toContain('never use a new action ID or resend automatically');
+    expect(skill.body).toContain('fanvue folders <account-id>');
+    expect(skill.body).toContain('fanvue folder-media <account-id>');
     expect(manifest.data.cli.path).toBe('/publish-relay-skill/publish-relay-cli.js');
     expect(manifest.data.cli.updatePolicy).toBe('warn-only');
     expect(manifest.data.assets.map(({ path }) => path)).toEqual([

@@ -39,6 +39,13 @@ function fixture(capabilities: string[]) {
   const listSubscribers = vi
     .fn()
     .mockResolvedValue({ data: [], pagination: { nextCursor: 'next-page' } });
+  const listVaultFolders = vi
+    .fn()
+    .mockResolvedValue({ data: [{ name: 'DMs', createdAt: null, mediaCount: 7 }], pagination: {} });
+  const listVaultFolderMedia = vi.fn().mockResolvedValue({
+    data: [{ uuid: fanUuid, status: 'ready', name: 'Image' }],
+    pagination: {},
+  });
   const service = {
     listMessages,
     listMedia,
@@ -49,6 +56,8 @@ function fixture(capabilities: string[]) {
     getPost: vi.fn(),
     listChats: vi.fn(),
     getMediaStatus: vi.fn(),
+    listVaultFolders,
+    listVaultFolderMedia,
   } as unknown as FanvueReadService;
   const rateLimiter = new ApiRateLimiter({
     workspace: 100,
@@ -73,6 +82,8 @@ function fixture(capabilities: string[]) {
     listComments,
     listFollowers,
     listSubscribers,
+    listVaultFolders,
+    listVaultFolderMedia,
   };
 }
 
@@ -140,6 +151,34 @@ describe('Fanvue agent read boundary', () => {
     expect(context.listMedia).not.toHaveBeenCalled();
   });
 
+  it('uses media capability and preserves decoded Unicode and slash folder names', async () => {
+    const denied = fixture(['fanvue:chats:read']);
+    const deniedResponse = await denied.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/vault/folders`,
+      headers,
+    });
+    expect(deniedResponse.statusCode).toBe(403);
+    expect(denied.listVaultFolders).not.toHaveBeenCalled();
+
+    const context = fixture(['fanvue:media:read']);
+    const folder = 'DMs / Български';
+    const response = await context.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/vault/folders/${encodeURIComponent(folder)}/media?page=2&size=50`,
+      headers,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(context.listVaultFolderMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId, accountId, folderName: folder, page: 2, size: 50 }),
+    );
+    expect(context.requireCapability).toHaveBeenCalledWith(
+      expect.anything(),
+      'fanvue:media:read',
+      expect.any(String),
+    );
+  });
+
   it('returns a retryable safe 502 envelope for transport and malformed provider reads', async () => {
     const context = fixture(['fanvue:chats:read']);
     context.listMessages.mockRejectedValue(new FanvueRequestError(502, 'invalid_response'));
@@ -170,6 +209,7 @@ describe('Fanvue agent read boundary', () => {
     [400, 502],
     [401, 409],
     [403, 409],
+    [404, 404],
     [429, 429],
     [503, 502],
   ])('maps provider HTTP %i to safe Relay HTTP %i', async (providerStatus, relayStatus) => {

@@ -28,6 +28,17 @@ const media = z.object({
   status: z.enum(['created', 'processing', 'ready', 'error']),
   errorReason: z.string().nullish(),
 });
+const vaultFolder = z.object({
+  name: z.string().min(1).max(255),
+  createdAt: z.string().nullable(),
+  mediaCount: z.number().int().nonnegative(),
+});
+const vaultFolderMedia = z.object({
+  uuid: z.uuid(),
+  status: z.enum(['created', 'processing', 'ready', 'error']),
+  name: z.string().max(1000).nullish(),
+  mediaType: z.enum(['image', 'video', 'audio', 'document']).optional(),
+});
 const postSummary = z
   .object({
     uuid: z.uuid(),
@@ -170,6 +181,40 @@ export class FanvueReadClient {
       accessToken,
       `/media?${query}`,
       z.object({ data: z.array(media).max(50), pagination: offsetPagination }),
+    );
+  }
+
+  listVaultFolders(
+    accessToken: string,
+    options: { page?: number; size?: number; mediaName?: string } = {},
+  ) {
+    const query = new URLSearchParams({
+      page: String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)),
+      size: String(page(options.size ?? 15, 'size', 50)),
+    });
+    if (options.mediaName)
+      query.set('mediaName', z.string().min(1).max(1000).parse(options.mediaName));
+    return this.get(
+      accessToken,
+      `/vault/folders?${query}`,
+      z.object({ data: z.array(vaultFolder).max(50), pagination: offsetPagination }),
+    );
+  }
+
+  listVaultFolderMedia(
+    accessToken: string,
+    folderName: string,
+    options: { page?: number; size?: number } = {},
+  ) {
+    const folder = z.string().min(1).max(255).parse(folderName);
+    const query = new URLSearchParams({
+      page: String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)),
+      size: String(page(options.size ?? 15, 'size', 50)),
+    });
+    return this.get(
+      accessToken,
+      `/vault/folders/${encodeURIComponent(folder)}/media?${query}`,
+      z.object({ data: z.array(vaultFolderMedia).max(50), pagination: offsetPagination }),
     );
   }
 

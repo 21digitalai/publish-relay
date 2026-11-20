@@ -289,7 +289,10 @@ export class FanvueReadService {
       }
       for (const post of response.data) {
         postUuids.add(post.uuid);
-        if (post.publishedAt && post.mediaUuids.includes(mediaUuid))
+        if (
+          post.publishedAt &&
+          (post.mediaUuids.includes(mediaUuid) || post.mediaPreviewUuid === mediaUuid)
+        )
           return {
             ...publicationCoverage('posted', scannedAt, page, postUuids.size, false, null),
             matchingPostUuid: post.uuid,

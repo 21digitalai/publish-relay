@@ -278,7 +278,7 @@ describe('Fanvue read transport', () => {
       audience: 'subscribers',
       price: 300,
       mediaUuids: [],
-      mediaPreviewUuid: null,
+      mediaPreviewUuid: '550e8400-e29b-41d4-a716-446655440002',
       commentsCount: 1,
       credential: 'private',
     };
@@ -310,6 +310,7 @@ describe('Fanvue read transport', () => {
     expect(posts.data[0]?.textPreview).toHaveLength(280);
     expect(posts.data[0]).not.toHaveProperty('text');
     expect(posts.data[0]).not.toHaveProperty('credential');
+    expect(posts.data[0]?.mediaPreviewUuid).toBe('550e8400-e29b-41d4-a716-446655440002');
     const detail = await client.getPost('token', postUuid);
     expect(detail.text).toHaveLength(5000);
     expect(detail).not.toHaveProperty('credential');
@@ -317,6 +318,7 @@ describe('Fanvue read transport', () => {
     expect(comments.nextCursor).toBe('next-comment');
     expect(comments.data[0]).not.toHaveProperty('privateNote');
     expect(request.mock.calls[0]?.[0]).toContain('cursor=prior');
+    expect(request.mock.calls[0]?.[0]).toContain('includeUnpublished=true');
     expect(request.mock.calls[2]?.[0]).toContain('cursor=next-comment');
     expect(() => client.listComments('token', '../other')).toThrow();
   });

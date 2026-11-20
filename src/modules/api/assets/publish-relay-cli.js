@@ -23,6 +23,7 @@ const MUTATIONS = new Set([
   'fanvue:create-chat',
   'fanvue-dms:group-schedule',
   'fanvue-dms:group-cancel',
+  'fanvue-dms:history-backfill',
   'facebook-comments:reply',
   'facebook-comments:schedule',
   'facebook-comments:cancel',
@@ -165,6 +166,11 @@ const ROUTES = {
   'fanvue-dms:checkpoints': {
     method: 'GET',
     path: '/api/v1/fanvue/accounts/:id/chats/:fanUuid/checkpoints',
+  },
+  'fanvue-dms:history-backfill': {
+    method: 'POST',
+    path: '/api/v1/fanvue/accounts/:id/chats/:fanUuid/history-backfill',
+    body: true,
   },
   'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
   'drafts:show': { method: 'GET', path: '/api/v1/drafts/:id' },
@@ -368,6 +374,14 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   'fanvue:create-chat': new Set([...ENVELOPE_OUTPUT_KEYS, 'fanUuid', 'failureStatus']),
   'fanvue-dms:group-schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
   'fanvue-dms:group-status': new Set([...ENVELOPE_OUTPUT_KEYS, 'bubbles', 'sequence', 'dueAt']),
+  'fanvue-dms:history-backfill': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'state',
+    'reason',
+    'pagesIngested',
+    'messagesIngested',
+    'oldestAt',
+  ]),
   'fanvue-dms:group-cancel': new Set([...ENVELOPE_OUTPUT_KEYS, 'cancelled']),
   'fanvue-dms:candidates': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

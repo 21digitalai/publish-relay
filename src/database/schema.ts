@@ -1779,6 +1779,11 @@ export const fanvueDmConversationState = pgTable(
     quietUntilInboundAfterUuid: uuid('quiet_until_inbound_after_uuid'),
     historyCoverageOldestAt: timestamp('history_coverage_oldest_at', { withTimezone: true }),
     historyBackfillCompleteAt: timestamp('history_backfill_complete_at', { withTimezone: true }),
+    historyBackfillStatus: text('history_backfill_status').notNull().default('not_started'),
+    historyBackfillFailureCode: text('history_backfill_failure_code'),
+    historyBackfillLastAttemptAt: timestamp('history_backfill_last_attempt_at', {
+      withTimezone: true,
+    }),
     ...timestamps,
   },
   (table) => [
@@ -1795,6 +1800,10 @@ export const fanvueDmConversationState = pgTable(
     check(
       'fanvue_dm_conversation_state_counts_check',
       sql`${table.logicalExchangeCount} >= 0 and ${table.activeDayCount} >= 0 and (${table.providerUnreadCount} is null or ${table.providerUnreadCount} >= 0)`,
+    ),
+    check(
+      'fanvue_dm_conversation_state_history_status_check',
+      sql`${table.historyBackfillStatus} in ('not_started', 'in_progress', 'incomplete', 'complete')`,
     ),
     foreignKey({
       columns: [table.workspaceId, table.accountId],

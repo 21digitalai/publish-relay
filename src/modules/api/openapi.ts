@@ -931,6 +931,90 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/fanvue/accounts/{accountId}/vault/catalog/{folderName}': {
+        get: {
+          operationId: 'listFanvueVaultCatalog',
+          description:
+            'List bounded live vault-folder media joined to Relay-owned optional manual USD cents and optimistic price versions. Provider URLs are omitted.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'folderName',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1, maxLength: 255 },
+            },
+            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            {
+              name: 'size',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 50 },
+            },
+          ],
+          responses: {
+            '200': { description: 'Bounded live catalog page with optional manual price facts' },
+            '400': { description: 'Invalid folder name or pagination' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:media:read capability' },
+            '404': { description: 'Selected account or folder unavailable' },
+            '409': { description: 'read:media grant missing or reconnect required' },
+            '429': { description: 'Read rate limit exceeded' },
+            '502': { description: 'Provider read failed or returned a malformed response' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/vault/media/{mediaUuid}/price': {
+        patch: {
+          operationId: 'setFanvueVaultMediaPrice',
+          description:
+            'Set or clear one selected-account vault media manual USD-cent price with optimistic version checking. Blank/unset is null; zero is invalid.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'mediaUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['manualPriceCents', 'expectedVersion'],
+                  properties: {
+                    manualPriceCents: { type: ['integer', 'null'], minimum: 1 },
+                    expectedVersion: { type: ['integer', 'null'], minimum: 1 },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Saved manual price and new version' },
+            '400': { description: 'Invalid media, price or version' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:chats:send capability' },
+            '404': { description: 'Selected account or media unavailable' },
+            '409': { description: 'Grant unavailable or optimistic version conflict' },
+          },
+        },
+      },
       '/api/v1/fanvue/accounts/{accountId}/posts/{postUuid}/comments': {
         post: {
           operationId: 'sendFanvueComment',

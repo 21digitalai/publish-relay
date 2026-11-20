@@ -196,6 +196,50 @@ export class FanvueReadService {
     return this.readClient.getPost(token, input.postUuid);
   }
 
+  async getMediaPublicationCoverage(input: {
+    workspaceId: string;
+    accountId: string;
+    mediaUuid: string;
+    maxPages?: number;
+  }) {
+    const mediaUuid = z.uuid().parse(input.mediaUuid);
+    const maxPages = z.number().int().min(1).max(100).default(20).parse(input.maxPages);
+    const token = await this.accessToken(input, 'post');
+    const scannedAt = new Date();
+    const postUuids = new Set<string>();
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      let response: Awaited<ReturnType<FanvueReadClient['listPosts']>>;
+      try {
+        response = await this.readClient.listPosts(token, {
+          ...(cursor ? { cursor } : {}),
+          size: 50,
+        });
+      } catch (error) {
+        if (!(error instanceof FanvueRequestError)) throw error;
+        return publicationCoverage('unknown', scannedAt, page - 1, postUuids.size, false, 'scan_failed');
+      }
+      for (const post of response.data) {
+        postUuids.add(post.uuid);
+        if (post.publishedAt && post.mediaUuids.includes(mediaUuid))
+          return {
+            ...publicationCoverage('posted', scannedAt, page, postUuids.size, false, null),
+            matchingPostUuid: post.uuid,
+            publishedAt: new Date(post.publishedAt),
+          };
+      }
+      if (!response.nextCursor)
+        return publicationCoverage('unposted', scannedAt, page, postUuids.size, true, null);
+      if (cursors.has(response.nextCursor))
+        return publicationCoverage('unknown', scannedAt, page, postUuids.size, false, 'cursor_loop');
+      cursors.add(response.nextCursor);
+      cursor = response.nextCursor;
+    }
+    return publicationCoverage('unknown', scannedAt, maxPages, postUuids.size, false, 'scan_capped');
+  }
+
   /** Internal command preflight: Fanvue GET only returns a post owned by this token's creator. */
   async getOwnedPostForComment(input: {
     workspaceId: string;
@@ -309,4 +353,15 @@ export class FanvueReadService {
     if (!stillConnected) throw new FanvueReadUnavailableError('account_not_found');
     return token.access_token;
   }
+}
+
+function publicationCoverage(
+  state: 'posted' | 'unposted' | 'unknown',
+  scannedAt: Date,
+  pagesScanned: number,
+  uniquePostsScanned: number,
+  complete: boolean,
+  incompleteReason: 'scan_failed' | 'cursor_loop' | 'scan_capped' | null,
+) {
+  return { state, scannedAt, pagesScanned, uniquePostsScanned, complete, incompleteReason };
 }

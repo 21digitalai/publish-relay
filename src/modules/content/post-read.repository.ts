@@ -218,6 +218,17 @@ export function buildMachineJobListQuery(database: NodePgDatabase, input: Browse
     .limit(input.limit);
 }
 
+export async function getMachineJobProvider(
+  database: NodePgDatabase,
+  workspaceId: string,
+  jobId: string,
+): Promise<string | null> {
+  const rows = await machineJobJoins(database)
+    .where(and(eq(publicationJobs.workspaceId, workspaceId), eq(publicationJobs.id, jobId)))
+    .limit(1);
+  return rows[0]?.providerAccount.provider ?? null;
+}
+
 export async function getBrowserJobDetail(
   database: NodePgDatabase,
   workspaceId: string,

@@ -100,6 +100,7 @@ let browserAuthenticate: ReturnType<typeof vi.fn>;
 let requireCapability: ReturnType<typeof vi.fn>;
 let authenticateDelegated: ReturnType<typeof vi.fn>;
 let evaluateAction: ActionPolicy['evaluate'];
+let enabledAdapters: Set<string>;
 let browserNow: Date | undefined;
 let mediaPutError: Error | undefined;
 const temporaryDirectories: string[] = [];
@@ -188,6 +189,17 @@ function requestPayload(text = 'Scheduled through the API') {
 beforeEach(async () => {
   storedMedia.clear();
   mediaPutError = undefined;
+  enabledAdapters = new Set([
+    'fake',
+    'x',
+    'youtube',
+    'instagram',
+    'facebook_page',
+    'linkedin',
+    'tiktok',
+    'snapchat',
+    'fanvue',
+  ]);
   browserNow = new Date('2026-09-01T10:00:00.000Z');
   database = new PGlite();
   for (const migration of migrations)
@@ -263,6 +275,7 @@ beforeEach(async () => {
     new CursorCodec(Buffer.alloc(32, 7)),
     { evaluate: evaluateAction },
     delegatedAuthorization,
+    enabledAdapters,
   );
   registerMediaRoutes(
     application,
@@ -2928,6 +2941,28 @@ describe('agent publication retry PostgreSQL boundary', () => {
     expect(evaluateAction).toHaveBeenCalledWith(
       expect.objectContaining({ actor: { type: 'delegated', id: delegatedGrantId } }),
     );
+  });
+
+  it('does not requeue an existing job after its server adapter is disabled', async () => {
+    await seedJob();
+    enabledAdapters.clear();
+    const response = await application.inject({
+      method: 'POST',
+      url: `/api/v1/jobs/${jobId}/retry`,
+      headers,
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      success: false,
+      error: { code: 'adapter_disabled', message: 'This adapter is disabled on this server' },
+    });
+    const stored = await database.query<{ state: string; events: number }>(`
+      SELECT job.state,
+        (SELECT count(*)::int FROM publication_job_events event
+          WHERE event.job_id = job.id AND event.reason = 'operator_retry') AS events
+      FROM publication_jobs job WHERE job.id = '${jobId}'
+    `);
+    expect(stored.rows).toEqual([{ state: 'failed', events: 0 }]);
   });
 
   it('requires authentication and publishes:retry capability', async () => {

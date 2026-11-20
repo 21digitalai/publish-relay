@@ -28,6 +28,7 @@ import { PostValidationError } from './post.errors.js';
 import {
   browserJobStates,
   getJobDetail,
+  getMachineJobProvider,
   getPostDetail,
   listMachineJobSummaries,
   listPostSummaries,
@@ -389,6 +390,20 @@ export function registerPostRoutes(
           requestFingerprint: mutationFingerprint({ jobId }),
         },
         async (transaction) => {
+          const provider = await getMachineJobProvider(
+            transaction,
+            principal.workspaceId,
+            jobId,
+          );
+          if (provider && enabledAdapters?.has(provider) === false)
+            return {
+              statusCode: 409,
+              body: errorEnvelope(
+                'adapter_disabled',
+                'This adapter is disabled on this server',
+                request.id,
+              ),
+            };
           const outcome = await requestOperatorRetryInTransaction(
             transaction,
             {

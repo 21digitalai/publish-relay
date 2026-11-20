@@ -3917,7 +3917,7 @@ export function JobDetailPage() {
               View post
             </a>
           )}
-          {job.state === 'needs_attention' && (
+          {job.state === 'needs_attention' && adapterEnabled && (
             <div className="recovery-panel story-needs-attention" role="alert">
               <div>
                 <strong>Snapchat Story outcome needs verification</strong>

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   listDueFanvueDmConversations,
   observeFanvueDmConversationSummary,
+  recordFanvueDmMessageReceipt,
   updateFanvueDmConversationWorkflow,
 } from '../src/modules/providers/fanvue-dm-conversation-state.repository.js';
 
@@ -36,6 +37,51 @@ async function setup() {
 }
 
 describe('Fanvue neutral conversation state', () => {
+  it('deduplicates provider receipts and advances boundaries monotonically', async () => {
+    const { pg, database } = await setup();
+    try {
+      const base = {
+        workspaceId,
+        accountId,
+        fanUuid,
+        providerMessageUuid: firstInbound,
+        direction: 'inbound' as const,
+        sentAt: new Date('2026-11-20T10:00:00Z'),
+        mediaUuids: ['00000000-0000-4000-8000-000000000010'],
+        priceCents: null,
+        purchasedAt: null,
+        observedAt: new Date('2026-11-20T10:01:00Z'),
+      };
+      await recordFanvueDmMessageReceipt(database, base);
+      await recordFanvueDmMessageReceipt(database, {
+        ...base,
+        mediaUuids: ['00000000-0000-4000-8000-000000000010'],
+        observedAt: new Date('2026-11-20T10:02:00Z'),
+      });
+      await recordFanvueDmMessageReceipt(database, {
+        ...base,
+        providerMessageUuid: secondInbound,
+        sentAt: new Date('2026-11-20T10:10:00Z'),
+        mediaUuids: [],
+        observedAt: new Date('2026-11-20T10:11:00Z'),
+      });
+      await recordFanvueDmMessageReceipt(database, {
+        ...base,
+        observedAt: new Date('2026-11-20T10:12:00Z'),
+      });
+      const receipts = await pg.query<{ count: number }>(
+        'SELECT count(*)::integer AS count FROM fanvue_dm_message_receipts',
+      );
+      expect(receipts.rows[0]?.count).toBe(2);
+      const state = await pg.query<{ latest_inbound_message_uuid: string }>(
+        'SELECT latest_inbound_message_uuid FROM fanvue_dm_conversation_state',
+      );
+      expect(state.rows[0]?.latest_inbound_message_uuid).toBe(secondInbound);
+    } finally {
+      await pg.close();
+    }
+  });
+
   it('reactivates a quiet conversation only for a changed inbound boundary', async () => {
     const { pg, database } = await setup();
     try {

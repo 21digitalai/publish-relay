@@ -179,20 +179,14 @@ const fanvuePaymentSignalCollectionSchema = z.object({
     .max(50),
   nextCursor: z.string().nullable(),
 });
-const fanvuePaginationSchema = z.object({
-  page: z.number().int().positive(),
-  size: z.number().int().nonnegative().max(50),
-  hasMore: z.boolean(),
-});
 const fanvueVaultFolderCollectionSchema = z.object({
   data: z.array(
     z.object({
       name: z.string().min(1).max(255),
       createdAt: z.string().nullable(),
-      mediaCount: z.number().int().nonnegative(),
     }),
   ),
-  pagination: fanvuePaginationSchema,
+  nextCursor: z.string().nullable(),
 });
 const fanvueVaultFolderMediaCollectionSchema = z.object({
   data: z.array(
@@ -203,7 +197,8 @@ const fanvueVaultFolderMediaCollectionSchema = z.object({
       mediaType: z.enum(['image', 'video', 'audio', 'document']).optional(),
     }),
   ),
-  pagination: fanvuePaginationSchema,
+  nextCursor: z.string().nullable(),
+  total: z.number().int().nonnegative().nullable(),
 });
 const engagementProposalSchema = z.object({
   id: z.uuid(),
@@ -863,7 +858,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               required: true,
               schema: { type: 'string', format: 'uuid' },
             },
-            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 1024 } },
             {
               name: 'size',
               in: 'query',
@@ -911,7 +906,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               required: true,
               schema: { type: 'string', minLength: 1, maxLength: 255 },
             },
-            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 1024 } },
             {
               name: 'size',
               in: 'query',
@@ -958,7 +953,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               required: true,
               schema: { type: 'string', minLength: 1, maxLength: 255 },
             },
-            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 1024 } },
             {
               name: 'size',
               in: 'query',

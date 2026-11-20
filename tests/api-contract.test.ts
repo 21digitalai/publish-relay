@@ -95,6 +95,18 @@ describe('API v1 contract', () => {
     expect(JSON.stringify(command.post.responses['201'])).toContain('commentUuid');
   });
 
+  it('documents the Fanvue vault catalog cursor contract', () => {
+    const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
+    const catalog = paths['/api/v1/fanvue/accounts/{accountId}/vault/catalog/{folderName}'] as {
+      get: { parameters: { name: string; in: string; schema: Record<string, unknown> }[] };
+    };
+    const queryParameters = catalog.get.parameters.filter((parameter) => parameter.in === 'query');
+    expect(queryParameters).toEqual([
+      { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 1024 } },
+      { name: 'size', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
+    ]);
+  });
+
   it('documents versioned provider-specific post request branches', () => {
     const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
     const post = paths['/api/v1/posts'] as {

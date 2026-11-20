@@ -1,7 +1,7 @@
 import { chromium } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 
-const evidenceDir = '../../../local-operations/publish-relay-16635';
+const evidenceDir = process.env.PUBLISH_RELAY_QA_EVIDENCE_DIR ?? 'test-results/fanvue-vault-price';
 await mkdir(evidenceDir, { recursive: true });
 
 const browser = await chromium.launch({ headless: true });

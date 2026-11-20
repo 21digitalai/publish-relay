@@ -7,6 +7,7 @@ interface Envelope<T> {
 
 interface FolderPage {
   data: { name: string }[];
+  nextCursor: string | null;
 }
 
 interface CatalogPage {
@@ -16,7 +17,8 @@ interface CatalogPage {
     manualPriceCents: number | null;
     priceVersion: number | null;
   }[];
-  pagination: { hasMore?: boolean };
+  nextCursor: string | null;
+  total: number | null;
 }
 
 async function json<T>(response: Response): Promise<T> {
@@ -30,36 +32,74 @@ function mediaName(name: string | null | undefined, uuid: string): string {
   return trimmed;
 }
 
+function parseFolderCursor(cursor: string | null): Record<string, string | null> {
+  if (!cursor) return {};
+  const parsed = JSON.parse(cursor) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new Error('Invalid vault media cursor');
+  const entries = Object.entries(parsed);
+  if (entries.some(([, value]) => value !== null && typeof value !== 'string'))
+    throw new Error('Invalid vault media cursor');
+  return Object.fromEntries(entries);
+}
+
 export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
   const versions = new Map<string, number | null>();
   const folderCache = new Map<string, string[]>();
   const loadFolders = async (accountId: string, signal: AbortSignal) => {
-    const response = await fetch(
-      `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/folders?size=50`,
-      { signal },
-    );
-    const page = await json<Envelope<FolderPage>>(response);
-    const names = page.data.data.map((folder) => folder.name);
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let complete = false;
+    for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+      const query = new URLSearchParams({ size: '50' });
+      if (cursor) query.set('cursor', cursor);
+      const response = await fetch(
+        `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/folders?${query}`,
+        { signal },
+      );
+      const page = await json<Envelope<FolderPage>>(response);
+      names.push(...page.data.data.map((folder) => folder.name));
+      if (!page.data.nextCursor) {
+        complete = true;
+        break;
+      }
+      if (seen.has(page.data.nextCursor)) throw new Error('Vault folder cursor loop');
+      seen.add(page.data.nextCursor);
+      cursor = page.data.nextCursor;
+    }
+    if (!complete) throw new Error('Vault folder scan exceeded the 100-page safety limit');
     folderCache.set(accountId, names);
     return names.map((name) => ({ id: name, name }));
   };
   return {
     loadFolders,
     async loadMedia({ accountId, folderId, cursor, signal }) {
-      const pageNumber = cursor === null ? 1 : Number(cursor);
-      if (!Number.isInteger(pageNumber) || pageNumber < 1) throw new Error('Invalid vault cursor');
+      const cursorByFolder = parseFolderCursor(cursor);
       const folders = folderId
         ? [folderId]
         : (folderCache.get(accountId) ??
           (await loadFolders(accountId, signal)).map(({ id }) => id));
       const pages = await Promise.all(
-        folders.map(async (folder) => {
-          const response = await fetch(
-            `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/catalog/${encodeURIComponent(folder)}?page=${String(pageNumber)}&size=50`,
-            { signal },
-          );
-          return { folder, page: await json<Envelope<CatalogPage>>(response) };
-        }),
+        folders
+          .filter(
+            (folder) =>
+              !Object.prototype.hasOwnProperty.call(cursorByFolder, folder) ||
+              cursorByFolder[folder] !== null,
+          )
+          .map(async (folder) => {
+            const query = new URLSearchParams({ size: '50' });
+            const providerCursor = cursorByFolder[folder];
+            if (providerCursor) query.set('cursor', providerCursor);
+            const response = await fetch(
+              `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/catalog/${encodeURIComponent(folder)}?${query}`,
+              { signal },
+            );
+            const page = await json<Envelope<CatalogPage>>(response);
+            if (providerCursor && page.data.nextCursor === providerCursor)
+              throw new Error('Vault media cursor loop');
+            return { folder, page };
+          }),
       );
       const byId = new Map<string, FanvueVaultMedia>();
       for (const { folder, page } of pages) {
@@ -76,10 +116,13 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
           });
         }
       }
+      const nextByFolder = Object.fromEntries(
+        pages.map(({ folder, page }) => [folder, page.data.nextCursor]),
+      );
       return {
         items: [...byId.values()],
-        nextCursor: pages.some(({ page }) => page.data.pagination.hasMore)
-          ? String(pageNumber + 1)
+        nextCursor: Object.values(nextByFolder).some((value) => value !== null)
+          ? JSON.stringify({ ...cursorByFolder, ...nextByFolder })
           : null,
       };
     },

@@ -216,7 +216,7 @@ export class FanvueReadService {
   async listVaultFolders(input: {
     workspaceId: string;
     accountId: string;
-    page?: number;
+    cursor?: string;
     size?: number;
     mediaName?: string;
   }) {
@@ -228,7 +228,7 @@ export class FanvueReadService {
     workspaceId: string;
     accountId: string;
     folderName: string;
-    page?: number;
+    cursor?: string;
     size?: number;
   }) {
     const token = await this.accessToken(input, 'media');

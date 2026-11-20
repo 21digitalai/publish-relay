@@ -24,7 +24,7 @@ const params = z.object({
   mediaUuid: z.uuid().optional(),
 });
 const query = z.object({
-  page: z.coerce.number().int().positive().max(1_000_000).optional(),
+  cursor: z.string().min(1).max(1024).optional(),
   size: z.coerce.number().int().positive().max(50).optional(),
 });
 const purchaseQuery = z.object({ fanUuid: z.uuid() });
@@ -44,7 +44,7 @@ function input(request: FastifyRequest, workspaceId: string) {
     workspaceId,
     accountId: path.data.accountId,
     folderName: path.data.folderName,
-    ...(search.data.page === undefined ? {} : { page: search.data.page }),
+    ...(search.data.cursor === undefined ? {} : { cursor: search.data.cursor }),
     ...(search.data.size === undefined ? {} : { size: search.data.size }),
   };
 }

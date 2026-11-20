@@ -40,7 +40,6 @@ const mediaThumbnail = media.extend({
 const vaultFolder = z.object({
   name: z.string().min(1).max(255),
   createdAt: z.string().nullable(),
-  mediaCount: z.number().int().nonnegative(),
 });
 const vaultFolderMedia = z.object({
   uuid: z.uuid(),
@@ -81,6 +80,9 @@ const offsetPagination = z.object({
   page: z.number().int().positive(),
   size: z.number().int().nonnegative().max(50),
   hasMore: z.boolean(),
+});
+const cursorPagination = z.object({
+  nextCursor: z.string().max(1024).nullable(),
 });
 const audiencePerson = z.object({
   uuid: z.uuid(),
@@ -195,35 +197,35 @@ export class FanvueReadClient {
 
   listVaultFolders(
     accessToken: string,
-    options: { page?: number; size?: number; mediaName?: string } = {},
+    options: { cursor?: string; size?: number; mediaName?: string } = {},
   ) {
-    const query = new URLSearchParams({
-      page: String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)),
-      size: String(page(options.size ?? 15, 'size', 50)),
-    });
+    const query = new URLSearchParams({ size: String(page(options.size ?? 15, 'size', 50)) });
+    if (options.cursor) query.set('cursor', z.string().min(1).max(1024).parse(options.cursor));
     if (options.mediaName)
       query.set('mediaName', z.string().min(1).max(1000).parse(options.mediaName));
     return this.get(
       accessToken,
-      `/vault/folders?${query}`,
-      z.object({ data: z.array(vaultFolder).max(50), pagination: offsetPagination }),
+      `/v1/vault/folders?${query}`,
+      z.object({ data: z.array(vaultFolder).max(50) }).extend(cursorPagination.shape),
     );
   }
 
   listVaultFolderMedia(
     accessToken: string,
     folderName: string,
-    options: { page?: number; size?: number } = {},
+    options: { cursor?: string; size?: number } = {},
   ) {
     const folder = z.string().min(1).max(255).parse(folderName);
-    const query = new URLSearchParams({
-      page: String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)),
-      size: String(page(options.size ?? 15, 'size', 50)),
-    });
+    const query = new URLSearchParams({ size: String(page(options.size ?? 15, 'size', 50)) });
+    if (options.cursor) query.set('cursor', z.string().min(1).max(1024).parse(options.cursor));
     return this.get(
       accessToken,
-      `/vault/folders/${encodeURIComponent(folder)}/media?${query}`,
-      z.object({ data: z.array(vaultFolderMedia).max(50), pagination: offsetPagination }),
+      `/v1/vault/folders/${encodeURIComponent(folder)}/media?${query}`,
+      z.object({
+        data: z.array(vaultFolderMedia).max(50),
+        nextCursor: z.string().max(1024).nullable(),
+        total: z.number().int().nonnegative().nullable(),
+      }),
     );
   }
 

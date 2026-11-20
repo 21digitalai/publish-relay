@@ -104,7 +104,7 @@ describe('Fanvue vault catalog routes', () => {
   });
 
   it('uses the shared catalog service with bounded machine media-read input', async () => {
-    const listFolderMedia = vi.fn().mockResolvedValue({ data: [], pagination: { hasMore: false } });
+    const listFolderMedia = vi.fn().mockResolvedValue({ data: [], nextCursor: null, total: 0 });
     const application = Fastify();
     registerFanvueVaultCatalogRoutes(application, {
       database: {} as never,
@@ -115,7 +115,7 @@ describe('Fanvue vault catalog routes', () => {
     });
     const response = await application.inject({
       method: 'GET',
-      url: `/api/v1/fanvue/accounts/${accountId}/vault/catalog/${encodeURIComponent('DMs / BG')}?page=2&size=50`,
+      url: `/api/v1/fanvue/accounts/${accountId}/vault/catalog/${encodeURIComponent('DMs / BG')}?cursor=next&size=50`,
       headers: {
         authorization: 'Bearer pr_test.secret',
         'x-publish-relay-workspace': workspaceId,
@@ -126,7 +126,7 @@ describe('Fanvue vault catalog routes', () => {
       workspaceId,
       accountId,
       folderName: 'DMs / BG',
-      page: 2,
+      cursor: 'next',
       size: 50,
     });
     expect(response.body).not.toContain('accessToken');

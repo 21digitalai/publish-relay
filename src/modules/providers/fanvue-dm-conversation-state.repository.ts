@@ -70,7 +70,13 @@ const historyPage = identity.extend({
   observedAt: z.date(),
 });
 const historyFailure = identity.extend({
-  failureCode: z.enum(['provider_read_failed', 'invalid_message_direction', 'page_limit_reached']),
+  failureCode: z.enum([
+    'provider_read_failed',
+    'invalid_message_direction',
+    'invalid_message_timestamp',
+    'page_ingest_failed',
+    'page_limit_reached',
+  ]),
   observedAt: z.date(),
 });
 

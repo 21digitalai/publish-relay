@@ -167,4 +167,75 @@ describe('Fanvue DM history backfill', () => {
       await pg.close();
     }
   });
+
+  it('rejects malformed provider timestamps before any page writes and records incomplete', async () => {
+    const { pg, database } = await setup();
+    try {
+      const invalid = message(inboundUuid, 'inbound', 'not-a-date');
+      await expect(
+        backfillFanvueDmHistory(database, { workspaceId, accountId, fanUuid }, () =>
+          Promise.resolve(page([invalid], 1, false)),
+        ),
+      ).resolves.toMatchObject({ state: 'incomplete', reason: 'invalid_message_timestamp' });
+      expect((await pg.query('SELECT * FROM fanvue_dm_message_receipts')).rows).toHaveLength(0);
+      expect(
+        (
+          await pg.query<{ status: string; code: string }>(
+            `SELECT history_backfill_status AS status, history_backfill_failure_code AS code
+               FROM fanvue_dm_conversation_state`,
+          )
+        ).rows[0],
+      ).toEqual({ status: 'incomplete', code: 'invalid_message_timestamp' });
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('rolls back a conflicting receipt page before recording an ingest failure', async () => {
+    const { pg, database } = await setup();
+    try {
+      await backfillFanvueDmHistory(database, { workspaceId, accountId, fanUuid }, () =>
+        Promise.resolve(
+          page([message(inboundUuid, 'inbound', '2026-11-20T10:00:00.000Z')], 1, false),
+        ),
+      );
+      const newUuid = '00000000-0000-4000-8000-000000000013';
+      await expect(
+        backfillFanvueDmHistory(database, { workspaceId, accountId, fanUuid }, () =>
+          Promise.resolve(
+            page(
+              [
+                message(newUuid, 'inbound', '2026-11-20T09:00:00.000Z'),
+                message(inboundUuid, 'inbound', '2026-11-20T10:01:00.000Z'),
+              ],
+              1,
+              false,
+            ),
+          ),
+        ),
+      ).resolves.toMatchObject({ state: 'incomplete', reason: 'page_ingest_failed' });
+      expect(
+        (
+          await pg.query<{ uuid: string }>(
+            'SELECT provider_message_uuid AS uuid FROM fanvue_dm_message_receipts',
+          )
+        ).rows,
+      ).toEqual([{ uuid: inboundUuid }]);
+      expect(
+        (
+          await pg.query<{ status: string; code: string; oldest: Date }>(
+            `SELECT history_backfill_status AS status, history_backfill_failure_code AS code,
+                    history_coverage_oldest_at AS oldest
+               FROM fanvue_dm_conversation_state`,
+          )
+        ).rows[0],
+      ).toEqual({
+        status: 'incomplete',
+        code: 'page_ingest_failed',
+        oldest: new Date('2026-11-20T10:00:00.000Z'),
+      });
+    } finally {
+      await pg.close();
+    }
+  });
 });

@@ -235,6 +235,40 @@ The same control offers `.facebook-comments-connect` as `Enable Comments` for un
 - If a Meta revoke has been reserved but not locally finalized, its rows show `Revocation pending` with a Retry Revoke path. Reconnect is suppressed until that same grant completes cleanup; the row remains visible on reload rather than implying a new grant can replace it.
 - Account rows load from the tenant-scoped account API. Connect and reconnect use provider-specific secure OAuth redirects for X, YouTube, and Meta; successful callbacks return to the protected workspace. One Meta group renders separate `Instagram · identity` and `Facebook · Page` destinations. `reauth_required`, `permission_lost`, and `remote_missing` destinations remain visible with reconnect guidance and cannot be selected for new schedules. YouTube rows expose an inline destination-defaults form for visibility, Made for Kids, and subscriber notification so routine schedules need only sparse overrides. Saving is explicit, disables during submission, and keeps errors inline. Disconnect remains blocked until referenced active jobs are cancelled, and the API error stays visible as actionable inline feedback.
 
+### Fanvue vault media prices
+
+`FanvueVaultPriceControl` is a compact **Vault media prices** action for the expanded
+Manage area of an active, manageable Fanvue account. It opens one account-specific,
+body-portaled dialog rather than adding a route or dashboard. The dialog explains that a
+saved USD price is agent-readable metadata and never send authorization.
+
+The toolbar reuses `DefaultsSelect` for dynamic provider folder names. Media use one dense
+divided list: a private same-origin thumbnail or `Preview unavailable`, safe media name,
+folder context, labelled USD input, and per-row Save/status. Blank is `Unset`; it is not
+zero, free, inferred, or random. Folder changes and cursor pagination preserve drafts by
+stable media identity. A save affects only its row, keeps rejected drafts, and announces
+confirmed success through `LiveRegion`. Dirty dismissal requires explicit discard and
+returns focus to the account trigger.
+
+The dialog reuses the existing backdrop, focus trap/return, buttons, inputs, alerts,
+loading tokens, and `.queue-table` divided-list plane. Add only
+`.fanvue-vault-price-*` layout selectors. Production previews must be authenticated,
+tenant/account-bound, private/no-store, and short-lived; provider URLs, tokens, media IDs,
+and raw payloads never appear as UI text. Loading, vault-empty, folder-empty, preview
+failure, validation failure, save failure, append failure, and saved states remain distinct.
+
+Desktop width is `min(880px, calc(100vw - 48px))` with an internally scrolling list. At
+390px it is full viewport with safe-area padding, a 64px preview/name row, and full-width
+price/Save controls with 44px targets and no horizontal scroll. Every input is labelled
+`USD price for {media name}`; Enter saves that changed row. Keyboard filtering, trapped
+Tab order, Escape close/discard, visible focus, text-plus-icon statuses, and reduced motion
+follow the existing Accounts dialog contracts.
+
+Implementation ownership stays in `src/ui/fanvue-vault-price-control.tsx`; `AccountRow`
+only mounts it after the real backend adapter is available for an eligible account. The
+component accepts a typed loader/save adapter so fixture visual states cannot leak into
+production or create a competing endpoint contract.
+
 ## Composer
 
 Fanvue uses the same destination-first Composer sheet, account picker, body, media upload,

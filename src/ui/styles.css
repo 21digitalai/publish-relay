@@ -1211,6 +1211,148 @@ textarea:focus-visible {
   border-radius: 8px;
   padding: 12px;
 }
+.confirm-dialog.fanvue-vault-price-dialog {
+  width: min(880px, calc(100vw - 48px));
+  max-height: min(760px, calc(100dvh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+.fanvue-vault-price-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.fanvue-vault-price-heading h2,
+.fanvue-vault-price-heading p {
+  margin: 0;
+}
+.fanvue-vault-price-heading p {
+  margin-top: 6px;
+}
+.fanvue-vault-price-toolbar {
+  width: min(100%, 320px);
+}
+.fanvue-vault-price-list {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border-block: 1px solid var(--border);
+}
+.fanvue-vault-price-row {
+  display: grid;
+  grid-template-columns: 56px minmax(140px, 1fr) minmax(210px, 260px) 96px;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.fanvue-vault-price-row:last-child {
+  border-bottom: 0;
+}
+.fanvue-vault-price-preview {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.15;
+  text-align: center;
+}
+.fanvue-vault-price-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.fanvue-vault-price-identity,
+.fanvue-vault-price-field,
+.fanvue-vault-price-action {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.fanvue-vault-price-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fanvue-vault-price-identity span,
+.fanvue-vault-price-field > span:first-child,
+.fanvue-vault-price-action span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.fanvue-vault-price-input {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.fanvue-vault-price-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.28);
+}
+.fanvue-vault-price-input b {
+  padding-left: 12px;
+  color: var(--muted);
+}
+.fanvue-vault-price-input input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+}
+.fanvue-vault-price-action .unsaved {
+  color: var(--warning);
+}
+.fanvue-vault-price-action .saved {
+  color: var(--success);
+}
+.fanvue-vault-price-error,
+.fanvue-vault-price-append-error {
+  margin: 0;
+  color: var(--danger);
+}
+.fanvue-vault-price-error {
+  grid-column: 3 / -1;
+}
+.fanvue-vault-price-state {
+  padding: 32px 16px;
+  text-align: center;
+}
+.fanvue-vault-price-skeleton {
+  display: grid;
+  gap: 8px;
+}
+.fanvue-vault-price-skeleton span {
+  height: 80px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  animation: pulse 1.2s ease-in-out infinite alternate;
+}
+.fanvue-vault-price-more {
+  align-self: center;
+}
+.fanvue-vault-price-discard {
+  padding: 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+}
 .facebook-guidance-field {
   display: grid;
   gap: 6px;
@@ -1610,6 +1752,36 @@ textarea:focus-visible {
   }
   .confirm-dialog {
     padding: 20px;
+  }
+  .fanvue-vault-price-dialog {
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 0;
+  }
+  .fanvue-vault-price-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 10px 12px;
+  }
+  .fanvue-vault-price-preview {
+    width: 64px;
+    height: 64px;
+  }
+  .fanvue-vault-price-field,
+  .fanvue-vault-price-action,
+  .fanvue-vault-price-error {
+    grid-column: 1 / -1;
+  }
+  .fanvue-vault-price-action {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+  .fanvue-vault-price-action button,
+  .fanvue-vault-price-input {
+    min-height: 44px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

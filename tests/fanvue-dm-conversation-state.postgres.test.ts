@@ -95,6 +95,47 @@ describe('Fanvue neutral conversation state', () => {
     }
   });
 
+  it.each(['inbound', 'outbound'] as const)(
+    'does not regress a newer %s receipt from stale or equal-time conflicting summaries',
+    async (direction) => {
+      const { pg, database } = await setup();
+      try {
+        const newerUuid = '00000000-0000-4000-8000-000000000030';
+        const newerAt = new Date('2026-11-20T10:10:00Z');
+        const base = { workspaceId, accountId, fanUuid };
+        await recordFanvueDmMessageReceipt(database, {
+          ...base,
+          providerMessageUuid: newerUuid,
+          direction,
+          sentAt: newerAt,
+          mediaUuids: [],
+          priceCents: null,
+          purchasedAt: null,
+          observedAt: new Date('2026-11-20T10:11:00Z'),
+        });
+        for (const [latestMessageUuid, latestMessageAt] of [
+          [firstInbound, new Date('2026-11-20T10:00:00Z')],
+          [secondInbound, newerAt],
+        ] as const) {
+          const row = await observeFanvueDmConversationSummary(database, {
+            ...base,
+            latestMessageUuid,
+            latestMessageAt,
+            latestDirection: direction,
+            providerIsRead: false,
+            providerUnreadCount: 1,
+            observedAt: new Date('2026-11-20T10:12:00Z'),
+          });
+          expect(
+            direction === 'inbound' ? row.latestInboundMessageUuid : row.latestOutboundMessageUuid,
+          ).toBe(newerUuid);
+        }
+      } finally {
+        await pg.close();
+      }
+    },
+  );
+
   it('reactivates a quiet conversation only for a changed inbound boundary', async () => {
     const { pg, database } = await setup();
     try {

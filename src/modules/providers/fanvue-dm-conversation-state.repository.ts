@@ -72,17 +72,17 @@ type MessageReceiptInput = z.output<typeof messageReceipt>;
 
 async function upsertMessageReceipt(transaction: NodePgDatabase, input: MessageReceiptInput) {
   const [existing] = await transaction
-      .select()
-      .from(fanvueDmMessageReceipts)
-      .where(
-        and(
-          eq(fanvueDmMessageReceipts.workspaceId, input.workspaceId),
-          eq(fanvueDmMessageReceipts.accountId, input.accountId),
-          eq(fanvueDmMessageReceipts.providerMessageUuid, input.providerMessageUuid),
-        ),
-      )
-      .for('update')
-      .limit(1);
+    .select()
+    .from(fanvueDmMessageReceipts)
+    .where(
+      and(
+        eq(fanvueDmMessageReceipts.workspaceId, input.workspaceId),
+        eq(fanvueDmMessageReceipts.accountId, input.accountId),
+        eq(fanvueDmMessageReceipts.providerMessageUuid, input.providerMessageUuid),
+      ),
+    )
+    .for('update')
+    .limit(1);
   if (
     existing &&
     (existing.fanUuid !== input.fanUuid ||
@@ -106,27 +106,24 @@ async function upsertMessageReceipt(transaction: NodePgDatabase, input: MessageR
 
 async function advanceReceiptBoundary(transaction: NodePgDatabase, input: MessageReceiptInput) {
   const [state] = await transaction
-      .select()
-      .from(fanvueDmConversationState)
-      .where(
-        and(
-          eq(fanvueDmConversationState.workspaceId, input.workspaceId),
-          eq(fanvueDmConversationState.accountId, input.accountId),
-          eq(fanvueDmConversationState.fanUuid, input.fanUuid),
-        ),
-      )
-      .for('update')
-      .limit(1);
+    .select()
+    .from(fanvueDmConversationState)
+    .where(
+      and(
+        eq(fanvueDmConversationState.workspaceId, input.workspaceId),
+        eq(fanvueDmConversationState.accountId, input.accountId),
+        eq(fanvueDmConversationState.fanUuid, input.fanUuid),
+      ),
+    )
+    .for('update')
+    .limit(1);
   const currentAt =
     input.direction === 'inbound' ? state?.latestInboundAt : state?.latestOutboundAt;
   const currentUuid =
     input.direction === 'inbound'
       ? state?.latestInboundMessageUuid
       : state?.latestOutboundMessageUuid;
-  if (
-    input.sentAt.getTime() === currentAt?.getTime() &&
-    currentUuid !== input.providerMessageUuid
-  )
+  if (input.sentAt.getTime() === currentAt?.getTime() && currentUuid !== input.providerMessageUuid)
     throw new FanvueDmMessageReceiptConflictError();
   if (currentAt && input.sentAt.getTime() <= currentAt.getTime()) return;
   const boundary = {
@@ -199,6 +196,19 @@ export async function observeFanvueDmConversationSummary(
         input.latestMessageAt.getTime() === existing.latestObservedAt.getTime() &&
         input.latestMessageUuid !== existing.latestObservedMessageUuid;
       if (isOlder || isAmbiguousEqualTime) return existing;
+    }
+    const directionalAt =
+      input.latestDirection === 'inbound' ? existing?.latestInboundAt : existing?.latestOutboundAt;
+    const directionalUuid =
+      input.latestDirection === 'inbound'
+        ? existing?.latestInboundMessageUuid
+        : existing?.latestOutboundMessageUuid;
+    if (directionalAt) {
+      const isDirectionOlder = input.latestMessageAt.getTime() < directionalAt.getTime();
+      const isDirectionAmbiguous =
+        input.latestMessageAt.getTime() === directionalAt.getTime() &&
+        input.latestMessageUuid !== directionalUuid;
+      if ((isDirectionOlder || isDirectionAmbiguous) && existing) return existing;
     }
     const isNewInbound =
       input.latestDirection === 'inbound' &&

@@ -39,6 +39,7 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
     const names: string[] = [];
     const seen = new Set<string>();
     let cursor: string | null = null;
+    let complete = false;
     for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
       const query = new URLSearchParams({ size: '50' });
       if (cursor) query.set('cursor', cursor);
@@ -48,11 +49,15 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
       );
       const page = await json<Envelope<FolderPage>>(response);
       names.push(...page.data.data.map((folder) => folder.name));
-      if (!page.data.nextCursor) break;
+      if (!page.data.nextCursor) {
+        complete = true;
+        break;
+      }
       if (seen.has(page.data.nextCursor)) throw new Error('Vault folder cursor loop');
       seen.add(page.data.nextCursor);
       cursor = page.data.nextCursor;
     }
+    if (!complete) throw new Error('Vault folder scan exceeded the 100-page safety limit');
     folderCache.set(accountId, names);
     return names.map((name) => ({ id: name, name }));
   };
@@ -81,7 +86,10 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
             `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/catalog/${encodeURIComponent(folder)}?${query}`,
             { signal },
           );
-          return { folder, page: await json<Envelope<CatalogPage>>(response) };
+          const page = await json<Envelope<CatalogPage>>(response);
+          if (providerCursor && page.data.nextCursor === providerCursor)
+            throw new Error('Vault media cursor loop');
+          return { folder, page };
           }),
       );
       const byId = new Map<string, FanvueVaultMedia>();

@@ -230,7 +230,12 @@ describe('Fanvue read transport', () => {
       { uuid: '123e4567-e89b-12d3-a456-426614174000', status: 'processing' },
     ]);
     expect(page.data[0]).not.toHaveProperty('url');
+    expect(page).toMatchObject({ nextCursor: null, total: 2 });
+    expect(request.mock.calls[0]?.[0]).toContain('/v1/vault/folders?');
     expect(request.mock.calls[0]?.[0]).toContain('mediaName=Foxy+AI');
+    expect(request.mock.calls[0]?.[1]).toMatchObject({
+      headers: expect.objectContaining({ 'X-Fanvue-API-Version': '2025-06-26' }),
+    });
     expect(request.mock.calls[1]?.[0]).toContain(
       '/v1/vault/folders/DMs%20%2F%20%D0%91%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D1%81%D0%BA%D0%B8/media?size=15&cursor=next-media',
     );
@@ -249,6 +254,19 @@ describe('Fanvue read transport', () => {
       code: 'invalid_response',
     });
     expect(() => client.listVaultFolderMedia('token', '')).toThrow();
+  });
+
+  it('accepts an empty v1 folder page without inventing membership', async () => {
+    const client = new FanvueReadClient(
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json({ data: [], nextCursor: null, total: 0 }),
+      ),
+    );
+    await expect(client.listVaultFolderMedia('token', 'Empty folder')).resolves.toEqual({
+      data: [],
+      nextCursor: null,
+      total: 0,
+    });
   });
 
   it('returns bounded post summaries and cursor-paginated comments', async () => {

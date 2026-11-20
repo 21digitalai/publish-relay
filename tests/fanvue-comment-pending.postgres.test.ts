@@ -88,6 +88,9 @@ async function fixture() {
       'utf8',
     ),
   );
+  await pg.exec(
+    await readFile(new URL('../migrations/0126_fanvue_dm_groups.sql', import.meta.url), 'utf8'),
+  );
   return { pg, database: drizzle(pg) as unknown as NodePgDatabase };
 }
 

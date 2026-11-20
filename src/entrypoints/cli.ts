@@ -130,6 +130,14 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
     path: '/api/v1/fanvue/accounts/:id/vault/media/:mediaUuid/price',
     body: true,
   },
+  'fanvue:vault-purchase-fact': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/vault/media/:mediaUuid/purchase',
+  },
+  'fanvue:vault-publication-fact': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/vault/media/:mediaUuid/publication',
+  },
   'fanvue-guidance:show': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/guidance' },
   'fanvue-guidance:set': {
     method: 'PATCH',
@@ -332,6 +340,22 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'manualPriceCents',
     'version',
     'updatedAt',
+  ]),
+  'fanvue:vault-purchase-fact': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'state',
+    'purchasedByFan',
+  ]),
+  'fanvue:vault-publication-fact': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'state',
+    'scannedAt',
+    'pagesScanned',
+    'uniquePostsScanned',
+    'complete',
+    'incompleteReason',
+    'matchingPostUuid',
+    'publishedAt',
   ]),
   'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
@@ -792,6 +816,8 @@ function routePath(
     command !== 'fanvue:folders' &&
     command !== 'fanvue:folder-media' &&
     command !== 'fanvue:vault-catalog' &&
+    command !== 'fanvue:vault-purchase-fact' &&
+    command !== 'fanvue:vault-publication-fact' &&
     command !== 'facebook-comments:posts' &&
     command !== 'facebook-comments:list' &&
     command !== 'facebook-dms:list' &&
@@ -813,6 +839,10 @@ function routePath(
             ? ['page', 'size', 'media-name']
             : command === 'fanvue:folder-media' || command === 'fanvue:vault-catalog'
               ? ['page', 'size']
+              : command === 'fanvue:vault-purchase-fact'
+                ? ['fan-uuid']
+                : command === 'fanvue:vault-publication-fact'
+                  ? ['max-pages']
               : command === 'publishes:list'
                 ? [
                     'cursor',
@@ -826,7 +856,17 @@ function routePath(
                 : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
-    if (typeof value === 'string') query.set(name === 'media-name' ? 'mediaName' : name, value);
+    if (typeof value === 'string')
+      query.set(
+        name === 'media-name'
+          ? 'mediaName'
+          : name === 'fan-uuid'
+            ? 'fanUuid'
+            : name === 'max-pages'
+              ? 'maxPages'
+              : name,
+        value,
+      );
   }
   const encoded = query.toString();
   return encoded ? `${resourcePath}?${encoded}` : resourcePath;
@@ -879,7 +919,7 @@ async function pollJob(
 async function run(): Promise<Json> {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.8.9' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.10' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);

@@ -1023,6 +1023,78 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/fanvue/accounts/{accountId}/vault/media/{mediaUuid}/purchase': {
+        get: {
+          operationId: 'getFanvueVaultMediaPurchaseFact',
+          description:
+            'Read one selected-account fan/media purchase fact. Known false is distinct from unknown provider evidence.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'mediaUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'fanUuid',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': { description: 'Known boolean purchase fact or explicit unknown/null evidence' },
+            '400': { description: 'Invalid account, media or fan UUID' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:media:read capability' },
+            '404': { description: 'Selected account or fan chat unavailable' },
+            '409': { description: 'Required Fanvue grant unavailable' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/vault/media/{mediaUuid}/publication': {
+        get: {
+          operationId: 'getFanvueVaultMediaPublicationFact',
+          description:
+            'Scan bounded selected-account post history for an exact media UUID. Unposted requires complete pagination and trusted proof that manual posts are covered; unverified, partial, failed, looping and capped scans return unknown.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'mediaUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'maxPages',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+            },
+          ],
+          responses: {
+            '200': { description: 'Posted, completely proven unposted, or explicit unknown coverage' },
+            '400': { description: 'Invalid account, media UUID or page cap' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:media:read capability' },
+            '404': { description: 'Selected account unavailable' },
+            '409': { description: 'Required Fanvue grant unavailable' },
+          },
+        },
+      },
       '/api/v1/fanvue/accounts/{accountId}/posts/{postUuid}/comments': {
         post: {
           operationId: 'sendFanvueComment',

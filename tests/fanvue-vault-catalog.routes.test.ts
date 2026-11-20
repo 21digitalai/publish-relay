@@ -12,6 +12,7 @@ import { registerFanvueVaultCatalogRoutes } from '../src/modules/providers/fanvu
 const workspaceId = '00000000-0000-4000-8000-000000000301';
 const accountId = '00000000-0000-4000-8000-000000000302';
 const mediaUuid = '00000000-0000-4000-8000-000000000303';
+const fanUuid = '00000000-0000-4000-8000-000000000304';
 const rateLimiter = () =>
   new ApiRateLimiter({
     workspace: 100,
@@ -31,6 +32,77 @@ function apiKeys(capabilities: string[]) {
 }
 
 describe('Fanvue vault catalog routes', () => {
+  it.each([
+    [{ state: 'known', purchasedByFan: true }, true],
+    [{ state: 'known', purchasedByFan: false }, false],
+    [{ state: 'unknown', purchasedByFan: null }, null],
+  ])('returns bounded selected-account purchase truth %#', async (fact, expected) => {
+    const getMediaPurchaseFact = vi.fn().mockResolvedValue(fact);
+    const application = Fastify();
+    registerFanvueVaultCatalogRoutes(application, {
+      database: {} as never,
+      reads: { getMediaPurchaseFact } as unknown as FanvueReadService,
+      apiKeys: apiKeys(['fanvue:media:read']),
+      rateLimiter: rateLimiter(),
+      catalog: {} as FanvueVaultCatalogService,
+    });
+    const response = await application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/vault/media/${mediaUuid}/purchase?fanUuid=${fanUuid}`,
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ data: { purchasedByFan: expected } });
+    expect(getMediaPurchaseFact).toHaveBeenCalledWith({
+      workspaceId,
+      accountId,
+      mediaUuid,
+      fanUuid,
+    });
+  });
+
+  it('returns bounded publication coverage without internal provider data', async () => {
+    const getMediaPublicationCoverage = vi.fn().mockResolvedValue({
+      state: 'unknown',
+      scannedAt: new Date('2026-11-20T12:00:00.000Z'),
+      pagesScanned: 3,
+      uniquePostsScanned: 120,
+      complete: false,
+      incompleteReason: 'scan_capped',
+    });
+    const application = Fastify();
+    registerFanvueVaultCatalogRoutes(application, {
+      database: {} as never,
+      reads: { getMediaPublicationCoverage } as unknown as FanvueReadService,
+      apiKeys: apiKeys(['fanvue:media:read']),
+      rateLimiter: rateLimiter(),
+      catalog: {} as FanvueVaultCatalogService,
+    });
+    const response = await application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/vault/media/${mediaUuid}/publication?maxPages=3`,
+      headers: {
+        authorization: 'Bearer pr_test.secret',
+        'x-publish-relay-workspace': workspaceId,
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{ data: Record<string, unknown> }>();
+    expect(body).toMatchObject({
+      data: { state: 'unknown', complete: false, incompleteReason: 'scan_capped' },
+    });
+    expect(body.data).not.toHaveProperty('credential');
+    expect(getMediaPublicationCoverage).toHaveBeenCalledWith({
+      workspaceId,
+      accountId,
+      mediaUuid,
+      maxPages: 3,
+    });
+  });
+
   it('uses the shared catalog service with bounded machine media-read input', async () => {
     const listFolderMedia = vi.fn().mockResolvedValue({ data: [], pagination: { hasMore: false } });
     const application = Fastify();

@@ -280,7 +280,7 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.9' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.10' } });
     },
   );
 
@@ -931,6 +931,71 @@ describe('Publish Relay CLI', () => {
       data: {
         data: [{ uuid: mediaUuid, manualPriceCents: 450, priceVersion: 2, url: '[REDACTED]' }],
       },
+    });
+  });
+  it('routes one selected-fan Fanvue purchase fact with explicit unknown truth', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000002';
+    const mediaUuid = '00000000-0000-4000-8000-000000000003';
+    const fanUuid = '00000000-0000-4000-8000-000000000004';
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      { success: true, data: { state: 'unknown', purchasedByFan: null } },
+      '00000000-0000-4000-8000-000000000201',
+      paths,
+    );
+    const result = await cli(
+      [
+        'fanvue',
+        'vault-purchase-fact',
+        accountId,
+        '--media-uuid',
+        mediaUuid,
+        '--fan-uuid',
+        fanUuid,
+        '--base-url',
+        baseUrl,
+      ],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(paths).toEqual([
+      `/api/v1/fanvue/accounts/${accountId}/vault/media/${mediaUuid}/purchase?fanUuid=${fanUuid}`,
+    ]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { state: 'unknown', purchasedByFan: null },
+    });
+  });
+  it('routes one Fanvue publication coverage fact with a bounded scan', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000002';
+    const mediaUuid = '00000000-0000-4000-8000-000000000003';
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      { success: true, data: { state: 'unknown', complete: false, incompleteReason: 'scan_capped' } },
+      '00000000-0000-4000-8000-000000000201',
+      paths,
+    );
+    const result = await cli(
+      [
+        'fanvue',
+        'vault-publication-fact',
+        accountId,
+        '--media-uuid',
+        mediaUuid,
+        '--max-pages',
+        '3',
+        '--base-url',
+        baseUrl,
+      ],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(paths).toEqual([
+      `/api/v1/fanvue/accounts/${accountId}/vault/media/${mediaUuid}/publication?maxPages=3`,
+    ]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { state: 'unknown', complete: false, incompleteReason: 'scan_capped' },
     });
   });
   it('matches the real account API authentication and response contract', async () => {

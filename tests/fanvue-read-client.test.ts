@@ -17,6 +17,27 @@ const message = {
 };
 
 describe('Fanvue read transport', () => {
+  it.each([true, false])('reads explicit purchasedByFan=%s without inference', async (purchased) => {
+    const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ uuid: mediaUuid, status: 'ready', purchasedByFan: purchased }),
+    );
+    await expect(
+      new FanvueReadClient(request).getMediaPurchaseFact('token', mediaUuid, person.uuid),
+    ).resolves.toMatchObject({ purchasedByFan: purchased });
+    expect(request.mock.calls[0]?.[0]).toContain(`purchasedBy=${person.uuid}`);
+  });
+
+  it('keeps a missing purchasedByFan field unknown instead of false', async () => {
+    const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ uuid: mediaUuid, status: 'ready' }));
+    await expect(
+      new FanvueReadClient(request).getMediaPurchaseFact('token', mediaUuid, person.uuid),
+    ).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
   it('paginates chats and never marks message reads', async () => {
     const request = vi.fn<typeof fetch>().mockImplementation((url) =>
       Promise.resolve(

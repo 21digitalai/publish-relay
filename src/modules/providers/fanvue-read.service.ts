@@ -9,7 +9,7 @@ import {
   FanvueReconnectionRequiredError,
   getFreshFanvueToken,
 } from './fanvue-credential.service.js';
-import type { FanvueHttpClient } from './fanvue-http-client.js';
+import { FanvueRequestError, type FanvueHttpClient } from './fanvue-http-client.js';
 import type { FanvueReadClient } from './fanvue-read-client.js';
 
 export type FanvueReadModule = 'chat' | 'post' | 'media' | 'audience';
@@ -39,6 +39,9 @@ export class FanvueReadService {
     private readonly keys: MasterKeyProvider,
     private readonly oauthClient: FanvueHttpClient,
     private readonly readClient: FanvueReadClient,
+    private readonly publicationCoverage: { manualPostsIncluded: boolean } = {
+      manualPostsIncluded: false,
+    },
   ) {}
 
   async listFollowers(input: {
@@ -90,8 +93,15 @@ export class FanvueReadService {
     accountId: string;
     fanUuid: string;
   }) {
+    return this.getExistingChat(input, ['write:chat']);
+  }
+
+  private async getExistingChat(
+    input: { workspaceId: string; accountId: string; fanUuid: string },
+    additionalScopes: string[],
+  ) {
     const fanUuid = z.uuid().parse(input.fanUuid);
-    const token = await this.accessToken(input, 'chat', ['write:chat']);
+    const token = await this.accessToken(input, 'chat', additionalScopes);
     const messages = await this.readClient.listMessages(token, fanUuid, { size: 1 });
     const first = messages.data[0];
     if (!first || (first.sender.uuid !== fanUuid && first.recipient.uuid !== fanUuid))
@@ -119,6 +129,27 @@ export class FanvueReadService {
   async getMediaStatus(input: { workspaceId: string; accountId: string; mediaUuid: string }) {
     const token = await this.accessToken(input, 'media');
     return this.readClient.getMediaStatus(token, input.mediaUuid);
+  }
+
+  async getMediaPurchaseFact(input: {
+    workspaceId: string;
+    accountId: string;
+    mediaUuid: string;
+    fanUuid: string;
+  }) {
+    try {
+      const { accessToken } = await this.getExistingChat(input, ['read:media']);
+      const media = await this.readClient.getMediaPurchaseFact(
+        accessToken,
+        input.mediaUuid,
+        input.fanUuid,
+      );
+      return { state: 'known' as const, purchasedByFan: media.purchasedByFan };
+    } catch (error) {
+      if (error instanceof FanvueRequestError)
+        return { state: 'unknown' as const, purchasedByFan: null };
+      throw error;
+    }
   }
 
   async getMediaThumbnail(input: { workspaceId: string; accountId: string; mediaUuid: string }) {
@@ -168,6 +199,60 @@ export class FanvueReadService {
   async getPost(input: { workspaceId: string; accountId: string; postUuid: string }) {
     const token = await this.accessToken(input, 'post');
     return this.readClient.getPost(token, input.postUuid);
+  }
+
+  async getMediaPublicationCoverage(input: {
+    workspaceId: string;
+    accountId: string;
+    mediaUuid: string;
+    maxPages?: number;
+  }) {
+    const mediaUuid = z.uuid().parse(input.mediaUuid);
+    const maxPages = z.number().int().min(1).max(100).default(20).parse(input.maxPages);
+    const token = await this.accessToken(input, 'post');
+    const scannedAt = new Date();
+    const postUuids = new Set<string>();
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      let response: Awaited<ReturnType<FanvueReadClient['listPosts']>>;
+      try {
+        response = await this.readClient.listPosts(token, {
+          ...(cursor ? { cursor } : {}),
+          size: 50,
+        });
+      } catch (error) {
+        if (!(error instanceof FanvueRequestError)) throw error;
+        return publicationCoverage('unknown', scannedAt, page - 1, postUuids.size, false, 'scan_failed');
+      }
+      for (const post of response.data) {
+        postUuids.add(post.uuid);
+        if (post.publishedAt && post.mediaUuids.includes(mediaUuid))
+          return {
+            ...publicationCoverage('posted', scannedAt, page, postUuids.size, false, null),
+            matchingPostUuid: post.uuid,
+            publishedAt: new Date(post.publishedAt),
+          };
+      }
+      if (!response.nextCursor) {
+        if (!this.publicationCoverage.manualPostsIncluded)
+          return publicationCoverage(
+            'unknown',
+            scannedAt,
+            page,
+            postUuids.size,
+            true,
+            'manual_post_coverage_unverified',
+          );
+        return publicationCoverage('unposted', scannedAt, page, postUuids.size, true, null);
+      }
+      if (cursors.has(response.nextCursor))
+        return publicationCoverage('unknown', scannedAt, page, postUuids.size, false, 'cursor_loop');
+      cursors.add(response.nextCursor);
+      cursor = response.nextCursor;
+    }
+    return publicationCoverage('unknown', scannedAt, maxPages, postUuids.size, false, 'scan_capped');
   }
 
   /** Internal command preflight: Fanvue GET only returns a post owned by this token's creator. */
@@ -283,4 +368,20 @@ export class FanvueReadService {
     if (!stillConnected) throw new FanvueReadUnavailableError('account_not_found');
     return token.access_token;
   }
+}
+
+function publicationCoverage(
+  state: 'posted' | 'unposted' | 'unknown',
+  scannedAt: Date,
+  pagesScanned: number,
+  uniquePostsScanned: number,
+  complete: boolean,
+  incompleteReason:
+    | 'scan_failed'
+    | 'cursor_loop'
+    | 'scan_capped'
+    | 'manual_post_coverage_unverified'
+    | null,
+) {
+  return { state, scannedAt, pagesScanned, uniquePostsScanned, complete, incompleteReason };
 }

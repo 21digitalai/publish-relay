@@ -353,7 +353,7 @@ function FanvueVaultPriceDialog({
 
   return (
     <div
-      className="dialog-backdrop"
+      className="dialog-backdrop fanvue-vault-price-backdrop"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) requestClose();

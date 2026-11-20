@@ -259,8 +259,9 @@ failure, validation failure, save failure, append failure, and saved states rema
 
 Desktop width is `min(880px, calc(100vw - 48px))` with an internally scrolling list.
 The media preview is 168px square on desktop and 192px square on mobile, three times
-the previous 56px/64px sizes. At 390px use safe-area padding, stack the preview above the full-width name, and retain full-width
-price/Save controls with 44px targets and no horizontal scroll. Every input is labelled
+the previous 56px/64px sizes. At 390px the backdrop has no inset and the dialog fills the
+viewport with safe-area padding; stack the preview above the full-width name and retain
+full-width price/Save controls with 44px targets and no horizontal scroll. Every input is labelled
 `USD price for {media name}`; Enter saves that changed row. Keyboard filtering, trapped
 Tab order, Escape close/discard, visible focus, text-plus-icon statuses, and reduced motion
 follow the existing Accounts dialog contracts.

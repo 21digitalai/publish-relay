@@ -1757,7 +1757,10 @@ textarea:focus-visible {
   .confirm-dialog {
     padding: 20px;
   }
-  .fanvue-vault-price-dialog {
+  .fanvue-vault-price-backdrop {
+    padding: 0;
+  }
+  .confirm-dialog.fanvue-vault-price-dialog {
     width: 100vw;
     max-width: none;
     height: 100dvh;

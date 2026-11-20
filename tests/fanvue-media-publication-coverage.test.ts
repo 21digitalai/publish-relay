@@ -24,13 +24,19 @@ function post(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function fixture(...pages: unknown[]) {
+function fixture(pages: unknown[], manualPostsIncluded = false) {
   const listPosts = vi.fn();
   for (const page of pages) {
     if (page instanceof Error) listPosts.mockRejectedValueOnce(page);
     else listPosts.mockResolvedValueOnce(page);
   }
-  const service = new FanvueReadService({} as never, {} as never, {} as never, {} as never);
+  const service = new FanvueReadService(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    { manualPostsIncluded },
+  );
   Reflect.set(service, 'accessToken', vi.fn().mockResolvedValue('token'));
   Reflect.set(service, 'readClient', { listPosts });
   return { service, listPosts };
@@ -38,10 +44,10 @@ function fixture(...pages: unknown[]) {
 
 describe('Fanvue media publication coverage', () => {
   it('proves a published exact UUID match across overlapping pages', async () => {
-    const context = fixture(
+    const context = fixture([
       { data: [post()], nextCursor: 'next' },
       { data: [post({ mediaUuids: [input.mediaUuid] })], nextCursor: 'later' },
-    );
+    ]);
     await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
       state: 'posted',
       complete: false,
@@ -53,11 +59,27 @@ describe('Fanvue media publication coverage', () => {
     });
   });
 
-  it('proves unposted only after complete history and ignores unpublished matches', async () => {
-    const context = fixture({
+  it('keeps a complete scan unknown until manual-post coverage is verified', async () => {
+    const context = fixture([{
       data: [post({ publishedAt: null, mediaUuids: [input.mediaUuid] })],
       nextCursor: null,
+    }]);
+    await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
+      state: 'unknown',
+      complete: true,
+      pagesScanned: 1,
+      uniquePostsScanned: 1,
+      incompleteReason: 'manual_post_coverage_unverified',
     });
+  });
+
+  it('proves unposted after complete history when manual-post coverage is verified', async () => {
+    const context = fixture([
+      {
+        data: [post({ publishedAt: null, mediaUuids: [input.mediaUuid] })],
+        nextCursor: null,
+      },
+    ], true);
     await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
       state: 'unposted',
       complete: true,
@@ -68,10 +90,10 @@ describe('Fanvue media publication coverage', () => {
   });
 
   it('returns unknown for a partial provider failure', async () => {
-    const context = fixture(
+    const context = fixture([
       { data: [post()], nextCursor: 'next' },
       new FanvueRequestError(503),
-    );
+    ]);
     await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
       state: 'unknown',
       complete: false,
@@ -82,7 +104,7 @@ describe('Fanvue media publication coverage', () => {
   });
 
   it('returns unknown when the bounded scan is capped', async () => {
-    const context = fixture({ data: [post()], nextCursor: 'next' });
+    const context = fixture([{ data: [post()], nextCursor: 'next' }]);
     await expect(
       context.service.getMediaPublicationCoverage({ ...input, maxPages: 1 }),
     ).resolves.toMatchObject({

@@ -39,6 +39,9 @@ export class FanvueReadService {
     private readonly keys: MasterKeyProvider,
     private readonly oauthClient: FanvueHttpClient,
     private readonly readClient: FanvueReadClient,
+    private readonly publicationCoverage: { manualPostsIncluded: boolean } = {
+      manualPostsIncluded: false,
+    },
   ) {}
 
   async listFollowers(input: {
@@ -230,8 +233,18 @@ export class FanvueReadService {
             publishedAt: new Date(post.publishedAt),
           };
       }
-      if (!response.nextCursor)
+      if (!response.nextCursor) {
+        if (!this.publicationCoverage.manualPostsIncluded)
+          return publicationCoverage(
+            'unknown',
+            scannedAt,
+            page,
+            postUuids.size,
+            true,
+            'manual_post_coverage_unverified',
+          );
         return publicationCoverage('unposted', scannedAt, page, postUuids.size, true, null);
+      }
       if (cursors.has(response.nextCursor))
         return publicationCoverage('unknown', scannedAt, page, postUuids.size, false, 'cursor_loop');
       cursors.add(response.nextCursor);
@@ -361,7 +374,12 @@ function publicationCoverage(
   pagesScanned: number,
   uniquePostsScanned: number,
   complete: boolean,
-  incompleteReason: 'scan_failed' | 'cursor_loop' | 'scan_capped' | null,
+  incompleteReason:
+    | 'scan_failed'
+    | 'cursor_loop'
+    | 'scan_capped'
+    | 'manual_post_coverage_unverified'
+    | null,
 ) {
   return { state, scannedAt, pagesScanned, uniquePostsScanned, complete, incompleteReason };
 }

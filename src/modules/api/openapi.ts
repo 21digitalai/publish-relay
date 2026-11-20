@@ -1055,7 +1055,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         get: {
           operationId: 'getFanvueVaultMediaPublicationFact',
           description:
-            'Scan bounded selected-account post history for an exact media UUID. Only complete pagination proves unposted; partial, failed, looping and capped scans return unknown.',
+            'Scan bounded selected-account post history for an exact media UUID. Unposted requires complete pagination and trusted proof that manual posts are covered; unverified, partial, failed, looping and capped scans return unknown.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
             {

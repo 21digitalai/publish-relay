@@ -32,7 +32,7 @@ export class FanvueVaultCatalogService {
     workspaceId: string;
     accountId: string;
     folderName: string;
-    page?: number;
+    cursor?: string;
     size?: number;
   }) {
     const live = await this.reads.listVaultFolderMedia(input);

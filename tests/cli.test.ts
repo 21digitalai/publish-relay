@@ -876,7 +876,8 @@ describe('Publish Relay CLI', () => {
               url: 'private',
             },
           ],
-          pagination: { page: 2, size: 1, hasMore: false },
+          nextCursor: null,
+          total: 1,
         },
       },
       '00000000-0000-4000-8000-000000000201',
@@ -889,8 +890,8 @@ describe('Publish Relay CLI', () => {
         accountId,
         '--folder-name',
         'DMs / Български',
-        '--page',
-        '2',
+        '--cursor',
+        'media-next',
         '--size',
         '50',
         '--base-url',
@@ -900,7 +901,7 @@ describe('Publish Relay CLI', () => {
     );
     expect(result.code).toBe(0);
     expect(paths).toEqual([
-      `/api/v1/fanvue/accounts/${accountId}/vault/folders/DMs%20%2F%20%D0%91%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D1%81%D0%BA%D0%B8/media?page=2&size=50`,
+      `/api/v1/fanvue/accounts/${accountId}/vault/folders/DMs%20%2F%20%D0%91%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D1%81%D0%BA%D0%B8/media?cursor=media-next&size=50`,
     ]);
     const output = JSON.parse(result.stdout) as { data: { data: unknown[] } };
     expect(output.data.data[0]).toEqual({
@@ -931,7 +932,8 @@ describe('Publish Relay CLI', () => {
               url: 'private',
             },
           ],
-          pagination: { page: 2, size: 1, hasMore: false },
+          nextCursor: null,
+          total: 1,
         },
       },
       '00000000-0000-4000-8000-000000000201',
@@ -944,8 +946,8 @@ describe('Publish Relay CLI', () => {
         accountId,
         '--folder-name',
         'Paid / Български',
-        '--page',
-        '2',
+        '--cursor',
+        'catalog-next',
         '--size',
         '50',
         '--base-url',
@@ -955,7 +957,7 @@ describe('Publish Relay CLI', () => {
     );
     expect(result.code).toBe(0);
     expect(paths).toEqual([
-      `/api/v1/fanvue/accounts/${accountId}/vault/catalog/Paid%20%2F%20%D0%91%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D1%81%D0%BA%D0%B8?page=2&size=50`,
+      `/api/v1/fanvue/accounts/${accountId}/vault/catalog/Paid%20%2F%20%D0%91%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D1%81%D0%BA%D0%B8?cursor=catalog-next&size=50`,
     ]);
     expect(JSON.parse(result.stdout)).toMatchObject({
       data: {

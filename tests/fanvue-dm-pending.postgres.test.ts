@@ -13,6 +13,7 @@ import {
   renewClaimedFanvueDm,
   replayScheduledFanvueDm,
   scheduleFanvueDm,
+  scheduleFanvueDmGroup,
 } from '../src/modules/providers/fanvue-dm-pending.repository.js';
 import { dispatchDueFanvueDms } from '../src/modules/providers/fanvue-dm-pending.worker.js';
 
@@ -289,7 +290,16 @@ describe('Fanvue DM pending intent foundation', () => {
       const sendMessage = vi
         .fn()
         .mockResolvedValue({ state: 'confirmed', messageUuid: input.fanUuid });
-      const runtime = { database, messages: { sendMessage }, workerId: 'worker', leaseMs: 30_000 };
+      const preflightScheduledDispatch = vi
+        .fn()
+        .mockResolvedValueOnce('allow')
+        .mockResolvedValueOnce('cancel');
+      const runtime = {
+        database,
+        messages: { sendMessage, preflightScheduledDispatch },
+        workerId: 'worker',
+        leaseMs: 30_000,
+      };
       expect(await dispatchDueFanvueDms(runtime, dueAt)).toMatchObject({
         state: 'failed',
         settled: true,
@@ -338,6 +348,43 @@ describe('Fanvue DM pending intent foundation', () => {
         }),
         expect.stringMatching(/^worker:/),
       );
+      const group = {
+        workspaceId,
+        accountId,
+        fanUuid: '00000000-0000-4000-8000-000000000028',
+        clientActionId: '00000000-0000-4000-8000-000000000026',
+        actor: { type: 'user' as const, id: actorId },
+        bubbles: ['Root', 'Tail'],
+        expectedLatestInboundMessageUuid: '00000000-0000-4000-8000-000000000027',
+        expectedLatestInboundAt: new Date('2026-11-20T10:00:00Z'),
+        earliestAt: new Date('2026-11-20T12:00:00Z'),
+        latestAt: new Date('2026-11-20T12:05:00Z'),
+      };
+      await scheduleFanvueDmGroup(database, group);
+      const rootResult = await dispatchDueFanvueDms(
+        runtime,
+        new Date('2026-11-20T13:00:00Z'),
+      );
+      expect(rootResult).toMatchObject({ state: 'confirmed', settled: true });
+      const tailDue = await pg.query<{ due_at: string }>(
+        `SELECT due_at FROM fanvue_dm_pending_intents
+         WHERE group_id IS NOT NULL AND sequence_index = 1`,
+      );
+      const tailResult = await dispatchDueFanvueDms(
+        runtime,
+        new Date(Date.parse(tailDue.rows[0]?.due_at ?? '') + 1000),
+      );
+      expect(tailResult).toMatchObject({ state: 'cancelled', settled: true });
+      expect(preflightScheduledDispatch).toHaveBeenCalledTimes(2);
+      expect(sendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'Tail' }),
+        expect.anything(),
+      );
+      const groupStates = await pg.query<{ status: string }>(
+        `SELECT status FROM fanvue_dm_pending_intents
+         WHERE group_id IS NOT NULL ORDER BY sequence_index`,
+      );
+      expect(groupStates.rows.map((row) => row.status)).toEqual(['confirmed', 'cancelled']);
     } finally {
       await pg.close();
     }

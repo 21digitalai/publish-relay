@@ -28,7 +28,7 @@ interface Runtime {
 }
 
 type Intent = NonNullable<Awaited<ReturnType<typeof claimDueFanvueDm>>>;
-type State = 'confirmed' | 'failed' | 'unknown' | 'pending';
+type State = 'confirmed' | 'failed' | 'unknown' | 'pending' | 'cancelled';
 
 export async function hasCurrentFanvueAuthority(
   database: NodePgDatabase,
@@ -123,7 +123,7 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   if (prior) return prior;
   if (intent.expectedLatestInboundMessageUuid && runtime.messages.preflightScheduledDispatch) {
     const preflight = await runtime.messages.preflightScheduledDispatch(intent);
-    if (preflight === 'cancel') return 'failed';
+    if (preflight === 'cancel') return 'cancelled';
     if (preflight === 'freeze_unknown') return 'unknown';
   }
   if (intent.actorType === 'system') return 'failed';

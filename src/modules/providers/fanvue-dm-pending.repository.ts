@@ -147,6 +147,28 @@ export async function scheduleFanvueDmGroup(
         throw new FanvueDmScheduleConflictError();
       return prior;
     }
+    const [commentCollision] = await tx
+      .select({ id: fanvueCommentPendingIntents.id })
+      .from(fanvueCommentPendingIntents)
+      .where(
+        and(
+          eq(fanvueCommentPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueCommentPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (commentCollision) throw new FanvueDmScheduleConflictError();
+    const [actionCollision] = await tx
+      .select({ id: fanvueActionIntents.id })
+      .from(fanvueActionIntents)
+      .where(
+        and(
+          eq(fanvueActionIntents.workspaceId, input.workspaceId),
+          eq(fanvueActionIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (actionCollision) throw new FanvueDmScheduleConflictError();
     const [account] = await tx
       .select({ provider: providerAccounts.destinationProvider })
       .from(providerAccounts)
@@ -204,13 +226,38 @@ export async function scheduleFanvueDmGroup(
   });
 }
 
+export async function replayFanvueDmGroup(
+  database: NodePgDatabase,
+  unparsed: z.input<typeof fanvueGroupScheduleInput>,
+) {
+  const input = fanvueGroupScheduleInput.parse(unparsed);
+  return withTenantTransaction(database, input, async (tx) => {
+    const [prior] = await tx
+      .select({ ...projection, requestFingerprint: fanvueDmPendingIntents.requestFingerprint })
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (!prior) return null;
+    if (!prior.groupId || prior.requestFingerprint !== groupFingerprint(input))
+      throw new FanvueDmScheduleConflictError();
+    const { requestFingerprint, ...receipt } = prior;
+    void requestFingerprint;
+    return receipt;
+  });
+}
+
 export async function getFanvueDmGroupStatus(
   database: NodePgDatabase,
   input: { workspaceId: string; accountId: string; fanUuid: string; clientActionId: string },
 ) {
   return withTenantTransaction(database, input, async (tx) => {
     const [root] = await tx
-      .select({ groupId: fanvueDmPendingIntents.groupId, id: fanvueDmPendingIntents.id })
+      .select({ groupId: fanvueDmPendingIntents.groupId })
       .from(fanvueDmPendingIntents)
       .where(
         and(
@@ -239,7 +286,6 @@ export async function getFanvueDmGroupStatus(
       .orderBy(asc(fanvueDmPendingIntents.sequenceIndex))
       .limit(5);
     return {
-      id: root.id,
       bubbles: rows.map((row) => ({
         sequence: row.sequence,
         status: row.status,
@@ -767,7 +813,7 @@ export async function finishClaimedFanvueDm(
     workspaceId: string;
     id: string;
     leaseOwner: string;
-    state: 'confirmed' | 'failed' | 'unknown' | 'pending';
+    state: 'confirmed' | 'failed' | 'unknown' | 'pending' | 'cancelled';
   },
 ) {
   return withTenantTransaction(database, input, async (tx) => {
@@ -853,7 +899,7 @@ export async function finishClaimedFanvueDm(
                 ),
               );
           }
-        } else if (input.state === 'failed') {
+        } else if (input.state === 'failed' || input.state === 'cancelled') {
           await tx
             .update(fanvueDmPendingIntents)
             .set({ status: 'cancelled', updatedAt: new Date() })

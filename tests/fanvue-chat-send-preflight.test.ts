@@ -13,7 +13,13 @@ const input = {
 
 function fixture(data: unknown[]) {
   const accessToken = vi.fn().mockResolvedValue('token');
-  const listMessages = vi.fn().mockResolvedValue({ data });
+  const listMessages = vi.fn().mockResolvedValue({
+    data: data.map((message) => ({
+      uuid: '00000000-0000-4000-8000-000000000006',
+      sentAt: '2026-11-20T12:00:00.000Z',
+      ...(message as object),
+    })),
+  });
   const getMediaPurchaseFact = vi.fn().mockResolvedValue({ purchasedByFan: true });
   const service = new FanvueReadService({} as never, {} as never, {} as never, {} as never);
   Reflect.set(service, 'accessToken', accessToken);
@@ -32,6 +38,8 @@ describe('Fanvue existing-chat send preflight', () => {
     await expect(context.service.getExistingChatForMessage(input)).resolves.toEqual({
       accessToken: 'token',
       targetLabel: null,
+      latestMessageUuid: '00000000-0000-4000-8000-000000000006',
+      latestMessageAt: new Date('2026-11-20T12:00:00.000Z'),
     });
     expect(context.accessToken).toHaveBeenCalledWith(input, 'chat', ['write:chat']);
     expect(context.listMessages).toHaveBeenCalledWith('token', input.fanUuid, { size: 1 });
@@ -47,6 +55,29 @@ describe('Fanvue existing-chat send preflight', () => {
     await expect(context.service.getExistingChatForMessage(input)).resolves.toMatchObject({
       targetLabel: '@alexandra',
     });
+  });
+
+  it('finds the latest recipient inbound behind group-owned outbound messages', async () => {
+    const inboundUuid = '00000000-0000-4000-8000-000000000007';
+    const context = fixture([
+      {
+        sender: { uuid: '00000000-0000-4000-8000-000000000004' },
+        recipient: { uuid: input.fanUuid },
+      },
+      {
+        uuid: inboundUuid,
+        sentAt: '2026-11-20T11:00:00.000Z',
+        sender: { uuid: input.fanUuid },
+        recipient: { uuid: '00000000-0000-4000-8000-000000000004' },
+      },
+    ]);
+    await expect(
+      context.service.getLatestRecipientMessageForSendBoundary(input),
+    ).resolves.toEqual({
+      latestInboundMessageUuid: inboundUuid,
+      latestInboundAt: new Date('2026-11-20T11:00:00.000Z'),
+    });
+    expect(context.listMessages).toHaveBeenCalledWith('token', input.fanUuid, { size: 10 });
   });
 
   it('proves purchase facts with read chat and media scopes without write chat', async () => {

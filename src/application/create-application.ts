@@ -406,16 +406,19 @@ function registerBrowserRoutes(
     fanvueOauth,
     delegatedAuthorization,
   } = options;
+  const enabledAdapters = resolveEnabledAdapters(config);
   if (database && mediaStorage && config.CURSOR_SIGNING_SECRET) {
-    registerInstagramMediaRoutes(application, {
-      database,
-      mediaStorage,
-      tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
-    });
-    registerTikTokMediaRoutes(application, {
-      grants: new TikTokMediaGrantService(database, Buffer.from(config.CURSOR_SIGNING_SECRET)),
-      mediaStorage,
-    });
+    if (enabledAdapters.has('instagram'))
+      registerInstagramMediaRoutes(application, {
+        database,
+        mediaStorage,
+        tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
+      });
+    if (enabledAdapters.has('tiktok'))
+      registerTikTokMediaRoutes(application, {
+        grants: new TikTokMediaGrantService(database, Buffer.from(config.CURSOR_SIGNING_SECRET)),
+        mediaStorage,
+      });
   }
   if (auth && database) {
     if (options.facebookRead)
@@ -427,7 +430,7 @@ function registerBrowserRoutes(
     registerEngagementProposalRoutes(application, {
       database,
       auth,
-      enabledAdapters: resolveEnabledAdapters(config),
+      enabledAdapters,
     });
     const facebookRuntime = options.facebookRead
       ? { database, ...options.facebookRead, policy: actionPolicy }
@@ -492,10 +495,10 @@ function registerBrowserRoutes(
     registerProviderAccountRoutes(application, {
       auth,
       database,
-      enabledAdapters: resolveEnabledAdapters(config),
+      enabledAdapters,
       ...(tiktokOauth ? { tiktok: { keys: tiktokOauth.keys, client: tiktokOauth.client } } : {}),
     });
-    if (resolveEnabledAdapters(config).has('tiktok')) {
+    if (enabledAdapters.has('tiktok')) {
       registerTikTokConsentRoutes(application, { auth, database });
       registerTikTokDraftRoutes(application, { auth, database, actionPolicy });
       registerTikTokScheduleRoutes(application, {
@@ -505,13 +508,13 @@ function registerBrowserRoutes(
         enabled: Boolean(tiktokOauth),
       });
     }
-    if (resolveEnabledAdapters(config).has('snapchat'))
+    if (enabledAdapters.has('snapchat'))
       registerSnapchatStoryResolutionRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {
       auth,
       database,
       actionPolicy,
-      enabledAdapters: resolveEnabledAdapters(config),
+      enabledAdapters,
       ...(mediaStorage ? { mediaStorage } : {}),
       videoConfig: {
         maxBytes: config.MEDIA_VIDEO_MAX_BYTES ?? AGENT_MEDIA_MAX_BYTES,
@@ -531,7 +534,7 @@ function registerBrowserRoutes(
     registerLinkedInOauthRoutes(application, { auth, database, actionPolicy, ...linkedinOauth });
   if (auth && database && metaOauth)
     registerMetaOauthRoutes(application, { auth, database, actionPolicy, ...metaOauth });
-  if (auth && database)
+  if (auth && database && enabledAdapters.has('instagram'))
     registerInstagramLoginRoutes(application, {
       auth,
       database,

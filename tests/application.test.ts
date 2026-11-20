@@ -58,6 +58,27 @@ describe('application', () => {
     expect((await application.inject({ method: 'GET', url: '/login' })).statusCode).toBe(404);
   });
 
+  it('omits disabled provider media and connection routes from a composed server', () => {
+    const application = Fastify();
+    registerCoreApplication(application, {
+      config: {
+        ...testConfig,
+        CURSOR_SIGNING_SECRET: 'a'.repeat(32),
+        PUBLISH_RELAY_ENABLED_ADAPTERS: '',
+      },
+      database: {} as never,
+      mediaStorage: {} as never,
+      auth: {} as never,
+    });
+    applications.push(application);
+
+    expect(application.hasRoute({ method: 'GET', url: '/provider-media/instagram' })).toBe(false);
+    expect(
+      application.hasRoute({ method: 'GET', url: '/provider-media/tiktok/:grant/:token' }),
+    ).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/instagram' })).toBe(false);
+  });
+
   it('keeps a Hosted root while serving one magic-link auth shell and prefixed assets', async () => {
     const application = Fastify();
     application.get('/', () => 'Hosted landing');

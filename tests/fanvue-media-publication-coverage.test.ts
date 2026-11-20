@@ -83,6 +83,21 @@ describe('Fanvue media publication coverage', () => {
     });
   });
 
+  it('matches a manually created published post from the canonical collection', async () => {
+    const manualPostUuid = '00000000-0000-4000-8000-000000000005';
+    const context = fixture([
+      {
+        data: [post({ uuid: manualPostUuid, mediaUuids: [input.mediaUuid] })],
+        nextCursor: null,
+      },
+    ]);
+    await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
+      state: 'posted',
+      matchingPostUuid: manualPostUuid,
+      publishedAt: new Date('2026-11-20T10:05:00.000Z'),
+    });
+  });
+
   it('does not mark an unpublished preview-media match as posted', async () => {
     const context = fixture([
       {
@@ -137,6 +152,20 @@ describe('Fanvue media publication coverage', () => {
       pagesScanned: 1,
       uniquePostsScanned: 1,
       incompleteReason: 'scan_capped',
+    });
+  });
+
+  it('returns unknown when the provider repeats an opaque cursor', async () => {
+    const context = fixture([
+      { data: [post()], nextCursor: 'same-cursor' },
+      { data: [post({ uuid: '00000000-0000-4000-8000-000000000006' })], nextCursor: 'same-cursor' },
+    ]);
+    await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
+      state: 'unknown',
+      complete: false,
+      pagesScanned: 2,
+      uniquePostsScanned: 2,
+      incompleteReason: 'cursor_loop',
     });
   });
 });

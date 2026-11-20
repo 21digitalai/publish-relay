@@ -190,19 +190,18 @@ describe('Fanvue DM history backfill', () => {
            'provider_history', NULL, '${paidUuid}', 'confirmed', 300, NULL);
       `);
       const paid = message(paidUuid, 'outbound', '2026-11-20T10:20:00.000Z', [purchasedMediaUuid]);
-      const different = message(
-        collisionMessageUuid,
-        'outbound',
-        '2026-11-20T10:25:00.000Z',
-        [purchasedMediaUuid],
-      );
+      const different = message(collisionMessageUuid, 'outbound', '2026-11-20T10:25:00.000Z', [
+        purchasedMediaUuid,
+      ]);
       await expect(
         backfillFanvueDmHistory(database, { workspaceId, accountId, fanUuid }, () =>
           Promise.resolve(
             page(
               [
                 message(manualGiftUuid, 'outbound', '2026-11-20T10:05:00.000Z', [mediaUuid]),
-                message(otherMessageUuid, 'outbound', '2026-11-20T10:10:00.000Z', [unknownMediaUuid]),
+                message(otherMessageUuid, 'outbound', '2026-11-20T10:10:00.000Z', [
+                  unknownMediaUuid,
+                ]),
                 paid,
                 different,
               ],

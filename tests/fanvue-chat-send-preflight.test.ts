@@ -71,9 +71,7 @@ describe('Fanvue existing-chat send preflight', () => {
         recipient: { uuid: '00000000-0000-4000-8000-000000000004' },
       },
     ]);
-    await expect(
-      context.service.getLatestRecipientMessageForSendBoundary(input),
-    ).resolves.toEqual({
+    await expect(context.service.getLatestRecipientMessageForSendBoundary(input)).resolves.toEqual({
       latestInboundMessageUuid: inboundUuid,
       latestInboundAt: new Date('2026-11-20T11:00:00.000Z'),
     });
@@ -93,11 +91,9 @@ describe('Fanvue existing-chat send preflight', () => {
         mediaUuid: '00000000-0000-4000-8000-000000000005',
       }),
     ).resolves.toEqual({ state: 'known', purchasedByFan: true });
-    expect(context.accessToken).toHaveBeenCalledWith(
-      expect.objectContaining(input),
-      'chat',
-      ['read:media'],
-    );
+    expect(context.accessToken).toHaveBeenCalledWith(expect.objectContaining(input), 'chat', [
+      'read:media',
+    ]);
     expect(context.getMediaPurchaseFact).toHaveBeenCalledWith(
       'token',
       '00000000-0000-4000-8000-000000000005',

@@ -18,11 +18,17 @@ const reservation = identity.extend({
   groupId: z.uuid().nullable().default(null),
   providerMediaUuid: z.uuid().nullable().default(null),
 });
-const settlement = identity.extend({
-  clientActionId: z.uuid(),
-  state: z.enum(['confirmed', 'unknown', 'cancelled']),
-  providerMessageUuid: z.uuid().optional(),
-});
+const settlementIdentity = identity.extend({ clientActionId: z.uuid() });
+const settlement = z.discriminatedUnion('state', [
+  settlementIdentity.extend({
+    state: z.literal('confirmed'),
+    providerMessageUuid: z.uuid(),
+  }),
+  settlementIdentity.extend({ state: z.literal('unknown') }),
+  settlementIdentity.extend({ state: z.literal('cancelled') }),
+]);
+
+const MAX_FANVUE_DM_CHECKPOINTS_PER_FAN = 100;
 
 export class FanvueDmCheckpointConflictError extends Error {
   constructor() {
@@ -86,14 +92,12 @@ export async function settleFanvueDmCheckpoint(
   unparsed: z.input<typeof settlement>,
 ) {
   const input = settlement.parse(unparsed);
-  if (input.state === 'confirmed' && !input.providerMessageUuid)
-    throw new Error('Confirmed Fanvue checkpoint requires a provider message UUID');
   return withTenantTransaction(database, input, async (transaction) => {
     const [row] = await transaction
       .update(fanvueDmConversationCheckpoints)
       .set({
         state: input.state,
-        providerMessageUuid: input.providerMessageUuid ?? null,
+        providerMessageUuid: input.state === 'confirmed' ? input.providerMessageUuid : null,
         updatedAt: new Date(),
       })
       .where(
@@ -138,6 +142,7 @@ export async function listFanvueDmCheckpoints(
       .orderBy(
         asc(fanvueDmConversationCheckpoints.kind),
         asc(fanvueDmConversationCheckpoints.ordinal),
-      ),
+      )
+      .limit(MAX_FANVUE_DM_CHECKPOINTS_PER_FAN),
   );
 }

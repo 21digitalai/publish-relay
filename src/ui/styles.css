@@ -1246,10 +1246,9 @@ textarea:focus-visible {
 .fanvue-vault-price-row {
   --fanvue-vault-preview-size: 168px;
   display: grid;
-  grid-template-columns: var(--fanvue-vault-preview-size) minmax(140px, 1fr) minmax(
-      210px,
-      260px
-    ) 96px;
+  grid-template-columns:
+    var(--fanvue-vault-preview-size) minmax(140px, 1fr) minmax(210px, 260px)
+    96px;
   gap: 14px;
   align-items: center;
   padding: 12px 4px;

@@ -28,6 +28,9 @@ const query = z.object({
   size: z.coerce.number().int().positive().max(50).optional(),
 });
 const purchaseQuery = z.object({ fanUuid: z.uuid() });
+const publicationQuery = z.object({
+  maxPages: z.coerce.number().int().min(1).max(100).optional(),
+});
 const priceBody = z.strictObject({
   manualPriceCents: z.number().int().positive().nullable(),
   expectedVersion: z.number().int().positive().nullable(),
@@ -167,6 +170,38 @@ export function registerFanvueVaultCatalogRoutes(
           accountId: path.data.accountId,
           mediaUuid: path.data.mediaUuid,
           fanUuid: search.data.fanUuid,
+        });
+        return await reply.send(successEnvelope(fact, request.id));
+      } catch (error) {
+        return await errorReply(error, request, reply);
+      }
+    },
+  );
+  application.get(
+    '/api/v1/fanvue/accounts/:accountId/vault/media/:mediaUuid/publication',
+    async (request, reply) => {
+      try {
+        const principal = await authorizeMachineRequest(
+          request,
+          dependencies.apiKeys,
+          dependencies.delegatedAuthorization,
+          'fanvue:media:read',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const path = params.safeParse(request.params);
+        const search = publicationQuery.safeParse(request.query);
+        if (!path.success || !path.data.mediaUuid || !search.success)
+          return await reply
+            .code(400)
+            .send(errorEnvelope('invalid_request', 'Invalid publication-fact request', request.id));
+        const fact = await dependencies.reads.getMediaPublicationCoverage({
+          workspaceId: principal.workspaceId,
+          accountId: path.data.accountId,
+          mediaUuid: path.data.mediaUuid,
+          ...(search.data.maxPages === undefined ? {} : { maxPages: search.data.maxPages }),
         });
         return await reply.send(successEnvelope(fact, request.id));
       } catch (error) {

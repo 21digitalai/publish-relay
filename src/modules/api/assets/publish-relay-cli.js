@@ -327,11 +327,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'version',
     'updatedAt',
   ]),
-  'fanvue:vault-purchase-fact': new Set([
-    ...ENVELOPE_OUTPUT_KEYS,
-    'state',
-    'purchasedByFan',
-  ]),
+  'fanvue:vault-purchase-fact': new Set([...ENVELOPE_OUTPUT_KEYS, 'state', 'purchasedByFan']),
   'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'facebook-guidance:show': new Set([
@@ -786,21 +782,24 @@ function routePath(route, command, id, flags) {
               ? ['page', 'size']
               : command === 'fanvue:vault-purchase-fact'
                 ? ['fan-uuid']
-              : command === 'publishes:list'
-                ? [
-                    'cursor',
-                    'limit',
-                    'states',
-                    'approvalStatus',
-                    'providerAccountId',
-                    'scheduledAfter',
-                    'scheduledBefore',
-                  ]
-                : ['cursor', 'limit'];
+                : command === 'publishes:list'
+                  ? [
+                      'cursor',
+                      'limit',
+                      'states',
+                      'approvalStatus',
+                      'providerAccountId',
+                      'scheduledAfter',
+                      'scheduledBefore',
+                    ]
+                  : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
     if (typeof value === 'string')
-      query.set(name === 'media-name' ? 'mediaName' : name === 'fan-uuid' ? 'fanUuid' : name, value);
+      query.set(
+        name === 'media-name' ? 'mediaName' : name === 'fan-uuid' ? 'fanUuid' : name,
+        value,
+      );
   }
   const encoded = query.toString();
   return encoded ? `${resourcePath}?${encoded}` : resourcePath;

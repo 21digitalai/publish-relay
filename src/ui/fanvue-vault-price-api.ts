@@ -46,7 +46,8 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
   return {
     loadFolders,
     async loadMedia({ accountId, folderId, cursor, signal }) {
-      if (cursor) return { items: [], nextCursor: null };
+      const pageNumber = cursor === null ? 1 : Number(cursor);
+      if (!Number.isInteger(pageNumber) || pageNumber < 1) throw new Error('Invalid vault cursor');
       const folders = folderId
         ? [folderId]
         : (folderCache.get(accountId) ??
@@ -54,7 +55,7 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
       const pages = await Promise.all(
         folders.map(async (folder) => {
           const response = await fetch(
-            `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/catalog/${encodeURIComponent(folder)}?size=50`,
+            `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/catalog/${encodeURIComponent(folder)}?page=${String(pageNumber)}&size=50`,
             { signal },
           );
           return { folder, page: await json<Envelope<CatalogPage>>(response) };
@@ -75,7 +76,12 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
           });
         }
       }
-      return { items: [...byId.values()], nextCursor: null };
+      return {
+        items: [...byId.values()],
+        nextCursor: pages.some(({ page }) => page.data.pagination.hasMore)
+          ? String(pageNumber + 1)
+          : null,
+      };
     },
     async savePrice({ accountId, mediaId, priceUsd, signal }) {
       const response = await fetch(

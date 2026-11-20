@@ -119,6 +119,15 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
     method: 'GET',
     path: '/api/v1/fanvue/accounts/:id/vault/folders/:folderName/media',
   },
+  'fanvue:vault-catalog': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/vault/catalog/:folderName',
+  },
+  'fanvue:vault-price-set': {
+    method: 'PATCH',
+    path: '/api/v1/fanvue/accounts/:id/vault/media/:mediaUuid/price',
+    body: true,
+  },
   'fanvue-guidance:show': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/guidance' },
   'fanvue-guidance:set': {
     method: 'PATCH',
@@ -288,6 +297,26 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'status',
     'name',
     'mediaType',
+  ]),
+  'fanvue:vault-catalog': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'pagination',
+    'page',
+    'size',
+    'hasMore',
+    'uuid',
+    'status',
+    'name',
+    'mediaType',
+    'manualPriceCents',
+    'priceVersion',
+  ]),
+  'fanvue:vault-price-set': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'providerMediaUuid',
+    'manualPriceCents',
+    'version',
+    'updatedAt',
   ]),
   'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
@@ -697,6 +726,9 @@ function routePath(
   const folderName = flags['folder-name'];
   if (route.path.includes(':folderName') && typeof folderName !== 'string')
     throw new CliError(EXIT.usage, 'Fanvue folder media command requires --folder-name');
+  const mediaUuid = flags['media-uuid'];
+  if (route.path.includes(':mediaUuid') && typeof mediaUuid !== 'string')
+    throw new CliError(EXIT.usage, 'Fanvue vault price command requires --media-uuid');
   if (route.path.includes(':conversationId') && typeof conversationId !== 'string')
     throw new CliError(EXIT.usage, 'Facebook DM command requires --conversation-id');
   const intentId = flags['intent-id'];
@@ -723,7 +755,9 @@ function routePath(
     .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')))
     .replace(':intentId', encodeURIComponent(String(intentId ?? '')))
     .replace(':rootId', encodeURIComponent(String(rootId ?? '')));
-  const resourcePath = path.replace(':folderName', encodeURIComponent(String(folderName ?? '')));
+  const resourcePath = path
+    .replace(':folderName', encodeURIComponent(String(folderName ?? '')))
+    .replace(':mediaUuid', encodeURIComponent(String(mediaUuid ?? '')));
   if (
     command !== 'posts:list' &&
     command !== 'destinations:list' &&
@@ -732,6 +766,7 @@ function routePath(
     command !== 'fanvue:subscribers' &&
     command !== 'fanvue:folders' &&
     command !== 'fanvue:folder-media' &&
+    command !== 'fanvue:vault-catalog' &&
     command !== 'facebook-comments:posts' &&
     command !== 'facebook-comments:list' &&
     command !== 'facebook-dms:list' &&
@@ -751,7 +786,7 @@ function routePath(
           ? ['page', 'size', 'cursor']
           : command === 'fanvue:folders'
             ? ['page', 'size', 'media-name']
-            : command === 'fanvue:folder-media'
+            : command === 'fanvue:folder-media' || command === 'fanvue:vault-catalog'
               ? ['page', 'size']
               : command === 'publishes:list'
                 ? [

@@ -56,6 +56,7 @@ const postSummary = z
     audience: z.enum(['subscribers', 'followers-and-subscribers']),
     price: z.number().nonnegative().nullish(),
     mediaUuids: z.array(z.uuid()).max(50),
+    mediaPreviewUuid: z.uuid().nullish(),
     commentsCount: z.number().int().nonnegative(),
   })
   .transform(({ text, ...post }) => ({ ...post, textPreview: text?.slice(0, 280) ?? null }));
@@ -254,7 +255,10 @@ export class FanvueReadClient {
   }
 
   listPosts(accessToken: string, options: { cursor?: string; size?: number } = {}) {
-    const query = new URLSearchParams({ size: String(page(options.size ?? 15, 'size', 50)) });
+    const query = new URLSearchParams({
+      size: String(page(options.size ?? 15, 'size', 50)),
+      includeUnpublished: 'true',
+    });
     if (options.cursor) query.set('cursor', z.string().min(1).max(1024).parse(options.cursor));
     return this.get(
       accessToken,

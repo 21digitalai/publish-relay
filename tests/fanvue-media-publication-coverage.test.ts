@@ -19,6 +19,7 @@ function post(overrides: Record<string, unknown> = {}) {
     audience: 'followers-and-subscribers',
     price: null,
     mediaUuids: [],
+    mediaPreviewUuid: null,
     commentsCount: 0,
     ...overrides,
   };
@@ -30,13 +31,9 @@ function fixture(pages: unknown[], manualPostsIncluded = false) {
     if (page instanceof Error) listPosts.mockRejectedValueOnce(page);
     else listPosts.mockResolvedValueOnce(page);
   }
-  const service = new FanvueReadService(
-    {} as never,
-    {} as never,
-    {} as never,
-    {} as never,
-    { manualPostsIncluded },
-  );
+  const service = new FanvueReadService({} as never, {} as never, {} as never, {} as never, {
+    manualPostsIncluded,
+  });
   Reflect.set(service, 'accessToken', vi.fn().mockResolvedValue('token'));
   Reflect.set(service, 'readClient', { listPosts });
   return { service, listPosts };
@@ -60,10 +57,12 @@ describe('Fanvue media publication coverage', () => {
   });
 
   it('keeps a complete scan unknown until manual-post coverage is verified', async () => {
-    const context = fixture([{
-      data: [post({ publishedAt: null, mediaUuids: [input.mediaUuid] })],
-      nextCursor: null,
-    }]);
+    const context = fixture([
+      {
+        data: [post({ publishedAt: null, mediaUuids: [input.mediaUuid] })],
+        nextCursor: null,
+      },
+    ]);
     await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
       state: 'unknown',
       complete: true,
@@ -73,13 +72,41 @@ describe('Fanvue media publication coverage', () => {
     });
   });
 
-  it('proves unposted after complete history when manual-post coverage is verified', async () => {
+  it('matches a published post that references media only as its preview', async () => {
+    const context = fixture([
+      { data: [post({ mediaPreviewUuid: input.mediaUuid })], nextCursor: null },
+    ]);
+    await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
+      state: 'posted',
+      matchingPostUuid: postUuid,
+      publishedAt: new Date('2026-11-20T10:05:00.000Z'),
+    });
+  });
+
+  it('does not mark an unpublished preview-media match as posted', async () => {
     const context = fixture([
       {
-        data: [post({ publishedAt: null, mediaUuids: [input.mediaUuid] })],
+        data: [post({ publishedAt: null, mediaPreviewUuid: input.mediaUuid })],
         nextCursor: null,
       },
-    ], true);
+    ]);
+    await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
+      state: 'unknown',
+      complete: true,
+      incompleteReason: 'manual_post_coverage_unverified',
+    });
+  });
+
+  it('proves unposted after complete history when manual-post coverage is verified', async () => {
+    const context = fixture(
+      [
+        {
+          data: [post({ publishedAt: null, mediaUuids: [input.mediaUuid] })],
+          nextCursor: null,
+        },
+      ],
+      true,
+    );
     await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
       state: 'unposted',
       complete: true,
@@ -90,10 +117,7 @@ describe('Fanvue media publication coverage', () => {
   });
 
   it('returns unknown for a partial provider failure', async () => {
-    const context = fixture([
-      { data: [post()], nextCursor: 'next' },
-      new FanvueRequestError(503),
-    ]);
+    const context = fixture([{ data: [post()], nextCursor: 'next' }, new FanvueRequestError(503)]);
     await expect(context.service.getMediaPublicationCoverage(input)).resolves.toMatchObject({
       state: 'unknown',
       complete: false,

@@ -226,22 +226,25 @@ function registerMachineApiRoutes(
   const rateLimiter = createApiRateLimiter();
   registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
   if (!database) return;
-  registerFanvueGuidanceRoutes(
-    application,
-    database,
-    auth,
-    apiKeys,
-    rateLimiter,
-    delegatedAuthorization,
-  );
-  registerFacebookPageGuidanceRoutes(
-    application,
-    database,
-    auth,
-    apiKeys,
-    rateLimiter,
-    delegatedAuthorization,
-  );
+  const enabledAdapters = resolveEnabledAdapters(config);
+  if (enabledAdapters.has('fanvue'))
+    registerFanvueGuidanceRoutes(
+      application,
+      database,
+      auth,
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+  if (enabledAdapters.has('facebook_page'))
+    registerFacebookPageGuidanceRoutes(
+      application,
+      database,
+      auth,
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
   registerDestinationRoutes(
     application,
     database,
@@ -347,16 +350,18 @@ function registerMachineApiRoutes(
     resolveEnabledAdapters(config),
   );
   registerExternalDraftRoutes(application, database, apiKeys, rateLimiter, delegatedAuthorization);
-  registerFanvuePaymentRoutes(application, {
-    database,
-    apiKeys,
-    rateLimiter,
-    ...(delegatedAuthorization ? { delegatedAuthorization } : {}),
-  });
+  if (enabledAdapters.has('fanvue'))
+    registerFanvuePaymentRoutes(application, {
+      database,
+      apiKeys,
+      rateLimiter,
+      ...(delegatedAuthorization ? { delegatedAuthorization } : {}),
+    });
   registerEngagementProposalRoutes(application, {
     database,
     apiKeys,
     rateLimiter,
+    enabledAdapters,
     ...(delegatedAuthorization ? { delegatedAuthorization } : {}),
   });
   if (!mediaStorage) return;
@@ -419,7 +424,11 @@ function registerBrowserRoutes(
         { database, ...options.facebookRead },
         auth,
       );
-    registerEngagementProposalRoutes(application, { database, auth });
+    registerEngagementProposalRoutes(application, {
+      database,
+      auth,
+      enabledAdapters: resolveEnabledAdapters(config),
+    });
     const facebookRuntime = options.facebookRead
       ? { database, ...options.facebookRead, policy: actionPolicy }
       : null;

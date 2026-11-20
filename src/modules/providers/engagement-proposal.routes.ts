@@ -198,6 +198,7 @@ export function registerEngagementProposalRoutes(
     apiKeys?: ApiKeyService;
     rateLimiter?: ApiRateLimiter;
     delegatedAuthorization?: DelegatedAuthorizationService;
+    enabledAdapters?: ReadonlySet<string>;
   },
 ): void {
   const { database, auth, apiKeys, rateLimiter, delegatedAuthorization } = dependencies;
@@ -261,6 +262,10 @@ export function registerEngagementProposalRoutes(
         const input = createEngagementProposalSchema.safeParse(request.body);
         if (!input.success || !validFacebookProposal(input.data))
           return await reply.code(400).send({ data: null, error: 'Invalid proposal' });
+        if (dependencies.enabledAdapters?.has(input.data.provider) === false)
+          return await reply
+            .code(409)
+            .send({ data: null, error: 'This adapter is disabled on this server' });
         if (input.data.provider === 'facebook_page') {
           const allowed = await authorizePageEngagement(database, {
             workspaceId: principal.workspaceId,
@@ -858,6 +863,8 @@ export function registerEngagementProposalRoutes(
     const input = createEngagementProposalSchema.safeParse(request.body);
     if (!input.success || !validFacebookProposal(input.data))
       return reply.code(400).send({ data: null, error: 'Invalid proposal' });
+    if (dependencies.enabledAdapters?.has(input.data.provider) === false)
+      return reply.code(409).send({ data: null, error: 'This adapter is disabled on this server' });
     try {
       const row = await createEngagementProposal(database, {
         ...input.data,

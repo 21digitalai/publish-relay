@@ -2,6 +2,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import {
+  FanvueDmConversationStateUnavailableError,
   ingestFanvueDmHistoryPage,
   markFanvueDmHistoryBackfillIncomplete,
 } from './fanvue-dm-conversation-state.repository.js';
@@ -17,6 +18,19 @@ const inputSchema = z.strictObject({
 });
 
 type MessagePage = Awaited<ReturnType<FanvueReadClient['listMessages']>>;
+
+class InvalidHistoryMessageError extends Error {
+  constructor(readonly code: 'invalid_message_direction' | 'invalid_message_timestamp') {
+    super(code);
+  }
+}
+
+function providerDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()))
+    throw new InvalidHistoryMessageError('invalid_message_timestamp');
+  return date;
+}
 
 export async function backfillFanvueDmHistory(
   database: NodePgDatabase,
@@ -55,40 +69,63 @@ export async function backfillFanvueDmHistory(
           message.sender.uuid === input.fanUuid && message.recipient.uuid !== input.fanUuid;
         const outbound =
           message.recipient.uuid === input.fanUuid && message.sender.uuid !== input.fanUuid;
-        if (!inbound && !outbound) throw new Error('invalid_message_direction');
+        if (!inbound && !outbound)
+          throw new InvalidHistoryMessageError('invalid_message_direction');
         return {
           providerMessageUuid: message.uuid,
           direction: inbound ? ('inbound' as const) : ('outbound' as const),
-          sentAt: new Date(message.sentAt),
+          sentAt: providerDate(message.sentAt),
           mediaUuids: message.mediaUuids ?? [],
           priceCents: message.pricing?.USD.price ?? null,
-          purchasedAt: message.purchasedAt ? new Date(message.purchasedAt) : null,
+          purchasedAt: message.purchasedAt ? providerDate(message.purchasedAt) : null,
           excludeMedia: exclusions.has(message.uuid),
         };
       });
-    } catch {
+    } catch (error) {
+      const failureCode =
+        error instanceof InvalidHistoryMessageError
+          ? error.code
+          : ('invalid_message_timestamp' as const);
       await markFanvueDmHistoryBackfillIncomplete(database, {
         workspaceId: input.workspaceId,
         accountId: input.accountId,
         fanUuid: input.fanUuid,
-        failureCode: 'invalid_message_direction',
+        failureCode,
         observedAt,
       });
       return {
         state: 'incomplete' as const,
-        reason: 'invalid_message_direction' as const,
+        reason: failureCode,
         pagesIngested,
         messagesIngested,
       };
     }
-    const result = await ingestFanvueDmHistoryPage(database, {
-      workspaceId: input.workspaceId,
-      accountId: input.accountId,
-      fanUuid: input.fanUuid,
-      messages,
-      hasMore: response.pagination.hasMore,
-      observedAt,
-    });
+    let result;
+    try {
+      result = await ingestFanvueDmHistoryPage(database, {
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+        messages,
+        hasMore: response.pagination.hasMore,
+        observedAt,
+      });
+    } catch (error) {
+      if (error instanceof FanvueDmConversationStateUnavailableError) throw error;
+      await markFanvueDmHistoryBackfillIncomplete(database, {
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+        failureCode: 'page_ingest_failed',
+        observedAt,
+      });
+      return {
+        state: 'incomplete' as const,
+        reason: 'page_ingest_failed' as const,
+        pagesIngested,
+        messagesIngested,
+      };
+    }
     pagesIngested += 1;
     messagesIngested += result.ingested;
     hasMore = response.pagination.hasMore;

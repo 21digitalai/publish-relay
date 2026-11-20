@@ -58,7 +58,7 @@ describe('application', () => {
     expect((await application.inject({ method: 'GET', url: '/login' })).statusCode).toBe(404);
   });
 
-  it('omits disabled provider media and connection routes from a composed server', () => {
+  it('omits every disabled provider route when composed runtime options are injected', async () => {
     const application = Fastify();
     registerCoreApplication(application, {
       config: {
@@ -69,14 +69,44 @@ describe('application', () => {
       database: {} as never,
       mediaStorage: {} as never,
       auth: {} as never,
+      apiKeys: {} as never,
+      facebookRead: {} as never,
+      xOauth: {} as never,
+      youtubeOauth: {} as never,
+      linkedinOauth: {} as never,
+      metaOauth: {} as never,
+      instagramOauth: {} as never,
+      tiktokOauth: {} as never,
+      snapchatOauth: {} as never,
+      fanvueOauth: {} as never,
     });
     applications.push(application);
 
+    await application.ready();
     expect(application.hasRoute({ method: 'GET', url: '/provider-media/instagram' })).toBe(false);
     expect(
       application.hasRoute({ method: 'GET', url: '/provider-media/tiktok/:grant/:token' }),
     ).toBe(false);
     expect(application.hasRoute({ method: 'POST', url: '/api/oauth/instagram' })).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/x' })).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/youtube' })).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/linkedin' })).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/meta' })).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/tiktok' })).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/snapchat' })).toBe(false);
+    expect(application.hasRoute({ method: 'POST', url: '/api/oauth/fanvue' })).toBe(false);
+    expect(
+      application.hasRoute({
+        method: 'GET',
+        url: '/api/v1/destinations/:accountId/facebook-conversations',
+      }),
+    ).toBe(false);
+    expect(
+      application.hasRoute({
+        method: 'GET',
+        url: '/api/v1/fanvue/accounts/:accountId/followers',
+      }),
+    ).toBe(false);
   });
 
   it('keeps a Hosted root while serving one magic-link auth shell and prefixed assets', async () => {

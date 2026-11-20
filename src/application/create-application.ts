@@ -256,7 +256,7 @@ function registerMachineApiRoutes(
       : undefined,
     resolveEnabledAdapters(config),
   );
-  if (options.facebookRead) {
+  if (enabledAdapters.has('facebook_page') && options.facebookRead) {
     const facebook = { database, ...options.facebookRead };
     registerFacebookDmMemoryRoutes(
       application,
@@ -294,7 +294,7 @@ function registerMachineApiRoutes(
       delegatedAuthorization,
     );
   }
-  if (options.fanvueOauth) {
+  if (enabledAdapters.has('fanvue') && options.fanvueOauth) {
     const reads = new FanvueReadService(
       database,
       options.fanvueOauth.keys,
@@ -421,7 +421,7 @@ function registerBrowserRoutes(
       });
   }
   if (auth && database) {
-    if (options.facebookRead)
+    if (enabledAdapters.has('facebook_page') && options.facebookRead)
       registerFacebookPageBrowserReadRoutes(
         application,
         { database, ...options.facebookRead },
@@ -432,9 +432,10 @@ function registerBrowserRoutes(
       auth,
       enabledAdapters,
     });
-    const facebookRuntime = options.facebookRead
-      ? { database, ...options.facebookRead, policy: actionPolicy }
-      : null;
+    const facebookRuntime =
+      enabledAdapters.has('facebook_page') && options.facebookRead
+        ? { database, ...options.facebookRead, policy: actionPolicy }
+        : null;
     const approvalCommands: EngagementSendCommands = {
       ...(facebookRuntime
         ? {
@@ -454,7 +455,7 @@ function registerBrowserRoutes(
           }
         : {}),
     };
-    if (fanvueOauth) {
+    if (enabledAdapters.has('fanvue') && fanvueOauth) {
       const reads = new FanvueReadService(
         database,
         fanvueOauth.keys,
@@ -526,13 +527,18 @@ function registerBrowserRoutes(
       },
     });
   }
-  if (auth && database && xOauth)
+  if (auth && database && enabledAdapters.has('x') && xOauth)
     registerXOauthRoutes(application, { auth, database, actionPolicy, ...xOauth });
-  if (auth && database && youtubeOauth)
+  if (auth && database && enabledAdapters.has('youtube') && youtubeOauth)
     registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
-  if (auth && database && linkedinOauth)
+  if (auth && database && enabledAdapters.has('linkedin') && linkedinOauth)
     registerLinkedInOauthRoutes(application, { auth, database, actionPolicy, ...linkedinOauth });
-  if (auth && database && metaOauth)
+  if (
+    auth &&
+    database &&
+    (enabledAdapters.has('instagram') || enabledAdapters.has('facebook_page')) &&
+    metaOauth
+  )
     registerMetaOauthRoutes(application, { auth, database, actionPolicy, ...metaOauth });
   if (auth && database && enabledAdapters.has('instagram'))
     registerInstagramLoginRoutes(application, {
@@ -541,15 +547,15 @@ function registerBrowserRoutes(
       actionPolicy,
       ...(instagramOauth ? { oauth: instagramOauth } : {}),
     });
-  if (auth && database && tiktokOauth)
+  if (auth && database && enabledAdapters.has('tiktok') && tiktokOauth)
     registerTikTokOauthRoutes(application, { auth, database, actionPolicy, ...tiktokOauth });
-  if (auth && database && snapchatOauth)
+  if (auth && database && enabledAdapters.has('snapchat') && snapchatOauth)
     registerSnapchatOauthRoutes(application, { auth, database, actionPolicy, ...snapchatOauth });
-  if (auth && database && fanvueOauth)
+  if (auth && database && enabledAdapters.has('fanvue') && fanvueOauth)
     registerFanvueOauthRoutes(application, { auth, database, actionPolicy, ...fanvueOauth });
-  if (database && fanvueOauth)
+  if (database && enabledAdapters.has('fanvue') && fanvueOauth)
     registerFanvuePaymentWebhook(application, { database, keys: fanvueOauth.keys });
-  if (auth && database && fanvueOauth)
+  if (auth && database && enabledAdapters.has('fanvue') && fanvueOauth)
     registerFanvueBrowserReadRoutes(
       application,
       new FanvueReadService(
@@ -578,11 +584,12 @@ export function registerCoreApplication(
   } = options;
   const uiRoot = options.uiRoot ?? fileURLToPath(new URL('../ui/', import.meta.url));
   const uiPrefix = options.uiPrefix ?? '/';
-  const enabledAdapters = [...resolveEnabledAdapters(config)].join(',');
+  const enabledAdapterSet = resolveEnabledAdapters(config);
+  const enabledAdapters = [...enabledAdapterSet].join(',');
   const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
     .replace(
       '<body>',
-      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-enabled-adapters="${enabledAdapters}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}" data-fanvue-enabled="${String(Boolean(options.fanvueOauth))}">`,
+      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-enabled-adapters="${enabledAdapters}" data-linkedin-enabled="${String(enabledAdapterSet.has('linkedin') && Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(enabledAdapterSet.has('tiktok') && Boolean(options.tiktokOauth))}" data-fanvue-enabled="${String(enabledAdapterSet.has('fanvue') && Boolean(options.fanvueOauth))}">`,
     )
     .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
     .replace('href="/favicon.svg"', `href="${uiPrefix === '/' ? '/' : uiPrefix}favicon.svg"`);

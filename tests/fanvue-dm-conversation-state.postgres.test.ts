@@ -53,6 +53,7 @@ describe('Fanvue neutral conversation state', () => {
         fanUuid,
         providerMessageUuid: firstInbound,
         direction: 'inbound' as const,
+        exchangeRole: 'inbound_turn' as const,
         sentAt: new Date('2026-11-20T10:00:00Z'),
         mediaUuids: ['00000000-0000-4000-8000-000000000010'],
         priceCents: null,
@@ -113,6 +114,7 @@ describe('Fanvue neutral conversation state', () => {
           ...base,
           providerMessageUuid: newerUuid,
           direction,
+          exchangeRole: direction === 'inbound' ? 'inbound_turn' : 'outbound_root',
           sentAt: newerAt,
           mediaUuids: [],
           priceCents: null,
@@ -141,6 +143,35 @@ describe('Fanvue neutral conversation state', () => {
       }
     },
   );
+
+  it('rejects omitted and direction-incompatible exchange roles', async () => {
+    const { pg, database } = await setup();
+    try {
+      const base = {
+        workspaceId,
+        accountId,
+        fanUuid,
+        providerMessageUuid: firstInbound,
+        direction: 'inbound' as const,
+        sentAt: new Date('2026-11-20T10:00:00Z'),
+        mediaUuids: [],
+        priceCents: null,
+        purchasedAt: null,
+        observedAt: new Date('2026-11-20T10:01:00Z'),
+      };
+      await expect(recordFanvueDmMessageReceipt(database, base as never)).rejects.toThrow();
+      await expect(
+        recordFanvueDmMessageReceipt(database, { ...base, exchangeRole: 'outbound_root' }),
+      ).rejects.toThrow('Exchange role does not match message direction');
+      await expect(
+        pg.exec(`INSERT INTO fanvue_dm_message_receipts
+          (workspace_id, account_id, fan_uuid, provider_message_uuid, direction, exchange_role, sent_at, observed_at)
+          VALUES ('${workspaceId}', '${accountId}', '${fanUuid}', '${secondInbound}', 'outbound', 'inbound_turn', now(), now())`),
+      ).rejects.toThrow();
+    } finally {
+      await pg.close();
+    }
+  });
 
   it('counts human turns with one outbound group as one exchange and ignores outbound autos', async () => {
     const { pg, database } = await setup();

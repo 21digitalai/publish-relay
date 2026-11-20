@@ -31,16 +31,27 @@ const workflowUpdate = identity.extend({
   historyCoverageOldestAt: z.date().optional(),
   historyBackfillCompleteAt: z.date().optional(),
 });
-const messageReceipt = identity.extend({
-  providerMessageUuid: z.uuid(),
-  direction: z.enum(['inbound', 'outbound']),
-  exchangeRole: z.enum(['inbound_turn', 'outbound_root', 'outbound_tail', 'automation']).optional(),
-  sentAt: z.date(),
-  mediaUuids: z.array(z.uuid()).max(20).default([]),
-  priceCents: z.number().int().nonnegative().nullable().default(null),
-  purchasedAt: z.date().nullable().default(null),
-  observedAt: z.date(),
-});
+const messageReceipt = identity
+  .extend({
+    providerMessageUuid: z.uuid(),
+    direction: z.enum(['inbound', 'outbound']),
+    exchangeRole: z.enum(['inbound_turn', 'outbound_root', 'outbound_tail', 'automation']),
+    sentAt: z.date(),
+    mediaUuids: z.array(z.uuid()).max(20).default([]),
+    priceCents: z.number().int().nonnegative().nullable().default(null),
+    purchasedAt: z.date().nullable().default(null),
+    observedAt: z.date(),
+  })
+  .superRefine((value, context) => {
+    if (
+      (value.direction === 'inbound' && value.exchangeRole !== 'inbound_turn') ||
+      (value.direction === 'outbound' && value.exchangeRole === 'inbound_turn')
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'Exchange role does not match message direction',
+      });
+  });
 
 export class FanvueDmConversationStateUnavailableError extends Error {
   constructor() {
@@ -69,9 +80,7 @@ async function requireFanvueAccount(transaction: NodePgDatabase, input: z.output
   if (account?.provider !== 'fanvue') throw new FanvueDmConversationStateUnavailableError();
 }
 
-type MessageReceiptInput = Omit<z.output<typeof messageReceipt>, 'exchangeRole'> & {
-  exchangeRole: 'inbound_turn' | 'outbound_root' | 'outbound_tail' | 'automation';
-};
+type MessageReceiptInput = z.output<typeof messageReceipt>;
 
 async function upsertMessageReceipt(transaction: NodePgDatabase, input: MessageReceiptInput) {
   const [existing] = await transaction
@@ -212,12 +221,7 @@ export async function recordFanvueDmMessageReceipt(
   database: NodePgDatabase,
   unparsed: z.input<typeof messageReceipt>,
 ) {
-  const parsed = messageReceipt.parse(unparsed);
-  const input: MessageReceiptInput = {
-    ...parsed,
-    exchangeRole:
-      parsed.exchangeRole ?? (parsed.direction === 'inbound' ? 'inbound_turn' : 'outbound_root'),
-  };
+  const input = messageReceipt.parse(unparsed);
   return withTenantTransaction(database, input, async (transaction) => {
     await requireFanvueAccount(transaction, input);
     const receipt = await upsertMessageReceipt(transaction, input);

@@ -1839,7 +1839,7 @@ export const fanvueDmMessageReceipts = pgTable(
     ),
     check(
       'fanvue_dm_message_receipts_exchange_role_check',
-      sql`${table.exchangeRole} in ('inbound_turn', 'outbound_root', 'outbound_tail', 'automation')`,
+      sql`(${table.direction} = 'inbound' and ${table.exchangeRole} = 'inbound_turn') or (${table.direction} = 'outbound' and ${table.exchangeRole} in ('outbound_root', 'outbound_tail', 'automation'))`,
     ),
     check(
       'fanvue_dm_message_receipts_price_check',

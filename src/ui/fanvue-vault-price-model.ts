@@ -35,8 +35,8 @@ export interface FanvueVaultPriceAdapter {
 export function normalizeFanvueUsdPrice(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed === '') return null;
-  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(trimmed)) {
-    throw new Error('Enter a USD amount with no more than two decimal places.');
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(trimmed) || Number(trimmed) <= 0) {
+    throw new Error('Enter a positive USD amount with no more than two decimal places.');
   }
   return Number(trimmed).toFixed(2);
 }

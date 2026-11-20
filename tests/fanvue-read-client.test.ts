@@ -17,16 +17,21 @@ const message = {
 };
 
 describe('Fanvue read transport', () => {
-  it.each([true, false])('reads explicit purchasedByFan=%s without inference', async (purchased) => {
-    const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
-    const request = vi.fn<typeof fetch>().mockResolvedValue(
-      Response.json({ uuid: mediaUuid, status: 'ready', purchasedByFan: purchased }),
-    );
-    await expect(
-      new FanvueReadClient(request).getMediaPurchaseFact('token', mediaUuid, person.uuid),
-    ).resolves.toMatchObject({ purchasedByFan: purchased });
-    expect(request.mock.calls[0]?.[0]).toContain(`purchasedBy=${person.uuid}`);
-  });
+  it.each([true, false])(
+    'reads explicit purchasedByFan=%s without inference',
+    async (purchased) => {
+      const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
+      const request = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          Response.json({ uuid: mediaUuid, status: 'ready', purchasedByFan: purchased }),
+        );
+      await expect(
+        new FanvueReadClient(request).getMediaPurchaseFact('token', mediaUuid, person.uuid),
+      ).resolves.toMatchObject({ purchasedByFan: purchased });
+      expect(request.mock.calls[0]?.[0]).toContain(`purchasedBy=${person.uuid}`);
+    },
+  );
 
   it('keeps a missing purchasedByFan field unknown instead of false', async () => {
     const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
@@ -151,6 +156,34 @@ describe('Fanvue read transport', () => {
     });
     expect(request.mock.calls[0]?.[0]).toContain('page=2&size=20');
     expect(() => client.getMediaStatus('token', '../other')).toThrow();
+  });
+
+  it('requests all documented preview fallbacks for ready vault media', async () => {
+    const mediaUuid = '0b4a3c1e-2f6d-4b8a-9c1d-5e7f8a9b0c1d';
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        uuid: mediaUuid,
+        status: 'ready',
+        variants: [
+          {
+            variantType: 'main',
+            url: 'https://media.fanvue.com/private/main.jpg',
+          },
+          {
+            variantType: 'thumbnail_gallery',
+            url: 'https://media.fanvue.com/private/gallery.jpg',
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      new FanvueReadClient(request).getMediaThumbnail('token', mediaUuid),
+    ).resolves.toMatchObject({
+      status: 'ready',
+      variants: [{ variantType: 'main' }, { variantType: 'thumbnail_gallery' }],
+    });
+    expect(request.mock.calls[0]?.[0]).toContain('?variants=main,thumbnail,thumbnail_gallery');
   });
 
   it('lists vault folders and URL-encodes folder names while projecting stable media facts', async () => {

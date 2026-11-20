@@ -244,7 +244,11 @@ export class FanvueReadClient {
 
   getMediaThumbnail(accessToken: string, mediaUuid: string) {
     const id = z.uuid().parse(mediaUuid);
-    return this.get(accessToken, `/media/${id}?variants=thumbnail`, mediaThumbnail);
+    return this.get(
+      accessToken,
+      `/media/${id}?variants=main,thumbnail,thumbnail_gallery`,
+      mediaThumbnail,
+    );
   }
 
   listPosts(accessToken: string, options: { cursor?: string; size?: number } = {}) {

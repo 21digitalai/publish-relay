@@ -192,8 +192,10 @@ export class FanvueReadService {
   async getMediaThumbnail(input: { workspaceId: string; accountId: string; mediaUuid: string }) {
     const token = await this.accessToken(input, 'media');
     const media = await this.readClient.getMediaThumbnail(token, input.mediaUuid);
-    const thumbnail = media.variants.find((variant) => variant.variantType === 'thumbnail');
-    return { status: media.status, url: thumbnail?.url ?? null };
+    const preview = ['thumbnail', 'thumbnail_gallery', 'main']
+      .map((variantType) => media.variants.find((variant) => variant.variantType === variantType))
+      .find((variant) => variant !== undefined);
+    return { status: media.status, url: preview?.url ?? null };
   }
 
   async listVaultFolders(input: {

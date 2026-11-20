@@ -10,6 +10,8 @@ import { FacebookEngagementControl } from './facebook-engagement-control.js';
 import { FacebookPageGuidanceControl } from './facebook-page-guidance-control.js';
 import { FanvueAudienceControl } from './fanvue-audience-control.js';
 import { FanvueGuidanceControl } from './fanvue-guidance-control.js';
+import { FanvueVaultPriceControl } from './fanvue-vault-price-control.js';
+import { createFanvueVaultPriceAdapter } from './fanvue-vault-price-api.js';
 import { LiveRegion } from './feedback.js';
 import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
@@ -61,6 +63,8 @@ interface Account {
   originWorkspaceName?: string;
   showOtherWorkspacePosts?: boolean;
 }
+
+const fanvueVaultPriceAdapter = createFanvueVaultPriceAdapter();
 
 interface AccountDto {
   id: string;
@@ -1223,7 +1227,14 @@ function AccountRow({
           </p>
         )}
         {!account.isExposed && account.provider.toLowerCase() === 'fanvue' && canManageAccount && (
-          <FanvueGuidanceControl accountId={account.id} accountName={account.name} />
+          <>
+            <FanvueGuidanceControl accountId={account.id} accountName={account.name} />
+            <FanvueVaultPriceControl
+              accountId={account.id}
+              accountName={account.name}
+              adapter={fanvueVaultPriceAdapter}
+            />
+          </>
         )}
         {!account.isExposed &&
           account.provider.toLowerCase() === 'fanvue' &&

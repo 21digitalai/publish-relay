@@ -68,14 +68,10 @@ async function requireFanvueAccount(transaction: NodePgDatabase, input: z.output
   if (account?.provider !== 'fanvue') throw new FanvueDmConversationStateUnavailableError();
 }
 
-export async function recordFanvueDmMessageReceipt(
-  database: NodePgDatabase,
-  unparsed: z.input<typeof messageReceipt>,
-) {
-  const input = messageReceipt.parse(unparsed);
-  return withTenantTransaction(database, input, async (transaction) => {
-    await requireFanvueAccount(transaction, input);
-    const [existing] = await transaction
+type MessageReceiptInput = z.output<typeof messageReceipt>;
+
+async function upsertMessageReceipt(transaction: NodePgDatabase, input: MessageReceiptInput) {
+  const [existing] = await transaction
       .select()
       .from(fanvueDmMessageReceipts)
       .where(
@@ -87,38 +83,29 @@ export async function recordFanvueDmMessageReceipt(
       )
       .for('update')
       .limit(1);
-    if (
-      existing &&
-      (existing.fanUuid !== input.fanUuid ||
-        existing.direction !== input.direction ||
-        existing.sentAt.getTime() !== input.sentAt.getTime())
-    )
-      throw new FanvueDmMessageReceiptConflictError();
-    const receiptValues = {
-      workspaceId: input.workspaceId,
-      accountId: input.accountId,
-      fanUuid: input.fanUuid,
-      providerMessageUuid: input.providerMessageUuid,
-      direction: input.direction,
-      sentAt: input.sentAt,
-      mediaUuids: input.mediaUuids,
-      priceCents: input.priceCents,
-      purchasedAt: input.purchasedAt,
-      observedAt: input.observedAt,
-      updatedAt: input.observedAt,
-    };
-    const [receipt] = !existing
-      ? await transaction.insert(fanvueDmMessageReceipts).values(receiptValues).returning()
-      : input.observedAt.getTime() >= existing.observedAt.getTime()
-        ? await transaction
-            .update(fanvueDmMessageReceipts)
-            .set(receiptValues)
-            .where(eq(fanvueDmMessageReceipts.id, existing.id))
-            .returning()
-        : [existing];
-    if (!receipt) throw new Error('Fanvue message receipt upsert failed');
+  if (
+    existing &&
+    (existing.fanUuid !== input.fanUuid ||
+      existing.direction !== input.direction ||
+      existing.sentAt.getTime() !== input.sentAt.getTime())
+  )
+    throw new FanvueDmMessageReceiptConflictError();
+  const values = { ...input, updatedAt: input.observedAt };
+  const [receipt] = !existing
+    ? await transaction.insert(fanvueDmMessageReceipts).values(values).returning()
+    : input.observedAt.getTime() >= existing.observedAt.getTime()
+      ? await transaction
+          .update(fanvueDmMessageReceipts)
+          .set(values)
+          .where(eq(fanvueDmMessageReceipts.id, existing.id))
+          .returning()
+      : [existing];
+  if (!receipt) throw new Error('Fanvue message receipt upsert failed');
+  return receipt;
+}
 
-    const [state] = await transaction
+async function advanceReceiptBoundary(transaction: NodePgDatabase, input: MessageReceiptInput) {
+  const [state] = await transaction
       .select()
       .from(fanvueDmConversationState)
       .where(
@@ -130,49 +117,59 @@ export async function recordFanvueDmMessageReceipt(
       )
       .for('update')
       .limit(1);
-    const currentAt =
-      input.direction === 'inbound' ? state?.latestInboundAt : state?.latestOutboundAt;
-    const currentUuid =
-      input.direction === 'inbound'
-        ? state?.latestInboundMessageUuid
-        : state?.latestOutboundMessageUuid;
-    const isNewer = !currentAt || input.sentAt.getTime() > currentAt.getTime();
-    const isAmbiguous =
-      input.sentAt.getTime() === currentAt?.getTime() &&
-      currentUuid !== input.providerMessageUuid;
-    if (isAmbiguous) throw new FanvueDmMessageReceiptConflictError();
-    if (isNewer) {
-      const boundary = {
-        ...(input.direction === 'inbound'
-          ? {
-              latestInboundMessageUuid: input.providerMessageUuid,
-              latestInboundAt: input.sentAt,
-            }
-          : {
-              latestOutboundMessageUuid: input.providerMessageUuid,
-              latestOutboundAt: input.sentAt,
-            }),
-        updatedAt: input.observedAt,
-      };
-      if (state)
-        await transaction
-          .update(fanvueDmConversationState)
-          .set(boundary)
-          .where(
-            and(
-              eq(fanvueDmConversationState.workspaceId, input.workspaceId),
-              eq(fanvueDmConversationState.accountId, input.accountId),
-              eq(fanvueDmConversationState.fanUuid, input.fanUuid),
-            ),
-          );
-      else
-        await transaction.insert(fanvueDmConversationState).values({
-          workspaceId: input.workspaceId,
-          accountId: input.accountId,
-          fanUuid: input.fanUuid,
-          ...boundary,
-        });
-    }
+  const currentAt =
+    input.direction === 'inbound' ? state?.latestInboundAt : state?.latestOutboundAt;
+  const currentUuid =
+    input.direction === 'inbound'
+      ? state?.latestInboundMessageUuid
+      : state?.latestOutboundMessageUuid;
+  if (
+    input.sentAt.getTime() === currentAt?.getTime() &&
+    currentUuid !== input.providerMessageUuid
+  )
+    throw new FanvueDmMessageReceiptConflictError();
+  if (currentAt && input.sentAt.getTime() <= currentAt.getTime()) return;
+  const boundary = {
+    ...(input.direction === 'inbound'
+      ? {
+          latestInboundMessageUuid: input.providerMessageUuid,
+          latestInboundAt: input.sentAt,
+        }
+      : {
+          latestOutboundMessageUuid: input.providerMessageUuid,
+          latestOutboundAt: input.sentAt,
+        }),
+    updatedAt: input.observedAt,
+  };
+  if (state)
+    await transaction
+      .update(fanvueDmConversationState)
+      .set(boundary)
+      .where(
+        and(
+          eq(fanvueDmConversationState.workspaceId, input.workspaceId),
+          eq(fanvueDmConversationState.accountId, input.accountId),
+          eq(fanvueDmConversationState.fanUuid, input.fanUuid),
+        ),
+      );
+  else
+    await transaction.insert(fanvueDmConversationState).values({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      fanUuid: input.fanUuid,
+      ...boundary,
+    });
+}
+
+export async function recordFanvueDmMessageReceipt(
+  database: NodePgDatabase,
+  unparsed: z.input<typeof messageReceipt>,
+) {
+  const input = messageReceipt.parse(unparsed);
+  return withTenantTransaction(database, input, async (transaction) => {
+    await requireFanvueAccount(transaction, input);
+    const receipt = await upsertMessageReceipt(transaction, input);
+    await advanceReceiptBoundary(transaction, input);
     return receipt;
   });
 }

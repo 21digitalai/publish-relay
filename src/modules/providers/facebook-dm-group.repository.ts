@@ -10,6 +10,10 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import {
+  MessageGroupValidationError,
+  validateMessageGroupBubbles,
+} from '../engagement/message-group.js';
+import {
   isPageConversationNoGoInTransaction,
   lockPageDmAccount,
 } from './facebook-dm-no-go.repository.js';
@@ -98,12 +102,17 @@ export async function findPageDmGroupReplay(
 
 /** One Page-locked transaction owns the exact root and every waiting tail. */
 export async function schedulePageDmGroup(database: NodePgDatabase, input: GroupRequest) {
-  if (
-    input.texts.length < 1 ||
-    input.texts.length > 4 ||
-    input.texts.some((text) => !text.trim() || text.length > 2000)
-  )
-    throw new PendingDmConflictError('A Page DM group requires 1–4 nonempty bubbles');
+  try {
+    validateMessageGroupBubbles(input.texts, {
+      maximumBubbles: 4,
+      maximumTextLength: 2_000,
+    });
+  } catch (error) {
+    if (error instanceof MessageGroupValidationError) {
+      throw new PendingDmConflictError('A Page DM group requires 1–4 nonempty bubbles');
+    }
+    throw error;
+  }
   return withTenantTransaction(database, input, async (tx) => {
     await lockPageDmAccount(tx, input);
     const actorType = input.actor.type === 'api-key' ? 'api_key' : input.actor.type;

@@ -109,6 +109,54 @@ describe('application', () => {
     ).toBe(false);
   });
 
+  it('isolates asymmetric Instagram and Facebook Page composition routes', async () => {
+    const instagramOnly = Fastify();
+    registerCoreApplication(instagramOnly, {
+      config: { ...testConfig, PUBLISH_RELAY_ENABLED_ADAPTERS: 'instagram' },
+      database: {} as never,
+      auth: {} as never,
+      metaOauth: {} as never,
+      instagramOauth: {} as never,
+    });
+    applications.push(instagramOnly);
+    await instagramOnly.ready();
+
+    expect(instagramOnly.hasRoute({ method: 'POST', url: '/api/oauth/instagram' })).toBe(true);
+    expect(instagramOnly.hasRoute({ method: 'POST', url: '/api/oauth/meta/facebook-pages' })).toBe(
+      false,
+    );
+    expect(
+      instagramOnly.hasRoute({ method: 'POST', url: '/api/oauth/meta/facebook-page-messages' }),
+    ).toBe(false);
+    expect(
+      instagramOnly.hasRoute({ method: 'POST', url: '/api/oauth/meta/facebook-page-comments' }),
+    ).toBe(false);
+    expect(instagramOnly.hasRoute({ method: 'GET', url: '/api/oauth/meta/callback' })).toBe(false);
+
+    const facebookOnly = Fastify();
+    registerCoreApplication(facebookOnly, {
+      config: { ...testConfig, PUBLISH_RELAY_ENABLED_ADAPTERS: 'facebook_page' },
+      database: {} as never,
+      auth: {} as never,
+      metaOauth: {} as never,
+      instagramOauth: {} as never,
+    });
+    applications.push(facebookOnly);
+    await facebookOnly.ready();
+
+    expect(facebookOnly.hasRoute({ method: 'POST', url: '/api/oauth/instagram' })).toBe(false);
+    expect(facebookOnly.hasRoute({ method: 'POST', url: '/api/oauth/meta/facebook-pages' })).toBe(
+      true,
+    );
+    expect(
+      facebookOnly.hasRoute({ method: 'POST', url: '/api/oauth/meta/facebook-page-messages' }),
+    ).toBe(true);
+    expect(
+      facebookOnly.hasRoute({ method: 'POST', url: '/api/oauth/meta/facebook-page-comments' }),
+    ).toBe(true);
+    expect(facebookOnly.hasRoute({ method: 'GET', url: '/api/oauth/meta/callback' })).toBe(true);
+  });
+
   it('keeps a Hosted root while serving one magic-link auth shell and prefixed assets', async () => {
     const application = Fastify();
     application.get('/', () => 'Hosted landing');

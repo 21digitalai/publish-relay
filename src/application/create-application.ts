@@ -533,12 +533,7 @@ function registerBrowserRoutes(
     registerYouTubeOauthRoutes(application, { auth, database, actionPolicy, ...youtubeOauth });
   if (auth && database && enabledAdapters.has('linkedin') && linkedinOauth)
     registerLinkedInOauthRoutes(application, { auth, database, actionPolicy, ...linkedinOauth });
-  if (
-    auth &&
-    database &&
-    (enabledAdapters.has('instagram') || enabledAdapters.has('facebook_page')) &&
-    metaOauth
-  )
+  if (auth && database && enabledAdapters.has('facebook_page') && metaOauth)
     registerMetaOauthRoutes(application, { auth, database, actionPolicy, ...metaOauth });
   if (auth && database && enabledAdapters.has('instagram'))
     registerInstagramLoginRoutes(application, {

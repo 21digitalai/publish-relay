@@ -28,6 +28,7 @@ const media = z.object({
   status: z.enum(['created', 'processing', 'ready', 'error']),
   errorReason: z.string().nullish(),
 });
+const mediaPurchaseFact = media.extend({ purchasedByFan: z.boolean() });
 const mediaThumbnail = media.extend({
   variants: z.array(
     z.object({
@@ -229,6 +230,16 @@ export class FanvueReadClient {
   getMediaStatus(accessToken: string, mediaUuid: string) {
     const id = z.uuid().parse(mediaUuid);
     return this.get(accessToken, `/media/${id}`, media);
+  }
+
+  getMediaPurchaseFact(accessToken: string, mediaUuid: string, fanUuid: string) {
+    const mediaId = z.uuid().parse(mediaUuid);
+    const fanId = z.uuid().parse(fanUuid);
+    return this.get(
+      accessToken,
+      `/media/${mediaId}?purchasedBy=${encodeURIComponent(fanId)}`,
+      mediaPurchaseFact,
+    );
   }
 
   getMediaThumbnail(accessToken: string, mediaUuid: string) {

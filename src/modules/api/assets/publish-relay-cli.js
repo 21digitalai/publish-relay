@@ -120,6 +120,10 @@ const ROUTES = {
     path: '/api/v1/fanvue/accounts/:id/vault/media/:mediaUuid/price',
     body: true,
   },
+  'fanvue:vault-purchase-fact': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/vault/media/:mediaUuid/purchase',
+  },
   'fanvue-guidance:show': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/guidance' },
   'fanvue-guidance:set': {
     method: 'PATCH',
@@ -322,6 +326,11 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'manualPriceCents',
     'version',
     'updatedAt',
+  ]),
+  'fanvue:vault-purchase-fact': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'state',
+    'purchasedByFan',
   ]),
   'fanvue-guidance:show': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
   'fanvue-guidance:set': new Set([...ENVELOPE_OUTPUT_KEYS, 'guidance']),
@@ -753,6 +762,7 @@ function routePath(route, command, id, flags) {
     command !== 'fanvue:folders' &&
     command !== 'fanvue:folder-media' &&
     command !== 'fanvue:vault-catalog' &&
+    command !== 'fanvue:vault-purchase-fact' &&
     command !== 'facebook-comments:posts' &&
     command !== 'facebook-comments:list' &&
     command !== 'facebook-dms:list' &&
@@ -774,6 +784,8 @@ function routePath(route, command, id, flags) {
             ? ['page', 'size', 'media-name']
             : command === 'fanvue:folder-media' || command === 'fanvue:vault-catalog'
               ? ['page', 'size']
+              : command === 'fanvue:vault-purchase-fact'
+                ? ['fan-uuid']
               : command === 'publishes:list'
                 ? [
                     'cursor',
@@ -787,7 +799,8 @@ function routePath(route, command, id, flags) {
                 : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
-    if (typeof value === 'string') query.set(name === 'media-name' ? 'mediaName' : name, value);
+    if (typeof value === 'string')
+      query.set(name === 'media-name' ? 'mediaName' : name === 'fan-uuid' ? 'fanUuid' : name, value);
   }
   const encoded = query.toString();
   return encoded ? `${resourcePath}?${encoded}` : resourcePath;

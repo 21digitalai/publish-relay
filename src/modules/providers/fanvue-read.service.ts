@@ -9,7 +9,7 @@ import {
   FanvueReconnectionRequiredError,
   getFreshFanvueToken,
 } from './fanvue-credential.service.js';
-import type { FanvueHttpClient } from './fanvue-http-client.js';
+import { FanvueRequestError, type FanvueHttpClient } from './fanvue-http-client.js';
 import type { FanvueReadClient } from './fanvue-read-client.js';
 
 export type FanvueReadModule = 'chat' | 'post' | 'media' | 'audience';
@@ -90,8 +90,15 @@ export class FanvueReadService {
     accountId: string;
     fanUuid: string;
   }) {
+    return this.getExistingChat(input, ['write:chat']);
+  }
+
+  private async getExistingChat(
+    input: { workspaceId: string; accountId: string; fanUuid: string },
+    additionalScopes: string[],
+  ) {
     const fanUuid = z.uuid().parse(input.fanUuid);
-    const token = await this.accessToken(input, 'chat', ['write:chat']);
+    const token = await this.accessToken(input, 'chat', additionalScopes);
     const messages = await this.readClient.listMessages(token, fanUuid, { size: 1 });
     const first = messages.data[0];
     if (!first || (first.sender.uuid !== fanUuid && first.recipient.uuid !== fanUuid))
@@ -119,6 +126,27 @@ export class FanvueReadService {
   async getMediaStatus(input: { workspaceId: string; accountId: string; mediaUuid: string }) {
     const token = await this.accessToken(input, 'media');
     return this.readClient.getMediaStatus(token, input.mediaUuid);
+  }
+
+  async getMediaPurchaseFact(input: {
+    workspaceId: string;
+    accountId: string;
+    mediaUuid: string;
+    fanUuid: string;
+  }) {
+    try {
+      const { accessToken } = await this.getExistingChat(input, ['read:media']);
+      const media = await this.readClient.getMediaPurchaseFact(
+        accessToken,
+        input.mediaUuid,
+        input.fanUuid,
+      );
+      return { state: 'known' as const, purchasedByFan: media.purchasedByFan };
+    } catch (error) {
+      if (error instanceof FanvueRequestError)
+        return { state: 'unknown' as const, purchasedByFan: null };
+      throw error;
+    }
   }
 
   async getMediaThumbnail(input: { workspaceId: string; accountId: string; mediaUuid: string }) {

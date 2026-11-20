@@ -1244,8 +1244,12 @@ textarea:focus-visible {
   border-block: 1px solid var(--border);
 }
 .fanvue-vault-price-row {
+  --fanvue-vault-preview-size: 168px;
   display: grid;
-  grid-template-columns: 56px minmax(140px, 1fr) minmax(210px, 260px) 96px;
+  grid-template-columns: var(--fanvue-vault-preview-size) minmax(140px, 1fr) minmax(
+      210px,
+      260px
+    ) 96px;
   gap: 14px;
   align-items: center;
   padding: 12px 4px;
@@ -1255,8 +1259,8 @@ textarea:focus-visible {
   border-bottom: 0;
 }
 .fanvue-vault-price-preview {
-  width: 56px;
-  height: 56px;
+  width: var(--fanvue-vault-preview-size);
+  height: var(--fanvue-vault-preview-size);
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -1763,12 +1767,9 @@ textarea:focus-visible {
     border-radius: 0;
   }
   .fanvue-vault-price-row {
-    grid-template-columns: 64px minmax(0, 1fr);
+    --fanvue-vault-preview-size: 192px;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px 12px;
-  }
-  .fanvue-vault-price-preview {
-    width: 64px;
-    height: 64px;
   }
   .fanvue-vault-price-field,
   .fanvue-vault-price-action,

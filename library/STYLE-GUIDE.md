@@ -257,8 +257,9 @@ tenant/account-bound, private/no-store, and short-lived; provider URLs, tokens, 
 and raw payloads never appear as UI text. Loading, vault-empty, folder-empty, preview
 failure, validation failure, save failure, append failure, and saved states remain distinct.
 
-Desktop width is `min(880px, calc(100vw - 48px))` with an internally scrolling list. At
-390px it is full viewport with safe-area padding, a 64px preview/name row, and full-width
+Desktop width is `min(880px, calc(100vw - 48px))` with an internally scrolling list.
+The media preview is 168px square on desktop and 192px square on mobile, three times
+the previous 56px/64px sizes. At 390px use safe-area padding, stack the preview above the full-width name, and retain full-width
 price/Save controls with 44px targets and no horizontal scroll. Every input is labelled
 `USD price for {media name}`; Enter saves that changed row. Keyboard filtering, trapped
 Tab order, Escape close/discard, visible focus, text-plus-icon statuses, and reduced motion

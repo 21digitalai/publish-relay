@@ -191,7 +191,9 @@ export async function scheduleFanvueDmGroup(
       requestFingerprint:
         sequenceIndex === 0
           ? fingerprint
-          : createHash('sha256').update(`${fingerprint}:${String(sequenceIndex)}`).digest('hex'),
+          : createHash('sha256')
+              .update(`${fingerprint}:${String(sequenceIndex)}`)
+              .digest('hex'),
       status: sequenceIndex === 0 ? ('pending' as const) : ('waiting' as const),
     }));
     const inserted = await tx.insert(fanvueDmPendingIntents).values(rows).returning(projection);

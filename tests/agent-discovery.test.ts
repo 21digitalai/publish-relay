@@ -123,6 +123,10 @@ describe('agent discovery', () => {
     expect(skill.body).toContain('never use a new action ID or resend automatically');
     expect(skill.body).toContain('fanvue folders <account-id>');
     expect(skill.body).toContain('fanvue folder-media <account-id>');
+    expect(skill.body).toContain('fanvue-dms group-schedule <account-id>');
+    expect(skill.body).toContain('1–5 natural bubbles');
+    expect(skill.body).toContain('fanvue-dms group-status');
+    expect(skill.body).toContain('fanvue-dms group-cancel');
     expect(manifest.data.cli.path).toBe('/publish-relay-skill/publish-relay-cli.js');
     expect(manifest.data.cli.updatePolicy).toBe('warn-only');
     expect(manifest.data.assets.map(({ path }) => path)).toEqual([

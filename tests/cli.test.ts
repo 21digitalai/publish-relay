@@ -770,6 +770,64 @@ describe('Publish Relay CLI', () => {
       data: { state: 'confirmed', fanUuid, accessToken: '[REDACTED]' },
     });
   });
+  it('routes Fanvue guarded group schedule, status and cancel commands', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000002';
+    const fanUuid = '00000000-0000-4000-8000-000000000003';
+    const actionId = '00000000-0000-4000-8000-000000000004';
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      {
+        success: true,
+        data: { clientActionId: actionId, status: 'pending', dueAt: '2026-11-11T10:30:00Z' },
+      },
+      '00000000-0000-4000-8000-000000000201',
+      paths,
+    );
+    const directory = await mkdtemp(join(tmpdir(), 'relay-fanvue-group-'));
+    const bodyFile = join(directory, 'group.json');
+    await writeFile(
+      bodyFile,
+      JSON.stringify({
+        clientActionId: actionId,
+        bubbles: ['One', 'Two'],
+        expectedLatestInboundMessageUuid: '00000000-0000-4000-8000-000000000005',
+        expectedLatestInboundAt: '2026-11-11T10:00:00Z',
+        earliestAt: '2026-11-11T10:01:00Z',
+        latestAt: '2026-11-11T12:00:00Z',
+      }),
+    );
+    const common = [accountId, '--fan-uuid', fanUuid, '--root-id', actionId, '--base-url', baseUrl];
+    expect(
+      (
+        await cli(
+          [
+            'fanvue-dms',
+            'group-schedule',
+            ...common,
+            '--body-file',
+            bodyFile,
+            '--idempotency-key',
+            actionId,
+          ],
+          { PUBLISH_RELAY_API_KEY: 'test-key' },
+        )
+      ).code,
+    ).toBe(0);
+    expect(
+      (await cli(['fanvue-dms', 'group-status', ...common], { PUBLISH_RELAY_API_KEY: 'test-key' }))
+        .code,
+    ).toBe(0);
+    expect(
+      (await cli(['fanvue-dms', 'group-cancel', ...common], { PUBLISH_RELAY_API_KEY: 'test-key' }))
+        .code,
+    ).toBe(0);
+    expect(paths).toEqual([
+      `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages/scheduled-groups`,
+      `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages/scheduled-groups/${actionId}`,
+      `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages/scheduled-groups/${actionId}`,
+    ]);
+  });
   it('routes Fanvue vault folder reads with pagination and encoded folder names', async () => {
     const accountId = '00000000-0000-4000-8000-000000000002';
     const mediaUuid = '00000000-0000-4000-8000-000000000003';

@@ -40,6 +40,16 @@ function fixture(allowed = true) {
     .fn()
     .mockResolvedValue({ clientActionId, status: 'pending', dueAt: '2026-11-11T10:00:00.000Z' });
   const cancelScheduledMessage = vi.fn().mockResolvedValue(true);
+  const scheduleMessageGroup = vi.fn().mockResolvedValue({
+    clientActionId,
+    status: 'pending',
+    dueAt: new Date('2026-11-11T10:30:00Z'),
+  });
+  const scheduledMessageGroupStatus = vi.fn().mockResolvedValue({
+    id: '00000000-0000-4000-8000-000000000010',
+    bubbles: [{ sequence: 0, status: 'pending', dueAt: '2026-11-11T10:30:00.000Z' }],
+  });
+  const cancelScheduledMessageGroup = vi.fn().mockResolvedValue({ cancelled: 2 });
   const requireCapability = vi.fn().mockImplementation(() => {
     if (!allowed) throw new ApiKeyAuthorizationError('missing capability');
   });
@@ -64,6 +74,9 @@ function fixture(allowed = true) {
       scheduleMessage,
       scheduledMessageStatus,
       cancelScheduledMessage,
+      scheduleMessageGroup,
+      scheduledMessageGroupStatus,
+      cancelScheduledMessageGroup,
     } as unknown as FanvueMessageService,
     apiKeys,
     new ApiRateLimiter({
@@ -81,9 +94,83 @@ function fixture(allowed = true) {
     scheduleMessage,
     scheduledMessageStatus,
     cancelScheduledMessage,
+    scheduleMessageGroup,
+    scheduledMessageGroupStatus,
+    cancelScheduledMessageGroup,
     requireCapability,
   };
 }
+
+describe('Fanvue guarded DM group machine routes', () => {
+  const groupUrl = `${url}/scheduled-groups`;
+  const groupReceiptUrl = `${groupUrl}/${clientActionId}`;
+  const payload = {
+    clientActionId,
+    bubbles: ['Hello', 'How are you?'],
+    expectedLatestInboundMessageUuid: messageUuid,
+    expectedLatestInboundAt: '2026-11-11T10:00:00Z',
+    earliestAt: '2026-11-11T10:01:00Z',
+    latestAt: '2026-11-11T12:00:00Z',
+  };
+
+  it('schedules, reads and cancels one bounded group without sending', async () => {
+    const context = fixture();
+    const scheduled = await context.application.inject({
+      method: 'POST',
+      url: groupUrl,
+      headers,
+      payload,
+    });
+    expect(scheduled.statusCode).toBe(201);
+    expect(context.scheduleMessageGroup).toHaveBeenCalledWith({
+      workspaceId,
+      accountId,
+      fanUuid,
+      clientActionId,
+      bubbles: payload.bubbles,
+      expectedLatestInboundMessageUuid: messageUuid,
+      expectedLatestInboundAt: new Date(payload.expectedLatestInboundAt),
+      earliestAt: new Date(payload.earliestAt),
+      latestAt: new Date(payload.latestAt),
+      actor: { type: 'api-key', id: actorId },
+    });
+    expect(context.sendMessage).not.toHaveBeenCalled();
+    expect(scheduled.json()).toMatchObject({
+      data: { clientActionId, status: 'pending', dueAt: '2026-11-11T10:30:00.000Z' },
+    });
+    const status = await context.application.inject({
+      method: 'GET',
+      url: groupReceiptUrl,
+      headers,
+    });
+    expect(status.json()).toMatchObject({ data: { bubbles: [{ sequence: 0 }] } });
+    const cancelled = await context.application.inject({
+      method: 'DELETE',
+      url: groupReceiptUrl,
+      headers,
+    });
+    expect(cancelled.json()).toMatchObject({ data: { cancelled: 2 } });
+  });
+
+  it('rejects more than five bubbles and reversed due windows', async () => {
+    const context = fixture();
+    const tooMany = await context.application.inject({
+      method: 'POST',
+      url: groupUrl,
+      headers,
+      payload: { ...payload, bubbles: ['1', '2', '3', '4', '5', '6'] },
+    });
+    expect(tooMany.statusCode).toBe(400);
+    const reversed = await context.application.inject({
+      method: 'POST',
+      url: groupUrl,
+      headers,
+      payload: { ...payload, earliestAt: payload.latestAt, latestAt: payload.earliestAt },
+    });
+    expect(reversed.statusCode).toBe(400);
+    expect(context.scheduleMessageGroup).not.toHaveBeenCalled();
+  });
+});
 
 describe('Fanvue scheduled DM machine routes', () => {
   const scheduledUrl = `${url}/scheduled`;

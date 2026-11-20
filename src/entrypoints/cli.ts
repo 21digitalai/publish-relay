@@ -31,6 +31,8 @@ const MUTATIONS = new Set([
   'fanvue-guidance:set',
   'facebook-guidance:set',
   'fanvue:create-chat',
+  'fanvue-dms:group-schedule',
+  'fanvue-dms:group-cancel',
   'facebook-comments:reply',
   'facebook-comments:schedule',
   'facebook-comments:cancel',
@@ -144,6 +146,19 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
     method: 'POST',
     path: '/api/v1/fanvue/accounts/:id/chats',
     body: true,
+  },
+  'fanvue-dms:group-schedule': {
+    method: 'POST',
+    path: '/api/v1/fanvue/accounts/:id/chats/:fanUuid/messages/scheduled-groups',
+    body: true,
+  },
+  'fanvue-dms:group-status': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/chats/:fanUuid/messages/scheduled-groups/:rootId',
+  },
+  'fanvue-dms:group-cancel': {
+    method: 'DELETE',
+    path: '/api/v1/fanvue/accounts/:id/chats/:fanUuid/messages/scheduled-groups/:rootId',
   },
   'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
   'drafts:show': { method: 'GET', path: '/api/v1/drafts/:id' },
@@ -333,6 +348,9 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'commentGuidance',
   ]),
   'fanvue:create-chat': new Set([...ENVELOPE_OUTPUT_KEYS, 'fanUuid', 'failureStatus']),
+  'fanvue-dms:group-schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
+  'fanvue-dms:group-status': new Set([...ENVELOPE_OUTPUT_KEYS, 'bubbles', 'sequence', 'dueAt']),
+  'fanvue-dms:group-cancel': new Set([...ENVELOPE_OUTPUT_KEYS, 'cancelled']),
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
   'destinations:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
@@ -722,6 +740,7 @@ function routePath(
   flags: Record<string, string | true>,
 ): string {
   const conversationId = flags['conversation-id'];
+  const fanUuid = flags['fan-uuid'];
   const postId = flags['post-id'];
   const folderName = flags['folder-name'];
   if (route.path.includes(':folderName') && typeof folderName !== 'string')
@@ -731,6 +750,11 @@ function routePath(
     throw new CliError(EXIT.usage, 'Fanvue vault price command requires --media-uuid');
   if (route.path.includes(':conversationId') && typeof conversationId !== 'string')
     throw new CliError(EXIT.usage, 'Facebook DM command requires --conversation-id');
+  if (
+    route.path.includes(':fanUuid') &&
+    (typeof fanUuid !== 'string' || !WORKSPACE_ID_PATTERN.test(fanUuid))
+  )
+    throw new CliError(EXIT.usage, 'Fanvue DM command requires UUID --fan-uuid');
   const intentId = flags['intent-id'];
   const rootId = flags['root-id'];
   if (
@@ -753,6 +777,7 @@ function routePath(
     .replace(':postId', encodeURIComponent(String(postId ?? '')))
     .replace(':commentId', encodeURIComponent(String(flags['comment-id'] ?? '')))
     .replace(':conversationId', encodeURIComponent(String(conversationId ?? '')))
+    .replace(':fanUuid', encodeURIComponent(String(fanUuid ?? '')))
     .replace(':intentId', encodeURIComponent(String(intentId ?? '')))
     .replace(':rootId', encodeURIComponent(String(rootId ?? '')));
   const resourcePath = path
@@ -970,6 +995,31 @@ async function run(): Promise<Json> {
     )
       throw new CliError(EXIT.usage, 'Scheduled Page DM requires integer delay seconds');
   }
+  if (parsed.command === 'fanvue-dms:group-schedule') {
+    const payload = JSON.parse(String(body)) as {
+      clientActionId?: unknown;
+      bubbles?: unknown;
+      expectedLatestInboundMessageUuid?: unknown;
+      expectedLatestInboundAt?: unknown;
+      earliestAt?: unknown;
+      latestAt?: unknown;
+    };
+    if (payload.clientActionId !== parsed.flags['idempotency-key'])
+      throw new CliError(EXIT.usage, 'Fanvue DM clientActionId must match --idempotency-key');
+    if (
+      !Array.isArray(payload.bubbles) ||
+      payload.bubbles.length < 1 ||
+      payload.bubbles.length > 5 ||
+      typeof payload.expectedLatestInboundMessageUuid !== 'string' ||
+      typeof payload.expectedLatestInboundAt !== 'string' ||
+      typeof payload.earliestAt !== 'string' ||
+      typeof payload.latestAt !== 'string'
+    )
+      throw new CliError(
+        EXIT.usage,
+        'Fanvue DM group requires 1–5 bubbles, inbound identity and an explicit due window',
+      );
+  }
   if (parsed.command === 'proposals:create') {
     const actionId = (JSON.parse(String(body)) as { clientActionId?: unknown }).clientActionId;
     if (typeof actionId !== 'string' || actionId !== parsed.flags['idempotency-key'])
@@ -981,6 +1031,7 @@ async function run(): Promise<Json> {
     parsed.command !== 'facebook-dms:cancel' &&
     parsed.command !== 'facebook-comments:cancel' &&
     parsed.command !== 'facebook-dms:group-cancel' &&
+    parsed.command !== 'fanvue-dms:group-cancel' &&
     parsed.command !== 'facebook-dms:memory-upsert' &&
     typeof idempotencyKey !== 'string'
   )

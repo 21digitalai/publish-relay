@@ -14,6 +14,7 @@ import {
 import { tiktokConsentRequestSchema } from '../providers/tiktok-consent.service.js';
 import {
   fanvueCreateChatRequestSchema,
+  fanvueMessageGroupRequestSchema,
   fanvueMessageRequestSchema,
 } from '../providers/fanvue-message.routes.js';
 import { fanvueDmStageRequestSchema } from '../providers/fanvue-dm-stage.routes.js';
@@ -146,6 +147,13 @@ const fanvueCreateChatResultSchema = z.union([
   z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
   z.object({ state: z.literal('unknown') }),
 ]);
+function uuidPathParameter(name: string) {
+  return { name, in: 'path' as const, required: true, schema: { type: 'string', format: 'uuid' } };
+}
+
+function fanvueChatPathParameters() {
+  return [uuidPathParameter('accountId'), uuidPathParameter('fanUuid')];
+}
 const fanvueCommentResultSchema = z.union([
   z.object({ state: z.literal('confirmed'), commentUuid: z.uuid() }),
   z.object({ state: z.literal('failed'), failureStatus: z.number().int().min(400).max(499) }),
@@ -1145,6 +1153,61 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/fanvue/accounts/{accountId}/chats/{fanUuid}/messages/scheduled-groups': {
+        post: {
+          operationId: 'scheduleFanvueMessageGroup',
+          description:
+            'Persist one guarded 1–5 bubble Fanvue reply with an explicit forward due window and latest-inbound identity. No provider send occurs in this request.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: fanvueChatPathParameters(),
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: openApiJsonSchema(fanvueMessageGroupRequestSchema),
+              },
+            },
+          },
+          responses: {
+            '201': { description: 'Group persisted; dueAt is sampled once and replay-stable' },
+            '400': { description: 'Invalid bubbles, inbound identity, or due window' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:chats:send capability' },
+            '409': { description: 'Action conflict or another unresolved group exists' },
+            '429': { description: 'Mutation rate limit exceeded' },
+          },
+        },
+      },
+      '/api/v1/fanvue/accounts/{accountId}/chats/{fanUuid}/messages/scheduled-groups/{clientActionId}':
+        {
+          get: {
+            operationId: 'getFanvueMessageGroup',
+            description:
+              'Return at most five sequence/status/dueAt summaries; no text or provider data.',
+            security: [{ bearerAuth: [], workspace: [] }],
+            parameters: [...fanvueChatPathParameters(), uuidPathParameter('clientActionId')],
+            responses: {
+              '200': { description: 'Bounded group status' },
+              '401': { description: 'Authentication required' },
+              '403': { description: 'Missing fanvue:chats:send capability' },
+              '404': { description: 'Group not found in this account and fan scope' },
+            },
+          },
+          delete: {
+            operationId: 'cancelFanvueMessageGroup',
+            description:
+              'Cancel only unsent pending/waiting parts; claimed or settled parts are never rewound.',
+            security: [{ bearerAuth: [], workspace: [] }],
+            parameters: [...fanvueChatPathParameters(), uuidPathParameter('clientActionId')],
+            responses: {
+              '200': { description: 'Unsent group parts cancelled' },
+              '401': { description: 'Authentication required' },
+              '403': { description: 'Missing fanvue:chats:send capability' },
+              '404': { description: 'Group not found in this account and fan scope' },
+              '429': { description: 'Mutation rate limit exceeded' },
+            },
+          },
+        },
       '/api/v1/fanvue/accounts/{accountId}/dm-media/stage': {
         post: {
           operationId: 'stageFanvueDmMedia',

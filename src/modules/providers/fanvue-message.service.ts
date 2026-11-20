@@ -13,10 +13,14 @@ import {
 } from './fanvue-action-intent.repository.js';
 import { getReadyFanvueDmMedia } from './fanvue-dm-ready-media.repository.js';
 import {
+  cancelFanvueDmGroup,
   cancelPendingFanvueDm,
   findPendingFanvueDm,
+  getFanvueDmGroupStatus,
   replayScheduledFanvueDm,
+  scheduleFanvueDmGroup,
   scheduleFanvueDm,
+  fanvueGroupScheduleInput,
   scheduleInput,
 } from './fanvue-dm-pending.repository.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
@@ -154,6 +158,39 @@ export class FanvueMessageService {
       ...command,
       targetLabel,
     });
+  }
+
+  async scheduleMessageGroup(input: z.input<typeof fanvueGroupScheduleInput>) {
+    const command = fanvueGroupScheduleInput.parse(input);
+    const targetLabel = await this.preflightScheduledMessage({
+      workspaceId: command.workspaceId,
+      accountId: command.accountId,
+      fanUuid: command.fanUuid,
+      clientActionId: command.clientActionId,
+      text: command.bubbles[0],
+      dueAt: command.earliestAt,
+      actor: command.actor,
+    });
+    void targetLabel;
+    return scheduleFanvueDmGroup(this.database, command);
+  }
+
+  async scheduledMessageGroupStatus(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+    clientActionId: string;
+  }) {
+    return getFanvueDmGroupStatus(this.database, input);
+  }
+
+  async cancelScheduledMessageGroup(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+    clientActionId: string;
+  }) {
+    return cancelFanvueDmGroup(this.database, input);
   }
 
   async preflightScheduledDispatch(input: {

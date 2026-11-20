@@ -51,6 +51,18 @@ export const fanvueMessageRequestSchema = z.strictObject({
 const scheduledMessageRequestSchema = fanvueMessageRequestSchema
   .omit({ mediaUuids: true, mediaPreviewUuid: true })
   .extend({ dueAt: z.iso.datetime() });
+export const fanvueMessageGroupRequestSchema = z
+  .strictObject({
+    clientActionId: z.uuid(),
+    bubbles: z.array(z.string().min(1).max(5000)).min(1).max(5),
+    expectedLatestInboundMessageUuid: z.uuid(),
+    expectedLatestInboundAt: z.iso.datetime(),
+    earliestAt: z.iso.datetime(),
+    latestAt: z.iso.datetime(),
+  })
+  .refine((value) => new Date(value.earliestAt) <= new Date(value.latestAt), {
+    message: 'Earliest due time must not follow latest due time',
+  });
 
 export function registerFanvueMessageRoutes(
   application: FastifyInstance,
@@ -233,6 +245,124 @@ export function registerFanvueMessageRoutes(
           return await reply
             .code(404)
             .send(errorEnvelope('not_found', 'Scheduled message not found', request.id));
+        return await reply.send(successEnvelope(result, request.id));
+      } catch (error) {
+        return sendMessageError(error, request, reply);
+      }
+    },
+  );
+  application.post(
+    '/api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages/scheduled-groups',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      try {
+        const principal = await authorizeMachineRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          'fanvue:chats:send',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const path = params.parse(request.params);
+        const payload = fanvueMessageGroupRequestSchema.parse(request.body);
+        const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
+        if (!decision.allowed) {
+          void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);
+          return await reply
+            .code(429)
+            .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+        }
+        const intent = await service.scheduleMessageGroup({
+          workspaceId: principal.workspaceId,
+          accountId: path.accountId,
+          fanUuid: path.fanUuid,
+          clientActionId: payload.clientActionId,
+          bubbles: payload.bubbles,
+          expectedLatestInboundMessageUuid: payload.expectedLatestInboundMessageUuid,
+          expectedLatestInboundAt: new Date(payload.expectedLatestInboundAt),
+          earliestAt: new Date(payload.earliestAt),
+          latestAt: new Date(payload.latestAt),
+          actor: { type: principal.kind, id: principal.actorId },
+        });
+        return await reply.code(201).send(
+          successEnvelope(
+            {
+              clientActionId: intent.clientActionId,
+              status: intent.status,
+              dueAt: intent.dueAt.toISOString(),
+            },
+            request.id,
+          ),
+        );
+      } catch (error) {
+        return sendMessageError(error, request, reply);
+      }
+    },
+  );
+  application.get(
+    '/api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages/scheduled-groups/:clientActionId',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      try {
+        const principal = await authorizeMachineRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          'fanvue:chats:send',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const path = scheduledParams.parse(request.params);
+        const result = await service.scheduledMessageGroupStatus({
+          workspaceId: principal.workspaceId,
+          ...path,
+        });
+        if (!result)
+          return await reply
+            .code(404)
+            .send(errorEnvelope('not_found', 'Scheduled message group not found', request.id));
+        return await reply.send(successEnvelope(result, request.id));
+      } catch (error) {
+        return sendMessageError(error, request, reply);
+      }
+    },
+  );
+  application.delete(
+    '/api/v1/fanvue/accounts/:accountId/chats/:fanUuid/messages/scheduled-groups/:clientActionId',
+    async (request, reply) => {
+      void reply.header('Cache-Control', 'no-store');
+      try {
+        const principal = await authorizeMachineRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          'fanvue:chats:send',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const path = scheduledParams.parse(request.params);
+        const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
+        if (!decision.allowed) {
+          void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);
+          return await reply
+            .code(429)
+            .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+        }
+        const result = await service.cancelScheduledMessageGroup({
+          workspaceId: principal.workspaceId,
+          ...path,
+        });
+        if (!result)
+          return await reply
+            .code(404)
+            .send(errorEnvelope('not_found', 'Scheduled message group not found', request.id));
         return await reply.send(successEnvelope(result, request.id));
       } catch (error) {
         return sendMessageError(error, request, reply);

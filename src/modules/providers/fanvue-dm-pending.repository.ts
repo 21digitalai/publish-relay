@@ -1,7 +1,7 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import { and, asc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -631,6 +631,7 @@ export async function claimDueFanvueDm(
         id: fanvueDmPendingIntents.id,
         workspaceId: fanvueDmPendingIntents.workspaceId,
         accountId: fanvueDmPendingIntents.accountId,
+        sequenceIndex: fanvueDmPendingIntents.sequenceIndex,
       })
       .from(fanvueDmPendingIntents)
       .leftJoin(
@@ -644,6 +645,7 @@ export async function claimDueFanvueDm(
         and(
           lte(fanvueDmPendingIntents.dueAt, input.now),
           or(
+            gt(fanvueDmPendingIntents.sequenceIndex, 0),
             isNull(fanvueDmDispatchPacing.accountId),
             lte(fanvueDmDispatchPacing.nextAt, input.now),
           ),
@@ -681,7 +683,9 @@ export async function claimDueFanvueDm(
         ),
       )
       .limit(1);
-    if (pacing && pacing.nextAt > input.now) return null;
+    if (candidate.sequenceIndex === 0 || candidate.sequenceIndex === null) {
+      if (pacing && pacing.nextAt > input.now) return null;
+    }
     const [claimed] = await tx
       .update(fanvueDmPendingIntents)
       .set({
@@ -717,14 +721,16 @@ export async function claimDueFanvueDm(
           eq(engagementProposals.status, 'scheduled'),
         ),
       );
-    const nextAt = new Date(input.now.getTime() + randomInt(60, 121) * 1000);
-    await tx
-      .insert(fanvueDmDispatchPacing)
-      .values({ workspaceId: candidate.workspaceId, accountId: candidate.accountId, nextAt })
-      .onConflictDoUpdate({
-        target: [fanvueDmDispatchPacing.workspaceId, fanvueDmDispatchPacing.accountId],
-        set: { nextAt },
-      });
+    if (candidate.sequenceIndex === 0 || candidate.sequenceIndex === null) {
+      const nextAt = new Date(input.now.getTime() + randomInt(60, 121) * 1000);
+      await tx
+        .insert(fanvueDmDispatchPacing)
+        .values({ workspaceId: candidate.workspaceId, accountId: candidate.accountId, nextAt })
+        .onConflictDoUpdate({
+          target: [fanvueDmDispatchPacing.workspaceId, fanvueDmDispatchPacing.accountId],
+          set: { nextAt },
+        });
+    }
     return claimed;
   });
 }
@@ -762,7 +768,11 @@ export async function finishClaimedFanvueDm(
 ) {
   return withTenantTransaction(database, input, async (tx) => {
     const [intent] = await tx
-      .select({ clientActionId: fanvueDmPendingIntents.clientActionId })
+      .select({
+        clientActionId: fanvueDmPendingIntents.clientActionId,
+        groupId: fanvueDmPendingIntents.groupId,
+        sequenceIndex: fanvueDmPendingIntents.sequenceIndex,
+      })
       .from(fanvueDmPendingIntents)
       .where(
         and(
@@ -806,6 +816,52 @@ export async function finishClaimedFanvueDm(
       )
       .returning({ id: fanvueDmPendingIntents.id });
     if (settled) {
+      if (intent.groupId && intent.sequenceIndex !== null) {
+        if (input.state === 'confirmed') {
+          const [next] = await tx
+            .select({
+              id: fanvueDmPendingIntents.id,
+              gapSeconds: fanvueDmPendingIntents.gapSeconds,
+            })
+            .from(fanvueDmPendingIntents)
+            .where(
+              and(
+                eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+                eq(fanvueDmPendingIntents.groupId, intent.groupId),
+                eq(fanvueDmPendingIntents.sequenceIndex, intent.sequenceIndex + 1),
+                eq(fanvueDmPendingIntents.status, 'waiting'),
+              ),
+            )
+            .limit(1);
+          if (next) {
+            await tx
+              .update(fanvueDmPendingIntents)
+              .set({
+                status: 'pending',
+                dueAt: new Date(Date.now() + (next.gapSeconds ?? 0) * 1_000),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+                  eq(fanvueDmPendingIntents.id, next.id),
+                  eq(fanvueDmPendingIntents.status, 'waiting'),
+                ),
+              );
+          }
+        } else if (input.state === 'failed') {
+          await tx
+            .update(fanvueDmPendingIntents)
+            .set({ status: 'cancelled', updatedAt: new Date() })
+            .where(
+              and(
+                eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+                eq(fanvueDmPendingIntents.groupId, intent.groupId),
+                eq(fanvueDmPendingIntents.status, 'waiting'),
+              ),
+            );
+        }
+      }
       const proposalStatus =
         input.state === 'confirmed'
           ? 'sent'

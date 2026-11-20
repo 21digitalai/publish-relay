@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   cancelFanvueDmGroup,
+  claimDueFanvueDm,
   FanvueDmScheduleConflictError,
+  finishClaimedFanvueDm,
   getFanvueDmGroupStatus,
   scheduleFanvueDmGroup,
 } from '../src/modules/providers/fanvue-dm-pending.repository.js';
@@ -108,6 +110,42 @@ describe('Fanvue durable DM groups', () => {
       expect(
         await getFanvueDmGroupStatus(database, { ...input, workspaceId: otherWorkspaceId }),
       ).toBeNull();
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('releases exactly one confirmed tail without applying root account pacing', async () => {
+    const { pg, database } = await setup();
+    try {
+      const input = { ...command(), bubbles: ['Root', 'Tail', 'Last'] };
+      await scheduleFanvueDmGroup(database, input);
+      const root = await claimDueFanvueDm(database, {
+        workerId: 'worker',
+        now: new Date('2026-11-20T13:00:00Z'),
+        leaseMs: 30_000,
+      });
+      expect(root?.sequenceIndex).toBe(0);
+      expect(
+        await finishClaimedFanvueDm(database, {
+          workspaceId,
+          id: root?.id ?? '',
+          leaseOwner: root?.leaseOwner ?? '',
+          state: 'confirmed',
+        }),
+      ).toBe(true);
+      const status = await getFanvueDmGroupStatus(database, input);
+      expect(status?.bubbles.map((bubble) => bubble.status)).toEqual([
+        'confirmed',
+        'pending',
+        'waiting',
+      ]);
+      const tail = await claimDueFanvueDm(database, {
+        workerId: 'worker',
+        now: new Date(Date.now() + 20_000),
+        leaseMs: 30_000,
+      });
+      expect(tail?.sequenceIndex).toBe(1);
     } finally {
       await pg.close();
     }

@@ -304,22 +304,11 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'relationship',
     'subscriptionStatus',
   ]),
-  'fanvue:folders': new Set([
-    ...ENVELOPE_OUTPUT_KEYS,
-    'pagination',
-    'page',
-    'size',
-    'hasMore',
-    'name',
-    'createdAt',
-    'mediaCount',
-  ]),
+  'fanvue:folders': new Set([...ENVELOPE_OUTPUT_KEYS, 'nextCursor', 'name', 'createdAt']),
   'fanvue:folder-media': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
-    'pagination',
-    'page',
-    'size',
-    'hasMore',
+    'nextCursor',
+    'total',
     'uuid',
     'status',
     'name',
@@ -835,9 +824,9 @@ function routePath(route, command, id, flags) {
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
           : command === 'fanvue:folders'
-            ? ['page', 'size', 'media-name']
+            ? ['cursor', 'size', 'media-name']
             : command === 'fanvue:folder-media' || command === 'fanvue:vault-catalog'
-              ? ['page', 'size']
+              ? ['cursor', 'size']
               : command === 'fanvue:vault-purchase-fact'
                 ? ['fan-uuid']
                 : command === 'fanvue:vault-publication-fact'

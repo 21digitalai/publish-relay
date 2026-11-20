@@ -32,6 +32,17 @@ function mediaName(name: string | null | undefined, uuid: string): string {
   return trimmed;
 }
 
+function parseFolderCursor(cursor: string | null): Record<string, string | null> {
+  if (!cursor) return {};
+  const parsed = JSON.parse(cursor) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new Error('Invalid vault media cursor');
+  const entries = Object.entries(parsed);
+  if (entries.some(([, value]) => value !== null && typeof value !== 'string'))
+    throw new Error('Invalid vault media cursor');
+  return Object.fromEntries(entries);
+}
+
 export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
   const versions = new Map<string, number | null>();
   const folderCache = new Map<string, string[]>();
@@ -64,9 +75,7 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
   return {
     loadFolders,
     async loadMedia({ accountId, folderId, cursor, signal }) {
-      const cursorByFolder = cursor
-        ? (JSON.parse(cursor) as Record<string, string | null>)
-        : Object.create(null);
+      const cursorByFolder = parseFolderCursor(cursor);
       const folders = folderId
         ? [folderId]
         : (folderCache.get(accountId) ??
@@ -79,17 +88,17 @@ export function createFanvueVaultPriceAdapter(): FanvueVaultPriceAdapter {
               cursorByFolder[folder] !== null,
           )
           .map(async (folder) => {
-          const query = new URLSearchParams({ size: '50' });
-          const providerCursor = cursorByFolder[folder];
-          if (providerCursor) query.set('cursor', providerCursor);
-          const response = await fetch(
-            `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/catalog/${encodeURIComponent(folder)}?${query}`,
-            { signal },
-          );
-          const page = await json<Envelope<CatalogPage>>(response);
-          if (providerCursor && page.data.nextCursor === providerCursor)
-            throw new Error('Vault media cursor loop');
-          return { folder, page };
+            const query = new URLSearchParams({ size: '50' });
+            const providerCursor = cursorByFolder[folder];
+            if (providerCursor) query.set('cursor', providerCursor);
+            const response = await fetch(
+              `/api/fanvue/accounts/${encodeURIComponent(accountId)}/vault/catalog/${encodeURIComponent(folder)}?${query}`,
+              { signal },
+            );
+            const page = await json<Envelope<CatalogPage>>(response);
+            if (providerCursor && page.data.nextCursor === providerCursor)
+              throw new Error('Vault media cursor loop');
+            return { folder, page };
           }),
       );
       const byId = new Map<string, FanvueVaultMedia>();

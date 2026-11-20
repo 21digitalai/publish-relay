@@ -11,8 +11,10 @@ import {
   FanvueDmScheduleConflictError,
   finishClaimedFanvueDm,
   getFanvueDmGroupStatus,
+  scheduleFanvueDm,
   scheduleFanvueDmGroup,
 } from '../src/modules/providers/fanvue-dm-pending.repository.js';
+import { scheduleFanvueComment } from '../src/modules/providers/fanvue-comment-pending.repository.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000002';
@@ -130,6 +132,44 @@ describe('Fanvue durable DM groups', () => {
       await pg.close();
     }
   });
+
+  it.each(['immediate', 'comment'] as const)(
+    'serializes concurrent group-vs-%s admission to one winner',
+    async (kind) => {
+      const { pg, database } = await setup();
+      try {
+        const input = command();
+        const competing =
+          kind === 'immediate'
+            ? scheduleFanvueDm(database, {
+                workspaceId,
+                accountId,
+                fanUuid,
+                clientActionId,
+                actor: input.actor,
+                text: 'Immediate',
+                dueAt: input.earliestAt,
+              })
+            : scheduleFanvueComment(database, {
+                workspaceId,
+                accountId,
+                postUuid: '00000000-0000-4000-8000-000000000012',
+                clientActionId,
+                actor: input.actor,
+                text: 'Comment',
+                dueAt: input.earliestAt,
+              });
+        const results = await Promise.allSettled([
+          scheduleFanvueDmGroup(database, input),
+          competing,
+        ]);
+        expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      } finally {
+        await pg.close();
+      }
+    },
+  );
 
   it('cancels only unsent group parts and isolates tenant reads', async () => {
     const { pg, database } = await setup();

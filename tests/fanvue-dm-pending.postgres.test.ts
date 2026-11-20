@@ -290,7 +290,10 @@ describe('Fanvue DM pending intent foundation', () => {
       const sendMessage = vi
         .fn()
         .mockResolvedValue({ state: 'confirmed', messageUuid: input.fanUuid });
-      const preflightScheduledDispatch = vi.fn().mockResolvedValue('allow');
+      const preflightScheduledDispatch = vi
+        .fn()
+        .mockResolvedValueOnce('allow')
+        .mockResolvedValueOnce('cancel');
       const runtime = {
         database,
         messages: { sendMessage, preflightScheduledDispatch },
@@ -371,12 +374,17 @@ describe('Fanvue DM pending intent foundation', () => {
         runtime,
         new Date(Date.parse(tailDue.rows[0]?.due_at ?? '') + 1000),
       );
-      expect(tailResult).toMatchObject({ state: 'confirmed', settled: true });
+      expect(tailResult).toMatchObject({ state: 'cancelled', settled: true });
       expect(preflightScheduledDispatch).toHaveBeenCalledTimes(2);
-      expect(sendMessage).toHaveBeenCalledWith(
+      expect(sendMessage).not.toHaveBeenCalledWith(
         expect.objectContaining({ text: 'Tail' }),
-        expect.stringMatching(/^worker:/),
+        expect.anything(),
       );
+      const groupStates = await pg.query<{ status: string }>(
+        `SELECT status FROM fanvue_dm_pending_intents
+         WHERE group_id IS NOT NULL ORDER BY sequence_index`,
+      );
+      expect(groupStates.rows.map((row) => row.status)).toEqual(['confirmed', 'cancelled']);
     } finally {
       await pg.close();
     }

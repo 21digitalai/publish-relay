@@ -813,7 +813,7 @@ export async function finishClaimedFanvueDm(
     workspaceId: string;
     id: string;
     leaseOwner: string;
-    state: 'confirmed' | 'failed' | 'unknown' | 'pending';
+    state: 'confirmed' | 'failed' | 'unknown' | 'pending' | 'cancelled';
   },
 ) {
   return withTenantTransaction(database, input, async (tx) => {
@@ -899,7 +899,7 @@ export async function finishClaimedFanvueDm(
                 ),
               );
           }
-        } else if (input.state === 'failed') {
+        } else if (input.state === 'failed' || input.state === 'cancelled') {
           await tx
             .update(fanvueDmPendingIntents)
             .set({ status: 'cancelled', updatedAt: new Date() })

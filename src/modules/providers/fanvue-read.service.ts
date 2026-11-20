@@ -90,8 +90,15 @@ export class FanvueReadService {
     accountId: string;
     fanUuid: string;
   }) {
+    return this.getExistingChat(input, ['write:chat']);
+  }
+
+  private async getExistingChat(
+    input: { workspaceId: string; accountId: string; fanUuid: string },
+    additionalScopes: string[],
+  ) {
     const fanUuid = z.uuid().parse(input.fanUuid);
-    const token = await this.accessToken(input, 'chat', ['write:chat']);
+    const token = await this.accessToken(input, 'chat', additionalScopes);
     const messages = await this.readClient.listMessages(token, fanUuid, { size: 1 });
     const first = messages.data[0];
     if (!first || (first.sender.uuid !== fanUuid && first.recipient.uuid !== fanUuid))
@@ -126,7 +133,7 @@ export class FanvueReadService {
     fanUuid: string;
   }) {
     try {
-      const { accessToken } = await this.getExistingChatForMessage(input);
+      const { accessToken } = await this.getExistingChat(input, ['read:media']);
       const media = await this.readClient.getMediaPurchaseFact(
         accessToken,
         input.mediaUuid,

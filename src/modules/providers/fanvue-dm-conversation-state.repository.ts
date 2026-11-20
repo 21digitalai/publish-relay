@@ -298,17 +298,15 @@ async function recordHistoryMedia(
       .for('update')
       .limit(1);
     if (existing) {
-      if (!existing.providerMessageUuid)
-        await transaction
-          .update(fanvueDmMediaDeliveries)
-          .set({
-            state: 'confirmed',
-            providerMessageUuid: message.providerMessageUuid,
-            priceCents: message.priceCents,
-            purchasedAt: message.purchasedAt,
-            updatedAt: input.observedAt,
-          })
-          .where(eq(fanvueDmMediaDeliveries.id, existing.id));
+      if (existing.providerMessageUuid !== message.providerMessageUuid) continue;
+      await transaction
+        .update(fanvueDmMediaDeliveries)
+        .set({
+          priceCents: message.priceCents ?? existing.priceCents,
+          purchasedAt: message.purchasedAt ?? existing.purchasedAt,
+          updatedAt: input.observedAt,
+        })
+        .where(eq(fanvueDmMediaDeliveries.id, existing.id));
       continue;
     }
     await transaction.insert(fanvueDmMediaDeliveries).values({

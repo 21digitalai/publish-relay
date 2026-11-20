@@ -16,6 +16,8 @@ const inboundUuid = '00000000-0000-4000-8000-000000000010';
 const manualGiftUuid = '00000000-0000-4000-8000-000000000011';
 const paidUuid = '00000000-0000-4000-8000-000000000012';
 const mediaUuid = '00000000-0000-4000-8000-000000000020';
+const unknownMediaUuid = '00000000-0000-4000-8000-000000000021';
+const purchasedMediaUuid = '00000000-0000-4000-8000-000000000022';
 
 async function setup() {
   const pg = new PGlite();
@@ -163,6 +165,93 @@ describe('Fanvue DM history backfill', () => {
          GROUP BY workspace_id`,
       );
       expect(counts.rows).toEqual([{ workspace_id: otherWorkspaceId, count: 1 }]);
+    } finally {
+      await pg.close();
+    }
+  });
+
+  it('preserves action ownership and refreshes purchase facts only for the same message', async () => {
+    const { pg, database } = await setup();
+    try {
+      const reservedActionId = '00000000-0000-4000-8000-000000000030';
+      const unknownActionId = '00000000-0000-4000-8000-000000000031';
+      const otherMessageUuid = '00000000-0000-4000-8000-000000000032';
+      const collisionMessageUuid = '00000000-0000-4000-8000-000000000033';
+      await pg.exec(`
+        INSERT INTO fanvue_dm_media_deliveries
+          (workspace_id, account_id, fan_uuid, provider_media_uuid, source,
+           client_action_id, provider_message_uuid, state, price_cents, purchased_at)
+        VALUES
+          ('${workspaceId}', '${accountId}', '${fanUuid}', '${mediaUuid}',
+           'relay_action', '${reservedActionId}', NULL, 'reserved', NULL, NULL),
+          ('${workspaceId}', '${accountId}', '${fanUuid}', '${unknownMediaUuid}',
+           'relay_action', '${unknownActionId}', NULL, 'unknown', NULL, NULL),
+          ('${workspaceId}', '${accountId}', '${fanUuid}', '${purchasedMediaUuid}',
+           'provider_history', NULL, '${paidUuid}', 'confirmed', 300, NULL);
+      `);
+      const paid = message(paidUuid, 'outbound', '2026-11-20T10:20:00.000Z', [purchasedMediaUuid]);
+      const different = message(
+        collisionMessageUuid,
+        'outbound',
+        '2026-11-20T10:25:00.000Z',
+        [purchasedMediaUuid],
+      );
+      await expect(
+        backfillFanvueDmHistory(database, { workspaceId, accountId, fanUuid }, () =>
+          Promise.resolve(
+            page(
+              [
+                message(manualGiftUuid, 'outbound', '2026-11-20T10:05:00.000Z', [mediaUuid]),
+                message(otherMessageUuid, 'outbound', '2026-11-20T10:10:00.000Z', [unknownMediaUuid]),
+                paid,
+                different,
+              ],
+              1,
+              false,
+            ),
+          ),
+        ),
+      ).resolves.toMatchObject({ state: 'complete' });
+      const deliveries = await pg.query<{
+        provider_media_uuid: string;
+        source: string;
+        client_action_id: string | null;
+        provider_message_uuid: string | null;
+        state: string;
+        price_cents: number | null;
+        purchased_at: Date | null;
+      }>(`SELECT provider_media_uuid, source, client_action_id, provider_message_uuid,
+                 state, price_cents, purchased_at
+            FROM fanvue_dm_media_deliveries ORDER BY provider_media_uuid`);
+      expect(deliveries.rows).toEqual([
+        {
+          provider_media_uuid: mediaUuid,
+          source: 'relay_action',
+          client_action_id: reservedActionId,
+          provider_message_uuid: null,
+          state: 'reserved',
+          price_cents: null,
+          purchased_at: null,
+        },
+        {
+          provider_media_uuid: unknownMediaUuid,
+          source: 'relay_action',
+          client_action_id: unknownActionId,
+          provider_message_uuid: null,
+          state: 'unknown',
+          price_cents: null,
+          purchased_at: null,
+        },
+        {
+          provider_media_uuid: purchasedMediaUuid,
+          source: 'provider_history',
+          client_action_id: null,
+          provider_message_uuid: paidUuid,
+          state: 'confirmed',
+          price_cents: 500,
+          purchased_at: new Date('2026-11-20T10:30:00.000Z'),
+        },
+      ]);
     } finally {
       await pg.close();
     }

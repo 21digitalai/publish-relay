@@ -158,6 +158,14 @@ const ROUTES = {
     method: 'DELETE',
     path: '/api/v1/fanvue/accounts/:id/chats/:fanUuid/messages/scheduled-groups/:rootId',
   },
+  'fanvue-dms:candidates': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/dm-conversations/due',
+  },
+  'fanvue-dms:checkpoints': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/chats/:fanUuid/checkpoints',
+  },
   'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
   'drafts:show': { method: 'GET', path: '/api/v1/drafts/:id' },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
@@ -361,6 +369,25 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
   'fanvue-dms:group-schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'dueAt']),
   'fanvue-dms:group-status': new Set([...ENVELOPE_OUTPUT_KEYS, 'bubbles', 'sequence', 'dueAt']),
   'fanvue-dms:group-cancel': new Set([...ENVELOPE_OUTPUT_KEYS, 'cancelled']),
+  'fanvue-dms:candidates': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'fanUuid',
+    'latestObservedMessageUuid',
+    'latestObservedAt',
+    'latestInboundMessageUuid',
+    'latestInboundAt',
+    'providerIsRead',
+    'providerUnreadCount',
+    'nextReviewAt',
+    'historyBackfillCompleteAt',
+  ]),
+  'fanvue-dms:checkpoints': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'kind',
+    'ordinal',
+    'providerMessageUuid',
+    'providerMediaUuid',
+  ]),
   'account:current': new Set([...ENVELOPE_OUTPUT_KEYS, 'prefix', 'capabilities', 'expiresAt']),
   'destinations:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
@@ -775,6 +802,7 @@ function routePath(route, command, id, flags) {
     command !== 'fanvue:vault-catalog' &&
     command !== 'fanvue:vault-purchase-fact' &&
     command !== 'fanvue:vault-publication-fact' &&
+    command !== 'fanvue-dms:candidates' &&
     command !== 'facebook-comments:posts' &&
     command !== 'facebook-comments:list' &&
     command !== 'facebook-dms:list' &&
@@ -800,17 +828,19 @@ function routePath(route, command, id, flags) {
                 ? ['fan-uuid']
                 : command === 'fanvue:vault-publication-fact'
                   ? ['max-pages']
-                  : command === 'publishes:list'
-                    ? [
-                        'cursor',
-                        'limit',
-                        'states',
-                        'approvalStatus',
-                        'providerAccountId',
-                        'scheduledAfter',
-                        'scheduledBefore',
-                      ]
-                    : ['cursor', 'limit'];
+                  : command === 'fanvue-dms:candidates'
+                    ? ['size']
+                    : command === 'publishes:list'
+                      ? [
+                          'cursor',
+                          'limit',
+                          'states',
+                          'approvalStatus',
+                          'providerAccountId',
+                          'scheduledAfter',
+                          'scheduledBefore',
+                        ]
+                      : ['cursor', 'limit'];
   for (const name of names) {
     const value = flags[name];
     if (typeof value === 'string')

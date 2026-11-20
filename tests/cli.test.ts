@@ -828,6 +828,36 @@ describe('Publish Relay CLI', () => {
       `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages/scheduled-groups/${actionId}`,
     ]);
   });
+  it('routes bounded Fanvue DM candidate and checkpoint discovery commands', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000002';
+    const fanUuid = '00000000-0000-4000-8000-000000000003';
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      { success: true, data: [] },
+      '00000000-0000-4000-8000-000000000201',
+      paths,
+    );
+    const common = [accountId, '--base-url', baseUrl];
+    expect(
+      (
+        await cli(['fanvue-dms', 'candidates', ...common, '--size', '25'], {
+          PUBLISH_RELAY_API_KEY: 'test-key',
+        })
+      ).code,
+    ).toBe(0);
+    expect(
+      (
+        await cli(['fanvue-dms', 'checkpoints', ...common, '--fan-uuid', fanUuid], {
+          PUBLISH_RELAY_API_KEY: 'test-key',
+        })
+      ).code,
+    ).toBe(0);
+    expect(paths).toEqual([
+      `/api/v1/fanvue/accounts/${accountId}/dm-conversations/due?size=25`,
+      `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/checkpoints`,
+    ]);
+  });
   it('routes Fanvue vault folder reads with pagination and encoded folder names', async () => {
     const accountId = '00000000-0000-4000-8000-000000000002';
     const mediaUuid = '00000000-0000-4000-8000-000000000003';
@@ -972,7 +1002,10 @@ describe('Publish Relay CLI', () => {
     const paths: string[] = [];
     const baseUrl = await fixture(
       200,
-      { success: true, data: { state: 'unknown', complete: false, incompleteReason: 'scan_capped' } },
+      {
+        success: true,
+        data: { state: 'unknown', complete: false, incompleteReason: 'scan_capped' },
+      },
       '00000000-0000-4000-8000-000000000201',
       paths,
     );

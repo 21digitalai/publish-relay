@@ -11,6 +11,8 @@ import {
 } from './fanvue-credential.service.js';
 import { FanvueRequestError, type FanvueHttpClient } from './fanvue-http-client.js';
 import type { FanvueReadClient } from './fanvue-read-client.js';
+import { listFanvueDmCheckpoints } from './fanvue-dm-checkpoint.repository.js';
+import { listDueFanvueDmConversations } from './fanvue-dm-conversation-state.repository.js';
 
 export type FanvueReadModule = 'chat' | 'post' | 'media' | 'audience';
 
@@ -85,6 +87,23 @@ export class FanvueReadService {
   }) {
     const token = await this.accessToken(input, 'chat');
     return this.readClient.listMessages(token, input.fanUuid, input);
+  }
+
+  async listDueDmConversations(input: { workspaceId: string; accountId: string; size?: number }) {
+    return listDueFanvueDmConversations(this.database, {
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      now: new Date(),
+      ...(input.size === undefined ? {} : { limit: input.size }),
+    });
+  }
+
+  async listDmConversationCheckpoints(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+  }) {
+    return listFanvueDmCheckpoints(this.database, input);
   }
 
   /** A returned counterpart message proves this selected creator already has the fan chat. */
@@ -242,7 +261,14 @@ export class FanvueReadService {
         });
       } catch (error) {
         if (!(error instanceof FanvueRequestError)) throw error;
-        return publicationCoverage('unknown', scannedAt, page - 1, postUuids.size, false, 'scan_failed');
+        return publicationCoverage(
+          'unknown',
+          scannedAt,
+          page - 1,
+          postUuids.size,
+          false,
+          'scan_failed',
+        );
       }
       for (const post of response.data) {
         postUuids.add(post.uuid);
@@ -266,11 +292,25 @@ export class FanvueReadService {
         return publicationCoverage('unposted', scannedAt, page, postUuids.size, true, null);
       }
       if (cursors.has(response.nextCursor))
-        return publicationCoverage('unknown', scannedAt, page, postUuids.size, false, 'cursor_loop');
+        return publicationCoverage(
+          'unknown',
+          scannedAt,
+          page,
+          postUuids.size,
+          false,
+          'cursor_loop',
+        );
       cursors.add(response.nextCursor);
       cursor = response.nextCursor;
     }
-    return publicationCoverage('unknown', scannedAt, maxPages, postUuids.size, false, 'scan_capped');
+    return publicationCoverage(
+      'unknown',
+      scannedAt,
+      maxPages,
+      postUuids.size,
+      false,
+      'scan_capped',
+    );
   }
 
   /** Internal command preflight: Fanvue GET only returns a post owned by this token's creator. */
@@ -395,11 +435,7 @@ function publicationCoverage(
   uniquePostsScanned: number,
   complete: boolean,
   incompleteReason:
-    | 'scan_failed'
-    | 'cursor_loop'
-    | 'scan_capped'
-    | 'manual_post_coverage_unverified'
-    | null,
+    'scan_failed' | 'cursor_loop' | 'scan_capped' | 'manual_post_coverage_unverified' | null,
 ) {
   return { state, scannedAt, pagesScanned, uniquePostsScanned, complete, incompleteReason };
 }

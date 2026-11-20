@@ -46,6 +46,12 @@ function fixture(capabilities: string[]) {
     data: [{ uuid: fanUuid, status: 'ready', name: 'Image' }],
     pagination: {},
   });
+  const listDueDmConversations = vi
+    .fn()
+    .mockResolvedValue([{ fanUuid, nextReviewAt: '2026-11-20T10:00:00.000Z' }]);
+  const listDmConversationCheckpoints = vi
+    .fn()
+    .mockResolvedValue([{ kind: 'welcome', ordinal: 1, state: 'confirmed' }]);
   const service = {
     listMessages,
     listMedia,
@@ -58,6 +64,8 @@ function fixture(capabilities: string[]) {
     getMediaStatus: vi.fn(),
     listVaultFolders,
     listVaultFolderMedia,
+    listDueDmConversations,
+    listDmConversationCheckpoints,
   } as unknown as FanvueReadService;
   const rateLimiter = new ApiRateLimiter({
     workspace: 100,
@@ -84,6 +92,8 @@ function fixture(capabilities: string[]) {
     listSubscribers,
     listVaultFolders,
     listVaultFolderMedia,
+    listDueDmConversations,
+    listDmConversationCheckpoints,
   };
 }
 
@@ -138,6 +148,33 @@ describe('Fanvue agent read boundary', () => {
       expect.objectContaining({ workspaceId, accountId, fanUuid, page: 2 }),
     );
     expect(response.json()).not.toHaveProperty('accessToken');
+  });
+
+  it('exposes only bounded local due and checkpoint discovery through chat read authority', async () => {
+    const context = fixture(['fanvue:chats:read']);
+    const due = await context.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/dm-conversations/due?size=25`,
+      headers,
+    });
+    const checkpoints = await context.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/checkpoints`,
+      headers,
+    });
+    expect(due.statusCode).toBe(200);
+    expect(checkpoints.statusCode).toBe(200);
+    expect(context.listDueDmConversations).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId, accountId, size: 25 }),
+    );
+    expect(context.listDmConversationCheckpoints).toHaveBeenCalledWith({
+      workspaceId,
+      accountId,
+      fanUuid,
+      unreadOnly: false,
+    });
+    expect(due.body).not.toContain('clientActionId');
+    expect(checkpoints.body).not.toContain('groupId');
   });
 
   it('does not permit media read using chat capability', async () => {

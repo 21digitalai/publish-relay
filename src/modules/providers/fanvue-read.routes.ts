@@ -88,6 +88,17 @@ function readRoutes(service: FanvueReadService) {
       read: (input) => service.listMessages({ ...input, fanUuid: requiredId(input.fanUuid) }),
     },
     {
+      path: '/api/v1/fanvue/accounts/:accountId/dm-conversations/due',
+      capability: 'fanvue:chats:read',
+      read: (input) => service.listDueDmConversations(input),
+    },
+    {
+      path: '/api/v1/fanvue/accounts/:accountId/chats/:fanUuid/checkpoints',
+      capability: 'fanvue:chats:read',
+      read: (input) =>
+        service.listDmConversationCheckpoints({ ...input, fanUuid: requiredId(input.fanUuid) }),
+    },
+    {
       path: '/api/v1/fanvue/accounts/:accountId/media',
       capability: 'fanvue:media:read',
       read: (input) => service.listMedia(input),

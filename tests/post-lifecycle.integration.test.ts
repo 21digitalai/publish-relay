@@ -543,6 +543,22 @@ describe('media retention lifecycle', () => {
 });
 
 describe('post revision lifecycle', () => {
+  it('rejects an existing destination when its server adapter is disabled', async () => {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    await expect(
+      createPost(db, {
+        workspaceId,
+        userId,
+        content: { type: 'text', text: 'Disabled target' },
+        mediaIds: [],
+        providerAccountIds: [standardXAccount],
+        enabledAdapters: new Set(['facebook_page']),
+        scheduledAt: new Date('2026-09-03T10:00:00Z'),
+      }),
+    ).rejects.toThrow('selected adapters are disabled');
+    expect((await database.query('SELECT id FROM posts')).rows).toHaveLength(0);
+  });
+
   it('applies each selected X account declaration on create and edit without constraining other providers', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const base = {

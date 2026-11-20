@@ -225,6 +225,7 @@ export function registerBrowserWorkflowRoutes(
     mediaStorage?: MediaStorage;
     mediaProbe?: MediaProbe;
     videoConfig?: { maxBytes: number; limits: typeof BROWSER_VIDEO_LIMITS };
+    enabledAdapters?: ReadonlySet<string>;
   },
 ): void {
   const actionPolicy = dependencies.actionPolicy ?? allowAllActionPolicy;
@@ -521,6 +522,9 @@ export function registerBrowserWorkflowRoutes(
               userId: identity.userId,
               requestId: request.id,
               idempotencyKey: key,
+              ...(dependencies.enabledAdapters
+                ? { enabledAdapters: dependencies.enabledAdapters }
+                : {}),
               ...normalizeCreatePostRequest(body),
               scheduledAt: new Date(body.scheduledAt),
             },
@@ -619,6 +623,9 @@ export function registerBrowserWorkflowRoutes(
               requestId: request.id,
               idempotencyKey: key,
               postId: params.data.postId,
+              ...(dependencies.enabledAdapters
+                ? { enabledAdapters: dependencies.enabledAdapters }
+                : {}),
               ...normalizeCreatePostRequest(body),
               scheduledAt: new Date(body.scheduledAt),
             },
@@ -675,6 +682,9 @@ export function registerBrowserWorkflowRoutes(
                 idempotencyKey: key,
                 postId: params.data.postId,
                 scheduledAt: new Date(parsed.data.scheduledAt),
+                ...(dependencies.enabledAdapters
+                  ? { enabledAdapters: dependencies.enabledAdapters }
+                  : {}),
               },
               actionPolicy,
             ),
@@ -1053,6 +1063,13 @@ export function registerBrowserWorkflowRoutes(
         params.data.jobId,
         identity.userId,
       );
+      if (
+        existing &&
+        dependencies.enabledAdapters?.has(existing.providerAccount.provider) === false
+      )
+        return await reply
+          .code(409)
+          .send({ data: null, error: 'This adapter is disabled on this server' });
       if (existing && existing.state !== 'retry_wait')
         result = await requestOperatorRetry(
           dependencies.database,

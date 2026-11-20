@@ -16,7 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createDeployFixture, writeExecutable } from './deployment-fixture.js';
 
-import { loadRuntimeConfig } from '../src/config/runtime-config.js';
+import { loadRuntimeConfig, resolveEnabledAdapters } from '../src/config/runtime-config.js';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 const RELEASE_SCRIPT_TEST_TIMEOUT_MS = 20_000;
@@ -49,6 +49,29 @@ describe('deployment scripts', () => {
   it('defaults the application listener to the isolated port and accepts an override', () => {
     expect(loadRuntimeConfig({ NODE_ENV: 'test' }).PORT).toBe(3106);
     expect(loadRuntimeConfig({ NODE_ENV: 'test', PORT: '43199' }).PORT).toBe(43199);
+  });
+  it('validates the server adapter allowlist and preserves the unset default', () => {
+    expect([...resolveEnabledAdapters(loadRuntimeConfig({ NODE_ENV: 'test' }))]).toContain(
+      'facebook_page',
+    );
+    expect([
+      ...resolveEnabledAdapters(
+        loadRuntimeConfig({
+          NODE_ENV: 'test',
+          PUBLISH_RELAY_ENABLED_ADAPTERS: 'facebook_page, instagram',
+        }),
+      ),
+    ]).toEqual(['facebook_page', 'instagram']);
+    expect([
+      ...resolveEnabledAdapters(
+        loadRuntimeConfig({ NODE_ENV: 'test', PUBLISH_RELAY_ENABLED_ADAPTERS: '' }),
+      ),
+    ]).toEqual([]);
+    expect(() =>
+      resolveEnabledAdapters(
+        loadRuntimeConfig({ NODE_ENV: 'test', PUBLISH_RELAY_ENABLED_ADAPTERS: 'facebook' }),
+      ),
+    ).toThrow('Unknown or empty adapter ID(s)');
   });
   it('keeps provider-specific worker configuration isolated', () => {
     const worker = readFileSync(join(projectRoot, 'src/entrypoints/worker.ts'), 'utf8');

@@ -1,5 +1,18 @@
 import { z } from 'zod';
 
+import type { DestinationProvider } from '../modules/providers/contract.js';
+
+export const DESTINATION_PROVIDERS = [
+  'x',
+  'youtube',
+  'instagram',
+  'facebook_page',
+  'linkedin',
+  'tiktok',
+  'snapchat',
+  'fanvue',
+] as const satisfies readonly DestinationProvider[];
+
 const runtimeConfigSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -61,38 +74,70 @@ const runtimeConfigSchema = z
     PUBLISH_RELAY_MAGIC_LINK_PEPPER: z.string().min(32).optional(),
     PUBLISH_RELAY_RESEND_API_KEY: z.string().min(1).optional(),
     PUBLISH_RELAY_AUTH_EMAIL_FROM: z.email().optional(),
+    PUBLISH_RELAY_ENABLED_ADAPTERS: z.string().optional(),
   })
   .superRefine((config, context) => {
-    if (Boolean(config.PUBLISH_RELAY_META_APP_ID) !== Boolean(config.PUBLISH_RELAY_META_APP_SECRET))
+    if (config.PUBLISH_RELAY_ENABLED_ADAPTERS !== undefined) {
+      const configured = config.PUBLISH_RELAY_ENABLED_ADAPTERS;
+      const values = configured === '' ? [] : configured.split(',').map((value) => value.trim());
+      const invalid = values.filter(
+        (value) => value === '' || !DESTINATION_PROVIDERS.includes(value as DestinationProvider),
+      );
+      if (invalid.length > 0)
+        context.addIssue({
+          code: 'custom',
+          path: ['PUBLISH_RELAY_ENABLED_ADAPTERS'],
+          message: `Unknown or empty adapter ID(s): ${[...new Set(invalid)].join(', ')}`,
+        });
+    }
+    const adapterConfigured = (provider: DestinationProvider): boolean =>
+      config.PUBLISH_RELAY_ENABLED_ADAPTERS === undefined ||
+      config.PUBLISH_RELAY_ENABLED_ADAPTERS.split(',')
+        .map((value) => value.trim())
+        .includes(provider);
+    if (
+      adapterConfigured('facebook_page') &&
+      Boolean(config.PUBLISH_RELAY_META_APP_ID) !== Boolean(config.PUBLISH_RELAY_META_APP_SECRET)
+    )
       context.addIssue({
         code: 'custom',
         path: ['PUBLISH_RELAY_META_APP_ID'],
         message: 'Meta provider credentials must configure both app ID and app secret',
       });
-    if (config.PUBLISH_RELAY_META_APP_ID && !config.PUBLISH_RELAY_META_GRAPH_VERSION)
+    if (
+      adapterConfigured('facebook_page') &&
+      config.PUBLISH_RELAY_META_APP_ID &&
+      !config.PUBLISH_RELAY_META_GRAPH_VERSION
+    )
       context.addIssue({
         code: 'custom',
         path: ['PUBLISH_RELAY_META_GRAPH_VERSION'],
         message: 'A pinned Meta Graph API version is required when Meta is enabled',
       });
     if (
+      adapterConfigured('instagram') &&
       Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_ID) !==
-      Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET)
+        Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET)
     )
       context.addIssue({
         code: 'custom',
         path: ['PUBLISH_RELAY_INSTAGRAM_APP_ID'],
         message: 'Instagram Login requires its own app ID and secret',
       });
-    if (config.PUBLISH_RELAY_INSTAGRAM_APP_ID && !config.PUBLISH_RELAY_META_GRAPH_VERSION)
+    if (
+      adapterConfigured('instagram') &&
+      config.PUBLISH_RELAY_INSTAGRAM_APP_ID &&
+      !config.PUBLISH_RELAY_META_GRAPH_VERSION
+    )
       context.addIssue({
         code: 'custom',
         path: ['PUBLISH_RELAY_META_GRAPH_VERSION'],
         message: 'Instagram Login requires a pinned Graph API version',
       });
     if (
+      adapterConfigured('fanvue') &&
       Boolean(config.PUBLISH_RELAY_FANVUE_CLIENT_ID) !==
-      Boolean(config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET)
+        Boolean(config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET)
     )
       context.addIssue({
         code: 'custom',
@@ -130,6 +175,25 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env):
 
 export function resolveHumanAuthMode(config: RuntimeConfig): 'password' | 'magic_link' {
   return config.PUBLISH_RELAY_HUMAN_AUTH_MODE ?? 'password';
+}
+
+export function resolveEnabledAdapters(config: RuntimeConfig): ReadonlySet<DestinationProvider> {
+  const configured = config.PUBLISH_RELAY_ENABLED_ADAPTERS;
+  if (configured === undefined) return new Set(DESTINATION_PROVIDERS);
+  if (configured.trim() === '') return new Set();
+  const values = configured.split(',').map((value) => value.trim());
+  if (values.some((value) => value === ''))
+    throw new Error('PUBLISH_RELAY_ENABLED_ADAPTERS must be a comma-separated adapter allowlist');
+  const unknown = [...new Set(values)].filter(
+    (value) => !DESTINATION_PROVIDERS.includes(value as DestinationProvider),
+  );
+  if (unknown.length > 0)
+    throw new Error(`Unknown adapter(s) in PUBLISH_RELAY_ENABLED_ADAPTERS: ${unknown.join(', ')}`);
+  return new Set(values as DestinationProvider[]);
+}
+
+export function isAdapterEnabled(config: RuntimeConfig, provider: DestinationProvider): boolean {
+  return resolveEnabledAdapters(config).has(provider);
 }
 
 export function resolveTikTokProviderConfig(config: RuntimeConfig): {

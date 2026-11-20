@@ -54,6 +54,20 @@ describe('posting adapter registry', () => {
     expect(markup).toContain('Messages and comments need separate permission');
   });
 
+  it('uses the sanitized server allowlist before runtime-specific availability', () => {
+    vi.stubGlobal('document', {
+      body: {
+        dataset: {
+          enabledAdapters: 'facebook_page',
+          linkedinEnabled: 'true',
+          tiktokEnabled: 'true',
+          fanvueEnabled: 'true',
+        },
+      },
+    });
+    expect(getEnabledPostingAdapters().map((adapter) => adapter.id)).toEqual(['facebook_page']);
+  });
+
   it('removes disabled adapters without picker-specific filtering', () => {
     const adapters = POSTING_ADAPTERS.map((adapter) =>
       adapter.id === 'youtube' ? { ...adapter, enabled: false } : adapter,

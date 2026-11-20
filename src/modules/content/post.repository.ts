@@ -100,6 +100,7 @@ export interface PostRevisionInput {
   scheduledAt: Date;
   approvalRequired?: boolean;
   actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
+  enabledAdapters?: ReadonlySet<string>;
 }
 
 function persistedActor(actor: PostRevisionInput['actor'], userId?: string) {
@@ -121,7 +122,7 @@ async function validateTargetOwnership(
   database: NodePgDatabase,
   input: Pick<
     PostRevisionInput,
-    'content' | 'mediaIds' | 'providerAccountIds' | 'selectedDestination'
+    'content' | 'mediaIds' | 'providerAccountIds' | 'selectedDestination' | 'enabledAdapters'
   > & {
     workspaceId: string;
     xMediaPresent?: boolean;
@@ -139,6 +140,11 @@ async function validateTargetOwnership(
   );
   if (accounts.length !== input.providerAccountIds.length)
     throw new PostValidationError('One or more provider accounts do not belong to the workspace');
+  if (
+    input.enabledAdapters &&
+    accounts.some((account) => !input.enabledAdapters?.has(account.destinationProvider))
+  )
+    throw new PostValidationError('One or more selected adapters are disabled on this server');
   if (accounts.some((account) => account.destinationProvider === 'tiktok'))
     throw new PostValidationError('TikTok publishing is not available in this release');
   if (accounts.some((account) => account.destinationProvider === 'snapchat'))
@@ -710,6 +716,7 @@ export async function reschedulePostIntent(
     postId: string;
     scheduledAt: Date;
     now: Date;
+    enabledAdapters?: ReadonlySet<string>;
   },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
   const revisions = await database

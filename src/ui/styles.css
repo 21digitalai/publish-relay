@@ -2955,6 +2955,15 @@ textarea:focus-visible {
 .inline-validation {
   color: var(--danger);
 }
+
+.adapter-disabled-status {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
 .composer-body-hint,
 .composer-body-validation {
   display: block;

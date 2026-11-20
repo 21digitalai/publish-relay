@@ -30,6 +30,7 @@ export function registerDestinationRoutes(
   rateLimiter: ApiRateLimiter,
   delegatedAuthorization?: DelegatedAuthorizationService,
   tiktok?: { keys: MasterKeyProvider; client: TikTokHttpClient },
+  enabledAdapters?: ReadonlySet<string>,
 ): void {
   application.get('/api/v1/destinations/:accountId/tiktok-capabilities', async (request, reply) => {
     try {
@@ -132,22 +133,24 @@ export function registerDestinationRoutes(
       return await reply.send(
         successEnvelope(
           {
-            items: page.accounts.map((item) => {
-              const account = availableWithTikTokRuntime(item, Boolean(tiktok));
-              return {
-                id: account.id,
-                provider: account.provider,
-                destinationProvider: account.destinationProvider,
-                displayName: account.displayName,
-                status: account.status,
-                availability: account.availability,
-                remoteParentAccountId: account.remoteParentAccountId,
-                capabilitySnapshot: account.capabilitySnapshot,
-                capabilitiesCheckedAt: account.capabilitiesCheckedAt?.toISOString() ?? null,
-                capabilityFreshness: account.capabilityFreshness,
-                updatedAt: account.updatedAt.toISOString(),
-              };
-            }),
+            items: page.accounts
+              .filter((item) => enabledAdapters?.has(item.destinationProvider) !== false)
+              .map((item) => {
+                const account = availableWithTikTokRuntime(item, Boolean(tiktok));
+                return {
+                  id: account.id,
+                  provider: account.provider,
+                  destinationProvider: account.destinationProvider,
+                  displayName: account.displayName,
+                  status: account.status,
+                  availability: account.availability,
+                  remoteParentAccountId: account.remoteParentAccountId,
+                  capabilitySnapshot: account.capabilitySnapshot,
+                  capabilitiesCheckedAt: account.capabilitiesCheckedAt?.toISOString() ?? null,
+                  capabilityFreshness: account.capabilityFreshness,
+                  updatedAt: account.updatedAt.toISOString(),
+                };
+              }),
             nextCursor: page.nextCursor,
           },
           request.id,

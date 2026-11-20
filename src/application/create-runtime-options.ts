@@ -3,6 +3,7 @@ import pg from 'pg';
 
 import type { RuntimeConfig } from '../config/runtime-config.js';
 import {
+  isAdapterEnabled,
   resolveHumanAuthMode,
   resolveTikTokProviderConfig,
   resolveXProviderCredentials,
@@ -44,33 +45,48 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
   if (!activeKeyVersion || !config.MEDIA_STORAGE_ROOT)
     throw new Error('Master key and media storage configuration are required for the web process');
 
-  const xCredentials = resolveXProviderCredentials(config);
-  const tiktokCredentials = resolveTikTokProviderConfig(config);
+  const xCredentials = isAdapterEnabled(config, 'x') ? resolveXProviderCredentials(config) : null;
+  const tiktokCredentials = isAdapterEnabled(config, 'tiktok')
+    ? resolveTikTokProviderConfig(config)
+    : null;
   const publicOrigin = config.PUBLISH_RELAY_PUBLIC_ORIGIN;
   if (
     (xCredentials ||
-      config.PUBLISH_RELAY_GOOGLE_CLIENT_ID ||
-      config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID ||
-      config.PUBLISH_RELAY_META_APP_ID) &&
+      (isAdapterEnabled(config, 'youtube') && config.PUBLISH_RELAY_GOOGLE_CLIENT_ID) ||
+      (isAdapterEnabled(config, 'linkedin') && config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID) ||
+      (isAdapterEnabled(config, 'facebook_page') && config.PUBLISH_RELAY_META_APP_ID)) &&
     !publicOrigin
   )
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required when OAuth providers are enabled');
-  if (config.PUBLISH_RELAY_INSTAGRAM_APP_ID && !publicOrigin)
+  if (
+    isAdapterEnabled(config, 'instagram') &&
+    config.PUBLISH_RELAY_INSTAGRAM_APP_ID &&
+    !publicOrigin
+  )
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required for Instagram Login');
-  if (config.PUBLISH_RELAY_FANVUE_CLIENT_ID && !publicOrigin)
+  if (isAdapterEnabled(config, 'fanvue') && config.PUBLISH_RELAY_FANVUE_CLIENT_ID && !publicOrigin)
     throw new Error('PUBLISH_RELAY_PUBLIC_ORIGIN is required for Fanvue OAuth');
   if (
+    isAdapterEnabled(config, 'linkedin') &&
     Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID) !==
-    Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET)
+      Boolean(config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET)
   )
     throw new Error('LinkedIn OAuth requires both client ID and secret');
-  if (Boolean(config.PUBLISH_RELAY_META_APP_ID) !== Boolean(config.PUBLISH_RELAY_META_APP_SECRET))
+  if (
+    isAdapterEnabled(config, 'facebook_page') &&
+    Boolean(config.PUBLISH_RELAY_META_APP_ID) !== Boolean(config.PUBLISH_RELAY_META_APP_SECRET)
+  )
     throw new Error('Meta OAuth requires both app ID and secret');
-  if (config.PUBLISH_RELAY_META_APP_ID && !config.PUBLISH_RELAY_META_GRAPH_VERSION)
+  if (
+    isAdapterEnabled(config, 'facebook_page') &&
+    config.PUBLISH_RELAY_META_APP_ID &&
+    !config.PUBLISH_RELAY_META_GRAPH_VERSION
+  )
     throw new Error('Meta OAuth requires a pinned Graph version');
   if (
+    isAdapterEnabled(config, 'instagram') &&
     Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_ID) !==
-    Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET)
+      Boolean(config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET)
   )
     throw new Error('Instagram Login requires its own app ID and secret');
 
@@ -101,7 +117,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
             },
           }
         : {}),
-      ...(config.PUBLISH_RELAY_GOOGLE_CLIENT_ID &&
+      ...(isAdapterEnabled(config, 'youtube') &&
+      config.PUBLISH_RELAY_GOOGLE_CLIENT_ID &&
       config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET &&
       publicOrigin
         ? {
@@ -115,7 +132,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
             },
           }
         : {}),
-      ...(config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID &&
+      ...(isAdapterEnabled(config, 'linkedin') &&
+      config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID &&
       config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET &&
       publicOrigin
         ? {
@@ -129,7 +147,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
             },
           }
         : {}),
-      ...(config.PUBLISH_RELAY_META_APP_ID &&
+      ...(isAdapterEnabled(config, 'facebook_page') &&
+      config.PUBLISH_RELAY_META_APP_ID &&
       config.PUBLISH_RELAY_META_APP_SECRET &&
       config.PUBLISH_RELAY_META_GRAPH_VERSION &&
       publicOrigin
@@ -155,7 +174,7 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
             },
           }
         : {}),
-      ...(config.PUBLISH_RELAY_META_GRAPH_VERSION
+      ...(isAdapterEnabled(config, 'facebook_page') && config.PUBLISH_RELAY_META_GRAPH_VERSION
         ? {
             facebookRead: {
               keys: masterKeys,
@@ -165,7 +184,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
             },
           }
         : {}),
-      ...(config.PUBLISH_RELAY_INSTAGRAM_APP_ID &&
+      ...(isAdapterEnabled(config, 'instagram') &&
+      config.PUBLISH_RELAY_INSTAGRAM_APP_ID &&
       config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET &&
       config.PUBLISH_RELAY_META_GRAPH_VERSION &&
       publicOrigin
@@ -193,7 +213,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
             },
           }
         : {}),
-      ...(config.PUBLISH_RELAY_FANVUE_CLIENT_ID &&
+      ...(isAdapterEnabled(config, 'fanvue') &&
+      config.PUBLISH_RELAY_FANVUE_CLIENT_ID &&
       config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET &&
       publicOrigin
         ? {

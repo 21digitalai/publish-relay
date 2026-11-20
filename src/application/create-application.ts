@@ -6,7 +6,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveHumanAuthMode, type RuntimeConfig } from '../config/runtime-config.js';
+import {
+  resolveEnabledAdapters,
+  resolveHumanAuthMode,
+  type RuntimeConfig,
+} from '../config/runtime-config.js';
 import { registerApiDocumentationRoute } from '../modules/api/openapi.js';
 import { registerAgentDiscoveryRoutes } from '../modules/api/agent-discovery.js';
 import { ApiRateLimiter } from '../modules/api/rate-limit.js';
@@ -247,6 +251,7 @@ function registerMachineApiRoutes(
     options.tiktokOauth
       ? { keys: options.tiktokOauth.keys, client: options.tiktokOauth.client }
       : undefined,
+    resolveEnabledAdapters(config),
   );
   if (options.facebookRead) {
     const facebook = { database, ...options.facebookRead };
@@ -339,6 +344,7 @@ function registerMachineApiRoutes(
     new CursorCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
     actionPolicy,
     delegatedAuthorization,
+    resolveEnabledAdapters(config),
   );
   registerExternalDraftRoutes(application, database, apiKeys, rateLimiter, delegatedAuthorization);
   registerFanvuePaymentRoutes(application, {
@@ -477,21 +483,26 @@ function registerBrowserRoutes(
     registerProviderAccountRoutes(application, {
       auth,
       database,
+      enabledAdapters: resolveEnabledAdapters(config),
       ...(tiktokOauth ? { tiktok: { keys: tiktokOauth.keys, client: tiktokOauth.client } } : {}),
     });
-    registerTikTokConsentRoutes(application, { auth, database });
-    registerTikTokDraftRoutes(application, { auth, database, actionPolicy });
-    registerTikTokScheduleRoutes(application, {
-      auth,
-      database,
-      actionPolicy,
-      enabled: Boolean(tiktokOauth),
-    });
-    registerSnapchatStoryResolutionRoutes(application, { auth, database });
+    if (resolveEnabledAdapters(config).has('tiktok')) {
+      registerTikTokConsentRoutes(application, { auth, database });
+      registerTikTokDraftRoutes(application, { auth, database, actionPolicy });
+      registerTikTokScheduleRoutes(application, {
+        auth,
+        database,
+        actionPolicy,
+        enabled: Boolean(tiktokOauth),
+      });
+    }
+    if (resolveEnabledAdapters(config).has('snapchat'))
+      registerSnapchatStoryResolutionRoutes(application, { auth, database });
     registerBrowserWorkflowRoutes(application, {
       auth,
       database,
       actionPolicy,
+      enabledAdapters: resolveEnabledAdapters(config),
       ...(mediaStorage ? { mediaStorage } : {}),
       videoConfig: {
         maxBytes: config.MEDIA_VIDEO_MAX_BYTES ?? AGENT_MEDIA_MAX_BYTES,
@@ -555,10 +566,11 @@ export function registerCoreApplication(
   } = options;
   const uiRoot = options.uiRoot ?? fileURLToPath(new URL('../ui/', import.meta.url));
   const uiPrefix = options.uiPrefix ?? '/';
+  const enabledAdapters = [...resolveEnabledAdapters(config)].join(',');
   const shellHtml = readFileSync(resolve(uiRoot, 'index.html'), 'utf8')
     .replace(
       '<body>',
-      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}" data-fanvue-enabled="${String(Boolean(options.fanvueOauth))}">`,
+      `<body data-human-auth-mode="${resolveHumanAuthMode(config)}" data-enabled-adapters="${enabledAdapters}" data-linkedin-enabled="${String(Boolean(options.linkedinOauth))}" data-tiktok-enabled="${String(Boolean(options.tiktokOauth))}" data-fanvue-enabled="${String(Boolean(options.fanvueOauth))}">`,
     )
     .replaceAll('="/assets/', `="${uiPrefix === '/' ? '/' : uiPrefix}assets/`)
     .replace('href="/favicon.svg"', `href="${uiPrefix === '/' ? '/' : uiPrefix}favicon.svg"`);

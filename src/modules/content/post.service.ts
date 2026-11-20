@@ -133,6 +133,7 @@ export async function reschedulePostInTransaction(
     postId: string;
     scheduledAt: Date;
     now?: Date;
+    enabledAdapters?: ReadonlySet<string>;
   },
   policy: ActionPolicy = allowAllActionPolicy,
 ) {
@@ -158,6 +159,7 @@ export async function reschedulePost(
     postId: string;
     scheduledAt: Date;
     now?: Date;
+    enabledAdapters?: ReadonlySet<string>;
   },
   policy: ActionPolicy = allowAllActionPolicy,
 ) {

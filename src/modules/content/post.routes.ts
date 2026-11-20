@@ -125,6 +125,7 @@ export function registerPostRoutes(
   cursorCodec: CursorCodec,
   actionPolicy: ActionPolicy = allowAllActionPolicy,
   delegatedAuthorization?: DelegatedAuthorizationService,
+  enabledAdapters?: ReadonlySet<string>,
 ): void {
   application.get('/api/v1/posts', async (request, reply) => {
     try {
@@ -516,6 +517,7 @@ export function registerPostRoutes(
               actor: { type: principal.kind, id: principal.actorId },
               requestId: request.id,
               idempotencyKey,
+              ...(enabledAdapters ? { enabledAdapters } : {}),
               ...normalizeCreatePostRequest(body),
               scheduledAt: new Date(body.scheduledAt),
             },

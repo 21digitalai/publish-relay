@@ -108,9 +108,14 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
 export function getEnabledPostingAdapters(
   adapters: readonly PostingAdapterConfig[] = POSTING_ADAPTERS,
 ): readonly PostingAdapterConfig[] {
+  const configured =
+    typeof document === 'undefined'
+      ? null
+      : (document.body.dataset.enabledAdapters?.split(',') ?? null);
   return adapters.filter(
     (adapter) =>
       adapter.enabled &&
+      (configured === null || configured.includes(adapter.id)) &&
       (adapter.id !== 'linkedin' ||
         (typeof document !== 'undefined' && document.body.dataset.linkedinEnabled === 'true')) &&
       (adapter.id !== 'tiktok' ||

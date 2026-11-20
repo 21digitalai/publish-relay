@@ -67,6 +67,7 @@ export function registerProviderAccountRoutes(
     auth: AuthService;
     database: NodePgDatabase;
     tiktok?: { keys: MasterKeyProvider; client: TikTokHttpClient };
+    enabledAdapters?: ReadonlySet<string>;
   },
 ): void {
   application.get(
@@ -306,9 +307,11 @@ export function registerProviderAccountRoutes(
       return {
         data: {
           ...page,
-          accounts: page.accounts.map((account) =>
-            availableWithTikTokRuntime(account, Boolean(dependencies.tiktok)),
-          ),
+          accounts: page.accounts
+            .filter(
+              (account) => dependencies.enabledAdapters?.has(account.destinationProvider) !== false,
+            )
+            .map((account) => availableWithTikTokRuntime(account, Boolean(dependencies.tiktok))),
         },
         error: null,
       };

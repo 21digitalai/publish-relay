@@ -502,3 +502,10 @@ Fanvue creator-owned top-level comment proposals reuse the same Proposed replies
 
 The existing proposal detail owns Page DM timing. Its semantic `.engagement-proposal-timing` fieldset shows the bot-selected exact local base time before approval, with scheduled approval as the ordinary choice and an explicitly labelled immediate-send override only for eligible non-group, non-expired drafts. `.engagement-page-delay-settings` edits the selected Page's delay window. A past-due base time remains scheduled-approvable from now plus delay; a missing base time cannot schedule. The confirmation dialog shows the exact sampled final time after fresh Messenger window proof; the scheduled receipt shows the same time. A scheduled proposal shows its local send time and a pending-only cancellation action; do not expose intent IDs or a separate scheduling panel.
 For a Page DM proposal with two follow-ups, that same detail renders three individually editable textareas, one saved revision and one scheduled approval. The fieldset explains that bubble 1 starts at the displayed bot-selected time and bubbles 2–3 wait 4–10 seconds after preceding confirmed sends. Hide the immediate override for a group; do not silently convert it to three separate approvals. The action label and confirmation refer to the whole sequence. Cancellation can stop remaining bubbles after an earlier confirmed bubble, so feedback must not claim nothing was sent; the Page DM history remains the per-bubble record.
+The Accounts add-adapter picker and Composer destination catalog consume one sanitized server adapter
+allowlist. A disabled adapter has no menu card, reconnect entry, destination option, or engagement
+surface; the browser never interprets raw environment configuration. Runtime credential availability
+remains a second, narrower condition and cannot re-enable an adapter excluded by server policy.
+Existing Queue, Calendar, and Job detail history remains visible after an adapter is disabled. Job
+detail replaces publish/reschedule/retry/approval actions with `.adapter-disabled-status`; cancellation
+of preserved pending work remains available and does not contact the provider.

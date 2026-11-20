@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 
 import {
+  isAdapterEnabled,
   loadRuntimeConfig,
   resolveHumanAuthMode,
   resolveTikTokProviderConfig,
@@ -102,24 +103,27 @@ const mediaRetentionPolicy =
     ? retainForeverMediaPolicy
     : createFixedMediaRetentionPolicy(config.MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 let nextMediaRetentionAt = 0;
-const xRuntime = xCredentials
-  ? {
-      database,
-      keys,
-      source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
-      createClient: createXMediaClientFactory({
-        consumerKey: xCredentials.consumerKey,
-        consumerSecret: xCredentials.consumerSecret,
-        onPostDenial: (diagnostic) => {
-          process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
-        },
-      }),
-      workerId: config.WORKER_ID ?? 'publish-relay-worker',
-      leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
-    }
-  : null;
+const xRuntime =
+  isAdapterEnabled(config, 'x') && xCredentials
+    ? {
+        database,
+        keys,
+        source: createLocalXMediaSource(database, config.MEDIA_STORAGE_ROOT),
+        createClient: createXMediaClientFactory({
+          consumerKey: xCredentials.consumerKey,
+          consumerSecret: xCredentials.consumerSecret,
+          onPostDenial: (diagnostic) => {
+            process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
+          },
+        }),
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      }
+    : null;
 const youtubeRuntime =
-  config.PUBLISH_RELAY_GOOGLE_CLIENT_ID && config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET
+  isAdapterEnabled(config, 'youtube') &&
+  config.PUBLISH_RELAY_GOOGLE_CLIENT_ID &&
+  config.PUBLISH_RELAY_GOOGLE_CLIENT_SECRET
     ? {
         database,
         keys,
@@ -133,7 +137,9 @@ const youtubeRuntime =
       }
     : null;
 const linkedinRuntime =
-  config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID && config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET
+  isAdapterEnabled(config, 'linkedin') &&
+  config.PUBLISH_RELAY_LINKEDIN_CLIENT_ID &&
+  config.PUBLISH_RELAY_LINKEDIN_CLIENT_SECRET
     ? {
         database,
         keys,
@@ -146,13 +152,25 @@ const linkedinRuntime =
         leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
       }
     : null;
-const instagramRuntime =
+const metaMediaRuntime =
   config.PUBLISH_RELAY_META_GRAPH_VERSION &&
   config.PUBLISH_RELAY_PUBLIC_ORIGIN &&
   config.CURSOR_SIGNING_SECRET
     ? {
         database,
         keys,
+        tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
+        publicOrigin: config.PUBLISH_RELAY_PUBLIC_ORIGIN,
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      }
+    : null;
+const instagramRuntime =
+  isAdapterEnabled(config, 'instagram') &&
+  metaMediaRuntime &&
+  config.PUBLISH_RELAY_META_GRAPH_VERSION
+    ? {
+        ...metaMediaRuntime,
         client: new InstagramHttpClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
         ...(config.PUBLISH_RELAY_INSTAGRAM_APP_ID && config.PUBLISH_RELAY_INSTAGRAM_APP_SECRET
           ? {
@@ -167,16 +185,14 @@ const instagramRuntime =
               }),
             }
           : {}),
-        tokenCodec: new InstagramMediaTokenCodec(Buffer.from(config.CURSOR_SIGNING_SECRET)),
-        publicOrigin: config.PUBLISH_RELAY_PUBLIC_ORIGIN,
-        workerId: config.WORKER_ID ?? 'publish-relay-worker',
-        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
       }
     : null;
 const facebookRuntime =
-  instagramRuntime && config.PUBLISH_RELAY_META_GRAPH_VERSION
+  isAdapterEnabled(config, 'facebook_page') &&
+  metaMediaRuntime &&
+  config.PUBLISH_RELAY_META_GRAPH_VERSION
     ? {
-        ...instagramRuntime,
+        ...metaMediaRuntime,
         client: new FacebookHttpClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
       }
     : null;
@@ -195,7 +211,9 @@ const tiktokRuntime =
       }
     : null;
 const fanvueRuntime =
-  config.PUBLISH_RELAY_FANVUE_CLIENT_ID && config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET
+  isAdapterEnabled(config, 'fanvue') &&
+  config.PUBLISH_RELAY_FANVUE_CLIENT_ID &&
+  config.PUBLISH_RELAY_FANVUE_CLIENT_SECRET
     ? {
         database,
         keys,
@@ -210,33 +228,35 @@ const fanvueRuntime =
         leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
       }
     : null;
+const providerDisabledReason = (provider: Parameters<typeof isAdapterEnabled>[1]) =>
+  isAdapterEnabled(config, provider) ? 'missing_configuration' : 'disabled_by_server_policy';
 if (!xRuntime)
   process.stdout.write(
-    `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: 'missing_configuration' })}\n`,
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'x', reason: providerDisabledReason('x') })}\n`,
   );
 if (!youtubeRuntime)
   process.stdout.write(
-    `${JSON.stringify({ event: 'provider_disabled', provider: 'youtube', reason: 'missing_configuration' })}\n`,
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'youtube', reason: providerDisabledReason('youtube') })}\n`,
   );
 if (!linkedinRuntime)
   process.stdout.write(
-    `${JSON.stringify({ event: 'provider_disabled', provider: 'linkedin', reason: 'missing_configuration' })}\n`,
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'linkedin', reason: providerDisabledReason('linkedin') })}\n`,
   );
 if (!instagramRuntime)
   process.stdout.write(
-    `${JSON.stringify({ event: 'provider_disabled', provider: 'instagram', reason: 'missing_configuration' })}\n`,
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'instagram', reason: providerDisabledReason('instagram') })}\n`,
   );
 if (!facebookRuntime)
   process.stdout.write(
-    `${JSON.stringify({ event: 'provider_disabled', provider: 'facebook_page', reason: 'missing_configuration' })}\n`,
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'facebook_page', reason: providerDisabledReason('facebook_page') })}\n`,
   );
 if (!tiktokRuntime)
   process.stdout.write(
-    `${JSON.stringify({ event: 'provider_disabled', provider: 'tiktok', reason: 'missing_configuration' })}\n`,
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'tiktok', reason: providerDisabledReason('tiktok') })}\n`,
   );
 if (!fanvueRuntime)
   process.stdout.write(
-    `${JSON.stringify({ event: 'provider_disabled', provider: 'fanvue', reason: 'missing_configuration' })}\n`,
+    `${JSON.stringify({ event: 'provider_disabled', provider: 'fanvue', reason: providerDisabledReason('fanvue') })}\n`,
   );
 
 const destinationDispatchAdapters: DestinationDispatchAdapter[] = [];

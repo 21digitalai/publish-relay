@@ -73,6 +73,14 @@ Unset X and Google credential pairs keep those adapters disabled. Do not export 
 provider variables as empty strings; leave the commented sample lines unset. The worker logs a bounded
 `provider_disabled` event and continues non-provider maintenance. Verify:
 
+`PUBLISH_RELAY_ENABLED_ADAPTERS` is the deployment-wide adapter allowlist shared by the web and
+worker processes. Leave it unset to preserve the default of all adapters, set a comma-separated list
+such as `facebook_page` for a single-adapter installation, or set it to an explicit empty value to
+disable every adapter. Unknown adapter IDs fail startup. Configure the exact same value in both
+process environments and restart both processes after changing it. Disabled adapters are removed from
+connection and destination discovery, rejected by create/edit/reschedule admission, and omitted from
+worker dispatch; existing accounts, content, history, and queued jobs remain stored.
+
 ```bash
 curl --fail http://127.0.0.1:3106/health/live
 curl --fail http://127.0.0.1:3106/health/ready

@@ -3703,6 +3703,11 @@ export function JobDetailPage() {
   const jobId = window.location.pathname.split('/').at(-1) ?? '';
   const workspacePath = window.location.pathname.split('/').slice(0, 3).join('/');
   const [job, setJob] = useState<Job | null>(null);
+  const configuredAdapters = document.body.dataset.enabledAdapters;
+  const adapterEnabled =
+    !job ||
+    configuredAdapters === undefined ||
+    configuredAdapters.split(',').includes(job.provider);
   const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | 'approve' | 'toggle_approval' | null>(
@@ -3945,7 +3950,7 @@ export function JobDetailPage() {
               </div>
             </div>
           )}
-          {job.state === 'failed' && (
+          {job.state === 'failed' && adapterEnabled && (
             <div className="recovery-panel" role="alert">
               <div>
                 <strong>Publishing failed</strong>
@@ -3969,8 +3974,13 @@ export function JobDetailPage() {
               </button>
             </div>
           )}
+          {!adapterEnabled && (
+            <p className="adapter-disabled-status" role="status">
+              This adapter is disabled on this server. Existing publication history is preserved.
+            </p>
+          )}
           <footer className="detail-actions">
-            {job.state === 'scheduled' && detail?.canApprove && (
+            {adapterEnabled && job.state === 'scheduled' && detail?.canApprove && (
               <button
                 className="secondary-button job-approval-requirement"
                 disabled={isMutating}
@@ -3982,7 +3992,7 @@ export function JobDetailPage() {
                 Require approval: {job.approvalRequired ? 'On' : 'Off'}
               </button>
             )}
-            {job.approvalStatus === 'awaiting_approval' && detail?.canApprove && (
+            {adapterEnabled && job.approvalStatus === 'awaiting_approval' && detail?.canApprove && (
               <button
                 className="primary-button job-approve-publication"
                 disabled={isMutating}
@@ -3996,7 +4006,7 @@ export function JobDetailPage() {
             )}
             <button
               className="secondary-button"
-              disabled={job.state !== 'scheduled'}
+              disabled={!adapterEnabled || job.state !== 'scheduled'}
               onClick={() => {
                 setEditSchedule(localDateTimeValue(new Date(job.scheduledAt)));
                 setEditScheduleOption(0);

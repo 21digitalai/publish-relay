@@ -53,7 +53,12 @@ const reads = {
   listSubscribers: vi.fn(() => Promise.resolve({ data: [{ uuid: input.fanUuid }] })),
   getExistingChatForMessage: vi.fn(() => {
     events.push('preflight');
-    return Promise.resolve({ accessToken: 'token', targetLabel: '@alexandra' });
+    return Promise.resolve({
+      accessToken: 'token',
+      targetLabel: '@alexandra',
+      latestMessageUuid: messageUuid,
+      latestMessageAt: new Date('2026-11-20T10:00:00Z'),
+    });
   }),
   getMediaStatus: vi.fn(() => Promise.resolve({ uuid: mediaUuid, status: 'ready' })),
 };
@@ -129,6 +134,38 @@ describe('Fanvue scheduled message preflight', () => {
     expect(reads.getExistingChatForMessage).not.toHaveBeenCalled();
     expect(pending.schedule).not.toHaveBeenCalled();
     expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('Fanvue grouped dispatch preflight', () => {
+  const boundary = {
+    workspaceId: input.workspaceId,
+    accountId: input.accountId,
+    fanUuid: input.fanUuid,
+    expectedLatestInboundMessageUuid: messageUuid,
+    expectedLatestInboundAt: new Date('2026-11-20T10:00:00Z'),
+  };
+
+  it('allows only the exact latest message boundary', async () => {
+    await expect(service.preflightScheduledDispatch(boundary)).resolves.toBe('allow');
+    await expect(
+      service.preflightScheduledDispatch({
+        ...boundary,
+        expectedLatestInboundMessageUuid: mediaUuid,
+      }),
+    ).resolves.toBe('cancel');
+  });
+
+  it('freezes on an ambiguous provider read and preserves legacy singles', async () => {
+    reads.getExistingChatForMessage.mockRejectedValueOnce(new Error('provider unavailable'));
+    await expect(service.preflightScheduledDispatch(boundary)).resolves.toBe('freeze_unknown');
+    await expect(
+      service.preflightScheduledDispatch({
+        ...boundary,
+        expectedLatestInboundMessageUuid: null,
+        expectedLatestInboundAt: null,
+      }),
+    ).resolves.toBe('allow');
   });
 });
 

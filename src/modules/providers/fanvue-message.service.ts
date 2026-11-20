@@ -156,6 +156,25 @@ export class FanvueMessageService {
     });
   }
 
+  async preflightScheduledDispatch(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+    expectedLatestInboundMessageUuid: string | null;
+    expectedLatestInboundAt: Date | null;
+  }): Promise<'allow' | 'cancel' | 'freeze_unknown'> {
+    if (!input.expectedLatestInboundMessageUuid || !input.expectedLatestInboundAt) return 'allow';
+    try {
+      const latest = await this.reads.getExistingChatForMessage(input);
+      return latest.latestMessageUuid === input.expectedLatestInboundMessageUuid &&
+        latest.latestMessageAt.getTime() === input.expectedLatestInboundAt.getTime()
+        ? 'allow'
+        : 'cancel';
+    } catch {
+      return 'freeze_unknown';
+    }
+  }
+
   async preflightScheduledMessage(input: z.input<typeof scheduleInput>) {
     const command = scheduleInput.parse(input);
     let targetLabel: string | null;

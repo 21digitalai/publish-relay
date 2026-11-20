@@ -75,6 +75,8 @@ const projection = {
   groupId: fanvueDmPendingIntents.groupId,
   sequenceIndex: fanvueDmPendingIntents.sequenceIndex,
   gapSeconds: fanvueDmPendingIntents.gapSeconds,
+  expectedLatestInboundMessageUuid: fanvueDmPendingIntents.expectedLatestInboundMessageUuid,
+  expectedLatestInboundAt: fanvueDmPendingIntents.expectedLatestInboundAt,
 };
 
 export const fanvueGroupScheduleInput = z.strictObject({

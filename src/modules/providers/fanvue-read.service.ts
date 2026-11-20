@@ -101,6 +101,8 @@ export class FanvueReadService {
     return {
       accessToken: token,
       targetLabel: handle && /^[A-Za-z0-9._-]{1,159}$/.test(handle) ? `@${handle}` : null,
+      latestMessageUuid: first.uuid,
+      latestMessageAt: new Date(first.sentAt),
     };
   }
 

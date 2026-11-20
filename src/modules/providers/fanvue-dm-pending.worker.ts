@@ -21,7 +21,8 @@ import { FanvueReadUnavailableError } from './fanvue-read.service.js';
 
 interface Runtime {
   database: NodePgDatabase;
-  messages: Pick<FanvueMessageService, 'sendMessage'>;
+  messages: Pick<FanvueMessageService, 'sendMessage'> &
+    Partial<Pick<FanvueMessageService, 'preflightScheduledDispatch'>>;
   workerId: string;
   leaseMs: number;
 }
@@ -120,6 +121,11 @@ async function existingActionState(
 async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   const prior = await existingActionState(runtime.database, intent);
   if (prior) return prior;
+  if (intent.expectedLatestInboundMessageUuid && runtime.messages.preflightScheduledDispatch) {
+    const preflight = await runtime.messages.preflightScheduledDispatch(intent);
+    if (preflight === 'cancel') return 'failed';
+    if (preflight === 'freeze_unknown') return 'unknown';
+  }
   if (intent.actorType === 'system') return 'failed';
   if (!(await hasCurrentFanvueAuthority(runtime.database, intent, 'fanvue:chats:send')))
     return 'failed';

@@ -666,6 +666,10 @@ root action stores one sampled due time from the caller's explicit forward windo
 the group identity and wait with once-sampled 4–10-second gaps. Exact root-action replay returns the
 stored due time, changed payload conflicts, and group status/cancellation expose at most five bounded
 parts without message text. Existing single-message rows keep every group column null.
+The due worker re-reads the bounded latest chat edge before any grouped provider reservation. An
+exact UUID/timestamp match proceeds, a newer edge cancels the stale unsent group, and read ambiguity
+settles the claimed part unknown so waiting tails remain frozen. Legacy single-message schedules do
+not acquire this preflight retroactively.
 
 Group roots retain the provider-proven reply-window deadline on creation (migration 0122). Under the Page account lock, a newly discovered older window may take an earlier 60-second-or-wider pending root slot; only never-attempted, unclaimed roots with recorded deadlines may move, and every moved root must still fit its own deadline. Claimed roots and pending pre-send retries retain their due times as fixed boundaries, alongside the dispatch pacing cursor, stable non-urgent ordering, and enabled Sofia-day slots. If the complete reorder cannot safely fit, scheduling returns an explicit paced-window conflict without changing the queue. The due worker still reserves its independent durable 60–120-second Page cursor before provider I/O; priority never authorizes a burst or bypasses the current Page hold.
 

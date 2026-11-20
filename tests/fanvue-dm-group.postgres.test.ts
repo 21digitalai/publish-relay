@@ -40,6 +40,7 @@ async function setup() {
     '0113_fanvue_pending_target_label.sql',
     '0115_fanvue_comment_pending_intents.sql',
     '0126_fanvue_dm_groups.sql',
+    '0127_fanvue_dm_conversation_facts.sql',
   ]) {
     await pg.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }

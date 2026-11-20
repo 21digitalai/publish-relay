@@ -1755,6 +1755,186 @@ export const fanvueDmPendingIntents = pgTable(
   ],
 );
 
+export const fanvueDmConversationState = pgTable(
+  'fanvue_dm_conversation_state',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    fanUuid: uuid('fan_uuid').notNull(),
+    latestObservedMessageUuid: uuid('latest_observed_message_uuid'),
+    latestObservedAt: timestamp('latest_observed_at', { withTimezone: true }),
+    latestObservedDirection: text('latest_observed_direction'),
+    latestInboundMessageUuid: uuid('latest_inbound_message_uuid'),
+    latestInboundAt: timestamp('latest_inbound_at', { withTimezone: true }),
+    latestOutboundMessageUuid: uuid('latest_outbound_message_uuid'),
+    latestOutboundAt: timestamp('latest_outbound_at', { withTimezone: true }),
+    lastProcessedInboundUuid: uuid('last_processed_inbound_uuid'),
+    lastProcessedInboundAt: timestamp('last_processed_inbound_at', { withTimezone: true }),
+    providerIsRead: boolean('provider_is_read'),
+    providerUnreadCount: integer('provider_unread_count'),
+    lastChatListSeenAt: timestamp('last_chat_list_seen_at', { withTimezone: true }),
+    logicalExchangeCount: integer('logical_exchange_count').notNull().default(0),
+    activeDayCount: integer('active_day_count').notNull().default(0),
+    nextReviewAt: timestamp('next_review_at', { withTimezone: true }),
+    quietUntilInboundAfterUuid: uuid('quiet_until_inbound_after_uuid'),
+    historyCoverageOldestAt: timestamp('history_coverage_oldest_at', { withTimezone: true }),
+    historyBackfillCompleteAt: timestamp('history_backfill_complete_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId, table.fanUuid] }),
+    index('fanvue_dm_conversation_state_due_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.nextReviewAt,
+    ),
+    check(
+      'fanvue_dm_conversation_state_direction_check',
+      sql`${table.latestObservedDirection} is null or ${table.latestObservedDirection} in ('inbound', 'outbound')`,
+    ),
+    check(
+      'fanvue_dm_conversation_state_counts_check',
+      sql`${table.logicalExchangeCount} >= 0 and ${table.activeDayCount} >= 0 and (${table.providerUnreadCount} is null or ${table.providerUnreadCount} >= 0)`,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_dm_conversation_state_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvueDmMessageReceipts = pgTable(
+  'fanvue_dm_message_receipts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    fanUuid: uuid('fan_uuid').notNull(),
+    providerMessageUuid: uuid('provider_message_uuid').notNull(),
+    direction: text('direction').notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
+    mediaUuids: jsonb('media_uuids').$type<string[]>().notNull().default([]),
+    priceCents: integer('price_cents'),
+    purchasedAt: timestamp('purchased_at', { withTimezone: true }),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_dm_message_receipts_provider_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.providerMessageUuid,
+    ),
+    index('fanvue_dm_message_receipts_fan_sent_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.fanUuid,
+      table.sentAt,
+    ),
+    check(
+      'fanvue_dm_message_receipts_direction_check',
+      sql`${table.direction} in ('inbound', 'outbound')`,
+    ),
+    check(
+      'fanvue_dm_message_receipts_price_check',
+      sql`${table.priceCents} is null or ${table.priceCents} >= 0`,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_dm_message_receipts_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvueDmConversationCheckpoints = pgTable(
+  'fanvue_dm_conversation_checkpoints',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    fanUuid: uuid('fan_uuid').notNull(),
+    kind: text('kind').notNull(),
+    ordinal: integer('ordinal').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    groupId: uuid('group_id'),
+    state: text('state').notNull(),
+    providerMessageUuid: uuid('provider_message_uuid'),
+    providerMediaUuid: uuid('provider_media_uuid'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_dm_conversation_checkpoints_kind_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.fanUuid,
+      table.kind,
+      table.ordinal,
+    ),
+    check(
+      'fanvue_dm_conversation_checkpoints_kind_check',
+      sql`${table.kind} in ('welcome', 'silent_followup', 'free_gift', 'paid_offer')`,
+    ),
+    check(
+      'fanvue_dm_conversation_checkpoints_state_check',
+      sql`${table.state} in ('pending', 'confirmed', 'unknown', 'cancelled')`,
+    ),
+    check('fanvue_dm_conversation_checkpoints_ordinal_check', sql`${table.ordinal} > 0`),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_dm_conversation_checkpoints_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
+export const fanvueDmMediaDeliveries = pgTable(
+  'fanvue_dm_media_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    fanUuid: uuid('fan_uuid').notNull(),
+    providerMediaUuid: uuid('provider_media_uuid').notNull(),
+    source: text('source').notNull(),
+    clientActionId: uuid('client_action_id'),
+    providerMessageUuid: uuid('provider_message_uuid'),
+    state: text('state').notNull(),
+    priceCents: integer('price_cents'),
+    purchasedAt: timestamp('purchased_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('fanvue_dm_media_deliveries_active_unique')
+      .on(table.workspaceId, table.accountId, table.fanUuid, table.providerMediaUuid)
+      .where(sql`${table.state} in ('reserved', 'confirmed', 'unknown')`),
+    index('fanvue_dm_media_deliveries_fan_idx').on(
+      table.workspaceId,
+      table.accountId,
+      table.fanUuid,
+      table.createdAt,
+    ),
+    check(
+      'fanvue_dm_media_deliveries_source_check',
+      sql`${table.source} in ('relay_action', 'provider_history')`,
+    ),
+    check(
+      'fanvue_dm_media_deliveries_state_check',
+      sql`${table.state} in ('reserved', 'confirmed', 'unknown', 'cancelled')`,
+    ),
+    check(
+      'fanvue_dm_media_deliveries_price_check',
+      sql`${table.priceCents} is null or ${table.priceCents} >= 0`,
+    ),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_dm_media_deliveries_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
 export const fanvueDmDispatchPacing = pgTable(
   'fanvue_dm_dispatch_pacing',
   {

@@ -9,34 +9,40 @@ import {
 
 describe('message group contract', () => {
   it('keeps provider caps independent beneath the shared five-bubble ceiling', () => {
-    expect(() =>
+    expect(() => {
       validateMessageGroupBubbles(['1', '2', '3', '4'], {
         maximumBubbles: 4,
         maximumTextLength: 2_000,
-      }),
-    ).not.toThrow();
-    expect(() =>
+      });
+    }).not.toThrow();
+    expect(() => {
       validateMessageGroupBubbles(['1', '2', '3', '4', '5'], {
         maximumBubbles: 4,
         maximumTextLength: 2_000,
-      }),
-    ).toThrow(MessageGroupValidationError);
-    expect(() =>
+      });
+    }).toThrow(MessageGroupValidationError);
+    expect(() => {
       validateMessageGroupBubbles(['1', '2', '3', '4', '5'], {
         maximumBubbles: 5,
         maximumTextLength: 2_000,
-      }),
-    ).not.toThrow();
+      });
+    }).not.toThrow();
   });
 
   it('rejects empty, oversized, and policy-invalid groups', () => {
     const policy = { maximumBubbles: 4, maximumTextLength: 5 };
-    expect(() => validateMessageGroupBubbles([], policy)).toThrow();
-    expect(() => validateMessageGroupBubbles(['   '], policy)).toThrow();
-    expect(() => validateMessageGroupBubbles(['123456'], policy)).toThrow();
-    expect(() =>
-      validateMessageGroupBubbles(['ok'], { ...policy, maximumBubbles: 6 }),
-    ).toThrow('Invalid message-group provider policy');
+    expect(() => {
+      validateMessageGroupBubbles([], policy);
+    }).toThrow();
+    expect(() => {
+      validateMessageGroupBubbles(['   '], policy);
+    }).toThrow();
+    expect(() => {
+      validateMessageGroupBubbles(['123456'], policy);
+    }).toThrow();
+    expect(() => {
+      validateMessageGroupBubbles(['ok'], { ...policy, maximumBubbles: 6 });
+    }).toThrow('Invalid message-group provider policy');
   });
 
   it('samples an explicit due window without moving its bounds', () => {

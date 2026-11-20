@@ -13,10 +13,7 @@ export function validateMessageGroupBubbles(
   bubbles: readonly string[],
   policy: MessageGroupPolicy,
 ) {
-  if (
-    policy.maximumBubbles < 1 ||
-    policy.maximumBubbles > MESSAGE_GROUP_MAXIMUM_BUBBLES
-  ) {
+  if (policy.maximumBubbles < 1 || policy.maximumBubbles > MESSAGE_GROUP_MAXIMUM_BUBBLES) {
     throw new MessageGroupValidationError('Invalid message-group provider policy');
   }
   if (

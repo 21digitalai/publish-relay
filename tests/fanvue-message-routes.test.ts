@@ -46,7 +46,6 @@ function fixture(allowed = true) {
     dueAt: new Date('2026-11-11T10:30:00Z'),
   });
   const scheduledMessageGroupStatus = vi.fn().mockResolvedValue({
-    id: '00000000-0000-4000-8000-000000000010',
     bubbles: [{ sequence: 0, status: 'pending', dueAt: '2026-11-11T10:30:00.000Z' }],
   });
   const cancelScheduledMessageGroup = vi.fn().mockResolvedValue({ cancelled: 2 });
@@ -144,6 +143,7 @@ describe('Fanvue guarded DM group machine routes', () => {
       headers,
     });
     expect(status.json()).toMatchObject({ data: { bubbles: [{ sequence: 0 }] } });
+    expect(status.body).not.toMatch(/"id"/);
     const cancelled = await context.application.inject({
       method: 'DELETE',
       url: groupReceiptUrl,
@@ -168,6 +168,13 @@ describe('Fanvue guarded DM group machine routes', () => {
       payload: { ...payload, earliestAt: payload.latestAt, latestAt: payload.earliestAt },
     });
     expect(reversed.statusCode).toBe(400);
+    const whitespace = await context.application.inject({
+      method: 'POST',
+      url: groupUrl,
+      headers,
+      payload: { ...payload, bubbles: ['   '] },
+    });
+    expect(whitespace.statusCode).toBe(400);
     expect(context.scheduleMessageGroup).not.toHaveBeenCalled();
   });
 });

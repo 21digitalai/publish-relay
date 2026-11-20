@@ -54,7 +54,16 @@ const scheduledMessageRequestSchema = fanvueMessageRequestSchema
 export const fanvueMessageGroupRequestSchema = z
   .strictObject({
     clientActionId: z.uuid(),
-    bubbles: z.array(z.string().min(1).max(5000)).min(1).max(5),
+    bubbles: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(5000)
+          .refine((value) => value.trim().length > 0),
+      )
+      .min(1)
+      .max(5),
     expectedLatestInboundMessageUuid: z.uuid(),
     expectedLatestInboundAt: z.iso.datetime(),
     earliestAt: z.iso.datetime(),

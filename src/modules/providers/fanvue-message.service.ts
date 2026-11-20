@@ -18,6 +18,7 @@ import {
   findPendingFanvueDm,
   getFanvueDmGroupStatus,
   replayScheduledFanvueDm,
+  replayFanvueDmGroup,
   scheduleFanvueDmGroup,
   scheduleFanvueDm,
   fanvueGroupScheduleInput,
@@ -162,6 +163,8 @@ export class FanvueMessageService {
 
   async scheduleMessageGroup(input: z.input<typeof fanvueGroupScheduleInput>) {
     const command = fanvueGroupScheduleInput.parse(input);
+    const replay = await replayFanvueDmGroup(this.database, command);
+    if (replay) return replay;
     const targetLabel = await this.preflightScheduledMessage({
       workspaceId: command.workspaceId,
       accountId: command.accountId,

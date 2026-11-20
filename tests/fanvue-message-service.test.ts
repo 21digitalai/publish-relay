@@ -8,6 +8,8 @@ const pending = vi.hoisted(() => ({
   replay: vi.fn(),
   find: vi.fn(),
   cancel: vi.fn(),
+  scheduleGroup: vi.fn(),
+  replayGroup: vi.fn(),
 }));
 vi.mock('../src/database/tenant-transaction.js', () => ({
   withTenantTransaction: (_db: unknown, _input: unknown, work: (transaction: unknown) => unknown) =>
@@ -30,6 +32,8 @@ vi.mock('../src/modules/providers/fanvue-dm-pending.repository.js', async (impor
   replayScheduledFanvueDm: pending.replay,
   findPendingFanvueDm: pending.find,
   cancelPendingFanvueDm: pending.cancel,
+  scheduleFanvueDmGroup: pending.scheduleGroup,
+  replayFanvueDmGroup: pending.replayGroup,
 }));
 
 import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
@@ -91,6 +95,11 @@ beforeEach(() => {
   readyMedia.get.mockResolvedValue(new Map([[localMediaId, mediaUuid]]));
   pending.schedule.mockResolvedValue({ status: 'pending' });
   pending.replay.mockResolvedValue(null);
+  pending.replayGroup.mockResolvedValue(null);
+  pending.scheduleGroup.mockResolvedValue({
+    clientActionId: input.clientActionId,
+    status: 'pending',
+  });
 });
 
 describe('Fanvue scheduled message preflight', () => {
@@ -145,6 +154,26 @@ describe('Fanvue grouped dispatch preflight', () => {
     expectedLatestInboundMessageUuid: messageUuid,
     expectedLatestInboundAt: new Date('2026-11-20T10:00:00Z'),
   };
+
+  it('returns an exact stored group before provider preflight', async () => {
+    const command = {
+      ...boundary,
+      clientActionId: input.clientActionId,
+      actor: input.actor,
+      bubbles: ['One', 'Two'],
+      earliestAt: new Date('2026-11-20T10:01:00Z'),
+      latestAt: new Date('2026-11-20T12:00:00Z'),
+    };
+    pending.replayGroup.mockResolvedValueOnce({
+      clientActionId: input.clientActionId,
+      status: 'pending',
+    });
+    await expect(service.scheduleMessageGroup(command)).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(reads.getExistingChatForMessage).not.toHaveBeenCalled();
+    expect(pending.scheduleGroup).not.toHaveBeenCalled();
+  });
 
   it('allows only the exact latest message boundary', async () => {
     await expect(service.preflightScheduledDispatch(boundary)).resolves.toBe('allow');

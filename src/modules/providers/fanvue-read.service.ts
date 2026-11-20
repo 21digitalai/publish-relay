@@ -9,7 +9,7 @@ import {
   FanvueReconnectionRequiredError,
   getFreshFanvueToken,
 } from './fanvue-credential.service.js';
-import type { FanvueHttpClient } from './fanvue-http-client.js';
+import { FanvueRequestError, type FanvueHttpClient } from './fanvue-http-client.js';
 import type { FanvueReadClient } from './fanvue-read-client.js';
 
 export type FanvueReadModule = 'chat' | 'post' | 'media' | 'audience';
@@ -117,6 +117,27 @@ export class FanvueReadService {
   async getMediaStatus(input: { workspaceId: string; accountId: string; mediaUuid: string }) {
     const token = await this.accessToken(input, 'media');
     return this.readClient.getMediaStatus(token, input.mediaUuid);
+  }
+
+  async getMediaPurchaseFact(input: {
+    workspaceId: string;
+    accountId: string;
+    mediaUuid: string;
+    fanUuid: string;
+  }) {
+    try {
+      const { accessToken } = await this.getExistingChatForMessage(input);
+      const media = await this.readClient.getMediaPurchaseFact(
+        accessToken,
+        input.mediaUuid,
+        input.fanUuid,
+      );
+      return { state: 'known' as const, purchasedByFan: media.purchasedByFan };
+    } catch (error) {
+      if (error instanceof FanvueRequestError)
+        return { state: 'unknown' as const, purchasedByFan: null };
+      throw error;
+    }
   }
 
   async getMediaThumbnail(input: { workspaceId: string; accountId: string; mediaUuid: string }) {

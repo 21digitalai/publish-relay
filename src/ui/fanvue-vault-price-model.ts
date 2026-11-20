@@ -29,7 +29,13 @@ export interface FanvueVaultPriceAdapter {
     accountId: string;
     mediaId: string;
     priceUsd: string | null;
+    signal: AbortSignal;
   }): Promise<{ priceUsd: string | null }>;
+  refreshPreview(input: {
+    accountId: string;
+    mediaId: string;
+    signal: AbortSignal;
+  }): Promise<{ previewSrc: string | null }>;
 }
 
 export function normalizeFanvueUsdPrice(value: string): string | null {

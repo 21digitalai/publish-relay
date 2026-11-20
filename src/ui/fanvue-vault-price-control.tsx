@@ -66,6 +66,7 @@ function FanvueVaultPriceDialog({
   const [folderId, setFolderId] = useState<string | null>(null);
   const [media, setMedia] = useState<FanvueVaultMedia[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [canonicalPrices, setCanonicalPrices] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Set<string>>(new Set());
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [savedRows, setSavedRows] = useState<Set<string>>(new Set());
@@ -77,17 +78,56 @@ function FanvueVaultPriceDialog({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [announcement, setAnnouncement] = useState<string | null>(null);
+  const [previewUnavailable, setPreviewUnavailable] = useState<Set<string>>(new Set());
+  const [previewRefreshing, setPreviewRefreshing] = useState<Set<string>>(new Set());
+  const [previewAttempts, setPreviewAttempts] = useState<Record<string, number>>({});
   const dialogRef = useRef<HTMLElement>(null);
   const requestId = useRef(0);
+  const saveControllers = useRef(new Map<string, AbortController>());
+  const previewControllers = useRef(new Map<string, AbortController>());
+  const scopeRef = useRef({ accountId, generation: 0, mounted: true });
+  if (scopeRef.current.accountId !== accountId) {
+    scopeRef.current = {
+      accountId,
+      generation: scopeRef.current.generation + 1,
+      mounted: true,
+    };
+  }
 
   const dirtyIds = useMemo(
     () =>
-      media
-        .filter((item) => (drafts[item.id] ?? item.priceUsd ?? '') !== (item.priceUsd ?? ''))
-        .map((item) => item.id),
-    [drafts, media],
+      Object.entries(drafts)
+        .filter(([mediaId, draft]) => draft !== (canonicalPrices[mediaId] ?? ''))
+        .map(([mediaId]) => mediaId),
+    [canonicalPrices, drafts],
   );
   const dirty = dirtyIds.length > 0;
+
+  useEffect(() => {
+    const activeSaveControllers = saveControllers.current;
+    const activePreviewControllers = previewControllers.current;
+    scopeRef.current.mounted = true;
+    return () => {
+      scopeRef.current.mounted = false;
+      for (const controller of activeSaveControllers.values()) controller.abort();
+      for (const controller of activePreviewControllers.values()) controller.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    for (const controller of saveControllers.current.values()) controller.abort();
+    for (const controller of previewControllers.current.values()) controller.abort();
+    saveControllers.current.clear();
+    previewControllers.current.clear();
+    setDrafts({});
+    setCanonicalPrices({});
+    setSaving(new Set());
+    setSavedRows(new Set());
+    setRowErrors({});
+    setPreviewUnavailable(new Set());
+    setPreviewRefreshing(new Set());
+    setPreviewAttempts({});
+  }, [accountId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -103,6 +143,11 @@ function FanvueVaultPriceDialog({
         if (id !== requestId.current) return;
         setFolders(loadedFolders);
         setMedia(page.items);
+        setCanonicalPrices((current) => {
+          const next = { ...current };
+          for (const item of page.items) next[item.id] = item.priceUsd ?? '';
+          return next;
+        });
         setNextCursor(page.nextCursor);
         setState('ready');
       })
@@ -162,7 +207,7 @@ function FanvueVaultPriceDialog({
   };
 
   const save = async (item: FanvueVaultMedia) => {
-    const draft = drafts[item.id] ?? item.priceUsd ?? '';
+    const draft = drafts[item.id] ?? canonicalPrices[item.id] ?? item.priceUsd ?? '';
     let normalized: string | null;
     try {
       normalized = normalizeFanvueUsdPrice(draft);
@@ -173,29 +218,108 @@ function FanvueVaultPriceDialog({
       }));
       return;
     }
+    saveControllers.current.get(item.id)?.abort();
+    const controller = new AbortController();
+    saveControllers.current.set(item.id, controller);
+    const scope = { ...scopeRef.current };
     setSaving((current) => new Set(current).add(item.id));
     setRowErrors((current) => ({ ...current, [item.id]: '' }));
     try {
-      const result = await adapter.savePrice({ accountId, mediaId: item.id, priceUsd: normalized });
+      const result = await adapter.savePrice({
+        accountId,
+        mediaId: item.id,
+        priceUsd: normalized,
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted ||
+        !scopeRef.current.mounted ||
+        scope.accountId !== scopeRef.current.accountId ||
+        scope.generation !== scopeRef.current.generation
+      )
+        return;
       setMedia((current) =>
         current.map((entry) =>
           entry.id === item.id ? { ...entry, priceUsd: result.priceUsd } : entry,
         ),
       );
+      setCanonicalPrices((current) => ({ ...current, [item.id]: result.priceUsd ?? '' }));
       setDrafts((current) => ({ ...current, [item.id]: result.priceUsd ?? '' }));
       setSavedRows((current) => new Set(current).add(item.id));
       setAnnouncement(`Price saved for ${item.name}`);
     } catch (reason) {
+      if (controller.signal.aborted || scope.accountId !== scopeRef.current.accountId) return;
       setRowErrors((current) => ({
         ...current,
         [item.id]: reason instanceof Error ? reason.message : 'Price was not saved. Retry.',
       }));
     } finally {
-      setSaving((current) => {
+      if (saveControllers.current.get(item.id) === controller)
+        saveControllers.current.delete(item.id);
+      if (
+        scopeRef.current.mounted &&
+        scope.accountId === scopeRef.current.accountId &&
+        scope.generation === scopeRef.current.generation
+      ) {
+        setSaving((current) => {
+          const next = new Set(current);
+          next.delete(item.id);
+          return next;
+        });
+      }
+    }
+  };
+
+  const refreshPreview = async (item: FanvueVaultMedia) => {
+    const attempts = previewAttempts[item.id] ?? 0;
+    if (attempts >= 2 || previewRefreshing.has(item.id)) return;
+    previewControllers.current.get(item.id)?.abort();
+    const controller = new AbortController();
+    previewControllers.current.set(item.id, controller);
+    const scope = { ...scopeRef.current };
+    setPreviewRefreshing((current) => new Set(current).add(item.id));
+    setPreviewAttempts((current) => ({ ...current, [item.id]: attempts + 1 }));
+    try {
+      const result = await adapter.refreshPreview({
+        accountId,
+        mediaId: item.id,
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted ||
+        !scopeRef.current.mounted ||
+        scope.accountId !== scopeRef.current.accountId ||
+        scope.generation !== scopeRef.current.generation
+      )
+        return;
+      setMedia((current) =>
+        current.map((entry) =>
+          entry.id === item.id ? { ...entry, previewSrc: result.previewSrc } : entry,
+        ),
+      );
+      setPreviewUnavailable((current) => {
         const next = new Set(current);
-        next.delete(item.id);
+        if (result.previewSrc?.startsWith('/')) next.delete(item.id);
+        else next.add(item.id);
         return next;
       });
+    } catch {
+      if (!controller.signal.aborted && scope.accountId === scopeRef.current.accountId)
+        setPreviewUnavailable((current) => new Set(current).add(item.id));
+    } finally {
+      if (previewControllers.current.get(item.id) === controller)
+        previewControllers.current.delete(item.id);
+      if (
+        scopeRef.current.mounted &&
+        scope.accountId === scopeRef.current.accountId &&
+        scope.generation === scopeRef.current.generation
+      ) {
+        setPreviewRefreshing((current) => {
+          const next = new Set(current);
+          next.delete(item.id);
+          return next;
+        });
+      }
     }
   };
 
@@ -214,6 +338,11 @@ function FanvueVaultPriceDialog({
       });
       if (id !== requestId.current) return;
       setMedia((current) => mergeFanvueMedia(current, page.items));
+      setCanonicalPrices((current) => {
+        const next = { ...current };
+        for (const item of page.items) next[item.id] = item.priceUsd ?? '';
+        return next;
+      });
       setNextCursor(page.nextCursor);
     } catch (reason) {
       setAppendError(reason instanceof Error ? reason.message : 'More media could not be loaded.');
@@ -315,27 +444,48 @@ function FanvueVaultPriceDialog({
             ) : (
               <ul className="fanvue-vault-price-list">
                 {media.map((item) => {
-                  const value = drafts[item.id] ?? item.priceUsd ?? '';
-                  const changed = value !== (item.priceUsd ?? '');
+                  const value = drafts[item.id] ?? canonicalPrices[item.id] ?? item.priceUsd ?? '';
+                  const changed = value !== (canonicalPrices[item.id] ?? item.priceUsd ?? '');
                   const busy = saving.has(item.id);
                   const error = rowErrors[item.id];
                   return (
                     <li key={item.id} className="fanvue-vault-price-row">
                       <div className="fanvue-vault-price-preview">
-                        {item.previewSrc?.startsWith('/') ? (
+                        {item.previewSrc?.startsWith('/') && !previewUnavailable.has(item.id) ? (
                           <img
                             src={item.previewSrc}
                             alt={`Preview of ${item.name}`}
                             loading="lazy"
                             onError={(event) => {
                               event.currentTarget.hidden = true;
-                              event.currentTarget.nextElementSibling?.removeAttribute('hidden');
+                              setPreviewUnavailable((current) => new Set(current).add(item.id));
                             }}
                           />
                         ) : null}
-                        <span hidden={Boolean(item.previewSrc?.startsWith('/'))}>
+                        <span
+                          hidden={
+                            Boolean(item.previewSrc?.startsWith('/')) &&
+                            !previewUnavailable.has(item.id)
+                          }
+                        >
                           Preview unavailable
                         </span>
+                        {previewUnavailable.has(item.id) && (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={
+                              previewRefreshing.has(item.id) || (previewAttempts[item.id] ?? 0) >= 2
+                            }
+                            onClick={() => void refreshPreview(item)}
+                          >
+                            {previewRefreshing.has(item.id)
+                              ? 'Refreshing…'
+                              : (previewAttempts[item.id] ?? 0) >= 2
+                                ? 'Preview unavailable'
+                                : 'Refresh preview'}
+                          </button>
+                        )}
                       </div>
                       <div className="fanvue-vault-price-identity">
                         <strong title={item.name}>{item.name}</strong>

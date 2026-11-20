@@ -101,7 +101,11 @@ function readRoutes(service: FanvueReadService) {
       path: '/api/v1/fanvue/accounts/:accountId/chats/:fanUuid/checkpoints',
       capability: 'fanvue:chats:read',
       read: (input) =>
-        service.listDmConversationCheckpoints({ ...input, fanUuid: requiredId(input.fanUuid) }),
+        service.listDmConversationCheckpoints({
+          workspaceId: input.workspaceId,
+          accountId: input.accountId,
+          fanUuid: requiredId(input.fanUuid),
+        }),
     },
     {
       path: '/api/v1/fanvue/accounts/:accountId/media',

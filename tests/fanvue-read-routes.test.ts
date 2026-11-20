@@ -159,7 +159,7 @@ describe('Fanvue agent read boundary', () => {
     });
     const checkpoints = await context.application.inject({
       method: 'GET',
-      url: `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/checkpoints`,
+      url: `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/checkpoints?unreadOnly=true&page=2&size=10`,
       headers,
     });
     expect(due.statusCode).toBe(200);
@@ -171,7 +171,6 @@ describe('Fanvue agent read boundary', () => {
       workspaceId,
       accountId,
       fanUuid,
-      unreadOnly: false,
     });
     expect(due.body).not.toContain('clientActionId');
     expect(checkpoints.body).not.toContain('groupId');

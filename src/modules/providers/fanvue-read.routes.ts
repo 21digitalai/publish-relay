@@ -27,6 +27,11 @@ const querySchema = z.object({
   cursor: z.string().min(1).max(1024).optional(),
   mediaName: z.string().min(1).max(1000).optional(),
 });
+const historyBackfillBody = z.strictObject({
+  maxPages: z.number().int().min(1).max(100).optional(),
+  pageSize: z.number().int().min(1).max(50).optional(),
+  excludeMediaForMessageUuids: z.array(z.uuid()).max(20).optional(),
+});
 
 interface ReadInput {
   workspaceId: string;
@@ -177,6 +182,49 @@ export function registerFanvueReadRoutes(
       }
     });
   }
+  application.post(
+    '/api/v1/fanvue/accounts/:accountId/chats/:fanUuid/history-backfill',
+    async (request, reply) => {
+      try {
+        const principal = await authorizeMachineRequest(
+          request,
+          apiKeys,
+          delegatedAuthorization,
+          'fanvue:chats:read',
+        );
+        if (!principal)
+          return await reply
+            .code(401)
+            .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+        const params = paramsSchema.safeParse(request.params);
+        const body = historyBackfillBody.safeParse(request.body);
+        if (!params.success || !params.data.fanUuid || !body.success)
+          return await reply
+            .code(400)
+            .send(errorEnvelope('invalid_request', 'Invalid Fanvue backfill request', request.id));
+        const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
+        if (!decision.allowed) {
+          void reply.header('Retry-After', decision.retryAfterSeconds ?? 1);
+          return await reply
+            .code(429)
+            .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+        }
+        const data = await service.backfillDmHistory({
+          workspaceId: principal.workspaceId,
+          accountId: params.data.accountId,
+          fanUuid: params.data.fanUuid,
+          ...(body.data.maxPages === undefined ? {} : { maxPages: body.data.maxPages }),
+          ...(body.data.pageSize === undefined ? {} : { pageSize: body.data.pageSize }),
+          ...(body.data.excludeMediaForMessageUuids === undefined
+            ? {}
+            : { excludeMediaForMessageUuids: body.data.excludeMediaForMessageUuids }),
+        });
+        return await reply.send(successEnvelope(data, request.id));
+      } catch (error) {
+        return sendReadError(error, request, reply);
+      }
+    },
+  );
 }
 
 export function registerFanvueBrowserReadRoutes(

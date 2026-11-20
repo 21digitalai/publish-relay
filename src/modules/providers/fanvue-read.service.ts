@@ -12,6 +12,7 @@ import {
 import { FanvueRequestError, type FanvueHttpClient } from './fanvue-http-client.js';
 import type { FanvueReadClient } from './fanvue-read-client.js';
 import { listFanvueDmCheckpoints } from './fanvue-dm-checkpoint.repository.js';
+import { backfillFanvueDmHistory } from './fanvue-dm-history-backfill.js';
 import { listDueFanvueDmConversations } from './fanvue-dm-conversation-state.repository.js';
 
 export type FanvueReadModule = 'chat' | 'post' | 'media' | 'audience';
@@ -87,6 +88,20 @@ export class FanvueReadService {
   }) {
     const token = await this.accessToken(input, 'chat');
     return this.readClient.listMessages(token, input.fanUuid, input);
+  }
+
+  async backfillDmHistory(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+    maxPages?: number;
+    pageSize?: number;
+    excludeMediaForMessageUuids?: string[];
+  }) {
+    const token = await this.accessToken(input, 'chat');
+    return backfillFanvueDmHistory(this.database, input, (page, size) =>
+      this.readClient.listMessages(token, input.fanUuid, { page, size }),
+    );
   }
 
   async listDueDmConversations(input: { workspaceId: string; accountId: string; size?: number }) {

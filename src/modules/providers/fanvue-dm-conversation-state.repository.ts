@@ -1,10 +1,13 @@
-import { and, asc, eq, isNull, lte } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, lte } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
 import {
   fanvueDmConversationState,
+  fanvueActionIntents,
+  fanvueDmMediaDeliveries,
   fanvueDmMessageReceipts,
+  fanvueDmPendingIntents,
   providerAccounts,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -52,6 +55,24 @@ const messageReceipt = identity
         message: 'Exchange role does not match message direction',
       });
   });
+const historyMessage = identity.omit({ workspaceId: true, accountId: true, fanUuid: true }).extend({
+  providerMessageUuid: z.uuid(),
+  direction: z.enum(['inbound', 'outbound']),
+  sentAt: z.date(),
+  mediaUuids: z.array(z.uuid()).max(50),
+  priceCents: z.number().int().nonnegative().nullable(),
+  purchasedAt: z.date().nullable(),
+  excludeMedia: z.boolean().default(false),
+});
+const historyPage = identity.extend({
+  messages: z.array(historyMessage).max(50),
+  hasMore: z.boolean(),
+  observedAt: z.date(),
+});
+const historyFailure = identity.extend({
+  failureCode: z.enum(['provider_read_failed', 'invalid_message_direction', 'page_limit_reached']),
+  observedAt: z.date(),
+});
 
 export class FanvueDmConversationStateUnavailableError extends Error {
   constructor() {
@@ -215,6 +236,198 @@ async function refreshConversationCounts(transaction: NodePgDatabase, input: Mes
         eq(fanvueDmConversationState.fanUuid, input.fanUuid),
       ),
     );
+}
+
+async function historyExchangeRole(
+  transaction: NodePgDatabase,
+  input: z.output<typeof historyPage>,
+  message: z.output<typeof historyMessage>,
+) {
+  if (message.direction === 'inbound') return 'inbound_turn' as const;
+  const [groupPart] = await transaction
+    .select({ sequenceIndex: fanvueDmPendingIntents.sequenceIndex })
+    .from(fanvueActionIntents)
+    .innerJoin(
+      fanvueDmPendingIntents,
+      and(
+        eq(fanvueDmPendingIntents.workspaceId, fanvueActionIntents.workspaceId),
+        eq(fanvueDmPendingIntents.accountId, fanvueActionIntents.accountId),
+        eq(fanvueDmPendingIntents.clientActionId, fanvueActionIntents.clientActionId),
+      ),
+    )
+    .where(
+      and(
+        eq(fanvueActionIntents.workspaceId, input.workspaceId),
+        eq(fanvueActionIntents.accountId, input.accountId),
+        eq(fanvueActionIntents.targetUuid, input.fanUuid),
+        eq(fanvueActionIntents.providerObjectUuid, message.providerMessageUuid),
+        isNotNull(fanvueDmPendingIntents.groupId),
+      ),
+    )
+    .limit(1);
+  if (groupPart?.sequenceIndex === 0) return 'outbound_root' as const;
+  if (groupPart?.sequenceIndex !== null && groupPart?.sequenceIndex !== undefined)
+    return 'outbound_tail' as const;
+  return 'automation' as const;
+}
+
+async function recordHistoryMedia(
+  transaction: NodePgDatabase,
+  input: z.output<typeof historyPage>,
+  message: z.output<typeof historyMessage>,
+) {
+  if (message.excludeMedia) return;
+  for (const providerMediaUuid of [...new Set(message.mediaUuids)]) {
+    const [existing] = await transaction
+      .select()
+      .from(fanvueDmMediaDeliveries)
+      .where(
+        and(
+          eq(fanvueDmMediaDeliveries.workspaceId, input.workspaceId),
+          eq(fanvueDmMediaDeliveries.accountId, input.accountId),
+          eq(fanvueDmMediaDeliveries.fanUuid, input.fanUuid),
+          eq(fanvueDmMediaDeliveries.providerMediaUuid, providerMediaUuid),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (existing) {
+      if (!existing.providerMessageUuid)
+        await transaction
+          .update(fanvueDmMediaDeliveries)
+          .set({
+            state: 'confirmed',
+            providerMessageUuid: message.providerMessageUuid,
+            priceCents: message.priceCents,
+            purchasedAt: message.purchasedAt,
+            updatedAt: input.observedAt,
+          })
+          .where(eq(fanvueDmMediaDeliveries.id, existing.id));
+      continue;
+    }
+    await transaction.insert(fanvueDmMediaDeliveries).values({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      fanUuid: input.fanUuid,
+      providerMediaUuid,
+      source: 'provider_history',
+      providerMessageUuid: message.providerMessageUuid,
+      state: 'confirmed',
+      priceCents: message.priceCents,
+      purchasedAt: message.purchasedAt,
+      updatedAt: input.observedAt,
+    });
+  }
+}
+
+export async function ingestFanvueDmHistoryPage(
+  database: NodePgDatabase,
+  unparsed: z.input<typeof historyPage>,
+) {
+  const input = historyPage.parse(unparsed);
+  return withTenantTransaction(database, input, async (transaction) => {
+    await requireFanvueAccount(transaction, input);
+    let oldestAt: Date | null = null;
+    for (const message of input.messages) {
+      const receiptInput = {
+        ...input,
+        ...message,
+        exchangeRole: await historyExchangeRole(transaction, input, message),
+        observedAt: input.observedAt,
+      };
+      await upsertMessageReceipt(transaction, receiptInput);
+      await advanceReceiptBoundary(transaction, receiptInput);
+      await recordHistoryMedia(transaction, input, message);
+      if (!oldestAt || message.sentAt < oldestAt) oldestAt = message.sentAt;
+    }
+    if (input.messages[0])
+      await refreshConversationCounts(transaction, {
+        ...input,
+        ...input.messages[0],
+        exchangeRole: await historyExchangeRole(transaction, input, input.messages[0]),
+        observedAt: input.observedAt,
+      });
+    const [existing] = await transaction
+      .select()
+      .from(fanvueDmConversationState)
+      .where(
+        and(
+          eq(fanvueDmConversationState.workspaceId, input.workspaceId),
+          eq(fanvueDmConversationState.accountId, input.accountId),
+          eq(fanvueDmConversationState.fanUuid, input.fanUuid),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    const coverage =
+      oldestAt &&
+      (!existing?.historyCoverageOldestAt || oldestAt < existing.historyCoverageOldestAt)
+        ? oldestAt
+        : (existing?.historyCoverageOldestAt ?? null);
+    const values = {
+      historyCoverageOldestAt: coverage,
+      historyBackfillCompleteAt: input.hasMore
+        ? (existing?.historyBackfillCompleteAt ?? null)
+        : input.observedAt,
+      historyBackfillStatus: input.hasMore ? 'in_progress' : 'complete',
+      historyBackfillFailureCode: null,
+      historyBackfillLastAttemptAt: input.observedAt,
+      updatedAt: input.observedAt,
+    };
+    if (existing)
+      await transaction
+        .update(fanvueDmConversationState)
+        .set(values)
+        .where(
+          and(
+            eq(fanvueDmConversationState.workspaceId, input.workspaceId),
+            eq(fanvueDmConversationState.accountId, input.accountId),
+            eq(fanvueDmConversationState.fanUuid, input.fanUuid),
+          ),
+        );
+    else
+      await transaction.insert(fanvueDmConversationState).values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+        ...values,
+      });
+    return { ingested: input.messages.length, oldestAt: coverage, complete: !input.hasMore };
+  });
+}
+
+export async function markFanvueDmHistoryBackfillIncomplete(
+  database: NodePgDatabase,
+  unparsed: z.input<typeof historyFailure>,
+) {
+  const input = historyFailure.parse(unparsed);
+  return withTenantTransaction(database, input, async (transaction) => {
+    await requireFanvueAccount(transaction, input);
+    await transaction
+      .insert(fanvueDmConversationState)
+      .values({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+        historyBackfillStatus: 'incomplete',
+        historyBackfillFailureCode: input.failureCode,
+        historyBackfillLastAttemptAt: input.observedAt,
+        updatedAt: input.observedAt,
+      })
+      .onConflictDoUpdate({
+        target: [
+          fanvueDmConversationState.workspaceId,
+          fanvueDmConversationState.accountId,
+          fanvueDmConversationState.fanUuid,
+        ],
+        set: {
+          historyBackfillStatus: 'incomplete',
+          historyBackfillFailureCode: input.failureCode,
+          historyBackfillLastAttemptAt: input.observedAt,
+          updatedAt: input.observedAt,
+        },
+      });
+  });
 }
 
 export async function recordFanvueDmMessageReceipt(

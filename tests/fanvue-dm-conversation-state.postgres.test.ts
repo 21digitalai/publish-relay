@@ -40,6 +40,12 @@ async function setup() {
       'utf8',
     ),
   );
+  await pg.exec(
+    await readFile(
+      new URL('../migrations/0129_fanvue_dm_history_backfill_state.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   return { pg, database: drizzle(pg) as unknown as NodePgDatabase };
 }
 

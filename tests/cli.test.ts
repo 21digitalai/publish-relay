@@ -823,6 +823,58 @@ describe('Publish Relay CLI', () => {
       url: '[REDACTED]',
     });
   });
+  it('routes the priced Fanvue vault catalog without exposing provider URLs', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000002';
+    const mediaUuid = '00000000-0000-4000-8000-000000000003';
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      {
+        success: true,
+        data: {
+          data: [
+            {
+              uuid: mediaUuid,
+              status: 'ready',
+              name: 'Approved',
+              mediaType: 'image',
+              manualPriceCents: 450,
+              priceVersion: 2,
+              url: 'private',
+            },
+          ],
+          pagination: { page: 2, size: 1, hasMore: false },
+        },
+      },
+      '00000000-0000-4000-8000-000000000201',
+      paths,
+    );
+    const result = await cli(
+      [
+        'fanvue',
+        'vault-catalog',
+        accountId,
+        '--folder-name',
+        'Paid / Български',
+        '--page',
+        '2',
+        '--size',
+        '50',
+        '--base-url',
+        baseUrl,
+      ],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(paths).toEqual([
+      `/api/v1/fanvue/accounts/${accountId}/vault/catalog/Paid%20%2F%20%D0%91%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D1%81%D0%BA%D0%B8?page=2&size=50`,
+    ]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: {
+        data: [{ uuid: mediaUuid, manualPriceCents: 450, priceVersion: 2, url: '[REDACTED]' }],
+      },
+    });
+  });
   it('matches the real account API authentication and response contract', async () => {
     const application = Fastify();
     registerApiKeyRoutes(application, {

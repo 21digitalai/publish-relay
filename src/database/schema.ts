@@ -1682,6 +1682,31 @@ export const fanvueActionIntents = pgTable(
   ],
 );
 
+export const fanvueVaultMediaPrices = pgTable(
+  'fanvue_vault_media_prices',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    providerMediaUuid: uuid('provider_media_uuid').notNull(),
+    manualPriceCents: integer('manual_price_cents'),
+    version: integer('version').notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId, table.providerMediaUuid] }),
+    check(
+      'fanvue_vault_media_prices_positive_price_check',
+      sql`${table.manualPriceCents} is null or ${table.manualPriceCents} > 0`,
+    ),
+    check('fanvue_vault_media_prices_positive_version_check', sql`${table.version} > 0`),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'fanvue_vault_media_prices_account_fk',
+    }).onDelete('restrict'),
+  ],
+);
+
 export const fanvueDmPendingIntents = pgTable(
   'fanvue_dm_pending_intents',
   {

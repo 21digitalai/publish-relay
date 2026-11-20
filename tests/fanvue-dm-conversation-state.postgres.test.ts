@@ -6,6 +6,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { describe, expect, it } from 'vitest';
 
 import {
+  FanvueDmMessageReceiptConflictError,
   listDueFanvueDmConversations,
   observeFanvueDmConversationSummary,
   recordFanvueDmMessageReceipt,
@@ -69,10 +70,22 @@ describe('Fanvue neutral conversation state', () => {
         ...base,
         observedAt: new Date('2026-11-20T10:12:00Z'),
       });
+      await expect(
+        recordFanvueDmMessageReceipt(database, {
+          ...base,
+          fanUuid: '00000000-0000-4000-8000-000000000020',
+          observedAt: new Date('2026-11-20T10:13:00Z'),
+        }),
+      ).rejects.toBeInstanceOf(FanvueDmMessageReceiptConflictError);
+      await recordFanvueDmMessageReceipt(database, {
+        ...base,
+        workspaceId: otherWorkspaceId,
+        observedAt: new Date('2026-11-20T10:14:00Z'),
+      });
       const receipts = await pg.query<{ count: number }>(
         'SELECT count(*)::integer AS count FROM fanvue_dm_message_receipts',
       );
-      expect(receipts.rows[0]?.count).toBe(2);
+      expect(receipts.rows[0]?.count).toBe(3);
       const state = await pg.query<{ latest_inbound_message_uuid: string }>(
         'SELECT latest_inbound_message_uuid FROM fanvue_dm_conversation_state',
       );

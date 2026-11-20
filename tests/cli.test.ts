@@ -280,7 +280,7 @@ describe('Publish Relay CLI', () => {
     async (entrypoint) => {
       const result = await cli(['version'], {}, entrypoint);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.9' } });
+      expect(JSON.parse(result.stdout)).toMatchObject({ data: { version: '1.8.10' } });
     },
   );
 

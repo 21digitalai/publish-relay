@@ -69,6 +69,9 @@ const application = createStandaloneApplication({
     PORT: 43199,
     CURSOR_SIGNING_SECRET: 'e2e-cursor-signing-secret-32-characters-minimum',
     WORKER_POLL_INTERVAL_MS: 1000,
+    ...(process.env.PUBLISH_RELAY_ENABLED_ADAPTERS !== undefined
+      ? { PUBLISH_RELAY_ENABLED_ADAPTERS: process.env.PUBLISH_RELAY_ENABLED_ADAPTERS }
+      : {}),
     ...(magicLinkMode ? { PUBLISH_RELAY_HUMAN_AUTH_MODE: 'magic_link' } : {}),
   },
   auth,

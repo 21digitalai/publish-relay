@@ -1211,7 +1211,7 @@ textarea:focus-visible {
   border-radius: 8px;
   padding: 12px;
 }
-.fanvue-vault-price-dialog {
+.confirm-dialog.fanvue-vault-price-dialog {
   width: min(880px, calc(100vw - 48px));
   max-height: min(760px, calc(100dvh - 48px));
   display: flex;

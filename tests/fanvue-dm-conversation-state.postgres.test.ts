@@ -34,6 +34,12 @@ async function setup() {
       'utf8',
     ),
   );
+  await pg.exec(
+    await readFile(
+      new URL('../migrations/0128_fanvue_dm_receipt_exchange_roles.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   return { pg, database: drizzle(pg) as unknown as NodePgDatabase };
 }
 
@@ -135,6 +141,61 @@ describe('Fanvue neutral conversation state', () => {
       }
     },
   );
+
+  it('counts human turns with one outbound group as one exchange and ignores outbound autos', async () => {
+    const { pg, database } = await setup();
+    try {
+      const base = {
+        workspaceId,
+        accountId,
+        fanUuid,
+        mediaUuids: [],
+        priceCents: null,
+        purchasedAt: null,
+      };
+      const receipts = [
+        ['00000000-0000-4000-8000-000000000041', 'outbound', 'automation', '2026-11-19T08:00:00Z'],
+        ['00000000-0000-4000-8000-000000000042', 'inbound', 'inbound_turn', '2026-11-19T09:00:00Z'],
+        ['00000000-0000-4000-8000-000000000043', 'inbound', 'inbound_turn', '2026-11-19T09:00:01Z'],
+        [
+          '00000000-0000-4000-8000-000000000044',
+          'outbound',
+          'outbound_root',
+          '2026-11-19T09:10:00Z',
+        ],
+        [
+          '00000000-0000-4000-8000-000000000045',
+          'outbound',
+          'outbound_tail',
+          '2026-11-19T09:10:01Z',
+        ],
+        ['00000000-0000-4000-8000-000000000046', 'inbound', 'inbound_turn', '2026-11-20T10:00:00Z'],
+        [
+          '00000000-0000-4000-8000-000000000047',
+          'outbound',
+          'outbound_root',
+          '2026-11-20T10:05:00Z',
+        ],
+      ] as const;
+      for (const [providerMessageUuid, direction, exchangeRole, sentAt] of receipts)
+        await recordFanvueDmMessageReceipt(database, {
+          ...base,
+          providerMessageUuid,
+          direction,
+          exchangeRole,
+          sentAt: new Date(sentAt),
+          observedAt: new Date(sentAt),
+        });
+      const state = await pg.query<{ logical_exchange_count: number; active_day_count: number }>(
+        `SELECT logical_exchange_count, active_day_count
+           FROM fanvue_dm_conversation_state
+          WHERE workspace_id = '${workspaceId}' AND account_id = '${accountId}' AND fan_uuid = '${fanUuid}'`,
+      );
+      expect(state.rows[0]).toEqual({ logical_exchange_count: 2, active_day_count: 2 });
+    } finally {
+      await pg.close();
+    }
+  });
 
   it('reactivates a quiet conversation only for a changed inbound boundary', async () => {
     const { pg, database } = await setup();

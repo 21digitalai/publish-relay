@@ -1813,6 +1813,7 @@ export const fanvueDmMessageReceipts = pgTable(
     fanUuid: uuid('fan_uuid').notNull(),
     providerMessageUuid: uuid('provider_message_uuid').notNull(),
     direction: text('direction').notNull(),
+    exchangeRole: text('exchange_role').notNull(),
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
     mediaUuids: jsonb('media_uuids').$type<string[]>().notNull().default([]),
     priceCents: integer('price_cents'),
@@ -1835,6 +1836,10 @@ export const fanvueDmMessageReceipts = pgTable(
     check(
       'fanvue_dm_message_receipts_direction_check',
       sql`${table.direction} in ('inbound', 'outbound')`,
+    ),
+    check(
+      'fanvue_dm_message_receipts_exchange_role_check',
+      sql`${table.exchangeRole} in ('inbound_turn', 'outbound_root', 'outbound_tail', 'automation')`,
     ),
     check(
       'fanvue_dm_message_receipts_price_check',

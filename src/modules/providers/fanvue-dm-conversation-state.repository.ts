@@ -34,6 +34,7 @@ const workflowUpdate = identity.extend({
 const messageReceipt = identity.extend({
   providerMessageUuid: z.uuid(),
   direction: z.enum(['inbound', 'outbound']),
+  exchangeRole: z.enum(['inbound_turn', 'outbound_root', 'outbound_tail', 'automation']).optional(),
   sentAt: z.date(),
   mediaUuids: z.array(z.uuid()).max(20).default([]),
   priceCents: z.number().int().nonnegative().nullable().default(null),
@@ -68,7 +69,9 @@ async function requireFanvueAccount(transaction: NodePgDatabase, input: z.output
   if (account?.provider !== 'fanvue') throw new FanvueDmConversationStateUnavailableError();
 }
 
-type MessageReceiptInput = z.output<typeof messageReceipt>;
+type MessageReceiptInput = Omit<z.output<typeof messageReceipt>, 'exchangeRole'> & {
+  exchangeRole: 'inbound_turn' | 'outbound_root' | 'outbound_tail' | 'automation';
+};
 
 async function upsertMessageReceipt(transaction: NodePgDatabase, input: MessageReceiptInput) {
   const [existing] = await transaction
@@ -87,6 +90,7 @@ async function upsertMessageReceipt(transaction: NodePgDatabase, input: MessageR
     existing &&
     (existing.fanUuid !== input.fanUuid ||
       existing.direction !== input.direction ||
+      existing.exchangeRole !== input.exchangeRole ||
       existing.sentAt.getTime() !== input.sentAt.getTime())
   )
     throw new FanvueDmMessageReceiptConflictError();
@@ -158,15 +162,67 @@ async function advanceReceiptBoundary(transaction: NodePgDatabase, input: Messag
     });
 }
 
+async function refreshConversationCounts(transaction: NodePgDatabase, input: MessageReceiptInput) {
+  const receipts = await transaction
+    .select({
+      providerMessageUuid: fanvueDmMessageReceipts.providerMessageUuid,
+      direction: fanvueDmMessageReceipts.direction,
+      exchangeRole: fanvueDmMessageReceipts.exchangeRole,
+      sentAt: fanvueDmMessageReceipts.sentAt,
+    })
+    .from(fanvueDmMessageReceipts)
+    .where(
+      and(
+        eq(fanvueDmMessageReceipts.workspaceId, input.workspaceId),
+        eq(fanvueDmMessageReceipts.accountId, input.accountId),
+        eq(fanvueDmMessageReceipts.fanUuid, input.fanUuid),
+      ),
+    )
+    .orderBy(asc(fanvueDmMessageReceipts.sentAt), asc(fanvueDmMessageReceipts.providerMessageUuid));
+  let hasOpenInboundTurn = false;
+  let logicalExchangeCount = 0;
+  const activeDays = new Set<string>();
+  for (const receipt of receipts) {
+    if (receipt.exchangeRole === 'inbound_turn') {
+      hasOpenInboundTurn = true;
+      continue;
+    }
+    if (receipt.exchangeRole !== 'outbound_root' || !hasOpenInboundTurn) continue;
+    logicalExchangeCount += 1;
+    activeDays.add(receipt.sentAt.toISOString().slice(0, 10));
+    hasOpenInboundTurn = false;
+  }
+  await transaction
+    .update(fanvueDmConversationState)
+    .set({
+      logicalExchangeCount,
+      activeDayCount: activeDays.size,
+      updatedAt: input.observedAt,
+    })
+    .where(
+      and(
+        eq(fanvueDmConversationState.workspaceId, input.workspaceId),
+        eq(fanvueDmConversationState.accountId, input.accountId),
+        eq(fanvueDmConversationState.fanUuid, input.fanUuid),
+      ),
+    );
+}
+
 export async function recordFanvueDmMessageReceipt(
   database: NodePgDatabase,
   unparsed: z.input<typeof messageReceipt>,
 ) {
-  const input = messageReceipt.parse(unparsed);
+  const parsed = messageReceipt.parse(unparsed);
+  const input: MessageReceiptInput = {
+    ...parsed,
+    exchangeRole:
+      parsed.exchangeRole ?? (parsed.direction === 'inbound' ? 'inbound_turn' : 'outbound_root'),
+  };
   return withTenantTransaction(database, input, async (transaction) => {
     await requireFanvueAccount(transaction, input);
     const receipt = await upsertMessageReceipt(transaction, input);
     await advanceReceiptBoundary(transaction, input);
+    await refreshConversationCounts(transaction, input);
     return receipt;
   });
 }

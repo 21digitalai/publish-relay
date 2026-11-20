@@ -396,6 +396,7 @@ export class FanvueMessageService {
       actorType: command.actor.type === 'api-key' ? 'api_key' : command.actor.type,
       actorId: command.actor.id,
       scheduledLeaseOwner,
+      ...(mediaUuids ? { providerMediaUuids: mediaUuids } : {}),
     };
     const reservation = await reserveFanvueAction(this.database, intent);
     if (reservation.kind !== 'new') return replayResult(reservation);
@@ -423,6 +424,14 @@ export class FanvueMessageService {
       ...intent,
       reservationId: reservation.id,
       result: settlement,
+      ...(mediaUuids?.length
+        ? {
+            mediaDelivery: {
+              fanUuid: command.fanUuid,
+              ...(command.price !== undefined ? { priceCents: command.price } : {}),
+            },
+          }
+        : {}),
     });
     return result;
   }

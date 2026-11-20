@@ -382,6 +382,22 @@ describe.skipIf(!connectionString)('Fanvue read and DM account isolation on Post
         state: 'confirmed',
         messageUuid,
       });
+      const delivery = await pool.query<{
+        state: string;
+        provider_message_uuid: string;
+        price_cents: number;
+      }>(
+        `SELECT state, provider_message_uuid, price_cents
+           FROM fanvue_dm_media_deliveries
+          WHERE workspace_id=$1 AND account_id=$2 AND fan_uuid=$3 AND provider_media_uuid=$4`,
+        [workspaceId, accountId, fanUuid, mediaUuid],
+      );
+      expect(delivery.rows).toEqual([
+        { state: 'confirmed', provider_message_uuid: messageUuid, price_cents: 300 },
+      ]);
+      await expect(
+        accountBackedSend.sendMessage({ ...sendInput, clientActionId: randomUUID() }),
+      ).rejects.toThrow('Fanvue media is already reserved or observed for this fan');
       await connectProvider(
         database,
         keys,

@@ -434,7 +434,19 @@ describe('Fanvue existing-chat text send command', () => {
     });
     expect(ledger.reserve).toHaveBeenLastCalledWith(
       expect.anything(),
-      expect.objectContaining({ textBody: 'Unlock', mediaCount: 1, priceCents: 300 }),
+      expect.objectContaining({
+        textBody: 'Unlock',
+        mediaCount: 1,
+        priceCents: 300,
+        providerMediaUuids: [mediaUuid],
+      }),
+    );
+    expect(ledger.settle).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        result: { state: 'confirmed', providerObjectUuid: messageUuid },
+        mediaDelivery: { fanUuid: input.fanUuid, priceCents: 300 },
+      }),
     );
   });
 

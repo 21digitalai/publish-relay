@@ -9,6 +9,10 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { lockFanvueActionNamespace } from './fanvue-action-namespace.js';
+import {
+  reserveFanvueDmMediaInTransaction,
+  settleFanvueDmMediaInTransaction,
+} from './fanvue-dm-media-delivery.repository.js';
 
 export type FanvueActionKind = 'message' | 'comment' | 'chat_create';
 export type FanvueActionState = 'reserved' | 'confirmed' | 'failed' | 'unknown';
@@ -29,6 +33,7 @@ export interface FanvueActionInput {
   actorType?: string;
   actorId?: string;
   scheduledLeaseOwner?: string | undefined;
+  providerMediaUuids?: string[];
 }
 
 export type FanvueActionReservation =
@@ -184,7 +189,18 @@ export async function reserveFanvueAction(
       })
       .onConflictDoNothing()
       .returning({ id: fanvueActionIntents.id });
-    if (inserted[0]) return { kind: 'new', id: inserted[0].id };
+    if (inserted[0]) {
+      if (input.actionKind === 'message' && input.providerMediaUuids?.length) {
+        await reserveFanvueDmMediaInTransaction(transaction, {
+          workspaceId: input.workspaceId,
+          accountId: input.accountId,
+          fanUuid: input.targetUuid,
+          clientActionId: input.clientActionId,
+          providerMediaUuids: input.providerMediaUuids,
+        });
+      }
+      return { kind: 'new', id: inserted[0].id };
+    }
     const rows = await transaction
       .select({
         actionKind: fanvueActionIntents.actionKind,
@@ -221,6 +237,10 @@ export async function settleFanvueAction(
       | { state: 'confirmed'; providerObjectUuid: string }
       | { state: 'failed'; failureStatus: number }
       | { state: 'unknown' };
+    mediaDelivery?: {
+      fanUuid: string;
+      priceCents?: number;
+    };
   },
 ): Promise<void> {
   z.uuid().parse(input.reservationId);
@@ -242,5 +262,21 @@ export async function settleFanvueAction(
       )
       .returning({ id: fanvueActionIntents.id });
     if (rows.length !== 1) throw new Error('Fanvue action intent was not reserved');
+    if (input.mediaDelivery) {
+      const settled = await settleFanvueDmMediaInTransaction(transaction, {
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.mediaDelivery.fanUuid,
+        clientActionId: input.clientActionId,
+        state: input.result.state === 'confirmed' ? 'confirmed' : 'unknown',
+        ...(input.result.state === 'confirmed'
+          ? { providerMessageUuid: input.result.providerObjectUuid }
+          : {}),
+        ...(input.mediaDelivery.priceCents !== undefined
+          ? { priceCents: input.mediaDelivery.priceCents }
+          : {}),
+      });
+      if (settled.length === 0) throw new Error('Fanvue media delivery was not reserved');
+    }
   });
 }

@@ -34,6 +34,60 @@ export class FanvueDmMediaAlreadyUsedError extends Error {
   }
 }
 
+export async function reserveFanvueDmMediaInTransaction(
+  transaction: NodePgDatabase,
+  unparsed: z.input<typeof reservation>,
+) {
+  const input = reservation.parse(unparsed);
+  const providerMediaUuids = [...new Set(input.providerMediaUuids)];
+  if (providerMediaUuids.length !== input.providerMediaUuids.length)
+    throw new FanvueDmMediaAlreadyUsedError();
+  await requireFanvueAccount(transaction, input);
+  const existing = await transaction
+    .select({
+      id: fanvueDmMediaDeliveries.id,
+      providerMediaUuid: fanvueDmMediaDeliveries.providerMediaUuid,
+      state: fanvueDmMediaDeliveries.state,
+    })
+    .from(fanvueDmMediaDeliveries)
+    .where(
+      and(
+        eq(fanvueDmMediaDeliveries.workspaceId, input.workspaceId),
+        eq(fanvueDmMediaDeliveries.accountId, input.accountId),
+        eq(fanvueDmMediaDeliveries.fanUuid, input.fanUuid),
+        eq(fanvueDmMediaDeliveries.clientActionId, input.clientActionId),
+      ),
+    );
+  if (existing.length > 0) {
+    const existingMedia = existing.map((row) => row.providerMediaUuid).sort();
+    const requestedMedia = [...providerMediaUuids].sort();
+    if (
+      existing.some((row) => row.state === 'cancelled') ||
+      existingMedia.length !== requestedMedia.length ||
+      existingMedia.some((value, index) => value !== requestedMedia[index])
+    )
+      throw new FanvueDmMediaAlreadyUsedError();
+    return existing.map((row) => row.id);
+  }
+  const inserted = await transaction
+    .insert(fanvueDmMediaDeliveries)
+    .values(
+      providerMediaUuids.map((providerMediaUuid) => ({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+        providerMediaUuid,
+        source: 'relay_action',
+        clientActionId: input.clientActionId,
+        state: 'reserved',
+      })),
+    )
+    .onConflictDoNothing()
+    .returning({ id: fanvueDmMediaDeliveries.id });
+  if (inserted.length !== providerMediaUuids.length) throw new FanvueDmMediaAlreadyUsedError();
+  return inserted.map((row) => row.id);
+}
+
 async function requireFanvueAccount(transaction: NodePgDatabase, input: z.output<typeof identity>) {
   const [account] = await transaction
     .select({ provider: providerAccounts.destinationProvider })
@@ -54,55 +108,9 @@ export async function reserveFanvueDmMedia(
   unparsed: z.input<typeof reservation>,
 ) {
   const input = reservation.parse(unparsed);
-  const providerMediaUuids = [...new Set(input.providerMediaUuids)];
-  if (providerMediaUuids.length !== input.providerMediaUuids.length)
-    throw new FanvueDmMediaAlreadyUsedError();
-  return withTenantTransaction(database, input, async (transaction) => {
-    await requireFanvueAccount(transaction, input);
-    const existing = await transaction
-      .select({
-        id: fanvueDmMediaDeliveries.id,
-        providerMediaUuid: fanvueDmMediaDeliveries.providerMediaUuid,
-        state: fanvueDmMediaDeliveries.state,
-      })
-      .from(fanvueDmMediaDeliveries)
-      .where(
-        and(
-          eq(fanvueDmMediaDeliveries.workspaceId, input.workspaceId),
-          eq(fanvueDmMediaDeliveries.accountId, input.accountId),
-          eq(fanvueDmMediaDeliveries.fanUuid, input.fanUuid),
-          eq(fanvueDmMediaDeliveries.clientActionId, input.clientActionId),
-        ),
-      );
-    if (existing.length > 0) {
-      const existingMedia = existing.map((row) => row.providerMediaUuid).sort();
-      const requestedMedia = [...providerMediaUuids].sort();
-      if (
-        existing.some((row) => row.state === 'cancelled') ||
-        existingMedia.length !== requestedMedia.length ||
-        existingMedia.some((value, index) => value !== requestedMedia[index])
-      )
-        throw new FanvueDmMediaAlreadyUsedError();
-      return existing.map((row) => row.id);
-    }
-    const inserted = await transaction
-      .insert(fanvueDmMediaDeliveries)
-      .values(
-        providerMediaUuids.map((providerMediaUuid) => ({
-          workspaceId: input.workspaceId,
-          accountId: input.accountId,
-          fanUuid: input.fanUuid,
-          providerMediaUuid,
-          source: 'relay_action',
-          clientActionId: input.clientActionId,
-          state: 'reserved',
-        })),
-      )
-      .onConflictDoNothing()
-      .returning({ id: fanvueDmMediaDeliveries.id });
-    if (inserted.length !== providerMediaUuids.length) throw new FanvueDmMediaAlreadyUsedError();
-    return inserted.map((row) => row.id);
-  });
+  return withTenantTransaction(database, input, (transaction) =>
+    reserveFanvueDmMediaInTransaction(transaction, input),
+  );
 }
 
 export async function settleFanvueDmMedia(
@@ -112,27 +120,37 @@ export async function settleFanvueDmMedia(
   const input = settlement.parse(unparsed);
   if (input.state === 'confirmed' && !input.providerMessageUuid)
     throw new Error('Confirmed Fanvue media delivery requires a provider message UUID');
-  return withTenantTransaction(database, input, async (transaction) =>
-    transaction
-      .update(fanvueDmMediaDeliveries)
-      .set({
-        state: input.state,
-        providerMessageUuid: input.providerMessageUuid ?? null,
-        priceCents: input.priceCents ?? null,
-        purchasedAt: input.purchasedAt ?? null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(fanvueDmMediaDeliveries.workspaceId, input.workspaceId),
-          eq(fanvueDmMediaDeliveries.accountId, input.accountId),
-          eq(fanvueDmMediaDeliveries.fanUuid, input.fanUuid),
-          eq(fanvueDmMediaDeliveries.clientActionId, input.clientActionId),
-          eq(fanvueDmMediaDeliveries.state, 'reserved'),
-        ),
-      )
-      .returning({ id: fanvueDmMediaDeliveries.id }),
+  return withTenantTransaction(database, input, (transaction) =>
+    settleFanvueDmMediaInTransaction(transaction, input),
   );
+}
+
+export async function settleFanvueDmMediaInTransaction(
+  transaction: NodePgDatabase,
+  unparsed: z.input<typeof settlement>,
+) {
+  const input = settlement.parse(unparsed);
+  if (input.state === 'confirmed' && !input.providerMessageUuid)
+    throw new Error('Confirmed Fanvue media delivery requires a provider message UUID');
+  return transaction
+    .update(fanvueDmMediaDeliveries)
+    .set({
+      state: input.state,
+      providerMessageUuid: input.providerMessageUuid ?? null,
+      priceCents: input.priceCents ?? null,
+      purchasedAt: input.purchasedAt ?? null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(fanvueDmMediaDeliveries.workspaceId, input.workspaceId),
+        eq(fanvueDmMediaDeliveries.accountId, input.accountId),
+        eq(fanvueDmMediaDeliveries.fanUuid, input.fanUuid),
+        eq(fanvueDmMediaDeliveries.clientActionId, input.clientActionId),
+        eq(fanvueDmMediaDeliveries.state, 'reserved'),
+      ),
+    )
+    .returning({ id: fanvueDmMediaDeliveries.id });
 }
 
 export async function cancelReservedFanvueDmMedia(

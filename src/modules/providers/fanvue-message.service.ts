@@ -205,9 +205,9 @@ export class FanvueMessageService {
   }): Promise<'allow' | 'cancel' | 'freeze_unknown'> {
     if (!input.expectedLatestInboundMessageUuid || !input.expectedLatestInboundAt) return 'allow';
     try {
-      const latest = await this.reads.getExistingChatForMessage(input);
-      return latest.latestMessageUuid === input.expectedLatestInboundMessageUuid &&
-        latest.latestMessageAt.getTime() === input.expectedLatestInboundAt.getTime()
+      const latest = await this.reads.getLatestRecipientMessageForSendBoundary(input);
+      return latest.latestInboundMessageUuid === input.expectedLatestInboundMessageUuid &&
+        latest.latestInboundAt.getTime() === input.expectedLatestInboundAt.getTime()
         ? 'allow'
         : 'cancel';
     } catch {

@@ -57,6 +57,29 @@ describe('Fanvue existing-chat send preflight', () => {
     });
   });
 
+  it('finds the latest recipient inbound behind group-owned outbound messages', async () => {
+    const inboundUuid = '00000000-0000-4000-8000-000000000007';
+    const context = fixture([
+      {
+        sender: { uuid: '00000000-0000-4000-8000-000000000004' },
+        recipient: { uuid: input.fanUuid },
+      },
+      {
+        uuid: inboundUuid,
+        sentAt: '2026-11-20T11:00:00.000Z',
+        sender: { uuid: input.fanUuid },
+        recipient: { uuid: '00000000-0000-4000-8000-000000000004' },
+      },
+    ]);
+    await expect(
+      context.service.getLatestRecipientMessageForSendBoundary(input),
+    ).resolves.toEqual({
+      latestInboundMessageUuid: inboundUuid,
+      latestInboundAt: new Date('2026-11-20T11:00:00.000Z'),
+    });
+    expect(context.listMessages).toHaveBeenCalledWith('token', input.fanUuid, { size: 10 });
+  });
+
   it('proves purchase facts with read chat and media scopes without write chat', async () => {
     const context = fixture([
       {

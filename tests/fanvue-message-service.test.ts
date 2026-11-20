@@ -64,6 +64,12 @@ const reads = {
       latestMessageAt: new Date('2026-11-20T10:00:00Z'),
     });
   }),
+  getLatestRecipientMessageForSendBoundary: vi.fn(() =>
+    Promise.resolve({
+      latestInboundMessageUuid: messageUuid,
+      latestInboundAt: new Date('2026-11-20T10:00:00Z'),
+    }),
+  ),
   getMediaStatus: vi.fn(() => Promise.resolve({ uuid: mediaUuid, status: 'ready' })),
 };
 const client = {
@@ -175,8 +181,9 @@ describe('Fanvue grouped dispatch preflight', () => {
     expect(pending.scheduleGroup).not.toHaveBeenCalled();
   });
 
-  it('allows only the exact latest message boundary', async () => {
+  it('allows group-owned outbound predecessors while guarding the recipient boundary', async () => {
     await expect(service.preflightScheduledDispatch(boundary)).resolves.toBe('allow');
+    expect(reads.getLatestRecipientMessageForSendBoundary).toHaveBeenCalledWith(boundary);
     await expect(
       service.preflightScheduledDispatch({
         ...boundary,
@@ -186,7 +193,9 @@ describe('Fanvue grouped dispatch preflight', () => {
   });
 
   it('freezes on an ambiguous provider read and preserves legacy singles', async () => {
-    reads.getExistingChatForMessage.mockRejectedValueOnce(new Error('provider unavailable'));
+    reads.getLatestRecipientMessageForSendBoundary.mockRejectedValueOnce(
+      new Error('provider unavailable'),
+    );
     await expect(service.preflightScheduledDispatch(boundary)).resolves.toBe('freeze_unknown');
     await expect(
       service.preflightScheduledDispatch({

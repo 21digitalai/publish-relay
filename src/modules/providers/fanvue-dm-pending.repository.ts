@@ -147,6 +147,28 @@ export async function scheduleFanvueDmGroup(
         throw new FanvueDmScheduleConflictError();
       return prior;
     }
+    const [commentCollision] = await tx
+      .select({ id: fanvueCommentPendingIntents.id })
+      .from(fanvueCommentPendingIntents)
+      .where(
+        and(
+          eq(fanvueCommentPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueCommentPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (commentCollision) throw new FanvueDmScheduleConflictError();
+    const [actionCollision] = await tx
+      .select({ id: fanvueActionIntents.id })
+      .from(fanvueActionIntents)
+      .where(
+        and(
+          eq(fanvueActionIntents.workspaceId, input.workspaceId),
+          eq(fanvueActionIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (actionCollision) throw new FanvueDmScheduleConflictError();
     const [account] = await tx
       .select({ provider: providerAccounts.destinationProvider })
       .from(providerAccounts)

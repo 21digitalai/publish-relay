@@ -97,6 +97,40 @@ describe('Fanvue durable DM groups', () => {
     }
   });
 
+  it('rejects root action IDs already owned by immediate or comment ledgers', async () => {
+    const { pg, database } = await setup();
+    try {
+      const input = command();
+      await pg.query(
+        `INSERT INTO fanvue_action_intents (id, workspace_id, client_action_id)
+         VALUES ($1, $2, $3)`,
+        ['00000000-0000-4000-8000-000000000010', workspaceId, input.clientActionId],
+      );
+      await expect(scheduleFanvueDmGroup(database, input)).rejects.toBeInstanceOf(
+        FanvueDmScheduleConflictError,
+      );
+      await pg.query('DELETE FROM fanvue_action_intents');
+      await pg.query(
+        `INSERT INTO fanvue_comment_pending_intents (
+          workspace_id, account_id, client_action_id, actor_type, actor_id,
+          post_uuid, text_body, due_at
+        ) VALUES ($1, $2, $3, 'api_key', $4, $5, 'comment', now())`,
+        [
+          workspaceId,
+          accountId,
+          input.clientActionId,
+          input.actor.id,
+          '00000000-0000-4000-8000-000000000011',
+        ],
+      );
+      await expect(scheduleFanvueDmGroup(database, input)).rejects.toBeInstanceOf(
+        FanvueDmScheduleConflictError,
+      );
+    } finally {
+      await pg.close();
+    }
+  });
+
   it('cancels only unsent group parts and isolates tenant reads', async () => {
     const { pg, database } = await setup();
     try {

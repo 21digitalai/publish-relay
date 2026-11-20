@@ -93,6 +93,24 @@ export class FanvueReadService {
     return this.getExistingChat(input, ['write:chat']);
   }
 
+  /**
+   * Group tails compare the recipient-authored boundary, not the latest overall edge,
+   * because confirmed predecessors from this same group are expected to be newer.
+   */
+  async getLatestRecipientMessageForSendBoundary(input: {
+    workspaceId: string;
+    accountId: string;
+    fanUuid: string;
+  }) {
+    const fanUuid = z.uuid().parse(input.fanUuid);
+    const token = await this.accessToken(input, 'chat', ['write:chat']);
+    const messages = await this.readClient.listMessages(token, fanUuid, { size: 10 });
+    const inbound = messages.data.find((message) => message.sender.uuid === fanUuid);
+    if (!inbound || inbound.recipient.uuid === fanUuid)
+      throw new FanvueReadUnavailableError('account_not_found');
+    return { latestInboundMessageUuid: inbound.uuid, latestInboundAt: new Date(inbound.sentAt) };
+  }
+
   private async getExistingChat(
     input: { workspaceId: string; accountId: string; fanUuid: string },
     additionalScopes: string[],

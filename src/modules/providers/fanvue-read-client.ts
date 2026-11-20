@@ -28,6 +28,14 @@ const media = z.object({
   status: z.enum(['created', 'processing', 'ready', 'error']),
   errorReason: z.string().nullish(),
 });
+const mediaThumbnail = media.extend({
+  variants: z.array(
+    z.object({
+      variantType: z.enum(['blurred', 'main', 'thumbnail', 'thumbnail_gallery']),
+      url: z.url(),
+    }),
+  ),
+});
 const vaultFolder = z.object({
   name: z.string().min(1).max(255),
   createdAt: z.string().nullable(),
@@ -221,6 +229,11 @@ export class FanvueReadClient {
   getMediaStatus(accessToken: string, mediaUuid: string) {
     const id = z.uuid().parse(mediaUuid);
     return this.get(accessToken, `/media/${id}`, media);
+  }
+
+  getMediaThumbnail(accessToken: string, mediaUuid: string) {
+    const id = z.uuid().parse(mediaUuid);
+    return this.get(accessToken, `/media/${id}?variants=thumbnail`, mediaThumbnail);
   }
 
   listPosts(accessToken: string, options: { cursor?: string; size?: number } = {}) {

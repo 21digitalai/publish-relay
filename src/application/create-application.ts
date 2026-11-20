@@ -72,6 +72,7 @@ import {
   registerFanvueBrowserReadRoutes,
   registerFanvueReadRoutes,
 } from '../modules/providers/fanvue-read.routes.js';
+import { registerFanvueVaultCatalogRoutes } from '../modules/providers/fanvue-vault-catalog.routes.js';
 import { registerTikTokConsentRoutes } from '../modules/providers/tiktok-consent.routes.js';
 import { registerTikTokDraftRoutes } from '../modules/providers/tiktok-draft.routes.js';
 import { registerTikTokScheduleRoutes } from '../modules/providers/tiktok-schedule.routes.js';
@@ -293,6 +294,14 @@ function registerMachineApiRoutes(
       options.fanvueOauth.readClient ?? new FanvueReadClient(),
     );
     registerFanvueReadRoutes(application, reads, apiKeys, rateLimiter, delegatedAuthorization);
+    registerFanvueVaultCatalogRoutes(application, {
+      database,
+      reads,
+      apiKeys,
+      rateLimiter,
+      ...(auth ? { auth } : {}),
+      ...(delegatedAuthorization ? { delegatedAuthorization } : {}),
+    });
     registerFanvueCommentRoutes(
       application,
       new FanvueCommentService(database, reads, new FanvueCommentClient(), actionPolicy),

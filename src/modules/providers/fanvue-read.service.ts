@@ -119,6 +119,13 @@ export class FanvueReadService {
     return this.readClient.getMediaStatus(token, input.mediaUuid);
   }
 
+  async getMediaThumbnail(input: { workspaceId: string; accountId: string; mediaUuid: string }) {
+    const token = await this.accessToken(input, 'media');
+    const media = await this.readClient.getMediaThumbnail(token, input.mediaUuid);
+    const thumbnail = media.variants.find((variant) => variant.variantType === 'thumbnail');
+    return { status: media.status, url: thumbnail?.url ?? null };
+  }
+
   async listVaultFolders(input: {
     workspaceId: string;
     accountId: string;

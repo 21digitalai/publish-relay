@@ -1081,7 +1081,9 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
           ],
           responses: {
-            '200': { description: 'Posted, completely proven unposted, or explicit unknown coverage' },
+            '200': {
+              description: 'Posted, completely proven unposted, or explicit unknown coverage',
+            },
             '400': { description: 'Invalid account, media UUID or page cap' },
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing fanvue:media:read capability' },

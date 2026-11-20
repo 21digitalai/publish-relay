@@ -314,12 +314,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'relationship',
     'subscriptionStatus',
   ]),
-  'fanvue:folders': new Set([
-    ...ENVELOPE_OUTPUT_KEYS,
-    'nextCursor',
-    'name',
-    'createdAt',
-  ]),
+  'fanvue:folders': new Set([...ENVELOPE_OUTPUT_KEYS, 'nextCursor', 'name', 'createdAt']),
   'fanvue:folder-media': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'nextCursor',

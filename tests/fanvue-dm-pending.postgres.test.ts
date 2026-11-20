@@ -361,10 +361,7 @@ describe('Fanvue DM pending intent foundation', () => {
         latestAt: new Date('2026-11-20T12:05:00Z'),
       };
       await scheduleFanvueDmGroup(database, group);
-      const rootResult = await dispatchDueFanvueDms(
-        runtime,
-        new Date('2026-11-20T13:00:00Z'),
-      );
+      const rootResult = await dispatchDueFanvueDms(runtime, new Date('2026-11-20T13:00:00Z'));
       expect(rootResult).toMatchObject({ state: 'confirmed', settled: true });
       const tailDue = await pg.query<{ due_at: string }>(
         `SELECT due_at FROM fanvue_dm_pending_intents

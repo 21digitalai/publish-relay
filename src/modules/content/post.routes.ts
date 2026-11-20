@@ -390,11 +390,7 @@ export function registerPostRoutes(
           requestFingerprint: mutationFingerprint({ jobId }),
         },
         async (transaction) => {
-          const provider = await getMachineJobProvider(
-            transaction,
-            principal.workspaceId,
-            jobId,
-          );
+          const provider = await getMachineJobProvider(transaction, principal.workspaceId, jobId);
           if (provider && enabledAdapters?.has(provider) === false)
             return {
               statusCode: 409,

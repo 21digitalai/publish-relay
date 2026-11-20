@@ -68,6 +68,13 @@ export async function observeFanvueDmConversationSummary(
       )
       .for('update')
       .limit(1);
+    if (existing?.latestObservedAt) {
+      const isOlder = input.latestMessageAt.getTime() < existing.latestObservedAt.getTime();
+      const isAmbiguousEqualTime =
+        input.latestMessageAt.getTime() === existing.latestObservedAt.getTime() &&
+        input.latestMessageUuid !== existing.latestObservedMessageUuid;
+      if (isOlder || isAmbiguousEqualTime) return existing;
+    }
     const isNewInbound =
       input.latestDirection === 'inbound' &&
       input.latestMessageUuid !== existing?.latestInboundMessageUuid;

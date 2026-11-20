@@ -82,6 +82,79 @@ describe('Fanvue neutral conversation state', () => {
     }
   });
 
+  it('does not regress or reactivate from stale or ambiguous chat-list summaries', async () => {
+    const { pg, database } = await setup();
+    try {
+      const base = { workspaceId, accountId, fanUuid };
+      const firstAt = new Date('2026-11-20T10:00:00Z');
+      const secondAt = new Date('2026-11-20T10:10:00Z');
+      await observeFanvueDmConversationSummary(database, {
+        ...base,
+        latestMessageUuid: firstInbound,
+        latestMessageAt: firstAt,
+        latestDirection: 'inbound',
+        providerIsRead: false,
+        providerUnreadCount: 1,
+        observedAt: firstAt,
+      });
+      await observeFanvueDmConversationSummary(database, {
+        ...base,
+        latestMessageUuid: secondInbound,
+        latestMessageAt: secondAt,
+        latestDirection: 'inbound',
+        providerIsRead: true,
+        providerUnreadCount: 0,
+        observedAt: secondAt,
+      });
+      await updateFanvueDmConversationWorkflow(database, {
+        ...base,
+        quietUntilInboundAfterUuid: secondInbound,
+        nextReviewAt: null,
+      });
+
+      const stale = await observeFanvueDmConversationSummary(database, {
+        ...base,
+        latestMessageUuid: firstInbound,
+        latestMessageAt: firstAt,
+        latestDirection: 'inbound',
+        providerIsRead: false,
+        providerUnreadCount: 8,
+        observedAt: new Date('2026-11-20T10:20:00Z'),
+      });
+      expect(stale).toMatchObject({
+        latestObservedMessageUuid: secondInbound,
+        latestObservedAt: secondAt,
+        latestInboundMessageUuid: secondInbound,
+        latestInboundAt: secondAt,
+        providerIsRead: true,
+        providerUnreadCount: 0,
+        quietUntilInboundAfterUuid: secondInbound,
+        nextReviewAt: null,
+      });
+
+      const ambiguousUuid = '00000000-0000-4000-8000-000000000007';
+      const ambiguous = await observeFanvueDmConversationSummary(database, {
+        ...base,
+        latestMessageUuid: ambiguousUuid,
+        latestMessageAt: secondAt,
+        latestDirection: 'inbound',
+        providerIsRead: false,
+        providerUnreadCount: 9,
+        observedAt: new Date('2026-11-20T10:25:00Z'),
+      });
+      expect(ambiguous).toMatchObject({
+        latestObservedMessageUuid: secondInbound,
+        latestInboundMessageUuid: secondInbound,
+        providerIsRead: true,
+        providerUnreadCount: 0,
+        quietUntilInboundAfterUuid: secondInbound,
+        nextReviewAt: null,
+      });
+    } finally {
+      await pg.close();
+    }
+  });
+
   it('returns only due non-quiet rows in the selected tenant', async () => {
     const { pg, database } = await setup();
     try {

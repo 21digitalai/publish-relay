@@ -953,7 +953,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               required: true,
               schema: { type: 'string', minLength: 1, maxLength: 255 },
             },
-            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 1024 } },
             {
               name: 'size',
               in: 'query',

@@ -1,7 +1,7 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import { and, eq, isNull, lte, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 
@@ -16,6 +16,11 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { lockFanvueActionNamespace } from './fanvue-action-namespace.js';
+import {
+  MessageGroupValidationError,
+  sampleMessageGroupDueAt,
+  validateMessageGroupBubbles,
+} from '../engagement/message-group.js';
 
 export const scheduleInput = z
   .strictObject({
@@ -67,7 +72,212 @@ const projection = {
   dueAt: fanvueDmPendingIntents.dueAt,
   status: fanvueDmPendingIntents.status,
   leaseOwner: fanvueDmPendingIntents.leaseOwner,
+  groupId: fanvueDmPendingIntents.groupId,
+  sequenceIndex: fanvueDmPendingIntents.sequenceIndex,
+  gapSeconds: fanvueDmPendingIntents.gapSeconds,
 };
+
+export const fanvueGroupScheduleInput = z.strictObject({
+  workspaceId: z.uuid(),
+  accountId: z.uuid(),
+  fanUuid: z.uuid(),
+  clientActionId: z.uuid(),
+  actor: z.strictObject({ type: z.enum(['user', 'api-key', 'delegated']), id: z.uuid() }),
+  bubbles: z.array(z.string()).min(1).max(5),
+  expectedLatestInboundMessageUuid: z.uuid(),
+  expectedLatestInboundAt: z.date(),
+  earliestAt: z.date(),
+  latestAt: z.date(),
+});
+
+function groupFingerprint(input: z.output<typeof fanvueGroupScheduleInput>) {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+        actorType: input.actor.type === 'api-key' ? 'api_key' : input.actor.type,
+        actorId: input.actor.id,
+        bubbles: input.bubbles,
+        expectedLatestInboundMessageUuid: input.expectedLatestInboundMessageUuid,
+        expectedLatestInboundAt: input.expectedLatestInboundAt.toISOString(),
+        earliestAt: input.earliestAt.toISOString(),
+        latestAt: input.latestAt.toISOString(),
+      }),
+    )
+    .digest('hex');
+}
+
+export async function scheduleFanvueDmGroup(
+  database: NodePgDatabase,
+  unparsed: z.input<typeof fanvueGroupScheduleInput>,
+) {
+  const input = fanvueGroupScheduleInput.parse(unparsed);
+  try {
+    validateMessageGroupBubbles(input.bubbles, {
+      maximumBubbles: 5,
+      maximumTextLength: 5_000,
+    });
+  } catch (error) {
+    if (error instanceof MessageGroupValidationError) throw new FanvueDmScheduleConflictError();
+    throw error;
+  }
+  return withTenantTransaction(database, input, async (tx) => {
+    await lockFanvueActionNamespace(tx, input.workspaceId, input.clientActionId);
+    const fingerprint = groupFingerprint(input);
+    const [prior] = await tx
+      .select(projection)
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    if (prior) {
+      const [stored] = await tx
+        .select({ requestFingerprint: fanvueDmPendingIntents.requestFingerprint })
+        .from(fanvueDmPendingIntents)
+        .where(eq(fanvueDmPendingIntents.id, prior.id))
+        .limit(1);
+      if (!prior.groupId || stored?.requestFingerprint !== fingerprint)
+        throw new FanvueDmScheduleConflictError();
+      return prior;
+    }
+    const [account] = await tx
+      .select({ provider: providerAccounts.destinationProvider })
+      .from(providerAccounts)
+      .where(
+        and(
+          eq(providerAccounts.workspaceId, input.workspaceId),
+          eq(providerAccounts.id, input.accountId),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (account?.provider !== 'fanvue') throw new FanvueDmScheduleConflictError();
+    const [active] = await tx
+      .select({ id: fanvueDmPendingIntents.id })
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.accountId, input.accountId),
+          eq(fanvueDmPendingIntents.fanUuid, input.fanUuid),
+          inArray(fanvueDmPendingIntents.status, ['waiting', 'pending', 'claimed', 'unknown']),
+        ),
+      )
+      .limit(1);
+    if (active) throw new FanvueDmScheduleConflictError();
+    const groupId = randomUUID();
+    const dueAt = sampleMessageGroupDueAt(input.earliestAt, input.latestAt);
+    const actorType: 'user' | 'api_key' | 'delegated' =
+      input.actor.type === 'api-key' ? 'api_key' : input.actor.type;
+    const rows = input.bubbles.map((text, sequenceIndex) => ({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      fanUuid: input.fanUuid,
+      clientActionId: sequenceIndex === 0 ? input.clientActionId : randomUUID(),
+      actorType,
+      actorId: input.actor.id,
+      textBody: text,
+      dueAt,
+      groupId,
+      sequenceIndex,
+      gapSeconds: sequenceIndex === 0 ? 0 : randomInt(4, 11),
+      expectedLatestInboundMessageUuid: input.expectedLatestInboundMessageUuid,
+      expectedLatestInboundAt: input.expectedLatestInboundAt,
+      requestFingerprint:
+        sequenceIndex === 0
+          ? fingerprint
+          : createHash('sha256').update(`${fingerprint}:${String(sequenceIndex)}`).digest('hex'),
+      status: sequenceIndex === 0 ? ('pending' as const) : ('waiting' as const),
+    }));
+    const inserted = await tx.insert(fanvueDmPendingIntents).values(rows).returning(projection);
+    if (!inserted[0]) throw new Error('Fanvue DM group root insertion failed');
+    return inserted[0];
+  });
+}
+
+export async function getFanvueDmGroupStatus(
+  database: NodePgDatabase,
+  input: { workspaceId: string; accountId: string; fanUuid: string; clientActionId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [root] = await tx
+      .select({ groupId: fanvueDmPendingIntents.groupId, id: fanvueDmPendingIntents.id })
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.accountId, input.accountId),
+          eq(fanvueDmPendingIntents.fanUuid, input.fanUuid),
+          eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+          eq(fanvueDmPendingIntents.sequenceIndex, 0),
+        ),
+      )
+      .limit(1);
+    if (!root?.groupId) return null;
+    const rows = await tx
+      .select({
+        sequence: fanvueDmPendingIntents.sequenceIndex,
+        status: fanvueDmPendingIntents.status,
+        dueAt: fanvueDmPendingIntents.dueAt,
+      })
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.groupId, root.groupId),
+        ),
+      )
+      .orderBy(asc(fanvueDmPendingIntents.sequenceIndex))
+      .limit(5);
+    return {
+      id: root.id,
+      bubbles: rows.map((row) => ({
+        sequence: row.sequence,
+        status: row.status,
+        dueAt: row.dueAt.toISOString(),
+      })),
+    };
+  });
+}
+
+export async function cancelFanvueDmGroup(
+  database: NodePgDatabase,
+  input: { workspaceId: string; accountId: string; fanUuid: string; clientActionId: string },
+) {
+  return withTenantTransaction(database, input, async (tx) => {
+    const [root] = await tx
+      .select({ groupId: fanvueDmPendingIntents.groupId })
+      .from(fanvueDmPendingIntents)
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.accountId, input.accountId),
+          eq(fanvueDmPendingIntents.fanUuid, input.fanUuid),
+          eq(fanvueDmPendingIntents.clientActionId, input.clientActionId),
+          eq(fanvueDmPendingIntents.sequenceIndex, 0),
+        ),
+      )
+      .limit(1);
+    if (!root?.groupId) return null;
+    const cancelled = await tx
+      .update(fanvueDmPendingIntents)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(fanvueDmPendingIntents.workspaceId, input.workspaceId),
+          eq(fanvueDmPendingIntents.groupId, root.groupId),
+          inArray(fanvueDmPendingIntents.status, ['pending', 'waiting']),
+        ),
+      )
+      .returning({ id: fanvueDmPendingIntents.id });
+    return { cancelled: cancelled.length };
+  });
+}
 
 function pendingFingerprint(value: {
   accountId: string;

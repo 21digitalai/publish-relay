@@ -1723,6 +1723,12 @@ export const fanvueDmPendingIntents = pgTable(
     mediaPreviewId: uuid('media_preview_id'),
     priceCents: integer('price_cents'),
     dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    groupId: uuid('group_id'),
+    sequenceIndex: integer('sequence_index'),
+    gapSeconds: integer('gap_seconds'),
+    expectedLatestInboundMessageUuid: uuid('expected_latest_inbound_message_uuid'),
+    expectedLatestInboundAt: timestamp('expected_latest_inbound_at', { withTimezone: true }),
+    requestFingerprint: text('request_fingerprint'),
     status: text('status').notNull().default('pending'),
     leaseOwner: text('lease_owner'),
     leaseUntil: timestamp('lease_until', { withTimezone: true }),
@@ -1734,6 +1740,13 @@ export const fanvueDmPendingIntents = pgTable(
       table.clientActionId,
     ),
     index('fanvue_dm_pending_intents_due_idx').on(table.dueAt, table.id),
+    uniqueIndex('fanvue_dm_pending_intents_group_sequence_unique')
+      .on(table.workspaceId, table.groupId, table.sequenceIndex)
+      .where(sql`${table.groupId} is not null`),
+    check(
+      'fanvue_dm_pending_intents_group_shape_check',
+      sql`(${table.groupId} is null and ${table.sequenceIndex} is null and ${table.gapSeconds} is null and ${table.expectedLatestInboundMessageUuid} is null and ${table.expectedLatestInboundAt} is null and ${table.requestFingerprint} is null) or (${table.groupId} is not null and ${table.sequenceIndex} between 0 and 4 and ${table.gapSeconds} between 0 and 10 and (${table.sequenceIndex} <> 0 or ${table.gapSeconds} = 0) and ${table.expectedLatestInboundMessageUuid} is not null and ${table.expectedLatestInboundAt} is not null and ${table.requestFingerprint} is not null)`,
+    ),
     foreignKey({
       columns: [table.workspaceId, table.accountId],
       foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],

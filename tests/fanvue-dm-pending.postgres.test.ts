@@ -67,6 +67,9 @@ describe('Fanvue DM pending intent foundation', () => {
           'utf8',
         ),
       );
+      await pg.exec(
+        await readFile(new URL('../migrations/0126_fanvue_dm_groups.sql', import.meta.url), 'utf8'),
+      );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const scheduled = await scheduleFanvueDm(database, input);
       expect(scheduled).toMatchObject({ status: 'pending', text: 'Scheduled hello', mediaIds: [] });
@@ -143,6 +146,9 @@ describe('Fanvue DM pending intent foundation', () => {
           new URL('../migrations/0115_fanvue_comment_pending_intents.sql', import.meta.url),
           'utf8',
         ),
+      );
+      await pg.exec(
+        await readFile(new URL('../migrations/0126_fanvue_dm_groups.sql', import.meta.url), 'utf8'),
       );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const dueAt = new Date('2026-11-11T10:00:00Z');
@@ -271,6 +277,9 @@ describe('Fanvue DM pending intent foundation', () => {
           new URL('../migrations/0115_fanvue_comment_pending_intents.sql', import.meta.url),
           'utf8',
         ),
+      );
+      await pg.exec(
+        await readFile(new URL('../migrations/0126_fanvue_dm_groups.sql', import.meta.url), 'utf8'),
       );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const dueAt = new Date('2026-11-11T10:00:00Z');

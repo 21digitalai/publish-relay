@@ -32,6 +32,12 @@ async function setup() {
       'utf8',
     ),
   );
+  await pg.exec(
+    await readFile(
+      new URL('../migrations/0130_fanvue_dm_checkpoint_action_ownership.sql', import.meta.url),
+      'utf8',
+    ),
+  );
   return { pg, database: drizzle(pg) as unknown as NodePgDatabase };
 }
 
@@ -70,6 +76,13 @@ describe('Fanvue conversation checkpoints', () => {
       ).rejects.toBeInstanceOf(FanvueDmCheckpointConflictError);
       await expect(
         reserveFanvueDmCheckpoint(database, { ...input, providerMediaUuid: providerMessageUuid }),
+      ).rejects.toBeInstanceOf(FanvueDmCheckpointConflictError);
+      await expect(
+        reserveFanvueDmCheckpoint(database, {
+          ...input,
+          kind: 'paid_offer',
+          ordinal: 2,
+        }),
       ).rejects.toBeInstanceOf(FanvueDmCheckpointConflictError);
       await expect(
         settleFanvueDmCheckpoint(database, {

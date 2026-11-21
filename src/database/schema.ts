@@ -1886,6 +1886,12 @@ export const fanvueDmConversationCheckpoints = pgTable(
       table.kind,
       table.ordinal,
     ),
+    uniqueIndex('fanvue_dm_conversation_checkpoints_action_unique').on(
+      table.workspaceId,
+      table.accountId,
+      table.fanUuid,
+      table.clientActionId,
+    ),
     check(
       'fanvue_dm_conversation_checkpoints_kind_check',
       sql`${table.kind} in ('welcome', 'silent_followup', 'free_gift', 'paid_offer')`,

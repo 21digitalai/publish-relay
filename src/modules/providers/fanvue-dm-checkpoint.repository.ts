@@ -60,6 +60,30 @@ export async function reserveFanvueDmCheckpoint(
       .for('update')
       .limit(1);
     if (account?.provider !== 'fanvue') throw new FanvueDmCheckpointConflictError();
+    const [actionCheckpoint] = await transaction
+      .select()
+      .from(fanvueDmConversationCheckpoints)
+      .where(
+        and(
+          eq(fanvueDmConversationCheckpoints.workspaceId, input.workspaceId),
+          eq(fanvueDmConversationCheckpoints.accountId, input.accountId),
+          eq(fanvueDmConversationCheckpoints.fanUuid, input.fanUuid),
+          eq(fanvueDmConversationCheckpoints.clientActionId, input.clientActionId),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (actionCheckpoint) {
+      if (
+        actionCheckpoint.kind !== input.kind ||
+        actionCheckpoint.ordinal !== input.ordinal ||
+        actionCheckpoint.groupId !== input.groupId ||
+        actionCheckpoint.providerMediaUuid !== input.providerMediaUuid ||
+        actionCheckpoint.state === 'cancelled'
+      )
+        throw new FanvueDmCheckpointConflictError();
+      return actionCheckpoint;
+    }
     const [existing] = await transaction
       .select()
       .from(fanvueDmConversationCheckpoints)
@@ -159,6 +183,7 @@ export async function findFanvueDmCheckpointForAction(
           eq(fanvueDmConversationCheckpoints.clientActionId, input.clientActionId),
         ),
       )
+      .orderBy(asc(fanvueDmConversationCheckpoints.createdAt))
       .limit(1);
     return row ?? null;
   });

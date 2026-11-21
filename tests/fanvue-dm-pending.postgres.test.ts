@@ -268,7 +268,7 @@ describe('Fanvue DM pending intent foundation', () => {
         CREATE TABLE fanvue_action_intents (id uuid PRIMARY KEY, workspace_id uuid NOT NULL,
           account_id uuid NOT NULL, client_action_id uuid NOT NULL, target_uuid uuid NOT NULL,
           action_kind text NOT NULL, state text NOT NULL, text_body text,
-          media_count integer, price_cents integer);
+          provider_object_uuid uuid, media_count integer, price_cents integer);
         INSERT INTO provider_accounts VALUES ('${accountId}','${workspaceId}','fanvue');
       `);
       await pg.exec(
@@ -357,7 +357,9 @@ describe('Fanvue DM pending intent foundation', () => {
         ordinal: 1,
       });
       await pg.exec(`INSERT INTO memberships VALUES ('${workspaceId}','${actorId}','owner')`);
-      await pg.exec(`INSERT INTO fanvue_action_intents VALUES (
+      await pg.exec(`INSERT INTO fanvue_action_intents
+        (id, workspace_id, account_id, client_action_id, target_uuid, action_kind,
+         state, text_body, media_count, price_cents) VALUES (
         '00000000-0000-4000-8000-000000000024','${workspaceId}','${accountId}',
         '${next.clientActionId}','${next.fanUuid}','message','reserved','${next.text}',0,NULL)`);
       const cursor = await pg.query<{ next_at: string }>(

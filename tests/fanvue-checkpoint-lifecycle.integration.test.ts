@@ -367,6 +367,32 @@ describe('Fanvue checkpoint public lifecycle integration', () => {
     expect((await schedule(confirmedId, 1)).statusCode).toBe(201);
     expect(context.sendMessage).toHaveBeenCalledTimes(2);
 
+    const recoveredId = '00000000-0000-4000-8000-000000000144';
+    const recoveredMessageUuid = '00000000-0000-4000-8000-000000000145';
+    expect((await schedule(recoveredId, 4)).statusCode).toBe(201);
+    await context.pg.exec(`
+      INSERT INTO fanvue_action_intents
+        (workspace_id, account_id, client_action_id, action_kind, target_uuid,
+         request_fingerprint, state, provider_object_uuid, text_body, media_count)
+      VALUES
+        ('${workspaceId}', '${accountId}', '${recoveredId}', 'message', '${fanUuid}',
+         '${'a'.repeat(64)}', 'confirmed', '${recoveredMessageUuid}', 'Scheduled 4', 0)
+    `);
+    expect(await dispatchDueFanvueDms(runtime, new Date('2026-11-21T09:10:00Z'))).toMatchObject({
+      state: 'confirmed',
+      settled: true,
+    });
+    const recoveredReceipt = await context.application.inject({
+      method: 'GET',
+      url: checkpointUrl,
+      headers,
+    });
+    expect(recoveredReceipt.statusCode).toBe(200);
+    expect(recoveredReceipt.body).toContain('"ordinal":4');
+    expect(recoveredReceipt.body).toContain('"state":"confirmed"');
+    expect(recoveredReceipt.body).toContain(recoveredMessageUuid);
+    expect(context.sendMessage).toHaveBeenCalledTimes(2);
+
     context.setProviderFailure(false);
     context.setLatestInbound({
       latestInboundMessageUuid: '00000000-0000-4000-8000-000000000122',

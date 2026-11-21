@@ -30,6 +30,10 @@ interface Runtime {
 
 type Intent = NonNullable<Awaited<ReturnType<typeof claimDueFanvueDm>>>;
 type State = 'confirmed' | 'failed' | 'unknown' | 'pending' | 'cancelled';
+interface ExistingActionReceipt {
+  state: 'confirmed' | 'failed' | 'unknown';
+  providerObjectUuid?: string;
+}
 
 export async function hasCurrentFanvueAuthority(
   database: NodePgDatabase,
@@ -85,7 +89,7 @@ export async function hasCurrentFanvueAuthority(
 async function existingActionState(
   database: NodePgDatabase,
   intent: Intent,
-): Promise<State | null> {
+): Promise<ExistingActionReceipt | null> {
   return withTenantTransaction(database, intent, async (tx) => {
     const [action] = await tx
       .select({
@@ -93,6 +97,7 @@ async function existingActionState(
         targetUuid: fanvueActionIntents.targetUuid,
         actionKind: fanvueActionIntents.actionKind,
         state: fanvueActionIntents.state,
+        providerObjectUuid: fanvueActionIntents.providerObjectUuid,
         text: fanvueActionIntents.textBody,
         mediaCount: fanvueActionIntents.mediaCount,
         price: fanvueActionIntents.priceCents,
@@ -114,17 +119,30 @@ async function existingActionState(
       action.mediaCount !== intent.mediaIds.length ||
       action.price !== intent.price
     )
-      return 'unknown';
-    return action.state === 'confirmed' || action.state === 'failed' ? action.state : 'unknown';
+      return { state: 'unknown' };
+    if (action.state === 'confirmed' && action.providerObjectUuid)
+      return { state: 'confirmed', providerObjectUuid: action.providerObjectUuid };
+    return { state: action.state === 'failed' ? 'failed' : 'unknown' };
   });
+}
+
+async function reconcileActionCheckpoint(
+  database: NodePgDatabase,
+  intent: Intent,
+  receipt: ExistingActionReceipt,
+) {
+  const settlement =
+    receipt.state === 'confirmed' && receipt.providerObjectUuid
+      ? ({ state: 'confirmed', providerMessageUuid: receipt.providerObjectUuid } as const)
+      : ({ state: 'unknown' } as const);
+  await settleFanvueActionCheckpoint(database, intent, settlement);
 }
 
 async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   const prior = await existingActionState(runtime.database, intent);
   if (prior) {
-    if (prior === 'unknown')
-      await settleFanvueActionCheckpoint(runtime.database, intent, { state: 'unknown' });
-    return prior;
+    await reconcileActionCheckpoint(runtime.database, intent, prior);
+    return prior.state;
   }
   if (intent.expectedLatestInboundMessageUuid && runtime.messages.preflightScheduledDispatch) {
     const preflight = await runtime.messages.preflightScheduledDispatch(intent);
@@ -167,7 +185,10 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   } catch (error) {
     // A committed action reservation can have reached Fanvue even if settlement failed.
     const prior = await existingActionState(runtime.database, intent);
-    if (prior) return prior;
+    if (prior) {
+      await reconcileActionCheckpoint(runtime.database, intent, prior);
+      return prior.state;
+    }
     if (
       error instanceof FanvueReadUnavailableError ||
       error instanceof FanvueMessageMediaUnavailableError ||

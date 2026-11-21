@@ -52,6 +52,11 @@ const debugSchema = z.object({
     user_id: z.string().min(1).optional(),
     expires_at: z.number().int().nonnegative().optional(),
     scopes: z.array(z.string()).default([]),
+    granular_scopes: z
+      .array(
+        z.object({ scope: z.string().min(1), target_ids: z.array(z.string().min(1)).default([]) }),
+      )
+      .default([]),
   }),
 });
 
@@ -102,7 +107,19 @@ export interface MetaCredential {
   userId: string;
   expiresAt?: string;
   scopes: MetaPermission[];
+  granularPermissions: Array<{ permission: string; targetIds: string[] }>;
 }
+
+export type MetaDiscoveryEvidence =
+  | {
+      kind: 'pages';
+      pageCount: number;
+      pageIds: string[];
+      pageTasks: Array<{ pageId: string; tasks: string[] }>;
+    }
+  | { kind: 'schema_invalid' };
+
+export type MetaDiscoveryDiagnostics = (evidence: MetaDiscoveryEvidence) => void;
 
 export interface MetaDiscoveredPage {
   id: string;
@@ -242,12 +259,17 @@ export class MetaHttpClient {
           ? { expiresAt: new Date(this.now() + token.expires_in * 1000).toISOString() }
           : {}),
       scopes: [...permissions],
+      granularPermissions: debug.data.granular_scopes.map((grant) => ({
+        permission: grant.scope,
+        targetIds: [...grant.target_ids],
+      })),
     };
   }
 
   public async discoverPages(
     accessToken: string,
     family?: MetaGrantFamily,
+    diagnostics?: MetaDiscoveryDiagnostics,
   ): Promise<MetaDiscoveredPage[]> {
     const pages: MetaDiscoveredPage[] = [];
     let after: string | undefined;
@@ -264,7 +286,13 @@ export class MetaHttpClient {
       const response = await this.request(url, {
         headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
       });
-      const body = pagesSchema.parse(await this.responseJson(response));
+      let body: z.infer<typeof pagesSchema>;
+      try {
+        body = pagesSchema.parse(await this.responseJson(response));
+      } catch (error) {
+        if (error instanceof z.ZodError) diagnostics?.({ kind: 'schema_invalid' });
+        throw error;
+      }
       pages.push(
         ...body.data.map((page) => ({
           id: page.id,
@@ -288,7 +316,15 @@ export class MetaHttpClient {
         })),
       );
       const next = body.paging?.cursors?.after;
-      if (!next || next === after) return pages;
+      if (!next || next === after) {
+        diagnostics?.({
+          kind: 'pages',
+          pageCount: pages.length,
+          pageIds: pages.map((page) => page.id),
+          pageTasks: pages.map((page) => ({ pageId: page.id, tasks: [...page.tasks] })),
+        });
+        return pages;
+      }
       after = next;
     }
     throw new MetaRequestError(502, 'permanent');

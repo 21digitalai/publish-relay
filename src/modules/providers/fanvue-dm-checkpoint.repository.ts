@@ -18,6 +18,12 @@ const reservation = identity.extend({
   groupId: z.uuid().nullable().default(null),
   providerMediaUuid: z.uuid().nullable().default(null),
 });
+export const fanvueDmCheckpointIntent = reservation.omit({
+  workspaceId: true,
+  accountId: true,
+  fanUuid: true,
+  clientActionId: true,
+});
 const settlementIdentity = identity.extend({ clientActionId: z.uuid() });
 const settlement = z.discriminatedUnion('state', [
   settlementIdentity.extend({
@@ -112,8 +118,49 @@ export async function settleFanvueDmCheckpoint(
         ),
       )
       .returning();
-    if (!row) throw new FanvueDmCheckpointConflictError();
+    if (!row) {
+      const [existing] = await transaction
+        .select()
+        .from(fanvueDmConversationCheckpoints)
+        .where(
+          and(
+            eq(fanvueDmConversationCheckpoints.workspaceId, input.workspaceId),
+            eq(fanvueDmConversationCheckpoints.accountId, input.accountId),
+            eq(fanvueDmConversationCheckpoints.fanUuid, input.fanUuid),
+            eq(fanvueDmConversationCheckpoints.kind, input.kind),
+            eq(fanvueDmConversationCheckpoints.ordinal, input.ordinal),
+            eq(fanvueDmConversationCheckpoints.clientActionId, input.clientActionId),
+          ),
+        )
+        .limit(1);
+      const sameTerminalState =
+        existing?.state === input.state &&
+        (input.state !== 'confirmed' || existing.providerMessageUuid === input.providerMessageUuid);
+      if (!sameTerminalState) throw new FanvueDmCheckpointConflictError();
+      return existing;
+    }
     return row;
+  });
+}
+
+export async function findFanvueDmCheckpointForAction(
+  database: NodePgDatabase,
+  input: { workspaceId: string; accountId: string; fanUuid: string; clientActionId: string },
+) {
+  return withTenantTransaction(database, input, async (transaction) => {
+    const [row] = await transaction
+      .select()
+      .from(fanvueDmConversationCheckpoints)
+      .where(
+        and(
+          eq(fanvueDmConversationCheckpoints.workspaceId, input.workspaceId),
+          eq(fanvueDmConversationCheckpoints.accountId, input.accountId),
+          eq(fanvueDmConversationCheckpoints.fanUuid, input.fanUuid),
+          eq(fanvueDmConversationCheckpoints.clientActionId, input.clientActionId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
   });
 }
 

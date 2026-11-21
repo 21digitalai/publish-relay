@@ -16,6 +16,7 @@ import {
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import { lockFanvueActionNamespace } from './fanvue-action-namespace.js';
+import { fanvueDmCheckpointIntent } from './fanvue-dm-checkpoint.repository.js';
 import {
   MessageGroupValidationError,
   sampleMessageGroupDueAt,
@@ -34,6 +35,7 @@ export const scheduleInput = z
     mediaIds: z.array(z.uuid()).min(1).max(10).optional(),
     mediaPreviewId: z.uuid().optional(),
     price: z.number().int().min(300).optional(),
+    checkpoint: fanvueDmCheckpointIntent.optional(),
     dueAt: z.date(),
   })
   .superRefine((input, context) => {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const ledger = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), settle: vi.fn() }));
 const policy = vi.hoisted(() => ({ enforce: vi.fn(() => Promise.resolve()) }));
 const readyMedia = vi.hoisted(() => ({ get: vi.fn() }));
+const checkpoints = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), settle: vi.fn() }));
 const pending = vi.hoisted(() => ({
   schedule: vi.fn(),
   replay: vi.fn(),
@@ -25,6 +26,12 @@ vi.mock('../src/modules/providers/fanvue-action-intent.repository.js', () => ({
 }));
 vi.mock('../src/modules/providers/fanvue-dm-ready-media.repository.js', () => ({
   getReadyFanvueDmMedia: readyMedia.get,
+}));
+vi.mock('../src/modules/providers/fanvue-dm-checkpoint.repository.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  findFanvueDmCheckpointForAction: checkpoints.find,
+  reserveFanvueDmCheckpoint: checkpoints.reserve,
+  settleFanvueDmCheckpoint: checkpoints.settle,
 }));
 vi.mock('../src/modules/providers/fanvue-dm-pending.repository.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -99,6 +106,9 @@ beforeEach(() => {
     return Promise.resolve();
   });
   readyMedia.get.mockResolvedValue(new Map([[localMediaId, mediaUuid]]));
+  checkpoints.find.mockResolvedValue(null);
+  checkpoints.reserve.mockResolvedValue({ state: 'pending' });
+  checkpoints.settle.mockResolvedValue({ state: 'confirmed' });
   pending.schedule.mockResolvedValue({ status: 'pending' });
   pending.replay.mockResolvedValue(null);
   pending.replayGroup.mockResolvedValue(null);
@@ -129,6 +139,38 @@ describe('Fanvue scheduled message preflight', () => {
       expect.objectContaining({ ...input, dueAt }),
     );
     expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('reserves semantic intent before schedule and cancels only after a proven pre-attempt cancel', async () => {
+    const checkpoint = {
+      kind: 'silent_followup' as const,
+      ordinal: 1,
+      groupId: null,
+      providerMediaUuid: null,
+    };
+    await service.scheduleMessage({ ...input, dueAt, checkpoint });
+    expect(checkpoints.reserve.mock.invocationCallOrder[0]).toBeLessThan(
+      pending.schedule.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+    pending.cancel.mockResolvedValueOnce(true);
+    checkpoints.find.mockResolvedValueOnce({ ...checkpoint, state: 'pending' });
+    await expect(
+      service.cancelScheduledMessage({
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        fanUuid: input.fanUuid,
+        clientActionId: input.clientActionId,
+      }),
+    ).resolves.toBe(true);
+    expect(checkpoints.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        clientActionId: input.clientActionId,
+        kind: 'silent_followup',
+        ordinal: 1,
+        state: 'cancelled',
+      }),
+    );
   });
 
   it('does not persist or send on revoked chat access', async () => {
@@ -333,6 +375,38 @@ describe('Fanvue selected-fan chat creation', () => {
 });
 
 describe('Fanvue existing-chat text send command', () => {
+  it('reserves explicit semantic intent before send and settles the canonical provider result', async () => {
+    const checkpoint = {
+      kind: 'free_gift' as const,
+      ordinal: 1,
+      groupId: null,
+      providerMediaUuid: mediaUuid,
+    };
+    await expect(
+      service.sendMessage({ ...input, mediaUuids: [mediaUuid], checkpoint }),
+    ).resolves.toEqual({ state: 'confirmed', messageUuid });
+    expect(checkpoints.reserve).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      fanUuid: input.fanUuid,
+      clientActionId: input.clientActionId,
+      ...checkpoint,
+    });
+    expect(checkpoints.reserve.mock.invocationCallOrder[0]).toBeLessThan(
+      ledger.reserve.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(checkpoints.settle).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      fanUuid: input.fanUuid,
+      clientActionId: input.clientActionId,
+      kind: checkpoint.kind,
+      ordinal: checkpoint.ordinal,
+      state: 'confirmed',
+      providerMessageUuid: messageUuid,
+    });
+  });
+
   it('preflights selected creator/fan and commits intent before one text-only send', async () => {
     await expect(service.sendText(input)).resolves.toEqual({ state: 'confirmed', messageUuid });
     expect(events).toEqual(['preflight', 'reserve', 'send', 'settle']);

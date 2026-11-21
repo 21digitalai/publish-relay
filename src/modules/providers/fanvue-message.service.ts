@@ -12,6 +12,11 @@ import {
   type FanvueActionReservation,
 } from './fanvue-action-intent.repository.js';
 import { getReadyFanvueDmMedia } from './fanvue-dm-ready-media.repository.js';
+import { fanvueDmCheckpointIntent } from './fanvue-dm-checkpoint.repository.js';
+import {
+  reserveFanvueActionCheckpoint,
+  settleFanvueActionCheckpoint,
+} from './fanvue-dm-checkpoint.service.js';
 import {
   cancelFanvueDmGroup,
   cancelPendingFanvueDm,
@@ -49,6 +54,7 @@ const messageCommand = textMessage
     mediaPreviewUuid: z.uuid().optional(),
     mediaPreviewId: z.uuid().optional(),
     price: z.number().int().min(300).optional(),
+    checkpoint: fanvueDmCheckpointIntent.optional(),
   })
   .superRefine((value, context) => {
     if (!value.text && !value.mediaUuids?.length && !value.mediaIds?.length)
@@ -153,12 +159,18 @@ export class FanvueMessageService {
   async scheduleMessage(input: z.input<typeof scheduleInput>) {
     const command = scheduleInput.parse(input);
     const replay = await replayScheduledFanvueDm(this.database, command);
-    if (replay) return replay;
+    if (replay) {
+      await reserveFanvueActionCheckpoint(this.database, command);
+      return replay;
+    }
     const targetLabel = await this.preflightScheduledMessage(command);
-    return scheduleFanvueDm(this.database, {
-      ...command,
-      targetLabel,
-    });
+    await reserveFanvueActionCheckpoint(this.database, command);
+    try {
+      return await scheduleFanvueDm(this.database, { ...command, targetLabel });
+    } catch (error) {
+      await settleFanvueActionCheckpoint(this.database, command, { state: 'cancelled' });
+      throw error;
+    }
   }
 
   async scheduleMessageGroup(input: z.input<typeof fanvueGroupScheduleInput>) {
@@ -257,7 +269,10 @@ export class FanvueMessageService {
     fanUuid: string;
     clientActionId: string;
   }) {
-    return cancelPendingFanvueDm(this.database, input);
+    const cancelled = await cancelPendingFanvueDm(this.database, input);
+    if (cancelled)
+      await settleFanvueActionCheckpoint(this.database, input, { state: 'cancelled' });
+    return cancelled;
   }
 
   async createChat(
@@ -398,8 +413,13 @@ export class FanvueMessageService {
       scheduledLeaseOwner,
       ...(mediaUuids ? { providerMediaUuids: mediaUuids } : {}),
     };
+    await reserveFanvueActionCheckpoint(this.database, command, mediaUuids);
     const reservation = await reserveFanvueAction(this.database, intent);
-    if (reservation.kind !== 'new') return replayResult(reservation);
+    if (reservation.kind !== 'new') {
+      const replay = replayResult(reservation);
+      await this.settleActionCheckpoint(command, replay);
+      return replay;
+    }
 
     let result: FanvueTextMessageResult;
     try {
@@ -433,7 +453,19 @@ export class FanvueMessageService {
           }
         : {}),
     });
+    await this.settleActionCheckpoint(command, result);
     return result;
+  }
+
+  private async settleActionCheckpoint(
+    command: z.output<typeof messageCommand>,
+    result: FanvueTextMessageResult,
+  ) {
+    const settlement =
+      result.state === 'confirmed'
+        ? ({ state: 'confirmed', providerMessageUuid: result.messageUuid } as const)
+        : ({ state: 'unknown' } as const);
+    await settleFanvueActionCheckpoint(this.database, command, settlement);
   }
 
   private async resolveMedia(command: z.output<typeof messageCommand>) {

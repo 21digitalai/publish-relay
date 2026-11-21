@@ -10,6 +10,11 @@ import { ActionPolicyDeniedError } from '../policy/action-policy.js';
 import { FanvueRequestError } from './fanvue-http-client.js';
 import { FanvueDmScheduleConflictError } from './fanvue-dm-pending.repository.js';
 import {
+  FanvueDmCheckpointConflictError,
+  fanvueDmCheckpointIntent,
+} from './fanvue-dm-checkpoint.repository.js';
+import { FanvueCheckpointMediaConflictError } from './fanvue-dm-checkpoint.service.js';
+import {
   FanvueMessageActionConflictError,
   FanvueMessageMediaUnavailableError,
   FanvueSelectedFanUnavailableError,
@@ -47,6 +52,7 @@ export const fanvueMessageRequestSchema = z.strictObject({
   mediaPreviewUuid: z.uuid().optional(),
   mediaPreviewId: z.uuid().optional(),
   price: z.number().int().min(300).optional(),
+  checkpoint: fanvueDmCheckpointIntent.optional(),
 });
 const scheduledMessageRequestSchema = fanvueMessageRequestSchema
   .omit({ mediaUuids: true, mediaPreviewUuid: true })
@@ -170,6 +176,7 @@ export function registerFanvueMessageRoutes(
           ...(payload.mediaPreviewUuid ? { mediaPreviewUuid: payload.mediaPreviewUuid } : {}),
           ...(payload.mediaPreviewId ? { mediaPreviewId: payload.mediaPreviewId } : {}),
           ...(payload.price !== undefined ? { price: payload.price } : {}),
+          ...(payload.checkpoint ? { checkpoint: payload.checkpoint } : {}),
           actor: { type: principal.kind, id: principal.actorId },
         });
         const status = result.state === 'confirmed' ? 201 : result.state === 'unknown' ? 202 : 409;
@@ -212,6 +219,7 @@ export function registerFanvueMessageRoutes(
           ...(payload.mediaIds ? { mediaIds: payload.mediaIds } : {}),
           ...(payload.mediaPreviewId ? { mediaPreviewId: payload.mediaPreviewId } : {}),
           ...(payload.price !== undefined ? { price: payload.price } : {}),
+          ...(payload.checkpoint ? { checkpoint: payload.checkpoint } : {}),
           dueAt: new Date(payload.dueAt),
           actor: { type: principal.kind, id: principal.actorId },
         });
@@ -424,6 +432,11 @@ function sendMessageError(error: unknown, request: FastifyRequest, reply: Fastif
     return reply.code(409).send(errorEnvelope('action_conflict', error.message, request.id));
   if (error instanceof FanvueDmScheduleConflictError)
     return reply.code(409).send(errorEnvelope('action_conflict', error.message, request.id));
+  if (
+    error instanceof FanvueDmCheckpointConflictError ||
+    error instanceof FanvueCheckpointMediaConflictError
+  )
+    return reply.code(409).send(errorEnvelope('checkpoint_conflict', error.message, request.id));
   if (error instanceof FanvueMessageMediaUnavailableError)
     return reply.code(409).send(errorEnvelope('media_not_ready', error.message, request.id));
   if (error instanceof FanvueSelectedFanUnavailableError)

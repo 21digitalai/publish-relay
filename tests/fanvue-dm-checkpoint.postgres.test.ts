@@ -79,6 +79,13 @@ describe('Fanvue conversation checkpoints', () => {
         }),
       ).resolves.toMatchObject({ state: 'confirmed', providerMessageUuid });
       await expect(
+        settleFanvueDmCheckpoint(database, {
+          ...settlementInput,
+          state: 'confirmed',
+          providerMessageUuid,
+        }),
+      ).resolves.toMatchObject({ state: 'confirmed', providerMessageUuid });
+      await expect(
         settleFanvueDmCheckpoint(database, { ...settlementInput, state: 'unknown' }),
       ).rejects.toBeInstanceOf(FanvueDmCheckpointConflictError);
       expect(await listFanvueDmCheckpoints(database, { workspaceId, accountId, fanUuid })).toEqual([

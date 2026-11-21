@@ -22,6 +22,12 @@ const messageUuid = '00000000-0000-4000-8000-000000000005';
 const actorId = '00000000-0000-4000-8000-000000000006';
 const mediaUuid = '00000000-0000-4000-8000-000000000008';
 const localMediaId = '00000000-0000-4000-8000-000000000009';
+const checkpoint = {
+  kind: 'free_gift',
+  ordinal: 1,
+  groupId: null,
+  providerMediaUuid: mediaUuid,
+};
 const url = `/api/v1/fanvue/accounts/${accountId}/chats/${fanUuid}/messages`;
 const headers = {
   authorization: 'Bearer pr_test.secret',
@@ -247,6 +253,22 @@ describe('Fanvue scheduled DM machine routes', () => {
       ).statusCode,
     ).toBe(400);
     expect(context.scheduleMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('Fanvue semantic checkpoint route contract', () => {
+  it('passes explicit neutral lifecycle intent to the canonical immediate sender', async () => {
+    const context = fixture();
+    const response = await context.application.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: { clientActionId, text: 'A gift', mediaUuids: [mediaUuid], checkpoint },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(context.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ clientActionId, fanUuid, checkpoint }),
+    );
   });
 });
 

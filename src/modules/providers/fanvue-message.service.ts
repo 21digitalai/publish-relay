@@ -413,8 +413,21 @@ export class FanvueMessageService {
       scheduledLeaseOwner,
       ...(mediaUuids ? { providerMediaUuids: mediaUuids } : {}),
     };
-    await reserveFanvueActionCheckpoint(this.database, command, mediaUuids);
-    const reservation = await reserveFanvueAction(this.database, intent);
+    const checkpointReservation = await reserveFanvueActionCheckpoint(
+      this.database,
+      command,
+      mediaUuids,
+    );
+    let reservation: FanvueActionReservation;
+    try {
+      reservation = await reserveFanvueAction(this.database, intent);
+    } catch (cause) {
+      if (checkpointReservation.kind === 'new')
+        await settleFanvueActionCheckpoint(this.database, command, { state: 'cancelled' });
+      throw cause;
+    }
+    if (reservation.kind === 'conflict' && checkpointReservation.kind === 'new')
+      await settleFanvueActionCheckpoint(this.database, command, { state: 'cancelled' });
     if (reservation.kind !== 'new') {
       const replay = replayResult(reservation);
       await this.settleActionCheckpoint(command, replay);

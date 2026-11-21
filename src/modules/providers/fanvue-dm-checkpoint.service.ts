@@ -2,7 +2,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   findFanvueDmCheckpointForAction,
-  reserveFanvueDmCheckpoint,
+  reserveFanvueDmCheckpointWithDisposition,
   settleFanvueDmCheckpoint,
 } from './fanvue-dm-checkpoint.repository.js';
 
@@ -39,12 +39,12 @@ export async function reserveFanvueActionCheckpoint(
 ) {
   const checkpoint =
     command.checkpoint ?? (await findFanvueDmCheckpointForAction(database, command));
-  if (!checkpoint) return;
+  if (!checkpoint) return { kind: 'none' as const };
   const mediaUuid = checkpoint.providerMediaUuid;
   if (mediaUuid && resolvedMediaUuids && !resolvedMediaUuids.includes(mediaUuid))
     throw new FanvueCheckpointMediaConflictError();
-  if (!command.checkpoint) return;
-  await reserveFanvueDmCheckpoint(database, {
+  if (!command.checkpoint) return { kind: 'existing' as const };
+  const reservation = await reserveFanvueDmCheckpointWithDisposition(database, {
     workspaceId: command.workspaceId,
     accountId: command.accountId,
     fanUuid: command.fanUuid,
@@ -54,6 +54,7 @@ export async function reserveFanvueActionCheckpoint(
     kind: checkpoint.kind as NonNullable<FanvueCheckpointCommand['checkpoint']>['kind'],
     ordinal: checkpoint.ordinal,
   });
+  return { kind: reservation.kind };
 }
 
 export async function settleFanvueActionCheckpoint(

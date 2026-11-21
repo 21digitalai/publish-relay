@@ -46,6 +46,13 @@ export async function reserveFanvueDmCheckpoint(
   database: NodePgDatabase,
   unparsed: z.input<typeof reservation>,
 ) {
+  return (await reserveFanvueDmCheckpointWithDisposition(database, unparsed)).checkpoint;
+}
+
+export async function reserveFanvueDmCheckpointWithDisposition(
+  database: NodePgDatabase,
+  unparsed: z.input<typeof reservation>,
+) {
   const input = reservation.parse(unparsed);
   return withTenantTransaction(database, input, async (transaction) => {
     const [account] = await transaction
@@ -67,7 +74,6 @@ export async function reserveFanvueDmCheckpoint(
         and(
           eq(fanvueDmConversationCheckpoints.workspaceId, input.workspaceId),
           eq(fanvueDmConversationCheckpoints.accountId, input.accountId),
-          eq(fanvueDmConversationCheckpoints.fanUuid, input.fanUuid),
           eq(fanvueDmConversationCheckpoints.clientActionId, input.clientActionId),
         ),
       )
@@ -75,6 +81,7 @@ export async function reserveFanvueDmCheckpoint(
       .limit(1);
     if (actionCheckpoint) {
       if (
+        actionCheckpoint.fanUuid !== input.fanUuid ||
         actionCheckpoint.kind !== input.kind ||
         actionCheckpoint.ordinal !== input.ordinal ||
         actionCheckpoint.groupId !== input.groupId ||
@@ -82,7 +89,7 @@ export async function reserveFanvueDmCheckpoint(
         actionCheckpoint.state === 'cancelled'
       )
         throw new FanvueDmCheckpointConflictError();
-      return actionCheckpoint;
+      return { checkpoint: actionCheckpoint, kind: 'existing' as const };
     }
     const [existing] = await transaction
       .select()
@@ -106,14 +113,14 @@ export async function reserveFanvueDmCheckpoint(
         existing.state === 'cancelled'
       )
         throw new FanvueDmCheckpointConflictError();
-      return existing;
+      return { checkpoint: existing, kind: 'existing' as const };
     }
     const [created] = await transaction
       .insert(fanvueDmConversationCheckpoints)
       .values({ ...input, state: 'pending' })
       .returning();
     if (!created) throw new Error('Fanvue conversation checkpoint reservation failed');
-    return created;
+    return { checkpoint: created, kind: 'new' as const };
   });
 }
 
@@ -179,7 +186,6 @@ export async function findFanvueDmCheckpointForAction(
         and(
           eq(fanvueDmConversationCheckpoints.workspaceId, input.workspaceId),
           eq(fanvueDmConversationCheckpoints.accountId, input.accountId),
-          eq(fanvueDmConversationCheckpoints.fanUuid, input.fanUuid),
           eq(fanvueDmConversationCheckpoints.clientActionId, input.clientActionId),
         ),
       )

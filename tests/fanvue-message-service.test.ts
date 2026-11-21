@@ -31,6 +31,10 @@ vi.mock('../src/modules/providers/fanvue-dm-checkpoint.repository.js', async (im
   ...(await importOriginal<Record<string, unknown>>()),
   findFanvueDmCheckpointForAction: checkpoints.find,
   reserveFanvueDmCheckpoint: checkpoints.reserve,
+  reserveFanvueDmCheckpointWithDisposition: async (...args: unknown[]) => {
+    await checkpoints.reserve(...args);
+    return { checkpoint: { state: 'pending' }, kind: 'new' as const };
+  },
   settleFanvueDmCheckpoint: checkpoints.settle,
 }));
 vi.mock('../src/modules/providers/fanvue-dm-pending.repository.js', async (importOriginal) => ({

@@ -14,6 +14,7 @@ import {
   fanvueDmCheckpointIntent,
 } from './fanvue-dm-checkpoint.repository.js';
 import { FanvueCheckpointMediaConflictError } from './fanvue-dm-checkpoint.service.js';
+import { FanvueDmMediaAlreadyUsedError } from './fanvue-dm-media-delivery.repository.js';
 import {
   FanvueMessageActionConflictError,
   FanvueMessageMediaUnavailableError,
@@ -439,6 +440,8 @@ function sendMessageError(error: unknown, request: FastifyRequest, reply: Fastif
     return reply.code(409).send(errorEnvelope('checkpoint_conflict', error.message, request.id));
   if (error instanceof FanvueMessageMediaUnavailableError)
     return reply.code(409).send(errorEnvelope('media_not_ready', error.message, request.id));
+  if (error instanceof FanvueDmMediaAlreadyUsedError)
+    return reply.code(409).send(errorEnvelope('media_already_used', error.message, request.id));
   if (error instanceof FanvueSelectedFanUnavailableError)
     return reply
       .code(409)

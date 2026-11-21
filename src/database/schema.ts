@@ -1889,7 +1889,6 @@ export const fanvueDmConversationCheckpoints = pgTable(
     uniqueIndex('fanvue_dm_conversation_checkpoints_action_unique').on(
       table.workspaceId,
       table.accountId,
-      table.fanUuid,
       table.clientActionId,
     ),
     check(

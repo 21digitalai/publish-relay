@@ -1,2 +1,2 @@
 CREATE UNIQUE INDEX fanvue_dm_conversation_checkpoints_action_unique
-  ON fanvue_dm_conversation_checkpoints(workspace_id, account_id, fan_uuid, client_action_id);
+  ON fanvue_dm_conversation_checkpoints(workspace_id, account_id, client_action_id);

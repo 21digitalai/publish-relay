@@ -260,6 +260,22 @@ describe('Fanvue checkpoint public lifecycle integration', () => {
     expect(mediaMismatch.statusCode).toBe(409);
     expect(context.sendMessage).toHaveBeenCalledTimes(1);
 
+    const otherFanUuid = '00000000-0000-4000-8000-000000000099';
+    const crossFanReplay = await context.application.inject({
+      method: 'POST',
+      url: `/api/v1/fanvue/accounts/${accountId}/chats/${otherFanUuid}/messages`,
+      headers,
+      payload,
+    });
+    expect(crossFanReplay.statusCode).toBe(409);
+    const otherFanCheckpoints = await context.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/chats/${otherFanUuid}/checkpoints`,
+      headers,
+    });
+    expect(otherFanCheckpoints.json()).toMatchObject({ data: [] });
+    expect(context.sendMessage).toHaveBeenCalledTimes(1);
+
     const confirmedMediaReuse = await context.application.inject({
       method: 'POST',
       url: messageUrl,
@@ -270,7 +286,21 @@ describe('Fanvue checkpoint public lifecycle integration', () => {
         checkpoint: { ...payload.checkpoint, ordinal: 2 },
       },
     });
-    expect(confirmedMediaReuse.statusCode).toBe(500);
+    expect(confirmedMediaReuse.statusCode).toBe(409);
+    expect(confirmedMediaReuse.json()).toMatchObject({
+      error: { code: 'media_already_used' },
+    });
+    const receiptsAfterReuse = await context.application.inject({
+      method: 'GET',
+      url: checkpointUrl,
+      headers,
+    });
+    expect(receiptsAfterReuse.json()).toMatchObject({
+      data: [
+        { kind: 'free_gift', ordinal: 1, state: 'confirmed', providerMediaUuid: mediaUuid },
+        { kind: 'free_gift', ordinal: 2, state: 'cancelled', providerMediaUuid: mediaUuid },
+      ],
+    });
     expect(context.sendMessage).toHaveBeenCalledTimes(1);
   });
 

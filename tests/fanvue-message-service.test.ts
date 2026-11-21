@@ -44,6 +44,7 @@ vi.mock('../src/modules/providers/fanvue-dm-pending.repository.js', async (impor
 }));
 
 import { FanvueRequestError } from '../src/modules/providers/fanvue-http-client.js';
+import { FanvueCheckpointMediaConflictError } from '../src/modules/providers/fanvue-dm-checkpoint.service.js';
 import { FanvueMessageService } from '../src/modules/providers/fanvue-message.service.js';
 
 const input = {
@@ -375,6 +376,20 @@ describe('Fanvue selected-fan chat creation', () => {
 });
 
 describe('Fanvue existing-chat text send command', () => {
+  it('rejects a scheduled checkpoint whose stored media differs from resolved canonical media', async () => {
+    checkpoints.find.mockResolvedValueOnce({
+      kind: 'free_gift',
+      ordinal: 1,
+      groupId: null,
+      providerMediaUuid: '00000000-0000-4000-8000-000000000099',
+    });
+    await expect(
+      service.sendMessage({ ...input, mediaIds: [localMediaId] }),
+    ).rejects.toBeInstanceOf(FanvueCheckpointMediaConflictError);
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('reserves explicit semantic intent before send and settles the canonical provider result', async () => {
     const checkpoint = {
       kind: 'free_gift' as const,

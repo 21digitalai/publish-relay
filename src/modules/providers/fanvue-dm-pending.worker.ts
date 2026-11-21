@@ -15,6 +15,7 @@ import {
   finishClaimedFanvueDm,
   renewClaimedFanvueDm,
 } from './fanvue-dm-pending.repository.js';
+import { settleFanvueActionCheckpoint } from './fanvue-dm-checkpoint.service.js';
 import type { FanvueMessageService } from './fanvue-message.service.js';
 import { FanvueMessageMediaUnavailableError } from './fanvue-message.service.js';
 import { FanvueReadUnavailableError } from './fanvue-read.service.js';
@@ -120,15 +121,30 @@ async function existingActionState(
 
 async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
   const prior = await existingActionState(runtime.database, intent);
-  if (prior) return prior;
+  if (prior) {
+    if (prior === 'unknown')
+      await settleFanvueActionCheckpoint(runtime.database, intent, { state: 'unknown' });
+    return prior;
+  }
   if (intent.expectedLatestInboundMessageUuid && runtime.messages.preflightScheduledDispatch) {
     const preflight = await runtime.messages.preflightScheduledDispatch(intent);
-    if (preflight === 'cancel') return 'cancelled';
-    if (preflight === 'freeze_unknown') return 'unknown';
+    if (preflight === 'cancel') {
+      await settleFanvueActionCheckpoint(runtime.database, intent, { state: 'cancelled' });
+      return 'cancelled';
+    }
+    if (preflight === 'freeze_unknown') {
+      await settleFanvueActionCheckpoint(runtime.database, intent, { state: 'unknown' });
+      return 'unknown';
+    }
   }
-  if (intent.actorType === 'system') return 'failed';
-  if (!(await hasCurrentFanvueAuthority(runtime.database, intent, 'fanvue:chats:send')))
+  if (intent.actorType === 'system') {
+    await settleFanvueActionCheckpoint(runtime.database, intent, { state: 'cancelled' });
     return 'failed';
+  }
+  if (!(await hasCurrentFanvueAuthority(runtime.database, intent, 'fanvue:chats:send'))) {
+    await settleFanvueActionCheckpoint(runtime.database, intent, { state: 'cancelled' });
+    return 'failed';
+  }
   try {
     const result = await runtime.messages.sendMessage(
       {
@@ -156,8 +172,10 @@ async function dispatchOne(runtime: Runtime, intent: Intent): Promise<State> {
       error instanceof FanvueReadUnavailableError ||
       error instanceof FanvueMessageMediaUnavailableError ||
       error instanceof ActionPolicyDeniedError
-    )
+    ) {
+      await settleFanvueActionCheckpoint(runtime.database, intent, { state: 'cancelled' });
       return 'failed';
+    }
     return 'pending';
   }
 }

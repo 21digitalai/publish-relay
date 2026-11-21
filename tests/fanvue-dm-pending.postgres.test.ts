@@ -16,6 +16,10 @@ import {
   scheduleFanvueDmGroup,
 } from '../src/modules/providers/fanvue-dm-pending.repository.js';
 import { dispatchDueFanvueDms } from '../src/modules/providers/fanvue-dm-pending.worker.js';
+import {
+  listFanvueDmCheckpoints,
+  reserveFanvueDmCheckpoint,
+} from '../src/modules/providers/fanvue-dm-checkpoint.repository.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000002';
@@ -70,6 +74,12 @@ describe('Fanvue DM pending intent foundation', () => {
       );
       await pg.exec(
         await readFile(new URL('../migrations/0126_fanvue_dm_groups.sql', import.meta.url), 'utf8'),
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0127_fanvue_dm_conversation_facts.sql', import.meta.url),
+          'utf8',
+        ),
       );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const scheduled = await scheduleFanvueDm(database, input);
@@ -150,6 +160,12 @@ describe('Fanvue DM pending intent foundation', () => {
       );
       await pg.exec(
         await readFile(new URL('../migrations/0126_fanvue_dm_groups.sql', import.meta.url), 'utf8'),
+      );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0127_fanvue_dm_conversation_facts.sql', import.meta.url),
+          'utf8',
+        ),
       );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const dueAt = new Date('2026-11-11T10:00:00Z');
@@ -282,11 +298,25 @@ describe('Fanvue DM pending intent foundation', () => {
       await pg.exec(
         await readFile(new URL('../migrations/0126_fanvue_dm_groups.sql', import.meta.url), 'utf8'),
       );
+      await pg.exec(
+        await readFile(
+          new URL('../migrations/0127_fanvue_dm_conversation_facts.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const database = drizzle(pg) as unknown as NodePgDatabase;
       const dueAt = new Date('2026-11-11T10:00:00Z');
       const actorId = '00000000-0000-4000-8000-000000000022';
       const action = { ...input, dueAt, actor: { type: 'user' as const, id: actorId } };
       await scheduleFanvueDm(database, action);
+      await reserveFanvueDmCheckpoint(database, {
+        workspaceId,
+        accountId,
+        fanUuid: action.fanUuid,
+        clientActionId: action.clientActionId,
+        kind: 'silent_followup',
+        ordinal: 1,
+      });
       const sendMessage = vi
         .fn()
         .mockResolvedValue({ state: 'confirmed', messageUuid: input.fanUuid });
@@ -305,12 +335,27 @@ describe('Fanvue DM pending intent foundation', () => {
         settled: true,
       });
       expect(sendMessage).not.toHaveBeenCalled();
+      expect(
+        await listFanvueDmCheckpoints(database, {
+          workspaceId,
+          accountId,
+          fanUuid: action.fanUuid,
+        }),
+      ).toEqual([expect.objectContaining({ state: 'cancelled' })]);
       const next = {
         ...action,
         clientActionId: '00000000-0000-4000-8000-000000000023',
         dueAt: new Date(dueAt.getTime() + 1000),
       };
       await scheduleFanvueDm(database, next);
+      await reserveFanvueDmCheckpoint(database, {
+        workspaceId,
+        accountId,
+        fanUuid: next.fanUuid,
+        clientActionId: next.clientActionId,
+        kind: 'free_gift',
+        ordinal: 1,
+      });
       await pg.exec(`INSERT INTO memberships VALUES ('${workspaceId}','${actorId}','owner')`);
       await pg.exec(`INSERT INTO fanvue_action_intents VALUES (
         '00000000-0000-4000-8000-000000000024','${workspaceId}','${accountId}',
@@ -325,6 +370,16 @@ describe('Fanvue DM pending intent foundation', () => {
         ),
       ).toMatchObject({ state: 'unknown', settled: true });
       expect(sendMessage).not.toHaveBeenCalled();
+      expect(
+        await listFanvueDmCheckpoints(database, {
+          workspaceId,
+          accountId,
+          fanUuid: next.fanUuid,
+        }),
+      ).toEqual([
+        expect.objectContaining({ kind: 'free_gift', state: 'unknown' }),
+        expect.objectContaining({ kind: 'silent_followup', state: 'cancelled' }),
+      ]);
       const third = {
         ...action,
         clientActionId: '00000000-0000-4000-8000-000000000025',

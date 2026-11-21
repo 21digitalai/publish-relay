@@ -37,19 +37,22 @@ export async function reserveFanvueActionCheckpoint(
   command: FanvueCheckpointCommand,
   resolvedMediaUuids?: string[],
 ) {
-  if (!command.checkpoint) return;
-  const mediaUuid = command.checkpoint.providerMediaUuid;
+  const checkpoint =
+    command.checkpoint ?? (await findFanvueDmCheckpointForAction(database, command));
+  if (!checkpoint) return;
+  const mediaUuid = checkpoint.providerMediaUuid;
   if (mediaUuid && resolvedMediaUuids && !resolvedMediaUuids.includes(mediaUuid))
     throw new FanvueCheckpointMediaConflictError();
+  if (!command.checkpoint) return;
   await reserveFanvueDmCheckpoint(database, {
     workspaceId: command.workspaceId,
     accountId: command.accountId,
     fanUuid: command.fanUuid,
     clientActionId: command.clientActionId,
-    groupId: command.checkpoint.groupId ?? null,
+    groupId: checkpoint.groupId ?? null,
     providerMediaUuid: mediaUuid ?? null,
-    kind: command.checkpoint.kind,
-    ordinal: command.checkpoint.ordinal,
+    kind: checkpoint.kind as NonNullable<FanvueCheckpointCommand['checkpoint']>['kind'],
+    ordinal: checkpoint.ordinal,
   });
 }
 

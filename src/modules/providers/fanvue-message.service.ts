@@ -270,8 +270,7 @@ export class FanvueMessageService {
     clientActionId: string;
   }) {
     const cancelled = await cancelPendingFanvueDm(this.database, input);
-    if (cancelled)
-      await settleFanvueActionCheckpoint(this.database, input, { state: 'cancelled' });
+    if (cancelled) await settleFanvueActionCheckpoint(this.database, input, { state: 'cancelled' });
     return cancelled;
   }
 

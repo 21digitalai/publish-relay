@@ -13,10 +13,10 @@ export interface FanvueCheckpointCommand {
   clientActionId: string;
   checkpoint?:
     | {
-    kind: 'welcome' | 'silent_followup' | 'free_gift' | 'paid_offer';
-    ordinal: number;
-    groupId?: string | null;
-    providerMediaUuid?: string | null;
+        kind: 'welcome' | 'silent_followup' | 'free_gift' | 'paid_offer';
+        ordinal: number;
+        groupId?: string | null;
+        providerMediaUuid?: string | null;
       }
     | undefined;
 }

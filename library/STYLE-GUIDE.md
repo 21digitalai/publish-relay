@@ -1,5 +1,16 @@
 # Publish Relay Style Guide
 
+Proposed replies offers a secondary **New Messenger reply** disclosure, owned by
+`PageMessageDraft`. It reads bounded Page/account/conversation choices through the existing
+browser read routes and shows the freshest eligible recipient-authored text, never raw IDs.
+The human writes a text-only draft in the existing `.text-input` style and saves it into the
+canonical proposal queue; saving does not send or approve. Closed/ambiguous windows explain
+that a fresh incoming text is needed. Source refresh before save catches changed context;
+the canonical approval path remains the final server-authoritative window/no-go check.
+An ambiguous save freezes editing and retries the same action/payload rather than duplicating
+a proposal. Loading, empty, permission/read errors, refresh and bounded Load more controls stay
+inside the disclosure. Account and conversation selection uses labelled secondary-button groups.
+
 Fanvue DM approval reuses the selected proposal detail and `.engagement-proposal-timing` fieldset. It retains a future proposed planned time, or enters paced due-now dispatch after that time; the approve click never synchronously sends. The shared confirmation names the account and timing, a scheduled receipt permits pending-only cancellation, and detail refreshes to sending/sent/failed/unknown from the canonical action. Fanvue comment scheduling remains a separately scoped supported-target slice.
 The same engagement page refreshes its canonical Fanvue action-history list after a successful proposal approval or pending cancellation, without resetting account/channel/status filters. A proposal alone never creates a send-history row; the scheduled intent or action ledger supplies the visible state and survives reload.
 The Composer offers a default-off approval switch for ordinary and staged TikTok publication jobs. When enabled, scheduling creates a visible Calendar/Queue job marked Awaiting approval at its planned time; the Job detail lets an authorized owner/admin approve the exact current job in the shared confirmation dialog. Approval only makes normal worker dispatch eligible and never posts synchronously. Edit/reschedule creates a new awaiting-approval job. The staged TikTok path binds the choice into its immutable schedule attempt so ambiguous retries cannot silently change the hold.

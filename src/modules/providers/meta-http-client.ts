@@ -107,7 +107,7 @@ export interface MetaCredential {
   userId: string;
   expiresAt?: string;
   scopes: MetaPermission[];
-  granularPermissions: Array<{ permission: string; targetIds: string[] }>;
+  granularPermissions: { permission: string; targetIds: string[] }[];
 }
 
 export type MetaDiscoveryEvidence =
@@ -115,7 +115,7 @@ export type MetaDiscoveryEvidence =
       kind: 'pages';
       pageCount: number;
       pageIds: string[];
-      pageTasks: Array<{ pageId: string; tasks: string[] }>;
+      pageTasks: { pageId: string; tasks: string[] }[];
     }
   | { kind: 'schema_invalid' };
 

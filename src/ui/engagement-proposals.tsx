@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConfirmationDialog } from './confirmation-dialog.js';
 import { PageDmConversationLink } from './page-dm-conversation-link.js';
+import { PageMessageDraft } from './page-message-draft.js';
 import { PageDmHistory } from './page-dm-history.js';
 import { PageCommentHistory } from './page-comment-history.js';
 import { FanvueActionHistory } from './fanvue-action-history.js';
@@ -814,6 +815,25 @@ export function EngagementProposalsPage() {
             </p>
           </div>
         </header>
+        <PageMessageDraft
+          onCreated={(id) => {
+            setView('review');
+            setProviderFilter('facebook_page');
+            setKindFilter('dm');
+            changeQuery('view', 'review');
+            changeQuery('provider', 'facebook_page');
+            changeQuery('kind', 'dm');
+            setSelectedId(id);
+            setNotice('Reply draft saved. Review and approve it separately; no message was sent.');
+            void loadPage().catch((failure: unknown) => {
+              setError(
+                failure instanceof Error
+                  ? failure.message
+                  : 'Refresh proposals to see the saved draft',
+              );
+            });
+          }}
+        />
         {notice && (
           <p className="form-success" role="status">
             {notice}

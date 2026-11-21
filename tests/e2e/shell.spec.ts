@@ -1653,6 +1653,48 @@ test('registers, persists the first workspace update, and reloads the protected 
   await expect(page).toHaveURL(`/w/${workspaceSlug}/accounts`);
 });
 
+test('shows and clears a provider connection error while retrying onboarding step two', async ({
+  page,
+}) => {
+  await establishWorkspaceSession(page);
+  await page.goto('/onboarding/workspace');
+  await expect(page.getByRole('heading', { name: 'Name your workspace' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Connect your first account' })).toBeVisible();
+
+  let attempts = 0;
+  let releaseRetry!: () => void;
+  const retryRelease = new Promise<void>((resolve) => {
+    releaseRetry = resolve;
+  });
+  await page.route('**/api/oauth/meta/facebook-pages', async (route) => {
+    attempts += 1;
+    if (attempts === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: null, error: 'Facebook Pages is temporarily unavailable' }),
+      });
+      return;
+    }
+    await retryRelease;
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, error: 'Facebook Pages is still unavailable' }),
+    });
+  });
+
+  const facebookPages = page.getByRole('button', { name: /^Facebook Pages / });
+  await facebookPages.click();
+  await expect(page.getByRole('alert')).toContainText('Facebook Pages is temporarily unavailable');
+
+  await facebookPages.click();
+  await expect(page.getByRole('alert')).toBeHidden();
+  releaseRetry();
+  await expect(page.getByRole('alert')).toContainText('Facebook Pages is still unavailable');
+});
+
 test('filters accounts and opens a named disconnect confirmation', async ({ page }, testInfo) => {
   await establishWorkspaceSession(page);
   await mockConnectedAccounts(page);

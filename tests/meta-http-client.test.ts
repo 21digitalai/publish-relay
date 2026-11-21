@@ -128,6 +128,7 @@ describe('MetaHttpClient', () => {
               app_id: 'app',
               user_id: 'subject',
               scopes: META_FAMILY_PERMISSIONS.facebook_pages,
+              granular_scopes: [{ scope: 'pages_manage_posts', target_ids: ['page-1', 'page-2'] }],
             },
           }),
         ),
@@ -138,7 +139,11 @@ describe('MetaHttpClient', () => {
         { access_token: 'fixture-token' },
         META_FAMILY_PERMISSIONS.facebook_pages,
       ),
-    ).resolves.toMatchObject({ userId: 'subject', scopes: META_FAMILY_PERMISSIONS.facebook_pages });
+    ).resolves.toMatchObject({
+      userId: 'subject',
+      scopes: META_FAMILY_PERMISSIONS.facebook_pages,
+      granularPermissions: [{ permission: 'pages_manage_posts', targetIds: ['page-1', 'page-2'] }],
+    });
     await expect(
       client.validateCredential(
         { access_token: 'fixture-token' },
@@ -297,6 +302,50 @@ describe('MetaHttpClient', () => {
     });
 
     await expect(client.discoverPages('authority')).resolves.toEqual([]);
+  });
+
+  it('emits allowlisted discovery evidence without page credentials', async () => {
+    const diagnostics = vi.fn();
+    const client = new MetaHttpClient({
+      appId: 'app',
+      appSecret: 'secret',
+      graphVersion: 'v23.0',
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(
+        response({
+          data: [{ id: 'page-1', name: 'Page One', access_token: 'private-page-token', tasks: [] }],
+        }),
+      ),
+    });
+
+    await client.discoverPages('private-authority-token', 'facebook_pages', diagnostics);
+
+    expect(diagnostics).toHaveBeenCalledWith({
+      kind: 'pages',
+      pageCount: 1,
+      pageIds: ['page-1'],
+      pageTasks: [{ pageId: 'page-1', tasks: [] }],
+    });
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toMatch(/token/i);
+  });
+
+  it('reports a schema failure without provider response details', async () => {
+    const diagnostics = vi.fn();
+    const client = new MetaHttpClient({
+      appId: 'app',
+      appSecret: 'secret',
+      graphVersion: 'v23.0',
+      fetch: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          response({ data: [{ id: 'page-1', access_token: 'private-page-token' }] }),
+        ),
+    });
+
+    await expect(
+      client.discoverPages('private-authority-token', 'facebook_pages', diagnostics),
+    ).rejects.toThrow();
+    expect(diagnostics).toHaveBeenCalledWith({ kind: 'schema_invalid' });
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toMatch(/token|page-1/i);
   });
 
   it.each([401, 403])('classifies an already-invalid revoke response (%s)', async (status) => {

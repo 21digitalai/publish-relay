@@ -636,6 +636,11 @@ function OnboardingPage() {
                 Connect securely through the provider. Publish Relay never asks you to paste account
                 tokens.
               </p>
+              {workspaceError && (
+                <div className="form-summary" role="alert">
+                  {workspaceError}
+                </div>
+              )}
               <PostingAdapterList
                 onSelect={(adapter) => {
                   setWorkspaceError(null);

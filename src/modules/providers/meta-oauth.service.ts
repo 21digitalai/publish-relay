@@ -32,6 +32,7 @@ import {
 import {
   MetaRequestError,
   type MetaCredential,
+  type MetaDiscoveryEvidence,
   type MetaDiscoveredPage,
   type MetaGrantFamily,
   type MetaPermission,
@@ -86,7 +87,10 @@ export class MetaFamilyCallbackError extends Error {
 }
 
 export class MetaNoUsableDestinationsError extends Error {
-  constructor(public readonly family: MetaGrantFamily) {
+  constructor(
+    public readonly family: MetaGrantFamily,
+    public readonly discoveryEvidence?: MetaDiscoveryEvidence,
+  ) {
     super(`No usable ${family} destinations were discovered`);
   }
 }
@@ -100,6 +104,7 @@ async function recordMetaOauthAudit(
   input: { workspaceId: string; userId: string; requestId: string },
   action: 'meta.oauth.started' | 'meta.oauth.failed',
   family?: MetaGrantFamily,
+  metadata: Record<string, unknown> = {},
 ): Promise<void> {
   await withTenantTransaction(
     database,
@@ -113,7 +118,7 @@ async function recordMetaOauthAudit(
         targetType: 'user',
         targetId: input.userId,
         requestId: input.requestId,
-        metadata: { provider: 'meta', ...(family ? { family } : {}) },
+        metadata: { provider: 'meta', ...(family ? { family } : {}), ...metadata },
       }),
   );
 }
@@ -165,7 +170,12 @@ async function persistMetaDiscovery(
   pages: readonly MetaDiscoveredPage[],
   family: MetaGrantFamily,
 ) {
-  const authorityBytes = serializeCredential(credential);
+  const authorityBytes = serializeCredential({
+    accessToken: credential.accessToken,
+    userId: credential.userId,
+    ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
+    scopes: credential.scopes,
+  });
   const selectedPages = family === 'instagram' ? pages.filter((page) => page.instagram) : pages;
   const pageBytes = selectedPages.map((page) =>
     serializeCredential({ accessToken: page.accessToken, pageId: page.id }),
@@ -412,26 +422,47 @@ export async function completeMetaOauthConnection(
   const permissions = familyPermissions[family];
   if (!permissions)
     throw new MetaFamilyCallbackError(family, new Error('Meta consent is not configured'));
+  let discoveryEvidence: MetaDiscoveryEvidence | undefined;
+  let credential: MetaCredential | undefined;
   try {
-    const credential = await client.exchangeCode({
+    credential = await client.exchangeCode({
       code: input.code,
       redirectUri: transaction.redirectUri,
       permissions,
     });
-    const pages = await client.discoverPages(credential.accessToken, family);
+    const pages = await client.discoverPages(credential.accessToken, family, (evidence) => {
+      discoveryEvidence = evidence;
+    });
     const hasUsableDestination = pages.some((page) =>
       family === 'instagram' ? Boolean(page.instagram) : page.tasks.includes(REQUIRED_PAGE_TASK),
     );
     if (!hasUsableDestination) {
       await disconnectEmptyMetaFamilyGrant(database, input, family, credential.userId);
-      throw new MetaNoUsableDestinationsError(family);
+      throw new MetaNoUsableDestinationsError(family, discoveryEvidence);
     }
     return {
       family,
       ...(await persistMetaDiscovery(database, keys, input, credential, pages, family)),
     };
   } catch (error) {
-    await recordMetaOauthAudit(database, input, 'meta.oauth.failed', family);
+    const discovery =
+      error instanceof MetaNoUsableDestinationsError ? error.discoveryEvidence : discoveryEvidence;
+    await recordMetaOauthAudit(
+      database,
+      input,
+      'meta.oauth.failed',
+      family,
+      discovery
+        ? {
+            failure:
+              discovery.kind === 'pages' ? 'no_usable_destinations' : 'discovery_schema_invalid',
+            discovery,
+            ...(credential?.granularPermissions.length
+              ? { grantedPermissions: credential.granularPermissions }
+              : {}),
+          }
+        : {},
+    );
     // Only an independently verified empty grant is disconnected above.
     throw new MetaFamilyCallbackError(family, error);
   }

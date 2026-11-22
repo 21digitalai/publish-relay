@@ -1,0 +1,11 @@
+# Candidate fragment. Include only after the operator verifies a publicly trusted
+# certificate for the exact direct origin host and confirms the existing Mobile API
+# route remains unchanged.
+https://{$PUBLISH_RELAY_ORIGIN_HOST} {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3106
+	header {
+		-Server
+		Cache-Control "no-store"
+	}
+}

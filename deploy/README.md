@@ -20,4 +20,20 @@ Install an isolated Node 24 toolchain under `/opt/publish-relay/node24` before t
 
 Reverse proxy TLS termination must forward only to the isolated Publish Relay listener, initially `127.0.0.1:3106` (`HOST=127.0.0.1`, `PORT=3106`). `publish-release.sh` probes `PUBLISH_RELAY_HEALTH_URL`, defaulting to `http://127.0.0.1:3106/health/ready`. Keep `/metrics` restricted to host monitoring. Verify `/health/live`, `/health/ready`, login, protected-shell redirect behavior, worker restart survival, process metrics, journald logs, and absence of changes to existing services before cutover.
 
+## Droplet Compose candidate
+
+`compose/docker-compose.yml` is the reviewed-preparation candidate for the existing
+Droplet when Relay owns a private PostgreSQL 16 container instead of the Mobile API's
+managed database. It publishes PostgreSQL only on the Compose network, binds Relay web
+to loopback for Caddy, applies explicit CPU/memory limits, and keeps web, worker, and
+migration env files separate. Follow `compose/README.md`; do not deploy it, restore a
+database, reload Caddy, or publish the Worker until the candidate is independently
+reviewed and the operator's cutover gate is reconciled.
+
+`caddy/publish-relay.Caddyfile` is an isolated include candidate. It must not replace
+the existing Mobile API route. `edge/` contains the source-owned Worker candidate: it
+allows only the explicitly configured HTTPS direct origin, preserves cookies and CSRF
+headers, replaces untrusted forwarding headers, rewrites same-origin redirects, and
+forces `Cache-Control: no-store`. It deliberately has no tunnel fallback.
+
 Historical cleanup is never inferred from age or release count. `release-filesystem.mjs` validates canonical roots, links, migrations, active process working directories, and open-file use before bounded removal. Migration differences, legacy extra releases, or stale/unknown observations fail closed. See [RELEASE-RETENTION.md](RELEASE-RETENTION.md) for activation and recovery boundaries.

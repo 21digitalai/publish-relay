@@ -13,7 +13,17 @@ BEGIN
 END
 $roles$;
 
-GRANT CONNECT ON DATABASE :DBNAME TO publish_relay_web, publish_relay_worker;
+-- Use the database selected by the migration URL. This keeps the bootstrap
+-- command independent of psql variable substitution and avoids granting against
+-- a database name copied from an untrusted deployment environment.
+DO $database$
+BEGIN
+  EXECUTE format(
+    'GRANT CONNECT ON DATABASE %I TO publish_relay_web, publish_relay_worker',
+    current_database()
+  );
+END
+$database$;
 GRANT USAGE ON SCHEMA public TO publish_relay_web, publish_relay_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
   TO publish_relay_web, publish_relay_worker;

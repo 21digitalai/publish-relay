@@ -24,6 +24,7 @@
     "promote:instagram-login": "node dist/entrypoints/promote-instagram-login.js",
     "cli": "tsx src/entrypoints/cli.ts",
     "lint": "eslint .",
+    "lint:deploy": "eslint deploy --no-warn-ignored",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",

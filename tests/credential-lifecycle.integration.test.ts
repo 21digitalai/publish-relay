@@ -1649,7 +1649,7 @@ describe('credential and OAuth persistence', () => {
     });
   });
 
-  it('atomically reconnects Meta destinations, preserves IDs, and revokes rotated credentials', async () => {
+  it('atomically reconnects Meta destinations, preserves Messages consent, and revokes superseded credentials', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const metaMasterKey = randomBytes(32);
     const keys: MasterKeyProvider = {
@@ -1722,8 +1722,21 @@ describe('credential and OAuth persistence', () => {
       },
       { id: 'page-lost', name: 'Lost Page', accessToken: 'page-token-lost', tasks: [] },
     ]);
-    const before = await database.query<{ id: string; remote_account_id: string }>(
-      'select id, remote_account_id from provider_accounts order by remote_account_id',
+    const before = await database.query<{
+      id: string;
+      remote_account_id: string;
+      credential_id: string;
+    }>(
+      'select id, remote_account_id, credential_id from provider_accounts order by remote_account_id',
+    );
+    const messagesPage = before.rows.find((row) => row.remote_account_id === 'page-1');
+    if (!messagesPage) throw new Error('Expected selected Facebook Page fixture');
+    await database.query(
+      `insert into facebook_page_engagement_modules
+        (workspace_id, account_id, dms_enabled, dms_provider_grant, dms_credential_id,
+         dms_granted_scopes, dms_verified_at)
+       values ($1, $2, true, 'verified', $3, '["pages_messaging"]'::jsonb, now())`,
+      [workspaceId, messagesPage.id, messagesPage.credential_id],
     );
     await connect('second', 'facebook_pages', [
       {
@@ -1744,6 +1757,28 @@ describe('credential and OAuth persistence', () => {
     expect(after.rows.map((row) => ({ id: row.id, remote: row.remote_account_id }))).toEqual(
       before.rows.map((row) => ({ id: row.id, remote: row.remote_account_id })),
     );
+    const preserved = await database.query<{
+      account_credential_id: string;
+      dms_credential_id: string;
+      revoked_at: Date | null;
+    }>(
+      `select pa.credential_id as account_credential_id,
+              module.dms_credential_id,
+              credential.revoked_at
+         from provider_accounts pa
+         join facebook_page_engagement_modules module
+           on module.workspace_id = pa.workspace_id and module.account_id = pa.id
+         join credentials credential
+           on credential.workspace_id = module.workspace_id
+          and credential.id = module.dms_credential_id
+        where pa.workspace_id = $1 and pa.id = $2`,
+      [workspaceId, messagesPage.id],
+    );
+    expect(preserved.rows[0]).toMatchObject({
+      account_credential_id: messagesPage.credential_id,
+      dms_credential_id: messagesPage.credential_id,
+      revoked_at: null,
+    });
     expect(after.rows.find((row) => row.remote_account_id === 'page-lost')?.availability).toBe(
       'remote_missing',
     );
@@ -1810,7 +1845,7 @@ describe('credential and OAuth persistence', () => {
     );
     expect(actions.rows.map((row) => row.action)).toEqual(
       expect.arrayContaining([
-        'provider.destination.credential_rotated',
+        'provider.destination.credential_preserved',
         'provider.destination.discovered',
         'provider.destination.lost',
       ]),

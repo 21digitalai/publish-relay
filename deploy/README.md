@@ -20,4 +20,45 @@ Install an isolated Node 24 toolchain under `/opt/publish-relay/node24` before t
 
 Reverse proxy TLS termination must forward only to the isolated Publish Relay listener, initially `127.0.0.1:3106` (`HOST=127.0.0.1`, `PORT=3106`). `publish-release.sh` probes `PUBLISH_RELAY_HEALTH_URL`, defaulting to `http://127.0.0.1:3106/health/ready`. Keep `/metrics` restricted to host monitoring. Verify `/health/live`, `/health/ready`, login, protected-shell redirect behavior, worker restart survival, process metrics, journald logs, and absence of changes to existing services before cutover.
 
+## Direct-IP Caddy candidate
+
+The isolated `caddy/publish-relay.Caddyfile` uses Caddy's public ACME issuer with
+the `shortlived` profile, persistent file storage under `/data/caddy`, and
+`default_sni` set to the configured origin IP for clients that omit SNI. Caddy
+2.11.4 or newer is required for the tested syntax. The host owner must provision
+that data directory with the Caddy service's ownership and persistence (the existing
+Droplet container mounts its named Caddy data volume at `/data`; do not move global
+storage to an unmounted container path or discard existing Mobile API certificate
+state), then run
+`caddy adapt --config deploy/caddy/publish-relay.Caddyfile --adapter caddyfile` and
+`caddy validate --config deploy/caddy/publish-relay.Caddyfile --adapter caddyfile`
+with `PUBLISH_RELAY_ORIGIN_HOST` set. Do not include this fragment until the
+operator has verified that the chosen ACME CA will issue a publicly trusted
+certificate for the exact IP; source validation is not certificate issuance or
+renewal proof. Merge its global options at the top of the operator-owned Caddyfile;
+do not import the whole file after an existing site block. Caddy renews the
+short-lived certificate from its persistent storage; if adaptation, validation,
+issuance, or readiness fails, leave the existing Mobile API configuration active,
+remove only the uncommitted Relay candidate, and reload the last known-good config.
+Keep the existing Mobile API site block unchanged. Main may apply the reviewed
+candidate with `caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`
+only after the rollout gate, then verify `curl --fail https://$PUBLISH_RELAY_ORIGIN_HOST/health/ready`
+and the certificate chain before proceeding to Worker cutover.
+
+## Droplet Compose candidate
+
+`compose/docker-compose.yml` is the reviewed-preparation candidate for the existing
+Droplet when Relay owns a private PostgreSQL 16 container instead of the Mobile API's
+managed database. It publishes PostgreSQL only on the Compose network, binds Relay web
+to loopback for Caddy, applies explicit CPU/memory limits, and keeps web, worker, and
+migration env files separate. Follow `compose/README.md`; do not deploy it, restore a
+database, reload Caddy, or publish the Worker until the candidate is independently
+reviewed and the operator's cutover gate is reconciled.
+
+`caddy/publish-relay.Caddyfile` is an isolated include candidate. It must not replace
+the existing Mobile API route. `edge/` contains the source-owned Worker candidate: it
+allows only the explicitly configured HTTPS direct origin, preserves cookies and CSRF
+headers, replaces untrusted forwarding headers, rewrites same-origin redirects, and
+forces `Cache-Control: no-store`. It deliberately has no tunnel fallback.
+
 Historical cleanup is never inferred from age or release count. `release-filesystem.mjs` validates canonical roots, links, migrations, active process working directories, and open-file use before bounded removal. Migration differences, legacy extra releases, or stale/unknown observations fail closed. See [RELEASE-RETENTION.md](RELEASE-RETENTION.md) for activation and recovery boundaries.

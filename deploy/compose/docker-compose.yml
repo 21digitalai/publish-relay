@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16.6-alpine
+    restart: unless-stopped
+    env_file:
+      - ${PUBLISH_RELAY_POSTGRES_ENV_FILE:-/etc/publish-relay/postgres.env}
+    expose:
+      - '5432'
+    volumes:
+      - publish-relay-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 60s
+    mem_limit: 1536m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ${PUBLISH_RELAY_WEB_ENV_FILE:-/etc/publish-relay/web.env}
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3106
+      NODE_ENV: production
+      MEDIA_STORAGE_ROOT: /var/lib/publish-relay/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:3106:3106'
+    volumes:
+      - publish-relay-media:/var/lib/publish-relay/media
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 768m
+    cpus: 0.75
+    security_opt:
+      - no-new-privileges:true
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ${PUBLISH_RELAY_WORKER_ENV_FILE:-/etc/publish-relay/worker.env}
+    environment:
+      NODE_ENV: production
+      MEDIA_STORAGE_ROOT: /var/lib/publish-relay/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - publish-relay-media:/var/lib/publish-relay/media
+    command: ['node', 'dist/entrypoints/worker.js']
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 768m
+    cpus: 0.75
+    security_opt:
+      - no-new-privileges:true
+
+  migration:
+    profiles: [migration]
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    env_file:
+      - ${PUBLISH_RELAY_MIGRATION_ENV_FILE:-/etc/publish-relay/migration.env}
+    environment:
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ['node', 'dist/database/migrate.js']
+    mem_limit: 512m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  publish-relay-postgres:
+    name: publish-relay-postgres
+  publish-relay-media:
+    name: publish-relay-media

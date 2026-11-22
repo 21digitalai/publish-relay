@@ -1,0 +1,13 @@
+{
+  "name": "publish-relay-review",
+  "main": "worker.mjs",
+  "account_id": "5a6dfceb6baf17b778f762700a639974",
+  "compatibility_date": "2026-11-21",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "UPSTREAM": "https://203.0.113.10",
+    "UPSTREAM_HOST": "203.0.113.10",
+  },
+}

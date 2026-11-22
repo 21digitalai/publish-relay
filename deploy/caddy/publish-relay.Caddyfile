@@ -1,0 +1,23 @@
+# Candidate fragment. Merge the global options at the top of the operator-owned
+# Caddyfile, then include the site block only after the operator verifies a publicly trusted
+# certificate for the exact direct origin host and confirms the existing Mobile API
+# route remains unchanged. The CA must support public IP certificates; `shortlived`
+# is explicit because the direct-IP profile is intentionally short-lived.
+{
+	default_sni {$PUBLISH_RELAY_ORIGIN_HOST}
+	storage file_system /data/caddy
+}
+
+https://{$PUBLISH_RELAY_ORIGIN_HOST} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3106
+	header {
+		-Server
+		Cache-Control "no-store"
+	}
+}

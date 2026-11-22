@@ -23,10 +23,13 @@ Reverse proxy TLS termination must forward only to the isolated Publish Relay li
 ## Direct-IP Caddy candidate
 
 The isolated `caddy/publish-relay.Caddyfile` uses Caddy's public ACME issuer with
-the `shortlived` profile, persistent file storage under `/var/lib/caddy`, and
+the `shortlived` profile, persistent file storage under `/data/caddy`, and
 `default_sni` set to the configured origin IP for clients that omit SNI. Caddy
 2.11.4 or newer is required for the tested syntax. The host owner must provision
-that data directory with the Caddy service's ownership and persistence, then run
+that data directory with the Caddy service's ownership and persistence (the existing
+Droplet container mounts its named Caddy data volume at `/data`; do not move global
+storage to an unmounted container path or discard existing Mobile API certificate
+state), then run
 `caddy adapt --config deploy/caddy/publish-relay.Caddyfile --adapter caddyfile` and
 `caddy validate --config deploy/caddy/publish-relay.Caddyfile --adapter caddyfile`
 with `PUBLISH_RELAY_ORIGIN_HOST` set. Do not include this fragment until the

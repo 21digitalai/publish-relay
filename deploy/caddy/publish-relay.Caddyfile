@@ -5,7 +5,7 @@
 # is explicit because the direct-IP profile is intentionally short-lived.
 {
 	default_sni {$PUBLISH_RELAY_ORIGIN_HOST}
-	storage file_system /var/lib/caddy
+	storage file_system /data/caddy
 }
 
 https://{$PUBLISH_RELAY_ORIGIN_HOST} {

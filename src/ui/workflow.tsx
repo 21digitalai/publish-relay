@@ -3707,7 +3707,7 @@ export function JobDetailPage() {
   const adapterEnabled =
     !job ||
     configuredAdapters === undefined ||
-    configuredAdapters.split(',').includes(job.provider);
+    configuredAdapters.split(',').includes(job.provider.toLowerCase());
   const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | 'approve' | 'toggle_approval' | null>(

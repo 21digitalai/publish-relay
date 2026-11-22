@@ -48,6 +48,13 @@ const accountSchema = z.union([
     expiresAt: z.date(),
   }),
 ]);
+const fanvueSubscriberSchema = z.object({
+  uuid: z.uuid(),
+  handle: z.string(),
+  displayName: z.string(),
+  relationship: z.literal('subscriber'),
+  subscriptionStatus: z.enum(['active', 'cancelled', 'pending_confirmation', 'paused']).nullable(),
+});
 const destinationCollectionSchema = z.object({
   nextCursor: z.string().nullable(),
   items: z.array(
@@ -845,6 +852,43 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
           },
         },
+      '/api/v1/fanvue/accounts/{accountId}/subscribers/{fanUuid}': {
+        get: {
+          operationId: 'getFanvueSubscriber',
+          description:
+            'Read one exact selected-account subscriber and current provider status. Only active is active entitlement; 404 and other statuses are not active proof.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'fanUuid',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Allowlisted exact subscriber status',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(fanvueSubscriberSchema)),
+                },
+              },
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing fanvue:audience:read capability' },
+            '404': { description: 'Subscriber not found for the selected creator' },
+            '409': { description: 'Selected account or read:fan grant unavailable' },
+            '502': { description: 'Malformed or failed provider read' },
+          },
+        },
+      },
       '/api/v1/fanvue/accounts/{accountId}/vault/folders': {
         get: {
           operationId: 'listFanvueVaultFolders',

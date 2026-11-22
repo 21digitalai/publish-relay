@@ -68,6 +68,11 @@ export class FanvueReadService {
     return this.readClient.listSubscribers(token, input);
   }
 
+  async getSubscriber(input: { workspaceId: string; accountId: string; fanUuid: string }) {
+    const token = await this.accessToken(input, 'audience');
+    return this.readClient.getSubscriber(token, input.fanUuid);
+  }
+
   async listChats(input: {
     workspaceId: string;
     accountId: string;

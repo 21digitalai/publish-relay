@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.9.10';
-const CLI_VERSION = '1.8.10';
+const CONTRACT_VERSION = '1.9.11';
+const CLI_VERSION = '1.8.11';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -49,6 +49,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - facebook-dms schedule/cancel and group-schedule/group-status/group-cancel: the same selected-Page dms:send authority. A scheduled receipt is not proof of delivery.
 - proposals create: engagement:propose plus selected-Page comments:propose or dms:propose. This stages a human-reviewed suggestion only; it never sends and does not require send scope.
 - fanvue folders/folder-media/vault-catalog, vault-purchase-fact and vault-publication-fact: fanvue:media:read on the selected Fanvue account plus its provider read grant. Catalog adds optional Relay-owned manualPriceCents and priceVersion but never returns signed media URLs. vault-purchase-fact checks one media UUID against one selected-account fan UUID and returns known with an explicit boolean or unknown with null; unknown never means purchased or declined. vault-publication-fact returns posted only for an exact published-post UUID match, unposted only after complete pagination plus trusted manual-post coverage, and unknown for unverified manual coverage or failed, looping or capped scans. vault-price-set requires fanvue:chats:send and an optimistic expectedVersion.
+- fanvue subscriber: fanvue:audience:read on the selected Fanvue account plus read:fan. It reads one exact fan UUID and returns only identity, subscriber relationship and current provider subscription status. A 404 is explicit unknown/not found and never active entitlement.
 - fanvue-dms candidates/checkpoints: fanvue:chats:read for bounded local due-state and per-fan lifecycle receipt discovery.
 - fanvue-dms group-schedule/group-status/group-cancel: fanvue:chats:send on the selected Fanvue account. A scheduled receipt is not proof of delivery.
 - Audit operations require audit:read when they become available. Do not infer capabilities from CLI command visibility.
@@ -85,6 +86,9 @@ Media example: add media upload with --file <image-path> --content-type image/pn
 Draft handoff example: upload each local asset, then run drafts create with a JSON body containing externalId and the returned mediaIds plus a unique idempotency key. Retain the returned self and cockpit links; do not build a second scheduler UI in the source client.
 YouTube scheduling example: set title and any sparse provider override in the posts create body, select the connected destination, then retain data.jobs[].effectiveProviderSettings from the response. Do not repeat unchanged privacy, Made for Kids, notification, tags, or category defaults on every request.
 Retry example: after publishes show confirms state=failed and no reconciliation is required, run publishes retry <job-id> with a unique --idempotency-key. Poll the same job link afterward; never retry accepted_pending or unknown outcomes blindly.
+
+## Fanvue subscriber proof
+Run fanvue subscriber <account-id> --fan-uuid <fan-uuid>. Treat only subscriptionStatus=active as active. Null, pending_confirmation, paused, cancelled, or 404 are not active proof; never substitute a tip, automated welcome, or absence from the paginated subscriber list.
 
 ## Fanvue Vault
 Use destinations list to choose the connected Fanvue account ID. Run fanvue folders <account-id> --size 50 and follow data.nextCursor with --cursor until it is null. An optional --media-name filter selects only folders containing a matching media name. Read one folder with fanvue folder-media <account-id> --folder-name <exact-name> --size 50; use fanvue vault-catalog with the same flags when manualPriceCents and priceVersion are needed. The CLI URL-encodes spaces, Unicode, and slashes in the folder name. Continue with each opaque nextCursor; never invent page numbers or rewrite a cursor. Set or clear a price with fanvue vault-price-set <account-id> --media-uuid <uuid> --body-file <json>, sending manualPriceCents as a positive integer or null and the observed expectedVersion (null only for first insert). Query one selected-fan fact with fanvue vault-purchase-fact <account-id> --media-uuid <uuid> --fan-uuid <uuid>; treat state=unknown as no conclusion. Query publication coverage with fanvue vault-publication-fact <account-id> --media-uuid <uuid> [--max-pages 20]; treat only complete unposted as negative proof. Catalog never returns provider media URLs, variants, credentials, or tokens. A 403 means the key lacks the required account capability; a 409 means the selected account grant or optimistic version is stale. Do not switch accounts or infer membership when a folder is missing or empty.

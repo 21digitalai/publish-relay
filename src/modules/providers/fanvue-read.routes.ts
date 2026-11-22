@@ -83,6 +83,11 @@ function readRoutes(service: FanvueReadService) {
       read: (input) => service.listSubscribers(input),
     },
     {
+      path: '/api/v1/fanvue/accounts/:accountId/subscribers/:fanUuid',
+      capability: 'fanvue:audience:read',
+      read: (input) => service.getSubscriber({ ...input, fanUuid: requiredId(input.fanUuid) }),
+    },
+    {
       path: '/api/v1/fanvue/accounts/:accountId/chats',
       capability: 'fanvue:chats:read',
       read: (input) => service.listChats(input),

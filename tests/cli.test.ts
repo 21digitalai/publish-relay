@@ -965,6 +965,36 @@ describe('Publish Relay CLI', () => {
       },
     });
   });
+  it('routes an exact Fanvue subscriber read and redacts unexpected fields', async () => {
+    const accountId = '00000000-0000-4000-8000-000000000002';
+    const fanUuid = '00000000-0000-4000-8000-000000000004';
+    const paths: string[] = [];
+    const baseUrl = await fixture(
+      200,
+      {
+        success: true,
+        data: {
+          uuid: fanUuid,
+          handle: 'fan',
+          displayName: 'Fan',
+          relationship: 'subscriber',
+          subscriptionStatus: 'active',
+          amountPaid: 999,
+        },
+      },
+      '00000000-0000-4000-8000-000000000201',
+      paths,
+    );
+    const result = await cli(
+      ['fanvue', 'subscriber', accountId, '--fan-uuid', fanUuid, '--base-url', baseUrl],
+      { PUBLISH_RELAY_API_KEY: 'test-key' },
+    );
+    expect(result.code).toBe(0);
+    expect(paths).toEqual([`/api/v1/fanvue/accounts/${accountId}/subscribers/${fanUuid}`]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { uuid: fanUuid, subscriptionStatus: 'active', amountPaid: '[REDACTED]' },
+    });
+  });
   it('routes one selected-fan Fanvue purchase fact with explicit unknown truth', async () => {
     const accountId = '00000000-0000-4000-8000-000000000002';
     const mediaUuid = '00000000-0000-4000-8000-000000000003';

@@ -107,6 +107,10 @@ const ROUTES = {
   },
   'fanvue:followers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/followers' },
   'fanvue:subscribers': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/subscribers' },
+  'fanvue:subscriber': {
+    method: 'GET',
+    path: '/api/v1/fanvue/accounts/:id/subscribers/:fanUuid',
+  },
   'fanvue:folders': { method: 'GET', path: '/api/v1/fanvue/accounts/:id/vault/folders' },
   'fanvue:folder-media': {
     method: 'GET',
@@ -298,6 +302,14 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'size',
     'hasMore',
     'nextCursor',
+    'uuid',
+    'handle',
+    'displayName',
+    'relationship',
+    'subscriptionStatus',
+  ]),
+  'fanvue:subscriber': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
     'uuid',
     'handle',
     'displayName',

@@ -4,8 +4,9 @@ import { z } from 'zod';
 
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { ProviderDestinationConflictError } from '../credentials/provider-connection.repository.js';
-import { authenticateRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
+import { authorizeRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
+import { WorkspaceAuthorizationError } from '../identity/authorization.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-policy.js';
 import type { TikTokHttpClient } from './tiktok-http-client.js';
@@ -28,7 +29,14 @@ export function registerTikTokOauthRoutes(
   },
 ): void {
   application.post('/api/oauth/tiktok', async (request, reply) => {
-    const identity = await authenticateRequest(request, dependencies.auth);
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'publish:manage');
+    } catch (error) {
+      if (error instanceof WorkspaceAuthorizationError)
+        return reply.code(403).send({ data: null, error: 'Publishing access is required' });
+      throw error;
+    }
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     if (
       !verifyCsrfToken(
@@ -59,7 +67,14 @@ export function registerTikTokOauthRoutes(
   });
 
   application.get('/api/oauth/tiktok/callback', async (request, reply) => {
-    const identity = await authenticateRequest(request, dependencies.auth);
+    let identity;
+    try {
+      identity = await authorizeRequest(request, dependencies.auth, 'publish:manage');
+    } catch (error) {
+      if (error instanceof WorkspaceAuthorizationError)
+        return reply.code(403).send({ data: null, error: 'Publishing access is required' });
+      throw error;
+    }
     if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     const query = callbackQuerySchema.safeParse(request.query);
     if (!query.success)

@@ -38,7 +38,7 @@ function createStore(): AuthStore {
 function createTestApplication(store: AuthStore) {
   const application = createStandaloneApplication({
     config: { NODE_ENV: 'test', HOST: '127.0.0.1', PORT: 3100, WORKER_POLL_INTERVAL_MS: 1000 },
-    auth: new AuthService(store),
+    auth: new AuthService(store, undefined, 'test-auth-rate-limit-secret'),
   });
   applications.push(application);
   return application;
@@ -52,7 +52,7 @@ function createProductionApplication(store: AuthStore) {
       PORT: 3100,
       WORKER_POLL_INTERVAL_MS: 1000,
     },
-    auth: new AuthService(store),
+    auth: new AuthService(store, undefined, 'test-auth-rate-limit-secret'),
   });
   applications.push(application);
   return application;

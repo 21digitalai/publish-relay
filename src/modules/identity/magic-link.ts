@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 
+import { deriveAuthRateLimitKeys, normalizeAuthRateLimitEmail } from './auth-rate-limit.js';
 import { createOpaqueToken, hashOpaqueToken } from './session.js';
 
 export const MAGIC_LINK_LIFETIME_MS = 15 * 60 * 1_000;
@@ -23,7 +24,7 @@ export function hashMagicLinkBinding(value: string, pepper: string): string {
 }
 
 export function normalizeMagicLinkEmail(email: string): string {
-  return email.trim().toLowerCase();
+  return normalizeAuthRateLimitEmail(email);
 }
 
 export function validateMagicLinkRedirect(redirectPath?: string): string {
@@ -50,11 +51,15 @@ export function createMagicLinkSecretMaterial(input: {
 }): MagicLinkSecretMaterial {
   if (!input.pepper) throw new Error('Magic-link challenge pepper is required');
   const token = createOpaqueToken();
+  const rateLimitKeys = deriveAuthRateLimitKeys({
+    email: input.email,
+    networkKey: input.networkKey,
+    secret: input.pepper,
+  });
   return {
     token,
     tokenHash: hashOpaqueToken(token),
-    emailKeyHash: hmac(normalizeMagicLinkEmail(input.email), input.pepper),
-    networkKeyHash: hmac(input.networkKey, input.pepper),
+    ...rateLimitKeys,
     userAgentHash: hashMagicLinkBinding(input.userAgent, input.pepper),
   };
 }

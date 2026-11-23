@@ -92,7 +92,7 @@ export function createPostgresReviewerAccountStore(database: NodePgDatabase): Re
             AND revoked_at IS NULL
         `);
         await transaction.execute(sql`
-          UPDATE delegated_authorization_codes SET consumed_at = now(), updated_at = now()
+          UPDATE delegated_authorization_codes SET consumed_at = now()
           WHERE workspace_id = ${input.workspaceId}
             AND grant_id IN (
               SELECT id FROM delegated_grants

@@ -28,7 +28,7 @@ beforeEach(async () => {
     CREATE TABLE delegated_grants (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL,
       user_id uuid NOT NULL, revoked_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE delegated_authorization_codes (workspace_id uuid NOT NULL, grant_id uuid NOT NULL,
-      consumed_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now());
+      consumed_at timestamptz);
     CREATE TABLE delegated_tokens (workspace_id uuid NOT NULL, grant_id uuid NOT NULL,
       revoked_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE audit_events (workspace_id uuid NOT NULL, actor_type text NOT NULL,
@@ -81,7 +81,7 @@ describe('PostgreSQL reviewer lifecycle', () => {
       workspace,
       provisioned.userId,
     ]);
-    await postgres.query('INSERT INTO delegated_authorization_codes VALUES ($1,$2,NULL,now())', [
+    await postgres.query('INSERT INTO delegated_authorization_codes VALUES ($1,$2,NULL)', [
       workspace,
       grant,
     ]);

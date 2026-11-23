@@ -57,8 +57,11 @@ describe('PostgreSQL magic-link repository', () => {
     const workspaceId = '00000000-0000-4000-8000-000000000912';
     await database.exec(`
       INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Magic', 'magic');
-      INSERT INTO users (id, display_name, email, password_hash, default_workspace_id)
-        VALUES ('${userId}', 'Magic Owner', 'magic@example.test', 'legacy-password-hash', '${workspaceId}');
+      INSERT INTO users
+        (id, display_name, email, password_hash, default_workspace_id, review_access_expires_at)
+      VALUES
+        ('${userId}', 'Magic Owner', 'magic@example.test', 'legacy-password-hash',
+         '${workspaceId}', '2020-01-01T00:00:00Z');
       SELECT set_config('app.workspace_id', '${workspaceId}', false);
       INSERT INTO memberships (workspace_id, user_id, role)
         VALUES ('${workspaceId}', '${userId}', 'owner');
@@ -74,6 +77,7 @@ describe('PostgreSQL magic-link repository', () => {
       SET ROLE magic_link_test_web;
     `);
     const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
+    await expect(store.findEnabledUserIdByEmail('magic@example.test')).resolves.toBe(userId);
     const input = {
       tokenHash: 'token-hash',
       sessionTokenHash: 'session-hash',
@@ -92,10 +96,11 @@ describe('PostgreSQL magic-link repository', () => {
     await database.exec('RESET ROLE');
     const rows = await database.query<{ token_hash: string }>('SELECT token_hash FROM sessions');
     expect(rows.rows).toEqual([{ token_hash: 'session-hash' }]);
-    const users = await database.query<{ password_hash: string | null }>(
-      `SELECT password_hash FROM users WHERE id = '${userId}'`,
-    );
-    expect(users.rows).toEqual([{ password_hash: null }]);
+    const users = await database.query<{
+      password_hash: string | null;
+      review_access_expires_at: Date | null;
+    }>(`SELECT password_hash, review_access_expires_at FROM users WHERE id = '${userId}'`);
+    expect(users.rows).toEqual([{ password_hash: null, review_access_expires_at: null }]);
     const audit = await database.query<{ action: string; metadata: unknown }>(
       'SELECT action, metadata FROM audit_events',
     );

@@ -84,6 +84,73 @@ describe('authentication HTTP boundary', () => {
     expect(store.createSession).toHaveBeenCalledOnce();
   });
 
+  it('maps a wrapped case-insensitive email conflict without exposing database details', async () => {
+    const store = createStore();
+    vi.mocked(store.register).mockRejectedValue({
+      code: 'XX000',
+      cause: {
+        code: '23505',
+        constraint: 'users_email_lower_unique',
+        detail: 'Key (email)=(owner@example.test) already exists',
+      },
+    });
+    const response = await createTestApplication(store).inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: {
+        displayName: 'Relay Owner',
+        email: 'OWNER@example.test',
+        password: 'long-password',
+        workspaceName: 'Relay',
+      },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      data: null,
+      error: 'An account with that email already exists',
+    });
+    expect(response.body).not.toContain('owner@example.test');
+    expect(response.body).not.toContain('23505');
+  });
+
+  it('allows only one concurrent case-insensitive registration to win', async () => {
+    const store = createStore();
+    const registeredEmails = new Set<string>();
+    vi.mocked(store.register).mockImplementation(async (input) => {
+      await Promise.resolve();
+      if (registeredEmails.has(input.email)) {
+        throw new Error('duplicate email', {
+          cause: { code: '23505', constraint: 'users_email_lower_unique' },
+        });
+      }
+      registeredEmails.add(input.email);
+      return { userId: 'u1', workspaceId: 'w1', role: 'owner' };
+    });
+    const application = createTestApplication(store);
+    const payload = {
+      displayName: 'Relay Owner',
+      password: 'long-password',
+      workspaceName: 'Relay',
+    };
+    const responses = await Promise.all([
+      application.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { ...payload, email: 'OWNER@example.test' },
+      }),
+      application.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { ...payload, email: 'owner@example.test' },
+      }),
+    ]);
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([201, 409]);
+    expect(responses.find((response) => response.statusCode === 409)?.json()).toEqual({
+      data: null,
+      error: 'An account with that email already exists',
+    });
+  });
+
   it('rotates login state, protects the shell, and requires CSRF for logout', async () => {
     const store = createStore();
     vi.mocked(store.findLogin).mockResolvedValue({

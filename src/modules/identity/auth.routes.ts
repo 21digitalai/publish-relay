@@ -64,6 +64,19 @@ function isUniqueViolation(error: unknown): boolean {
   return 'cause' in error && isUniqueViolation(error.cause);
 }
 
+function isDuplicateEmailViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const record = error as Record<string, unknown>;
+  if (record.code === '23505') {
+    const constraint = record.constraint ?? record.constraint_name;
+    if (constraint === 'users_email_lower_unique') return true;
+    if (typeof record.message === 'string') {
+      return record.message.includes('users_email_lower_unique');
+    }
+  }
+  return 'cause' in record && isDuplicateEmailViolation(record.cause);
+}
+
 export async function authenticateRequest(
   request: FastifyRequest,
   auth: AuthService,
@@ -116,12 +129,21 @@ export function registerAuthRoutes(
     const input = registrationSchema.safeParse(request.body);
     if (!input.success)
       return reply.code(400).send({ data: null, error: 'Invalid registration details' });
-    const session = await auth.register(
-      input.data.displayName,
-      input.data.email,
-      input.data.password,
-      input.data.workspaceName,
-    );
+    let session: SessionResult;
+    try {
+      session = await auth.register(
+        input.data.displayName,
+        input.data.email,
+        input.data.password,
+        input.data.workspaceName,
+      );
+    } catch (error) {
+      if (isDuplicateEmailViolation(error))
+        return reply
+          .code(409)
+          .send({ data: null, error: 'An account with that email already exists' });
+      throw error;
+    }
     setSessionCookies(reply, session, options.secureCookies);
     return reply.code(201).send({
       data: { userId: session.userId, workspaceId: session.workspaceId, role: session.role },

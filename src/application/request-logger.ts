@@ -17,6 +17,20 @@ export function registerRedactedNotFoundHandler(application: FastifyInstance): v
   });
 }
 
+export function registerRedactedErrorHandler(application: FastifyInstance): void {
+  application.setErrorHandler((_error, request, reply) => {
+    request.log.error(
+      { requestId: request.id, method: request.method, url: requestPath(request.url) },
+      'request failed',
+    );
+    return reply.code(500).send({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Internal Server Error',
+    });
+  });
+}
+
 // Query strings can carry one-time login links and OAuth credentials.
 export const requestLoggerOptions: FastifyLoggerOptions = {
   serializers: {

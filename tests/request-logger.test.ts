@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 
 import {
+  registerRedactedErrorHandler,
   registerRedactedNotFoundHandler,
   requestLoggerOptions,
 } from '../src/application/request-logger.js';
@@ -23,8 +24,9 @@ describe('request logger', () => {
       },
     });
     application.get('/api/auth/magic-link/verify', () => {
-      throw new Error('Verification failed');
+      throw new Error('database query params password_hash=synthetic-secret');
     });
+    registerRedactedErrorHandler(application);
     registerRedactedNotFoundHandler(application);
 
     try {

@@ -98,7 +98,11 @@ import { registerFanvueGuidanceRoutes } from '../modules/credentials/fanvue-guid
 import { registerFacebookPageGuidanceRoutes } from '../modules/credentials/facebook-page-guidance.routes.js';
 import { registerDestinationRoutes } from '../modules/credentials/destination.routes.js';
 import { allowAllActionPolicy, type ActionPolicy } from '../modules/policy/action-policy.js';
-import { registerRedactedNotFoundHandler, requestLoggerOptions } from './request-logger.js';
+import {
+  registerRedactedErrorHandler,
+  registerRedactedNotFoundHandler,
+  requestLoggerOptions,
+} from './request-logger.js';
 import type { DelegatedAuthorizationService } from '../modules/delegated-authorization/delegated-authorization.service.js';
 import { registerDelegatedAuthorizationRoutes } from '../modules/delegated-authorization/delegated-authorization.routes.js';
 
@@ -612,6 +616,7 @@ export function registerCoreApplication(
     });
   registerMachineApiRoutes(application, options, actionPolicy);
   registerBrowserRoutes(application, options, actionPolicy, shellHtml);
+  registerRedactedErrorHandler(application);
   registerRedactedNotFoundHandler(application);
 
   return application;

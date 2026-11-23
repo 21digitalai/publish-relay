@@ -40,11 +40,41 @@ describe('PostgreSQL reviewer login lookup', () => {
       otherWorkspace,
     ]);
     const fixtures = [
-      ['00000000-0000-4000-8000-000000000011', 'valid@example.test', workspace, false, '2099-01-01T00:00:00Z'],
-      ['00000000-0000-4000-8000-000000000012', 'expired@example.test', workspace, false, '2020-01-01T00:00:00Z'],
-      ['00000000-0000-4000-8000-000000000013', 'disabled@example.test', workspace, true, '2099-01-01T00:00:00Z'],
-      ['00000000-0000-4000-8000-000000000014', 'owner@example.test', workspace, false, '2099-01-01T00:00:00Z'],
-      ['00000000-0000-4000-8000-000000000015', 'wrong-workspace@example.test', workspace, false, '2099-01-01T00:00:00Z'],
+      [
+        '00000000-0000-4000-8000-000000000011',
+        'valid@example.test',
+        workspace,
+        false,
+        '2099-01-01T00:00:00Z',
+      ],
+      [
+        '00000000-0000-4000-8000-000000000012',
+        'expired@example.test',
+        workspace,
+        false,
+        '2020-01-01T00:00:00Z',
+      ],
+      [
+        '00000000-0000-4000-8000-000000000013',
+        'disabled@example.test',
+        workspace,
+        true,
+        '2099-01-01T00:00:00Z',
+      ],
+      [
+        '00000000-0000-4000-8000-000000000014',
+        'owner@example.test',
+        workspace,
+        false,
+        '2099-01-01T00:00:00Z',
+      ],
+      [
+        '00000000-0000-4000-8000-000000000015',
+        'wrong-workspace@example.test',
+        workspace,
+        false,
+        '2099-01-01T00:00:00Z',
+      ],
     ] as const;
     for (const [id, email, defaultWorkspaceId, disabled, expiresAt] of fixtures)
       await postgres.query(

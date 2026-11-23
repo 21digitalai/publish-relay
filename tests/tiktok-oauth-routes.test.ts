@@ -26,6 +26,7 @@ function application(authenticated: boolean, role: 'owner' | 'editor' | 'viewer'
   const store: AuthStore = {
     register: vi.fn(),
     findLogin: vi.fn(),
+    findReviewerLogin: vi.fn(),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),
     revokeSession: vi.fn(),
@@ -148,7 +149,10 @@ describe('TikTok OAuth HTTP boundary', () => {
     expect(
       (await editor.inject({ method: 'POST', url: '/api/oauth/tiktok', headers: csrf })).statusCode,
     ).toBe(200);
-    vi.mocked(completeTikTokOauthConnection).mockResolvedValue({ connectionId: 'id', accounts: [] });
+    vi.mocked(completeTikTokOauthConnection).mockResolvedValue({
+      connectionId: 'id',
+      accounts: [],
+    });
     expect(
       (
         await editor.inject({

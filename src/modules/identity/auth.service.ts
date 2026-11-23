@@ -18,6 +18,10 @@ export interface AuthStore {
     workspaceName: string;
   }) => Promise<AuthIdentity>;
   findLogin: (email: string) => Promise<(AuthIdentity & { passwordHash: string }) | null>;
+  findReviewerLogin: (
+    email: string,
+    now: Date,
+  ) => Promise<(AuthIdentity & { passwordHash: string; reviewAccessExpiresAt: Date }) | null>;
   createSession: (
     input: AuthIdentity & { tokenHash: string; csrfSecretHash: string; expiresAt: Date },
   ) => Promise<void>;
@@ -105,10 +109,27 @@ export class AuthService {
     return this.issueSession(identity, now);
   }
 
-  private async issueSession(identity: AuthIdentity, now: Date): Promise<SessionResult> {
+  async loginReviewer(
+    email: string,
+    password: string,
+    now = new Date(),
+  ): Promise<SessionResult | null> {
+    const identity = await this.store.findReviewerLogin(email.trim().toLowerCase(), now);
+    if (!identity || !(await verifyPassword(identity.passwordHash, password))) return null;
+    await this.store.revokeSessionsForUser(identity.workspaceId, identity.userId);
+    return this.issueSession(identity, now, identity.reviewAccessExpiresAt);
+  }
+
+  private async issueSession(
+    identity: AuthIdentity,
+    now: Date,
+    maximumExpiresAt?: Date,
+  ): Promise<SessionResult> {
     const token = createOpaqueToken();
     const csrfToken = createOpaqueToken();
-    const expiresAt = new Date(now.getTime() + this.sessionLifetimeMs);
+    const normalExpiresAt = new Date(now.getTime() + this.sessionLifetimeMs);
+    const expiresAt =
+      maximumExpiresAt && maximumExpiresAt < normalExpiresAt ? maximumExpiresAt : normalExpiresAt;
     await this.store.createSession({
       ...identity,
       tokenHash: hashOpaqueToken(token),

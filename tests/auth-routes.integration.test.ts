@@ -17,6 +17,7 @@ function createStore(): AuthStore {
   return {
     register: vi.fn().mockResolvedValue({ userId: 'u1', workspaceId: 'w1', role: 'owner' }),
     findLogin: vi.fn(),
+    findReviewerLogin: vi.fn(),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),
     revokeSession: vi.fn(),

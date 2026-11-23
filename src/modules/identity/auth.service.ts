@@ -1,6 +1,7 @@
 import { createOpaqueToken, hashOpaqueToken } from './session.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { requireWorkspaceAction, type MembershipRole } from './authorization.js';
+import { deriveAuthRateLimitKeys, type AuthRateLimitSecret } from './auth-rate-limit.js';
 
 export const MAX_WORKSPACES_PER_USER = 100;
 
@@ -89,6 +90,7 @@ export class AuthService {
   constructor(
     private readonly store: AuthStore,
     private readonly sessionLifetimeMs = 1000 * 60 * 60 * 24 * 30,
+    private readonly authRateLimitSecret?: AuthRateLimitSecret,
   ) {}
 
   async register(
@@ -126,11 +128,10 @@ export class AuthService {
 
   async admitReviewerLogin(email: string, networkKey: string): Promise<boolean> {
     const consume = this.store.consumeReviewerRateLimit;
-    if (!consume) return false;
-    return consume({
-      emailKeyHash: hashOpaqueToken(email.trim().toLowerCase()),
-      networkKeyHash: hashOpaqueToken(networkKey),
-    });
+    if (!consume || !this.authRateLimitSecret) return false;
+    return consume(
+      deriveAuthRateLimitKeys({ email, networkKey, secret: this.authRateLimitSecret }),
+    );
   }
 
   private async issueSession(

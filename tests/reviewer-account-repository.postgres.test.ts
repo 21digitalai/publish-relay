@@ -68,11 +68,27 @@ describe('PostgreSQL reviewer lifecycle', () => {
     expect(reviewer.rows[0]?.password_hash).not.toBe(provisioned.password);
     expect(reviewer.rows[0]?.review_access_expires_at).not.toBeNull();
     const grant = '00000000-0000-4000-8000-000000000021';
-    await postgres.query('INSERT INTO sessions VALUES ($1,$2,NULL,now())', [workspace, provisioned.userId]);
-    await postgres.query('INSERT INTO api_keys VALUES ($1,$2,NULL,now())', [workspace, provisioned.userId]);
-    await postgres.query('INSERT INTO delegated_grants VALUES ($1,$2,$3,NULL,now())', [grant, workspace, provisioned.userId]);
-    await postgres.query('INSERT INTO delegated_authorization_codes VALUES ($1,$2,NULL,now())', [workspace, grant]);
-    await postgres.query('INSERT INTO delegated_tokens VALUES ($1,$2,NULL,now())', [workspace, grant]);
+    await postgres.query('INSERT INTO sessions VALUES ($1,$2,NULL,now())', [
+      workspace,
+      provisioned.userId,
+    ]);
+    await postgres.query('INSERT INTO api_keys VALUES ($1,$2,NULL,now())', [
+      workspace,
+      provisioned.userId,
+    ]);
+    await postgres.query('INSERT INTO delegated_grants VALUES ($1,$2,$3,NULL,now())', [
+      grant,
+      workspace,
+      provisioned.userId,
+    ]);
+    await postgres.query('INSERT INTO delegated_authorization_codes VALUES ($1,$2,NULL,now())', [
+      workspace,
+      grant,
+    ]);
+    await postgres.query('INSERT INTO delegated_tokens VALUES ($1,$2,NULL,now())', [
+      workspace,
+      grant,
+    ]);
     await service.revoke({
       workspaceId: workspace,
       operatorUserId: owner,
@@ -83,8 +99,14 @@ describe('PostgreSQL reviewer lifecycle', () => {
       is_disabled: boolean;
       password_hash: string | null;
       review_access_expires_at: Date | null;
-    }>('SELECT is_disabled,password_hash,review_access_expires_at FROM users WHERE id=$1', [provisioned.userId]);
-    expect(state.rows[0]).toEqual({ is_disabled: true, password_hash: null, review_access_expires_at: null });
+    }>('SELECT is_disabled,password_hash,review_access_expires_at FROM users WHERE id=$1', [
+      provisioned.userId,
+    ]);
+    expect(state.rows[0]).toEqual({
+      is_disabled: true,
+      password_hash: null,
+      review_access_expires_at: null,
+    });
     for (const query of [
       'SELECT revoked_at FROM sessions',
       'SELECT revoked_at FROM api_keys',

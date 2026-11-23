@@ -18,13 +18,13 @@ async function requireOperatorOwner(
   if (owner.rows.length !== 1) throw new Error('Operator owner membership is required');
 }
 
-export function createPostgresReviewerAccountStore(
-  database: NodePgDatabase,
-): ReviewerAccountStore {
+export function createPostgresReviewerAccountStore(database: NodePgDatabase): ReviewerAccountStore {
   return {
     async provision(input) {
       return database.transaction(async (transaction) => {
-        await transaction.execute(sql`select set_config('app.workspace_id', ${input.workspaceId}, true)`);
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${input.workspaceId}, true)`,
+        );
         await requireOperatorOwner(transaction, input.workspaceId, input.operatorUserId);
         const created = await transaction.execute<{ id: string }>(sql`
           INSERT INTO users (
@@ -57,7 +57,9 @@ export function createPostgresReviewerAccountStore(
 
     async revoke(input) {
       return database.transaction(async (transaction) => {
-        await transaction.execute(sql`select set_config('app.workspace_id', ${input.workspaceId}, true)`);
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${input.workspaceId}, true)`,
+        );
         await requireOperatorOwner(transaction, input.workspaceId, input.operatorUserId);
         const reviewer = await transaction.execute<{ id: string }>(sql`
           SELECT users.id

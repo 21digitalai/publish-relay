@@ -1,19 +1,12 @@
-# Candidate fragment. Merge the global options at the top of the operator-owned
-# Caddyfile, then include the site block only after the operator verifies a publicly trusted
-# certificate for the exact direct origin host and confirms the existing Mobile API
-# route remains unchanged. The CA must support public IP certificates; `shortlived`
-# is explicit because the direct-IP profile is intentionally short-lived.
+# Candidate fragment for the approved DuckDNS origin. Merge the global options at
+# the top of the operator-owned Caddyfile, then include the site block only after
+# the operator confirms the existing Mobile API route remains unchanged and the
+# exact hostname resolves to the Droplet.
 {
-	default_sni {$PUBLISH_RELAY_ORIGIN_HOST}
 	storage file_system /data/caddy
 }
 
-https://{$PUBLISH_RELAY_ORIGIN_HOST} {
-	tls {
-		issuer acme {
-			profile shortlived
-		}
-	}
+https://publish-relay.duckdns.org {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:3106
 	header {

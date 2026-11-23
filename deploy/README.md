@@ -20,29 +20,27 @@ Install an isolated Node 24 toolchain under `/opt/publish-relay/node24` before t
 
 Reverse proxy TLS termination must forward only to the isolated Publish Relay listener, initially `127.0.0.1:3106` (`HOST=127.0.0.1`, `PORT=3106`). `publish-release.sh` probes `PUBLISH_RELAY_HEALTH_URL`, defaulting to `http://127.0.0.1:3106/health/ready`. Keep `/metrics` restricted to host monitoring. Verify `/health/live`, `/health/ready`, login, protected-shell redirect behavior, worker restart survival, process metrics, journald logs, and absence of changes to existing services before cutover.
 
-## Direct-IP Caddy candidate
+## DuckDNS Caddy candidate
 
-The isolated `caddy/publish-relay.Caddyfile` uses Caddy's public ACME issuer with
-the `shortlived` profile, persistent file storage under `/data/caddy`, and
-`default_sni` set to the configured origin IP for clients that omit SNI. Caddy
-2.11.4 or newer is required for the tested syntax. The host owner must provision
+The isolated `caddy/publish-relay.Caddyfile` uses the approved
+`publish-relay.duckdns.org` hostname, Caddy's normal public ACME flow, and
+persistent file storage under `/data/caddy`. The host owner must provision
 that data directory with the Caddy service's ownership and persistence (the existing
 Droplet container mounts its named Caddy data volume at `/data`; do not move global
 storage to an unmounted container path or discard existing Mobile API certificate
 state), then run
 `caddy adapt --config deploy/caddy/publish-relay.Caddyfile --adapter caddyfile` and
-`caddy validate --config deploy/caddy/publish-relay.Caddyfile --adapter caddyfile`
-with `PUBLISH_RELAY_ORIGIN_HOST` set. Do not include this fragment until the
-operator has verified that the chosen ACME CA will issue a publicly trusted
-certificate for the exact IP; source validation is not certificate issuance or
-renewal proof. Merge its global options at the top of the operator-owned Caddyfile;
+`caddy validate --config deploy/caddy/publish-relay.Caddyfile --adapter caddyfile`.
+Do not include this fragment until the operator has verified DNS resolution and
+public certificate issuance for the exact hostname; source validation is not
+certificate issuance or renewal proof. Merge its global options at the top of the operator-owned Caddyfile;
 do not import the whole file after an existing site block. Caddy renews the
-short-lived certificate from its persistent storage; if adaptation, validation,
+certificate from its persistent storage; if adaptation, validation,
 issuance, or readiness fails, leave the existing Mobile API configuration active,
 remove only the uncommitted Relay candidate, and reload the last known-good config.
 Keep the existing Mobile API site block unchanged. Main may apply the reviewed
 candidate with `caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`
-only after the rollout gate, then verify `curl --fail https://$PUBLISH_RELAY_ORIGIN_HOST/health/ready`
+only after the rollout gate, then verify `curl --fail https://publish-relay.duckdns.org/health/ready`
 and the certificate chain before proceeding to Worker cutover.
 
 ## Droplet Compose candidate

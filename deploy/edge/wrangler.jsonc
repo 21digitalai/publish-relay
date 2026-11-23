@@ -7,7 +7,7 @@
   "preview_urls": false,
   "observability": { "enabled": false },
   "vars": {
-    "UPSTREAM": "https://203.0.113.10",
-    "UPSTREAM_HOST": "203.0.113.10",
+    "UPSTREAM": "https://publish-relay.duckdns.org",
+    "UPSTREAM_HOST": "publish-relay.duckdns.org",
   },
 }

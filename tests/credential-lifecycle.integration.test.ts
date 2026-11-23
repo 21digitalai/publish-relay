@@ -729,8 +729,29 @@ describe('credential and OAuth persistence', () => {
     expect(
       (await listProviderAccounts(db, workspaceId)).find(
         (account) => account.displayName === 'Creator open-two',
-      )?.status,
+      ),
+    ).toBeUndefined();
+    const visible = (await listProviderAccounts(db, workspaceId)).find(
+      (account) => account.displayName === 'Creator open-one',
+    );
+    expect(visible).toBeDefined();
+    if (!visible) throw new Error('Expected connected TikTok account');
+    expect(
+      await disconnectProviderAccount(db, {
+        workspaceId,
+        userId,
+        accountId: visible.id,
+        requestId: 'disconnect-tiktok-account',
+      }),
     ).toBe('disconnected');
+    expect(await listProviderAccounts(db, workspaceId)).toEqual([]);
+    subject = 'open-one';
+    const newState = oauthState((await begin()).authorizationUrl);
+    expect((await callback(newState))?.connectionId).toBe(first?.connectionId);
+    const restored = await listProviderAccounts(db, workspaceId);
+    expect(restored).toHaveLength(1);
+    expect(restored[0]?.id).toBe(visible.id);
+    expect(restored[0]?.status).toBe('active');
   });
 
   it('connects two LinkedIn members and reconnects only the matching identity', async () => {

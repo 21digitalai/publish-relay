@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -157,10 +157,7 @@ export function listProviderAccountsPage(
               .where(
                 and(
                   eq(providerAccounts.workspaceId, workspaceId),
-                  or(
-                    isNull(providerAccounts.disconnectedAt),
-                    eq(providerConnections.provider, 'tiktok'),
-                  ),
+                  isNull(providerAccounts.disconnectedAt),
                   providerFilter ? eq(providerConnections.provider, providerFilter) : undefined,
                   localAfter
                     ? sql`(${providerConnections.provider}, ${providerAccounts.displayName}, ${providerAccounts.id}) > (${localAfter[1]}, ${localAfter[2]}, ${localAfter[3]}::uuid)`

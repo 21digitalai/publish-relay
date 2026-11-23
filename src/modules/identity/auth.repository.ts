@@ -5,6 +5,27 @@ import { auditEvents, memberships, sessions, users, workspaces } from '../../dat
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 import type { AuthStore, WorkspaceSummary } from './auth.service.js';
 
+const REVIEWER_EMAIL_REQUESTS_PER_MINUTE = 5;
+const REVIEWER_NETWORK_REQUESTS_PER_MINUTE = 20;
+
+async function incrementReviewerRateBucket(
+  database: NodePgDatabase,
+  kind: 'email' | 'network',
+  keyHash: string,
+): Promise<number> {
+  const result = await database.execute<{ request_count: number }>(sql`
+    INSERT INTO auth_rate_limit_buckets (
+      kind, key_hash, window_started_at, expires_at
+    ) VALUES (${kind}, ${keyHash}, date_trunc('minute', now()), date_trunc('minute', now()) + interval '2 minutes')
+    ON CONFLICT (kind, key_hash, window_started_at)
+    DO UPDATE SET request_count = auth_rate_limit_buckets.request_count + 1
+    RETURNING request_count
+  `);
+  const count = result.rows[0]?.request_count;
+  if (!count) throw new Error('Reviewer auth rate-limit bucket was not updated');
+  return count;
+}
+
 function workspaceSlug(name: string): string {
   const base =
     name
@@ -131,6 +152,24 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             : null;
         },
       );
+    },
+    async consumeReviewerRateLimit(input) {
+      return database.transaction(async (transaction) => {
+        const emailCount = await incrementReviewerRateBucket(
+          transaction,
+          'email',
+          input.emailKeyHash,
+        );
+        const networkCount = await incrementReviewerRateBucket(
+          transaction,
+          'network',
+          input.networkKeyHash,
+        );
+        return (
+          emailCount <= REVIEWER_EMAIL_REQUESTS_PER_MINUTE &&
+          networkCount <= REVIEWER_NETWORK_REQUESTS_PER_MINUTE
+        );
+      });
     },
     async createSession(input) {
       await withTenantTransaction(database, input, async (transaction) => {

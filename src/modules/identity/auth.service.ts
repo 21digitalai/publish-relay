@@ -22,6 +22,10 @@ export interface AuthStore {
     email: string,
     now: Date,
   ) => Promise<(AuthIdentity & { passwordHash: string; reviewAccessExpiresAt: Date }) | null>;
+  consumeReviewerRateLimit?: (input: {
+    emailKeyHash: string;
+    networkKeyHash: string;
+  }) => Promise<boolean>;
   createSession: (
     input: AuthIdentity & { tokenHash: string; csrfSecretHash: string; expiresAt: Date },
   ) => Promise<void>;
@@ -118,6 +122,15 @@ export class AuthService {
     if (!identity || !(await verifyPassword(identity.passwordHash, password))) return null;
     await this.store.revokeSessionsForUser(identity.workspaceId, identity.userId);
     return this.issueSession(identity, now, identity.reviewAccessExpiresAt);
+  }
+
+  async admitReviewerLogin(email: string, networkKey: string): Promise<boolean> {
+    const consume = this.store.consumeReviewerRateLimit;
+    if (!consume) return false;
+    return consume({
+      emailKeyHash: hashOpaqueToken(email.trim().toLowerCase()),
+      networkKeyHash: hashOpaqueToken(networkKey),
+    });
   }
 
   private async issueSession(

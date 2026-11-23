@@ -18,6 +18,7 @@ function createStore(): AuthStore {
     register: vi.fn().mockResolvedValue({ userId: 'u1', workspaceId: 'w1', role: 'owner' }),
     findLogin: vi.fn(),
     findReviewerLogin: vi.fn(),
+    consumeReviewerRateLimit: vi.fn().mockResolvedValue(true),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),
     revokeSession: vi.fn(),
@@ -170,6 +171,61 @@ describe('authentication HTTP boundary', () => {
     });
     expect(response.cookies).toHaveLength(2);
     expect(response.cookies.every((cookie) => cookie.secure)).toBe(true);
+  });
+
+  it('admits reviewer login through the isolated bounded route and returns canonical session cookies', async () => {
+    const store = createStore();
+    vi.mocked(store.findReviewerLogin).mockResolvedValue({
+      userId: 'reviewer',
+      workspaceId: 'review-workspace',
+      role: 'editor',
+      passwordHash: await hashPassword('reviewer-password'),
+      reviewAccessExpiresAt: new Date(Date.now() + 60_000),
+    });
+    const response = await createTestApplication(store).inject({
+      method: 'POST',
+      url: '/api/auth/reviewer-login',
+      remoteAddress: '203.0.113.10',
+      payload: {
+        email: 'reviewer@example.test',
+        password: 'reviewer-password',
+        redirectPath: '/app',
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.cookies.map((cookie) => cookie.name)).toEqual([
+      'publish_relay_session',
+      'publish_relay_csrf',
+    ]);
+    expect(response.json()).toEqual({
+      data: {
+        userId: 'reviewer',
+        workspaceId: 'review-workspace',
+        role: 'editor',
+        redirectPath: '/app',
+      },
+      error: null,
+    });
+    const limiter = store.consumeReviewerRateLimit;
+    if (!limiter) throw new Error('Reviewer limiter mock is required');
+    const limiterInput = vi.mocked(limiter).mock.calls[0]?.[0];
+    expect(limiterInput?.emailKeyHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(limiterInput?.networkKeyHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('rate limits reviewer login before account lookup without changing ordinary login', async () => {
+    const store = createStore();
+    const limiter = store.consumeReviewerRateLimit;
+    if (!limiter) throw new Error('Reviewer limiter mock is required');
+    vi.mocked(limiter).mockResolvedValue(false);
+    const response = await createTestApplication(store).inject({
+      method: 'POST',
+      url: '/api/auth/reviewer-login',
+      payload: { email: 'unknown@example.test', password: 'reviewer-password' },
+    });
+    expect(response.statusCode).toBe(429);
+    expect(response.json()).toEqual({ data: null, error: 'Too many login attempts' });
+    expect(store.findReviewerLogin).not.toHaveBeenCalled();
   });
 
   it('updates the registered workspace in place with owner authorization and CSRF', async () => {

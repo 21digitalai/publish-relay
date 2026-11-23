@@ -53,7 +53,13 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
       const [user] = await database
         .select({ id: users.id })
         .from(users)
-        .where(and(sql`lower(${users.email}) = ${email}`, eq(users.isDisabled, false)))
+        .where(
+          and(
+            sql`lower(${users.email}) = ${email}`,
+            eq(users.isDisabled, false),
+            sql`(${users.reviewAccessExpiresAt} is null or ${users.reviewAccessExpiresAt} <= now())`,
+          ),
+        )
         .limit(1);
       return user?.id ?? null;
     },
@@ -107,6 +113,7 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
             AND challenge.consumed_at IS NULL
             AND challenge.expires_at > now()
             AND users.is_disabled = false
+            AND (users.review_access_expires_at IS NULL OR users.review_access_expires_at <= now())
           FOR UPDATE OF challenge
         `);
         const challenge = result.rows[0];

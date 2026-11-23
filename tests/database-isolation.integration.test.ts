@@ -25,6 +25,7 @@ const migrationUrls = [
   new URL('../migrations/0043_workspace_membership_listing.sql', import.meta.url),
   new URL('../migrations/0058_workspace_tombstone.sql', import.meta.url),
   new URL('../migrations/0076_api_key_capability_version.sql', import.meta.url),
+  new URL('../migrations/0131_reviewer_access_expiry.sql', import.meta.url),
 ];
 let database: PGlite;
 

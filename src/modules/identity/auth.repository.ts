@@ -59,6 +59,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           and(
             sql`lower(${users.email}) = ${email}`,
             eq(users.isDisabled, false),
+            isNull(users.reviewAccessExpiresAt),
             isNull(workspaces.deletedAt),
           ),
         )

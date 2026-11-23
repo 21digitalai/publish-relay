@@ -93,6 +93,8 @@ describe('PostgreSQL reviewer login lookup', () => {
       role: 'editor',
       passwordHash: 'hash',
     });
+    await expect(store.findLogin('valid@example.test')).resolves.toBeNull();
+    await expect(store.findLogin('expired@example.test')).resolves.toBeNull();
     for (const email of [
       'expired@example.test',
       'disabled@example.test',

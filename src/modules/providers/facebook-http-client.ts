@@ -332,7 +332,7 @@ export class FacebookHttpClient {
     const parsed = z
       .object({
         id: graphIdSchema,
-        message: z.string().min(1).max(16_000),
+        message: z.string().max(16_000).optional(),
         created_time: graphTimestampSchema,
       })
       .safeParse(target);
@@ -357,7 +357,7 @@ export class FacebookHttpClient {
       if (!replies.success) throw new FacebookRequestError({ kind: 'permanent', status: 502 });
       if (replies.data.data.some((reply) => reply.from.id === pageId))
         return {
-          text: parsed.data.message,
+          text: parsed.data.message ?? '',
           createdAt: parsed.data.created_time,
           hasPageReply: true,
           threadFingerprint: null,
@@ -365,7 +365,7 @@ export class FacebookHttpClient {
       replyIds.push(...replies.data.data.map((reply) => reply.id));
       if (!replies.data.paging?.next)
         return {
-          text: parsed.data.message,
+          text: parsed.data.message ?? '',
           createdAt: parsed.data.created_time,
           hasPageReply: false,
           threadFingerprint: createHash('sha256')

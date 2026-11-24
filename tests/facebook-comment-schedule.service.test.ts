@@ -51,6 +51,32 @@ beforeEach(() => {
 });
 
 describe('scheduled Page comment replay', () => {
+  it('stores an attachment-only target snapshot without weakening the reply body', async () => {
+    mocks.find.mockResolvedValue(null);
+    mocks.target.mockResolvedValue({
+      text: '',
+      createdAt: '2026-11-10T10:00:00+0000',
+      hasPageReply: false,
+      threadFingerprint: 'a'.repeat(64),
+    });
+    mocks.schedule.mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000005',
+      status: 'pending',
+      dueAt: new Date('2099-11-10T10:00:00Z'),
+    });
+
+    const future = { ...input, dueAt: '2099-11-10T10:00:00Z' };
+    await expect(scheduleAccountPageCommentReply(runtime, future)).resolves.toEqual({
+      id: '00000000-0000-4000-8000-000000000005',
+      status: 'pending',
+      dueAt: '2099-11-10T10:00:00.000Z',
+    });
+    expect(mocks.schedule).toHaveBeenCalledWith(
+      runtime.database,
+      expect.objectContaining({ targetText: '', text: input.text }),
+    );
+  });
+
   it('returns the exact durable receipt after due time without a new provider read or insert', async () => {
     mocks.find.mockResolvedValue({
       id: '00000000-0000-4000-8000-000000000005',

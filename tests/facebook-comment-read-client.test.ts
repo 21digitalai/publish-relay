@@ -8,7 +8,59 @@ import {
 const makeClient = (request: typeof fetch) =>
   new FacebookHttpClient({ graphVersion: 'v26.0', fetch: request });
 
+const attachmentOnlyTargets: { label: string; message?: string }[] = [
+  { label: 'blank', message: '' },
+  { label: 'omitted' },
+];
+
 describe('Facebook Page comment read transport', () => {
+  it.each(attachmentOnlyTargets)(
+    'accepts an attachment-only target with a $label message',
+    async ({ message }) => {
+      const request = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          Response.json({
+            id: '123_456_789',
+            ...(message === undefined ? {} : { message }),
+            created_time: '2026-11-10T12:00:00+0000',
+          }),
+        )
+        .mockResolvedValueOnce(Response.json({ data: [] }));
+
+      const result = await makeClient(request).readCommentThreadForReply({
+        pageId: '123',
+        commentId: '123_456_789',
+        accessToken: 'token',
+      });
+      expect(result).toMatchObject({
+        text: '',
+        createdAt: '2026-11-10T12:00:00+0000',
+        hasPageReply: false,
+      });
+      expect(result.threadFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    },
+  );
+
+  it('rejects a malformed target message instead of treating it as attachment-only', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      Response.json({
+        id: '123_456_789',
+        message: null,
+        created_time: '2026-11-10T12:00:00+0000',
+      }),
+    );
+
+    await expect(
+      makeClient(request).readCommentThreadForReply({
+        pageId: '123',
+        commentId: '123_456_789',
+        accessToken: 'token',
+      }),
+    ).rejects.toBeInstanceOf(FacebookRequestError);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   it('re-reads current target and detects a Page reply across pagination', async () => {
     const request = vi
       .fn<typeof fetch>()

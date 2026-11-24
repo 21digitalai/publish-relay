@@ -79,6 +79,19 @@ describe('due Page comment dispatch', () => {
     );
   });
 
+  it('dispatches when the unchanged attachment-only target remains textless', async () => {
+    vi.mocked(claimDuePageComment).mockResolvedValue({ ...intent, targetText: '' } as never);
+    vi.mocked(readScheduledCommentTarget).mockResolvedValue({
+      text: '',
+      createdAt: intent.targetCreatedAt,
+      hasPageReply: false,
+      threadFingerprint: intent.threadFingerprint,
+    });
+
+    expect(await dispatchDuePageComments(runtime)).toMatchObject({ confirmed: 1 });
+    expect(sendAccountPageCommentReply).toHaveBeenCalledOnce();
+  });
+
   it('suppresses a stale thread before provider send', async () => {
     vi.mocked(readScheduledCommentTarget).mockResolvedValue({
       text: intent.targetText,

@@ -719,6 +719,39 @@ export const facebookPageDmActions = pgTable(
   ],
 );
 
+export const instagramUnifiedActions = pgTable(
+  'instagram_unified_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    clientActionId: uuid('client_action_id').notNull(),
+    kind: text('kind').notNull(),
+    targetId: text('target_id').notNull(),
+    parentId: text('parent_id').notNull(),
+    recipientId: text('recipient_id'),
+    textBody: text('text_body').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    state: text('state').notNull().default('reserved'),
+    providerReceipt: text('provider_receipt'),
+    failureStatus: integer('failure_status'),
+    actorType: actorType('actor_type').notNull(),
+    actorId: uuid('actor_id').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('instagram_unified_actions_workspace_action_unique').on(table.workspaceId, table.clientActionId),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'instagram_unified_actions_account_fk',
+    }).onDelete('restrict'),
+    check('instagram_unified_actions_kind_check', sql`${table.kind} IN ('comment_reply', 'dm_reply')`),
+    check('instagram_unified_actions_state_check', sql`${table.state} IN ('reserved', 'confirmed', 'failed', 'unknown')`),
+    check('instagram_unified_actions_text_check', sql`length(trim(${table.textBody})) BETWEEN 1 AND 2000`),
+  ],
+);
+
 export const facebookPageDmPendingIntents = pgTable(
   'facebook_page_dm_pending_intents',
   {

@@ -10,7 +10,7 @@ import type { InstagramUnifiedReadClient } from './instagram-unified-read-client
 
 export class InstagramUnifiedReadUnavailableError extends Error {}
 
-async function loadToken(runtime: { database: NodePgDatabase; keys: MasterKeyProvider }, input: { workspaceId: string; accountId: string }) {
+export async function loadInstagramUnifiedToken(runtime: { database: NodePgDatabase; keys: MasterKeyProvider }, input: { workspaceId: string; accountId: string }) {
   const row = await withTenantTransaction(runtime.database, { workspaceId: input.workspaceId }, async (tx) => {
     const rows = await tx.select({ accountCredentialId: providerAccounts.credentialId, connectionCredentialId: providerConnections.credentialId, remoteAccountId: providerAccounts.remoteAccountId })
       .from(providerAccounts).innerJoin(providerConnections, eq(providerConnections.id, providerAccounts.connectionId))
@@ -32,25 +32,25 @@ async function loadToken(runtime: { database: NodePgDatabase; keys: MasterKeyPro
 export function createInstagramUnifiedReadService(runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: InstagramUnifiedReadClient }) {
   return {
     async permissions(input: { workspaceId: string; accountId: string }) {
-      const token = await loadToken(runtime, input);
+      const token = await loadInstagramUnifiedToken(runtime, input);
       return runtime.client.verifyPermissions(token.accessToken);
     },
     async media(input: { workspaceId: string; accountId: string; limit?: number; after?: string }) {
-      const token = await loadToken(runtime, input);
+      const token = await loadInstagramUnifiedToken(runtime, input);
       return runtime.client.listMedia({ accountId: token.remoteAccountId, accessToken: token.accessToken, ...(input.limit === undefined ? {} : { limit: input.limit }), ...(input.after === undefined ? {} : { after: input.after }) });
     },
     async comments(input: { workspaceId: string; accountId: string; mediaId: string; limit?: number; after?: string }) {
-      const token = await loadToken(runtime, input);
+      const token = await loadInstagramUnifiedToken(runtime, input);
       return runtime.client.listComments({ accountId: token.remoteAccountId, mediaId: input.mediaId, accessToken: token.accessToken, ...(input.limit === undefined ? {} : { limit: input.limit }), ...(input.after === undefined ? {} : { after: input.after }) });
     },
     async conversations(input: { workspaceId: string; accountId: string; limit?: number; after?: string }) {
-      const token = await loadToken(runtime, input);
+      const token = await loadInstagramUnifiedToken(runtime, input);
       const permission = await runtime.client.verifyMessagingPermission(token.accessToken);
       if (permission !== 'granted') throw new InstagramUnifiedReadError('permission', 403);
       return runtime.client.listConversations({ accountId: token.remoteAccountId, accessToken: token.accessToken, ...(input.limit === undefined ? {} : { limit: input.limit }), ...(input.after === undefined ? {} : { after: input.after }) });
     },
     async messages(input: { workspaceId: string; accountId: string; conversationId: string; limit?: number; after?: string }) {
-      const token = await loadToken(runtime, input);
+      const token = await loadInstagramUnifiedToken(runtime, input);
       const permission = await runtime.client.verifyMessagingPermission(token.accessToken);
       if (permission !== 'granted') throw new InstagramUnifiedReadError('permission', 403);
       return runtime.client.listMessages({ accountId: token.remoteAccountId, conversationId: input.conversationId, accessToken: token.accessToken, ...(input.limit === undefined ? {} : { limit: input.limit }), ...(input.after === undefined ? {} : { after: input.after }) });

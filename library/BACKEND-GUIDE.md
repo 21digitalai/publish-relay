@@ -2,6 +2,10 @@
 
 ## Core integration check
 
+### Unified Instagram stage-2 manual replies
+
+`POST /api/provider-accounts/:accountId/instagram-unified-actions` and the corresponding ForgeKey route are the only stage-2 send paths. They accept bounded `comment_reply` and existing-conversation `dm_reply` commands for `instagram_unified_login` accounts only. The server proves selected-account media/comment or conversation ancestry, live Unified grants, a recent recipient-authored DM window, tenant/account binding, and the exact recipient before the provider POST. Every request reserves an immutable row in `instagram_unified_actions` using `(workspace_id, client_action_id)` and a canonical request fingerprint; confirmed, definite failure, and unknown outcomes replay truthfully. Reserved/unknown actions never automatically resend or mint replacement IDs. This ledger is Unified-specific and must not be generalized with Facebook Page action tables. The routes expose only bounded outcome state and provider receipt IDs, never tokens or raw provider bodies.
+
 ### Unified Instagram stage-1 reads
 
 The `instagram_unified_login` connection family has a separate read-only contract. `GET /api/v1/destinations/:accountId/instagram-unified-status` performs a live provider permission check and returns only the bounded states for `instagram_basic` and `instagram_manage_comments`; an active connection is not treated as grant proof. `instagram-unified-media` requires `destinations:read`, while `instagram-unified-comments/:mediaId` requires `comments:read` and first proves that the media belongs to the selected Unified account. Both collections cap page size at 100, follow opaque cursors for at most 20 provider pages, and project allowlisted fields only. The new `instagram-unified-conversations` and `.../messages` reads require `dms:read`, live `instagram_manage_messages`, and selected-account ancestry proof; they remain read-only and project only IDs, timestamps, participants, sender summaries, and text. Legacy `instagram_login` and Facebook Page families remain separate, and no Instagram Unified send route exists in stage 1.

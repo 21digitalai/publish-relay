@@ -145,6 +145,14 @@ export class InstagramUnifiedReadClient {
     }));
   }
 
+  public replyToComment(input: { commentId: string; text: string; accessToken: string }): Promise<string> {
+    return this.post(`/${this.id(input.commentId)}/replies`, { message: z.string().trim().min(1).max(2000).parse(input.text) }, input.accessToken);
+  }
+
+  public sendConversationMessage(input: { conversationId: string; recipientId: string; text: string; accessToken: string }): Promise<string> {
+    return this.post(`/${this.id(input.conversationId)}/messages`, { recipient: { id: z.string().min(1).max(256).parse(input.recipientId) }, message: { text: z.string().trim().min(1).max(2000).parse(input.text) } }, input.accessToken);
+  }
+
   private async assertConversationOwner(input: { accountId: string; conversationId: string; accessToken: string }) {
     const body = await this.get(this.url(`/${this.id(input.conversationId)}`, { fields: 'id,participants{id}' }), input.accessToken);
     const parsed = conversation.safeParse(body);
@@ -264,6 +272,21 @@ export class InstagramUnifiedReadClient {
       code,
       parsed.success ? parsed.data.error?.error_subcode : undefined,
     );
+  }
+
+  private async post(path: string, body: unknown, accessToken: string): Promise<string> {
+    let response: Response;
+    try {
+      response = await this.request(this.url(path, {}), { method: 'POST', headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body), redirect: 'error' });
+    } catch { throw new InstagramUnifiedReadError('transient', 0); }
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const parsed = z.object({ error: z.object({ code: z.number().optional(), error_subcode: z.number().optional() }).optional() }).safeParse(payload);
+      throw new InstagramUnifiedReadError(response.status === 403 ? 'permission' : response.status === 429 ? 'rate_limit' : response.status >= 500 ? 'transient' : 'permanent', response.status, parsed.success ? parsed.data.error?.code : undefined, parsed.success ? parsed.data.error?.error_subcode : undefined);
+    }
+    const parsed = z.object({ id: graphId }).safeParse(payload);
+    if (!parsed.success) throw new InstagramUnifiedReadError('permanent', 502);
+    return parsed.data.id;
   }
 
   private id(value: string): string {

@@ -18,7 +18,7 @@ const connectionString = process.env.PUBLISH_RELAY_POSTGRES_URL;
 const describePostgres = describe.skipIf(!connectionString);
 
 describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () => {
-  const suffix = `${process.pid}_${Date.now()}`;
+  const suffix = `${String(process.pid)}_${String(Date.now())}`;
   const databaseName = `relay4765_${suffix}`;
   const workspaceId = '00000000-0000-4000-8000-000000000101';
   const otherWorkspaceId = '00000000-0000-4000-8000-000000000102';
@@ -51,7 +51,8 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     await admin.query(`ALTER ROLE "${webLoginRole}" PASSWORD 'relay4765-web'`);
     await admin.query(`ALTER ROLE "${workerLoginRole}" PASSWORD 'relay4765-worker'`);
     await admin.query(`CREATE DATABASE "${databaseName}"`);
-    databaseUrl = connectionString!.replace(/\/postgres(?:\?|$)/, `/${databaseName}?`);
+    if (!connectionString) throw new Error('PUBLISH_RELAY_POSTGRES_URL is required');
+    databaseUrl = connectionString.replace(/\/postgres(?:\?|$)/, `/${databaseName}?`);
     const provision = await readFile(
       new URL('../deploy/provision-database-roles.sql', import.meta.url),
       'utf8',
@@ -180,7 +181,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
       'app.workspace_id',
       otherWorkspaceId,
     ]);
-    const hidden = await isolated.query(
+    const hidden = await isolated.query<{ count: string }>(
       'SELECT count(*) FROM instagram_unified_actions WHERE client_action_id = $1',
       [actionId],
     );
@@ -222,7 +223,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
           { id: 'message-transport', senderId: 'recipient-1', createdAt: new Date().toISOString() },
         ],
       }),
-      sendConversationMessage: vi.fn().mockImplementation(async () => {
+      sendConversationMessage: vi.fn().mockImplementation(() => {
         calls.count += 1;
         throw new Error('transport lost');
       }),
@@ -271,7 +272,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
           },
         ],
       }),
-      sendConversationMessage: vi.fn().mockImplementation(async () => {
+      sendConversationMessage: vi.fn().mockImplementation(() => {
         calls.count += 1;
         return 'provider-receipt-after-lost-settlement';
       }),

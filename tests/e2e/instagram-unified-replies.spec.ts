@@ -5,7 +5,7 @@ const accountId = '00000000-0000-4000-8000-000000000981';
 test('Unified Instagram manual replies expose confirmation and bounded outcome states', async ({
   page,
 }, testInfo) => {
-  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const suffix = `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
   let permissionState = { instagram_basic: 'granted', instagram_manage_comments: 'granted' };
   let statusDelayMs = 0;
   let mediaMode: 'ready' | 'empty' | 'error' = 'ready';

@@ -9,7 +9,7 @@ it does **not** deploy code, migrate the database or restart web and worker.
 Follow the [supported update procedure](deploy/README.md#update-an-existing-installation)
 before using a new API/CLI. Do not select a special release branch.
 
-The existing `deploy/publish-release.sh <release-id> <built-source-directory>`
+The guarded `deploy/update-release.sh <release-id> <built-source-directory>`
 supports the documented Linux/systemd installation. Other topologies (including
 Cloudflare) must stop and obtain a reviewed activation procedure; pulling source
 is not evidence that an installation was upgraded.

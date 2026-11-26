@@ -165,11 +165,17 @@ describe('serialized one-release deployment lifecycle', () => {
     const value = fixture();
     for (const directory of [value.previous, value.source]) {
       mkdirSync(join(directory, 'migrations/meta'));
-      writeFileSync(join(directory, 'migrations/meta/_journal.json'), '{}');
+      writeFileSync(
+        join(directory, 'migrations/meta/_journal.json'),
+        JSON.stringify({ version: '7', dialect: 'postgresql', entries: [] }),
+      );
     }
     writeFileSync(join(value.source, 'migrations/meta/_journal.json'), '{"changed":true}');
     expect(run(value).stderr).toContain('Migration set changes');
-    writeFileSync(join(value.source, 'migrations/meta/_journal.json'), '{}');
+    writeFileSync(
+      join(value.source, 'migrations/meta/_journal.json'),
+      JSON.stringify({ version: '7', dialect: 'postgresql', entries: [] }),
+    );
     expect(run(value).status).toBe(0);
     expect(readdirSync(value.releaseRoot)).toEqual(['new']);
   });

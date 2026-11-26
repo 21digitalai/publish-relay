@@ -748,3 +748,17 @@ Machine PATCH /api/v1/posts/:postId/media requires content:write, the selected X
 post-revision-fence.ts owns the pre-dispatch boundary for canonical browser edit, reschedule and media amendment: lock the workspace-owned post before reading its newest revision, then lock all post jobs in ID order. Current targets must all remain never-attempted scheduled jobs with no lease, reconciliation or dispatch ledger/event evidence; historic superseded revisions and same-revision approval predecessors remain intact. Scheduled approval events are non-dispatch history and their exact receipts remain valid for media-only amendments; a concurrent approval successor missed by the locking snapshot fails closed rather than dropping its target. Scheduler claims use the same job locks. A winning claim makes amendment fail 409; a winning amendment supersedes old jobs atomically before creating the next canonical revision. Concurrent amendments CAS expectedRevisionId, exactly one winner.
 
 post-media.service.ts reuses editPostInTransaction for policy, ready tenant-owned media and provider admission. It changes only explicit media-reference fields, rejects regenerated payload differences beyond those mappings, then preserves each target's exact scheduled instant, effectiveProviderSettings and approval receipt. It never edits blobs, creates a dispatcher, or cancels/recreates a post. Audit stores old/new revision and mapping. Missing/foreign/non-ready media rolls back all revision/job writes. Migration 0132 adds content:write to the existing security-definer exposure projection's checked machine-capability allowlist without impersonating a human. Apply through the normal migration runner before release; no runtime configuration or new UI exists.
+
+## Standalone append-only update gate
+
+deploy/migration-compatibility.mjs is the sole Core migration comparison owner,
+called by the existing release filesystem preflight. It validates regular
+SQL/meta layouts, exact installed SQL and journal-entry prefix/root metadata,
+SQL/journal bijection and unique consecutive indices/tags. New timestamps exceed
+the maximum installed timestamp; immutable historical timestamp anomalies remain
+unchanged. Only matching new snapshots may accompany appended SQL. No-entry
+changes require byte-identical metadata. Structural compatibility never proves
+SQL is backward compatible: release review and disposable PostgreSQL recovery
+evidence remain required. update-release.sh gates the existing publish transaction
+with shipped backup/isolated restore and authority bootstrap; it does not create
+a second activation/rollback engine. Restore failure never mutates live current.

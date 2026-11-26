@@ -1,4 +1,5 @@
-import { lstatSync, realpathSync, readdirSync, readFileSync, readlinkSync, rmSync } from 'node:fs';
+import { lstatSync, realpathSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
+import { assertAppendOnlyMigrations } from './migration-compatibility.mjs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 
@@ -81,24 +82,6 @@ function checkRelease(path) {
   checkTree(path);
 }
 
-function migrationFiles(path) {
-  const directory = join(path, 'migrations');
-  canonicalDirectory(directory);
-  return migrationEntries(directory);
-}
-
-function migrationEntries(directory) {
-  return readdirSync(directory)
-    .sort()
-    .map((name) => {
-      const file = join(directory, name);
-      const stat = lstatSync(file);
-      if (stat.isDirectory()) return [name, migrationEntries(file)];
-      requireCondition(stat.isFile(), 'Unsupported migration layout');
-      return [name, readFileSync(file).toString('base64')];
-    });
-}
-
 function assertServiceRelease(expected) {
   for (const unit of ['publish-relay-web', 'publish-relay-worker']) {
     const pid = execFileSync('systemctl', ['show', unit, '--property=MainPID', '--value'], {
@@ -143,17 +126,14 @@ function preflight(root, current, id, source) {
   requireCondition(!entries.includes(candidate), 'Release already exists');
   checkRelease(source);
   requireCondition(!source.startsWith(root + '/'), 'Source must be outside release root');
-  migrationFiles(source);
+  assertAppendOnlyMigrations(null, source);
   if (selected) {
     requireCondition(
       !readdirSync(selected).includes('.release-pin'),
       'Pinned release requires owner recovery',
     );
     assertServiceRelease(selected);
-    requireCondition(
-      JSON.stringify(migrationFiles(selected)) === JSON.stringify(migrationFiles(source)),
-      'Migration set changes require a separately reviewed deployment/recovery procedure',
-    );
+    assertAppendOnlyMigrations(selected, source);
   }
   return selected ?? '';
 }

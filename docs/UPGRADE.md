@@ -2,12 +2,14 @@
 
 Publish Relay uses immutable application releases and forward-only database migrations.
 
-1. Back up the database and complete a restore drill.
-2. Fetch the target tag or exact commit into a new directory.
+1. Configure the backup destination and isolated restore target for the guarded backup/restore drill.
+2. Fetch reviewed main (or an exact reviewed main commit) into a new directory.
 3. Run `npm ci`, `npm run check`, and review `migrations/` against the running release.
 4. Build once with Node 24. Transfer the reviewed source plus `dist` artifact.
-5. Run `deploy/publish-release.sh <release-id> <built-source-directory>` from the deployment owner account.
+5. Run `deploy/update-release.sh <release-id> <built-source-directory>` from the deployment owner account.
 6. Verify both services, `/health/ready`, login, a protected route, worker logs, and metrics.
+
+`update-release.sh` requires MIGRATION_DATABASE_URL and an isolated RESTORE_DATABASE_URL, runs the shipped backup/restore and isolated authority bootstrap, then delegates to the existing publish-release.sh transaction. See the [canonical update procedure](../deploy/README.md#update-an-existing-installation).
 
 `publish-release.sh` installs production dependencies and then restores the reviewed `dist`
 artifact, because npm may remove build output. It normalizes the candidate so the service
@@ -21,3 +23,29 @@ commit with Node 24, then run
 `deploy/rollback-release.sh <new-release-id> <rebuilt-source-directory>`. The wrapper uses the
 same guarded activation and recovery lifecycle; it does not require a retained old release.
 If migration compatibility is uncertain, stop and use a reviewed recovery procedure.
+
+A historical source tree missing newly installed migration history is a schema
+downgrade and is refused, even if its JavaScript could run against the new schema.
+For post-success application rollback, the release owner must review a recovery
+artifact containing compatible prior application bytes AND the unchanged current
+migration history. Never edit the database ledger, reverse SQL, or bypass the
+comparator. Automatic failure recovery within the activation transaction instead
+reselects the still-retained prior app and proves readiness on the forward schema;
+it never runs that app's old migration tree. The append-only comparator proves
+file/journal structure only, not semantic backwards compatibility of SQL.
+
+## Disposable update verification
+
+After building with Node 24, the opt-in
+tests/standalone-update.postgres.test.ts suite uses POSTGRES_UPDATE_TEST_URL
+(an admin connection to a **disposable local PostgreSQL cluster**),
+POSTGRES_UPDATE_BIN (its client binary directory), and
+POSTGRES_UPDATE_NPM_CLI (the npm CLI JavaScript entrypoint) with
+npm test -- tests/standalone-update.postgres.test.ts. It creates uniquely named
+test/restore databases, provisions test runtime roles, runs the real compiled
+migration entrypoint and production-only dependency install in the candidate,
+and deletes its databases afterward. Never point it at a shared/production
+cluster. Backup, restore, migration, authority grants and prior-app readiness/API
+checks are real; Linux/systemd/process observations use the existing deployment
+fixture on non-Linux hosts. Release-owner checks on the actual supported Linux
+installation remain necessary before claiming deployment.

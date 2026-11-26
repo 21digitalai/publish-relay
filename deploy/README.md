@@ -32,14 +32,13 @@ Review migration files and journal against the installed release for forward
 compatibility. New API/CLI authority functions need their migrations, not just
 new JavaScript. Never substitute one-off SQL for the migration runner.
 
-**Current standalone guard limitation:** an existing installation's candidate and
-selected release must have byte-identical migration trees, including metadata.
-An update adding migrations therefore STOPS at preflight, even when append-only.
-Do not bypass the guard, remove the old release, or apply SQL manually to force it.
-Such an update needs a separately reviewed migration-compatible activation and
-recovery procedure. First install and same-migration updates still run the
-canonical forward migration runner. Hosted's separate append-only guard does
-not authorize weakening the standalone guard.
+The standalone guard accepts unchanged history or strictly appended SQL with a
+matching append-only Drizzle journal. Changed/deleted old SQL, changed old journal
+entries, downgrades, orphan metadata, unsafe paths and nonmonotonic new entries
+are refused. This is structural validation, NOT proof of SQL compatibility:
+review the exact release migrations for old-application compatibility and prove
+prior-application recovery on a disposable database before deployment. A
+destructive/incompatible migration requires a separately reviewed recovery plan.
 
 ### Preflight and backup on the installation host
 
@@ -64,33 +63,32 @@ systemctl cat publish-relay-web publish-relay-worker
 
 Require v24 from the configured Node path (substitute it if overridden).
 Load MIGRATION_DATABASE_URL securely in the deployment-owner environment, not
-either runtime URL. Verify PostgreSQL client tools. From the built candidate:
-
-```sh
-backup_path="$(bash deploy/backup-database.sh --local)"
-bash deploy/restore-drill.sh "$backup_path"
-```
+either runtime URL. Verify PostgreSQL client tools. Run the update from the checked candidate.
 
 Set RESTORE_DATABASE_URL to an isolated disposable database ending in _restore
-or _restore_drill; the drill rejects the production database name. Bootstrap
-authorities on the isolated target and verify representative row counts and
-migration ledger per [backup/restore](../docs/BACKUP-RESTORE.md). Record backup
-path, restore target, elapsed time and proof without secrets. Stop on any
-failure. Keep the backup; remove the isolated target only after verification.
+or _restore_drill. The guarded update command below invokes the shipped
+backup-database.sh --local and restore-drill.sh helpers, checks the restored
+migration ledger, and bootstraps authorities on the isolated target before
+touching production schema. Configure BACKUP_DIRECTORY outside releases; retain
+the verified backup. The restore target is intentionally overwritten by the drill.
+The helper refuses the production database name. See
+[backup/restore](../docs/BACKUP-RESTORE.md) for independent drill commands,
+representative row counts and encrypted/off-host backup policy. Record backup
+path, restore target and proof without secrets. A failure stops activation.
 
 ### Activate and verify
 
 As deployment owner with the required privileges on the installation host:
 
 ```sh
-bash deploy/publish-release.sh <unique-release-id> /absolute/path/to/checked-candidate
+bash deploy/update-release.sh <unique-release-id> /absolute/path/to/checked-candidate
 ```
 
 Replace both placeholders. This existing lifecycle is the only activation engine:
 it validates artifact and migration compatibility, serializes deployment, installs
 production dependencies, runs compiled forward migrations and authority bootstrap,
 switches current atomically, restarts BOTH web and worker, and probes readiness.
-It does not create the backup for you; the previous step is mandatory.
+The update wrapper performs the mandatory backup and isolated restore drill before delegating to this same activation engine. A failed backup, restore or restore-authority bootstrap prevents production migration and activation. Keep RESTORE_DATABASE_URL separate and disposable; restore is never used as an automatic production rollback.
 
 Inspect current and compare installed source/build with the recorded reviewed SHA.
 Verify both processes run from that release, configured /health/live and

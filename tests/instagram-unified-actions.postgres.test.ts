@@ -26,6 +26,7 @@ import {
 } from '../src/modules/providers/instagram-unified-no-go.repository.js';
 import {
   reserveInstagramUnifiedAction,
+  withInstagramUnifiedActionDispatch,
   settleInstagramUnifiedAction,
 } from '../src/modules/providers/instagram-unified-action.repository.js';
 
@@ -277,6 +278,33 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
       [workspaceId, input.clientActionId],
     );
     expect(state.rows).toEqual([{ state: 'unknown' }]);
+  });
+
+  it('retains the committed no-replay receipt when dispatch transaction aborts after a provider effect', async () => {
+    const input = {
+      workspaceId, accountId,
+      clientActionId: '00000000-0000-4000-8000-000000000399',
+      kind: 'dm_reply' as const,
+      targetId: 'rollback-message', parentId: 'rollback-conversation',
+      recipientId: 'recipient-1', text: 'Synthetic rollback test',
+      requestFingerprint: 'rollback-after-provider',
+      actor: { type: 'user' as const, id: '00000000-0000-4000-8000-000000000401' },
+    };
+    let providerCalls = 0;
+    const dispatch = () => {
+      providerCalls += 1;
+      return Promise.reject(new Error('connection lost after synthetic provider acceptance'));
+    };
+    await expect(withInstagramUnifiedActionDispatch(webDatabase as never, input, dispatch))
+      .rejects.toThrow('connection lost');
+    const persisted = await owner.query(
+      'SELECT state FROM instagram_unified_actions WHERE workspace_id = $1 AND client_action_id = $2',
+      [workspaceId, input.clientActionId],
+    );
+    expect(persisted.rows).toEqual([{ state: 'reserved' }]);
+    await expect(withInstagramUnifiedActionDispatch(webDatabase as never, input, dispatch))
+      .resolves.toEqual({ kind: 'existing', outcome: { state: 'unknown' } });
+    expect(providerCalls).toBe(1);
   });
 
   it('leaves a lost settlement reserved and replays it as unknown without another provider call', async () => {

@@ -67,6 +67,10 @@ export async function withInstagramUnifiedActionDispatch(
   input: InstagramUnifiedActionInput,
   dispatch: (transaction: NodePgDatabase, reservationId: string) => Promise<InstagramUnifiedActionOutcome>,
 ): Promise<InstagramUnifiedReservation | InstagramUnifiedActionOutcome | { kind: 'settlement-error'; error: unknown }> {
+  // Commit the no-replay receipt before any provider effect. The dispatch transaction
+  // can then roll back (or its connection can die) without erasing that receipt.
+  const reservation = await reserveInstagramUnifiedAction(database, input);
+  if (reservation.kind !== 'new') return reservation;
   return withTenantTransaction(database, input, async (tx) => {
     const [account] = await tx.select({ id: providerAccounts.id })
       .from(providerAccounts)
@@ -74,8 +78,6 @@ export async function withInstagramUnifiedActionDispatch(
       .for('update')
       .limit(1);
     if (!account) throw new Error('Unified Instagram account unavailable');
-    const reservation = await reserveInTransaction(tx, input);
-    if (reservation.kind !== 'new') return reservation;
     const result = await dispatch(tx, reservation.id);
     try {
       await tx.transaction((settlementTransaction) =>

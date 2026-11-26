@@ -11,6 +11,7 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   let mediaMode: 'ready' | 'empty' | 'error' = 'ready';
   let dmFailure = true;
   let forceNonPendingCancellation = false;
+  let conversationStopped = false;
   let scheduledItems: {
     id: string;
     kind: 'comment_reply' | 'dm_reply';
@@ -144,6 +145,26 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
       }),
   );
   await page.route(
+    `**/api/provider-accounts/${accountId}/instagram-unified-conversations/conversation-1/stop`,
+    async (route) => {
+      if (route.request().method() === 'PUT') {
+        conversationStopped = (route.request().postDataJSON() as { blocked: boolean }).blocked;
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { stopped: conversationStopped, cancelled: 0 }, error: null }),
+      });
+    },
+  );
+  await page.route(
+    `**/api/provider-accounts/${accountId}/instagram-unified-conversations/conversation-1/history*`,
+    (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { items: [] }, error: null }),
+      }),
+  );
+  await page.route(
     `**/api/provider-accounts/${accountId}/instagram-unified-actions`,
     async (route) => {
       const payload = route.request().postDataJSON() as { kind?: string };
@@ -264,6 +285,13 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   await conversationSelect.click();
   await expect(control.getByRole('option', { name: /alice/ })).toBeVisible();
   await control.getByRole('option', { name: /alice/ }).click();
+  await expect(control.getByRole('button', { name: 'Stop conversation' })).toBeVisible();
+  await expect(control.getByText('No conversation actions yet.')).toBeVisible();
+  await control.getByRole('button', { name: 'Stop conversation' }).click();
+  await expect(control.getByRole('button', { name: 'Resume conversation' })).toBeVisible();
+  await expect(control.getByRole('button', { name: 'Send reply' })).toBeDisabled();
+  await control.getByRole('button', { name: 'Resume conversation' }).click();
+  await expect(control.getByRole('button', { name: 'Stop conversation' })).toBeVisible();
   await control.getByRole('textbox', { name: 'Reply' }).fill('Absolutely, here are the details.');
   await control.getByRole('button', { name: 'Send reply' }).click();
   const dmDialog = page.getByRole('alertdialog', { name: 'Confirm conversation reply' });

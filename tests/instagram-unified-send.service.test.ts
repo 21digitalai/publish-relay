@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   loadToken: vi.fn(),
   reserve: vi.fn(),
   settle: vi.fn(),
+  isNoGo: vi.fn(),
 }));
 
 vi.mock('../src/modules/providers/instagram-unified-read.service.js', () => ({
@@ -13,6 +14,9 @@ vi.mock('../src/modules/providers/instagram-unified-read.service.js', () => ({
 vi.mock('../src/modules/providers/instagram-unified-action.repository.js', () => ({
   reserveInstagramUnifiedAction: mocks.reserve,
   settleInstagramUnifiedAction: mocks.settle,
+}));
+vi.mock('../src/modules/providers/instagram-unified-no-go.repository.js', () => ({
+  isInstagramUnifiedConversationNoGo: mocks.isNoGo,
 }));
 
 import {
@@ -56,6 +60,7 @@ beforeEach(() => {
   mocks.loadToken.mockResolvedValue({ accessToken: 'token', remoteAccountId: 'remote-account-1' });
   mocks.reserve.mockResolvedValue({ kind: 'new', id: 'reservation-1' });
   mocks.settle.mockResolvedValue(undefined);
+  mocks.isNoGo.mockResolvedValue(false);
 });
 
 describe('Instagram Unified manual reply service', () => {
@@ -139,6 +144,23 @@ describe('Instagram Unified manual reply service', () => {
     });
     expect(client.client.sendConversationMessage).not.toHaveBeenCalled();
     expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('settles a reservation as failed when stop wins the pre-dispatch race', async () => {
+    mocks.isNoGo.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const client = runtime();
+
+    await expect(
+      createInstagramUnifiedSendService(client as never).send(input),
+    ).rejects.toBeInstanceOf(InstagramUnifiedEligibilityError);
+    expect(client.client.sendConversationMessage).not.toHaveBeenCalled();
+    expect(mocks.settle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        reservationId: 'reservation-1',
+        outcome: { state: 'failed', failureStatus: 409 },
+      }),
+    );
   });
 
   it('rejects a changed replay as an action conflict', async () => {

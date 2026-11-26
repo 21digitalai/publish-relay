@@ -574,7 +574,10 @@ export function InstagramUnifiedCapabilityControl({
                 <ul className="instagram-unified-conversation-history" aria-label="Unified Instagram conversation history">
                   {history.length > 0 ? (
                     history.map((item) => (
-                      <li key={`${item.id}:${item.createdAt}`}>
+                      <li
+                        className="instagram-unified-conversation-history-item"
+                        key={`${item.id}:${item.createdAt}`}
+                      >
                         {new Date(item.createdAt).toLocaleString()} · {item.status} · {item.text}
                       </li>
                     ))

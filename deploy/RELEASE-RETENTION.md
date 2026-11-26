@@ -25,6 +25,9 @@ release: they do not opportunistically delete historical directories to make roo
 Run the reviewed scripts from a trusted checkout **outside** the releases directory:
 
 ```sh
+# Existing installation: mandatory backup and isolated restore gate before activation
+bash deploy/update-release.sh <unique-release-id> <absolute-built-artifact-directory>
+# First install (after separately verified backup/authority preparation)
 bash deploy/publish-release.sh <unique-release-id> <absolute-built-artifact-directory>
 bash deploy/rollback-release.sh <unique-release-id> <absolute-rebuilt-artifact-directory>
 ```
@@ -60,10 +63,12 @@ existing deployment environment controls are not product configuration.
   MainPIDs must resolve through `/proc/PID/cwd` to that release. Selection is rechecked before
   switching and deleting. Successful smoke checks both service activity and actual process
   release paths; a health response alone is insufficient.
-- This bounded automatic-recovery path only accepts an unchanged migration tree (including
-  migration metadata). A changed schema requires a separately reviewed expand/contract and
-  recovery procedure. Equality does **not** certify live database compatibility, reverse a
-  partial migration, or replace host/database acceptance. No database restore/delete is run.
+- The migration guard accepts unchanged history or strictly appended SQL and valid journal
+  metadata through the canonical migration comparator. Structural acceptance does **not**
+  certify semantic backwards compatibility: review the exact SQL and prove prior-app recovery
+  on a disposable database. Incompatible schema changes require a separately reviewed recovery
+  procedure. Activation never reverses SQL or restores/deletes the production database. The
+  update wrapper restores a backup only into the explicit isolated restore target before activation.
 - A `.release-pin` marker blocks automatic removal and requires owner reconciliation. Never
   remove a pin just to make a deployment pass. Existing out-of-band historical pins must be
   reconciled before activation; a JSON plan cannot silently release them.

@@ -1,5 +1,12 @@
 export type PostingAdapterId =
-  'x' | 'youtube' | 'linkedin' | 'facebook_page' | 'instagram' | 'tiktok' | 'fanvue';
+  | 'x'
+  | 'youtube'
+  | 'linkedin'
+  | 'facebook_page'
+  | 'instagram'
+  | 'instagram_unified_login'
+  | 'tiktok'
+  | 'fanvue';
 
 export interface PostingAdapterIcon {
   readonly viewBox: string;
@@ -84,7 +91,7 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
     configuration: { requiredBeforeConnect: [] },
   },
   {
-    id: 'instagram',
+    id: 'instagram_unified_login',
     connectionKey: 'instagram-unified-login',
     label: 'Instagram — Unified Login',
     description:
@@ -127,7 +134,9 @@ export function getEnabledPostingAdapters(
   return adapters.filter(
     (adapter) =>
       adapter.enabled &&
-      (configured === null || configured.includes(adapter.id)) &&
+      (configured === null ||
+        configured.includes(adapter.id) ||
+        (adapter.id === 'instagram_unified_login' && configured.includes('instagram'))) &&
       (adapter.id !== 'linkedin' ||
         (typeof document !== 'undefined' && document.body.dataset.linkedinEnabled === 'true')) &&
       (adapter.id !== 'tiktok' ||
@@ -143,5 +152,9 @@ export function getPostingAdapter(
 ): PostingAdapterConfig | undefined {
   const normalized =
     provider.toLowerCase() === 'meta' ? destinationProvider?.toLowerCase() : provider.toLowerCase();
-  return POSTING_ADAPTERS.find((adapter) => adapter.id === normalized && !adapter.connectionKey);
+  return POSTING_ADAPTERS.find(
+    (adapter) =>
+      adapter.id === normalized &&
+      (normalized === 'instagram_unified_login' || !adapter.connectionKey),
+  );
 }

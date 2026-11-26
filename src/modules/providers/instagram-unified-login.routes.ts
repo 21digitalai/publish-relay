@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
+import { ProviderDestinationConflictError } from '../credentials/provider-connection.repository.js';
 import { authenticateRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
@@ -36,12 +37,10 @@ export function registerInstagramUnifiedLoginRoutes(
     )
       return reply.code(403).send({ data: null, error: 'CSRF validation failed' });
     if (!dependencies.oauth)
-      return reply
-        .code(503)
-        .send({
-          data: null,
-          error: 'Instagram Unified Login is not configured yet. No authorization was started.',
-        });
+      return reply.code(503).send({
+        data: null,
+        error: 'Instagram Unified Login is not configured yet. No authorization was started.',
+      });
     try {
       return {
         data: await beginInstagramUnifiedLogin(
@@ -77,13 +76,17 @@ export function registerInstagramUnifiedLoginRoutes(
         dependencies.oauth.client,
         { ...identity, requestId: request.id, ...query.data },
       );
-      return reply.redirect(`/app?oauth=instagram-unified-${result ? 'connected' : 'expired'}`);
+      return await reply.redirect(
+        `/app?oauth=instagram-unified-${result ? 'connected' : 'expired'}`,
+      );
     } catch (error) {
+      const outcome =
+        error instanceof ProviderDestinationConflictError ? 'conflict' : 'service-error';
       request.log.warn(
-        { provider: 'instagram_unified_login' },
+        { provider: 'instagram_unified_login', outcome },
         'Instagram Unified Login callback failed',
       );
-      return reply.redirect('/app?oauth=instagram-unified-service-error');
+      return reply.redirect(`/app?oauth=instagram-unified-${outcome}`);
     }
   });
 }

@@ -184,6 +184,26 @@ describe('Instagram reconciliation', () => {
     expect(finishDispatchAttempt).toHaveBeenCalled();
   });
 
+  it('uses the shared Meta credential path for Unified Login connections', async () => {
+    databaseQuery.orderBy.mockResolvedValue([
+      { ...contextRow, connectionProvider: 'instagram_unified_login' },
+    ]);
+    vi.mocked(claimDueJobs).mockResolvedValue([job] as never);
+    vi.mocked(startDispatchAttempt).mockResolvedValue({ attemptId: 'attempt-1' } as never);
+    publish.mockResolvedValue({
+      status: 'published',
+      externalPostId: 'media-1',
+      externalUrl: 'https://instagram.com/p/1',
+    });
+
+    await expect(dispatchDueInstagramJobs(runtime, new Date('2026-10-18T00:00:00Z'))).resolves.toBe(
+      1,
+    );
+    expect(adapterClients).toEqual([runtime.client]);
+    expect(getFreshInstagramLoginToken).not.toHaveBeenCalled();
+    expect(finishDispatchAttempt).toHaveBeenCalled();
+  });
+
   it('refuses partial grants and PNG before sending to the adapter', async () => {
     vi.mocked(claimDueJobs).mockResolvedValue([job] as never);
     databaseQuery.orderBy.mockResolvedValue([

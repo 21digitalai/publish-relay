@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { Client } from 'pg';
+import pg, { Client } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const connectionString = process.env.PUBLISH_RELAY_POSTGRES_URL;
@@ -11,8 +13,11 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
   const workspaceId = '00000000-0000-4000-8000-000000000101';
   const otherWorkspaceId = '00000000-0000-4000-8000-000000000102';
   const accountId = '00000000-0000-4000-8000-000000000201';
-  const webRole = `relay4765_web_${suffix}`;
-  const workerRole = `relay4765_worker_${suffix}`;
+  const webRole = 'publish_relay_web';
+  const workerRole = 'publish_relay_worker';
+  const webLoginRole = 'publish_relay_web_login';
+  const workerLoginRole = 'publish_relay_worker_login';
+  const createdRoles: string[] = [];
   const clients: Client[] = [];
   let admin: Client;
   let owner: Client;
@@ -21,49 +26,71 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
   beforeAll(async () => {
     admin = new Client({ connectionString });
     await admin.connect();
+    for (const [role, attributes] of [
+      [webLoginRole, 'LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS'],
+      [workerLoginRole, 'LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS'],
+    ] as const) {
+      const exists = await admin.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [role]);
+      if (exists.rowCount === 0) {
+        await admin.query(`CREATE ROLE "${role}" ${attributes}`);
+        createdRoles.push(role);
+      }
+    }
     await admin.query(`CREATE DATABASE "${databaseName}"`);
     databaseUrl = connectionString!.replace(/\/postgres(?:\?|$)/, `/${databaseName}?`);
-
-    await admin.query(
-      `CREATE ROLE "${webRole}" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`,
+    const provision = await readFile(
+      new URL('../deploy/provision-database-roles.sql', import.meta.url),
+      'utf8',
     );
-    await admin.query(
-      `CREATE ROLE "${workerRole}" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS`,
-    );
+    await admin.query(provision.replace(/^\\set[^\n]*\n/m, ''));
+    for (const role of [webRole, workerRole]) {
+      const exists = await admin.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [role]);
+      if (exists.rowCount === 0) createdRoles.push(role);
+    }
     owner = new Client({ connectionString: databaseUrl });
     clients.push(owner);
     await owner.connect();
-    await owner.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
-    await owner.query(
-      "CREATE TYPE audit_actor_type AS ENUM ('user', 'api_key', 'delegated', 'system')",
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    await migrate(drizzle(pool), {
+      migrationsFolder: new URL('../migrations', import.meta.url).pathname,
+    });
+    await migrate(drizzle(pool), {
+      migrationsFolder: new URL('../migrations', import.meta.url).pathname,
+    });
+    await pool.end();
+    const bootstrap = await readFile(
+      new URL('../deploy/bootstrap-database-authorities.sql', import.meta.url),
+      'utf8',
     );
-    await owner.query(`CREATE TABLE provider_accounts (
-        workspace_id uuid NOT NULL,
-        id uuid NOT NULL,
-        PRIMARY KEY (workspace_id, id)
-      )`);
+    await owner.query(bootstrap.replace(/^\\set[^\n]*\n/m, ''));
+    await owner.query('GRANT publish_relay_web TO CURRENT_USER');
     await owner.query(
-      'INSERT INTO provider_accounts (workspace_id, id) VALUES ($1, $2), ($3, $2)',
-      [workspaceId, accountId, otherWorkspaceId],
+      `INSERT INTO workspaces (id, name, slug) VALUES ($1, 'Unified test A', 'unified-test-a'), ($2, 'Unified test B', 'unified-test-b')`,
+      [workspaceId, otherWorkspaceId],
+    );
+    const credentialId = '00000000-0000-4000-8000-000000000211';
+    const connectionId = '00000000-0000-4000-8000-000000000221';
+    await owner.query(
+      `INSERT INTO credentials (id, workspace_id, key_version, wrapped_key, wrapped_key_nonce, wrapped_key_tag, ciphertext, nonce, tag)
+       VALUES ($1, $2, 'v1', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06')`,
+      [credentialId, workspaceId],
     );
     await owner.query(
-      await readFile(
-        new URL('../migrations/0131_instagram_unified_actions.sql', import.meta.url),
-        'utf8',
-      ),
+      `INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id)
+       VALUES ($1, $2, 'meta', $3, 'unified-test-subject')`,
+      [connectionId, workspaceId, credentialId],
     );
-    await owner.query(`GRANT USAGE ON SCHEMA public TO "${webRole}", "${workerRole}"`);
-    await owner.query(`GRANT SELECT, INSERT, UPDATE ON instagram_unified_actions TO "${webRole}"`);
     await owner.query(
-      `GRANT SELECT, INSERT, UPDATE ON instagram_unified_actions TO "${workerRole}"`,
+      `INSERT INTO provider_accounts (id, workspace_id, connection_id, provider_account_id, destination_provider, remote_account_id, display_name)
+       VALUES ($1, $2, $3, 'unified-test-account', 'instagram', 'unified-test-remote', 'Unified test')`,
+      [accountId, workspaceId, connectionId],
     );
   });
 
   afterAll(async () => {
     await Promise.all(clients.map((client) => client.end()));
     await admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
-    await admin.query(`DROP ROLE IF EXISTS "${webRole}"`);
-    await admin.query(`DROP ROLE IF EXISTS "${workerRole}"`);
+    for (const role of createdRoles.reverse()) await admin.query(`DROP ROLE IF EXISTS "${role}"`);
     await admin.end();
   });
 
@@ -152,6 +179,20 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
       [actionId],
     );
     expect(state.rows).toEqual([{ state: 'unknown' }]);
+    const replay = await visible.query(
+      `INSERT INTO instagram_unified_actions (
+        workspace_id, account_id, client_action_id, kind, target_id, parent_id,
+        text_body, request_fingerprint, actor_type, actor_id
+      ) VALUES ($1, $2, $3, 'dm_reply', 'message-1', 'conversation-1', 'Hello', 'fingerprint-1', 'user', $4)
+      ON CONFLICT (workspace_id, client_action_id) DO NOTHING`,
+      values,
+    );
+    expect(replay.rowCount).toBe(0);
+    const replayCount = await visible.query<{ count: string }>(
+      'SELECT count(*) FROM instagram_unified_actions WHERE workspace_id = $1 AND client_action_id = $2',
+      [workspaceId, actionId],
+    );
+    expect(replayCount.rows[0]?.count).toBe('1');
     await visible.end();
     await first.end();
     await second.end();

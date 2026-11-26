@@ -6,6 +6,10 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   page,
 }, testInfo) => {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let permissionState = { instagram_basic: 'granted', instagram_manage_comments: 'granted' };
+  let statusDelayMs = 0;
+  let mediaMode: 'ready' | 'empty' | 'error' = 'ready';
+  let dmFailure = true;
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Unified Reply Owner',
@@ -46,23 +50,37 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
     }),
   );
   await page.route(`**/api/provider-accounts/${accountId}/instagram-unified/status`, (route) =>
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        data: { instagram_basic: 'granted', instagram_manage_comments: 'granted' },
-        error: null,
-      }),
-    }),
+    (async () => {
+      if (statusDelayMs) await new Promise((resolve) => setTimeout(resolve, statusDelayMs));
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: permissionState, error: null }),
+      });
+    })(),
   );
   await page.route(`**/api/provider-accounts/${accountId}/instagram-unified-media*`, (route) =>
     route.fulfill({
+      status: mediaMode === 'error' ? 503 : 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        data: {
-          media: [{ id: 'media-1', caption: 'Launch post', timestamp: '2026-11-26T18:00:00Z' }],
-        },
-        error: null,
-      }),
+      body: JSON.stringify(
+        mediaMode === 'error'
+          ? { data: null, error: 'Synthetic provider unavailable' }
+          : {
+              data: {
+                media:
+                  mediaMode === 'empty'
+                    ? []
+                    : [
+                        {
+                          id: 'media-1',
+                          caption: 'Launch post',
+                          timestamp: '2026-11-26T18:00:00Z',
+                        },
+                      ],
+              },
+              error: null,
+            },
+      ),
     }),
   );
   await page.route(`**/api/provider-accounts/${accountId}/instagram-unified-comments/*`, (route) =>
@@ -125,12 +143,16 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
         contentType: 'application/json',
         body: JSON.stringify({
           data:
-            payload.kind === 'dm_reply'
+            payload.kind === 'dm_reply' && !dmFailure
               ? { state: 'confirmed', receipt: 'dm-receipt-1' }
-              : { state: 'unknown' },
-          error: null,
+              : payload.kind === 'dm_reply'
+                ? null
+                : { state: 'unknown' },
+          error:
+            payload.kind === 'dm_reply' && dmFailure ? 'Synthetic provider rejected reply' : null,
         }),
       });
+      if (payload.kind === 'dm_reply') dmFailure = false;
     },
   );
 
@@ -170,7 +192,29 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   await expect(dmDialog).toContainText('alice');
   await expect(dmDialog).toContainText('Absolutely, here are the details.');
   await dmDialog.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect(control.getByRole('alert')).toContainText('Synthetic provider rejected reply');
+  await control.getByRole('button', { name: 'Send reply' }).click();
+  await control
+    .getByRole('alertdialog', { name: 'Confirm conversation reply' })
+    .getByRole('button', {
+      name: 'Confirm and send',
+    })
+    .click();
   await expect(control.getByText('Reply confirmed by the provider.')).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('instagram-unified-reply-mobile.png') });
+
+  permissionState = { instagram_basic: 'declined', instagram_manage_comments: 'declined' };
+  statusDelayMs = 100;
+  await control.getByRole('button', { name: 'Refresh status' }).click();
+  await expect(control.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+  await expect(control.getByText('Declined').first()).toBeVisible();
+
+  mediaMode = 'empty';
+  await control.getByRole('tab', { name: 'Comment reply' }).click();
+  await control.getByRole('button', { name: 'Load recent posts' }).click();
+  await expect(control.getByRole('button', { name: /Launch post/ })).toHaveCount(0);
+  mediaMode = 'error';
+  await control.getByRole('button', { name: 'Load recent posts' }).click();
+  await expect(control.getByRole('alert')).toContainText('Synthetic provider unavailable');
 });

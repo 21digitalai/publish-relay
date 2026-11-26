@@ -314,7 +314,9 @@ export function InstagramUnifiedCapabilityControl({
         <div className="instagram-unified-reply-tabs" role="tablist" aria-label="Reply type">
           <button
             type="button"
-            className={kind === 'comment_reply' ? 'active' : ''}
+            className={`instagram-unified-reply-tab ${kind === 'comment_reply' ? 'active' : ''}`}
+            aria-selected={kind === 'comment_reply'}
+            role="tab"
             onClick={() => {
               setKind('comment_reply');
             }}
@@ -323,7 +325,9 @@ export function InstagramUnifiedCapabilityControl({
           </button>
           <button
             type="button"
-            className={kind === 'dm_reply' ? 'active' : ''}
+            className={`instagram-unified-reply-tab ${kind === 'dm_reply' ? 'active' : ''}`}
+            aria-selected={kind === 'dm_reply'}
+            role="tab"
             onClick={() => {
               setKind('dm_reply');
             }}
@@ -415,6 +419,7 @@ export function InstagramUnifiedCapabilityControl({
         <label>
           Reply
           <textarea
+            className="instagram-unified-reply-textarea"
             value={text}
             maxLength={2000}
             onChange={(event) => {
@@ -519,7 +524,7 @@ function UnifiedSelect({
                 type="button"
                 role="option"
                 aria-selected={option === value}
-                className={option === value ? 'selected' : ''}
+                className={`instagram-unified-reply-option ${option === value ? 'selected' : ''}`}
                 key={option}
                 onClick={() => {
                   onChange(option);

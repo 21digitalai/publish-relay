@@ -382,6 +382,20 @@ Persistent macOS development uses `deploy/macos/publish-relay-local.sh`. It gene
 
 ## Instagram Login publishing bridge
 
+### Instagram API with Unified Login
+
+Unified Login is a separate `instagram_unified_login` connection family. Its callback is
+`/api/oauth/instagram-unified/callback` and it is disabled unless the opt-in app ID, secret,
+`config_id`, pinned Graph version, and public origin are configured. Authorization uses the
+Facebook Login for Business dialog with `config_id`; the server exchanges the code for a
+Business Integration System User token, reads `/me?fields=client_business_id`, and discovers
+bounded pages from `/me/assigned_instagram_accounts?fields=id,username`. The token is encrypted
+and the client business ID is the stable connection subject. Existing `instagram_login` and
+`meta` connections are never replaced; destination ownership conflicts fail closed. The public
+callback is `https://<origin>/api/oauth/instagram-unified/callback`, and Meta must have that URL
+and the required Instagram configuration registered. The source default is off; the secret is
+provided by the runtime vault pointer `apis/publish-relay-app-secret`, never committed.
+
 - `instagram-dispatch.service.ts` selects the transport and credential from the joined connection
   provider, not a remote ID or display name. Legacy `meta` Instagram keeps the Facebook Graph
   transport and account/Page credential; `instagram_login` uses `graph.instagram.com`, the

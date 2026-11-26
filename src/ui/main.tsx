@@ -100,7 +100,8 @@ function mapAccountDto(account: AccountDto): Account {
           ? 'YouTube'
           : account.provider.toLowerCase() === 'linkedin'
             ? 'LinkedIn'
-            : account.provider.toLowerCase() === 'instagram_login'
+            : account.provider.toLowerCase() === 'instagram_login' ||
+                account.provider.toLowerCase() === 'instagram_unified_login'
               ? 'Instagram'
               : account.provider.toLowerCase() === 'meta'
                 ? 'Meta'

@@ -1,5 +1,111 @@
 # Publish Relay deployment
 
+## Update an existing installation
+
+**Use reviewed main; source synchronization is not deployment.** The shipped
+activation script supports standalone Core on Linux/systemd with separate
+`publish-relay-web` and `publish-relay-worker` units and the immutable layout
+below. Hosted uses its private repository's guarded composition deployment.
+Cloudflare, containers, non-systemd supervisors and other layouts are unsupported
+by this command: stop before activation and obtain a reviewed topology-specific
+procedure. Do not infer success from a pull.
+
+### Build the exact reviewed source
+
+In a source checkout with the correct upstream, fetch main and build in a NEW
+clean directory outside the running application:
+
+```sh
+git fetch origin main
+git worktree add --detach /path/to/clean-candidate origin/main
+cd /path/to/clean-candidate
+git rev-parse HEAD
+node --version
+npm ci
+npm run check
+```
+
+Record the full SHA. Use Node **24** and npm 11; the deploy script requires
+Node 24 even if development accepts newer versions. Do not reuse ignored dist.
+Transfer the checked source plus freshly built dist as one immutable candidate.
+Review migration files and journal against the installed release for forward
+compatibility. New API/CLI authority functions need their migrations, not just
+new JavaScript. Never substitute one-off SQL for the migration runner.
+
+**Current standalone guard limitation:** an existing installation's candidate and
+selected release must have byte-identical migration trees, including metadata.
+An update adding migrations therefore STOPS at preflight, even when append-only.
+Do not bypass the guard, remove the old release, or apply SQL manually to force it.
+Such an update needs a separately reviewed migration-compatible activation and
+recovery procedure. First install and same-migration updates still run the
+canonical forward migration runner. Hosted's separate append-only guard does
+not authorize weakening the standalone guard.
+
+### Preflight and backup on the installation host
+
+Confirm the release root/current symlink, service user, both units, listener,
+readiness URL and selected Node/npm/psql paths against this installation.
+Set the documented PUBLISH_RELAY_* path overrides where defaults differ.
+Web and worker need separate database authorities and matching adapter/provider
+configuration in their protected env files, not in a release. Provision the
+group roles once using the Database authorities section below.
+
+Fail closed before activation unless these checks pass:
+
+```sh
+test "$(uname -s)" = Linux
+command -v systemctl
+command -v sudo
+command -v lsof
+command -v curl
+systemctl cat publish-relay-web publish-relay-worker
+/opt/publish-relay/node24/bin/node --version
+```
+
+Require v24 from the configured Node path (substitute it if overridden).
+Load MIGRATION_DATABASE_URL securely in the deployment-owner environment, not
+either runtime URL. Verify PostgreSQL client tools. From the built candidate:
+
+```sh
+backup_path="$(bash deploy/backup-database.sh --local)"
+bash deploy/restore-drill.sh "$backup_path"
+```
+
+Set RESTORE_DATABASE_URL to an isolated disposable database ending in _restore
+or _restore_drill; the drill rejects the production database name. Bootstrap
+authorities on the isolated target and verify representative row counts and
+migration ledger per [backup/restore](../docs/BACKUP-RESTORE.md). Record backup
+path, restore target, elapsed time and proof without secrets. Stop on any
+failure. Keep the backup; remove the isolated target only after verification.
+
+### Activate and verify
+
+As deployment owner with the required privileges on the installation host:
+
+```sh
+bash deploy/publish-release.sh <unique-release-id> /absolute/path/to/checked-candidate
+```
+
+Replace both placeholders. This existing lifecycle is the only activation engine:
+it validates artifact and migration compatibility, serializes deployment, installs
+production dependencies, runs compiled forward migrations and authority bootstrap,
+switches current atomically, restarts BOTH web and worker, and probes readiness.
+It does not create the backup for you; the previous step is mandatory.
+
+Inspect current and compare installed source/build with the recorded reviewed SHA.
+Verify both processes run from that release, configured /health/live and
+/health/ready, login/protected routes, worker logs and the newly required API
+plus shipped CLI/discovery contract. Health alone is not version/API proof.
+Record SHA, release ID and migration ledger; never claim another installation
+was upgraded without runtime evidence from it.
+
+On failure, do not blindly retry or delete the lock. Failed activation restores
+and verifies the previous application; uncertain recovery preserves both releases
+and the lock for owner inspection. Migrations are forward-only: application
+recovery never reverses schema. Follow [retention/recovery](RELEASE-RETENTION.md)
+and [upgrade/rollback](../docs/UPGRADE.md); incompatible migrations need a
+reviewed recovery plan, not reverse SQL or switching branches.
+
 Production uses immutable releases under `/opt/publish-relay/releases`, an atomic `current` symlink, and separate hardened systemd web and worker units. Web secrets belong in root-owned `/etc/publish-relay/publish-relay-web.env`; worker secrets belong in `/etc/publish-relay/publish-relay-worker.env`. Both are injected from the approved vault and never belong in a release. The deployment-only `MIGRATION_DATABASE_URL` is supplied to release, backup, and restore tooling without placing it in either runtime environment file.
 
 ## Database authorities

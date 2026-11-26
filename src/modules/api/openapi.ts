@@ -488,7 +488,10 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
           ],
           responses: {
-            '200': { description: 'Verified grant states for instagram_basic and instagram_manage_comments' },
+            '200': {
+              description:
+                'Verified grant states for instagram_basic and instagram_manage_comments',
+            },
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing destinations:read capability' },
             '409': { description: 'Provider grant verification failed' },
@@ -501,7 +504,12 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           description: 'List bounded media owned by the selected Unified Instagram account.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
-            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
             { name: 'after', in: 'query', schema: { type: 'string' } },
           ],
@@ -516,11 +524,22 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
       '/api/v1/destinations/{accountId}/instagram-unified-comments/{mediaId}': {
         get: {
           operationId: 'listInstagramUnifiedMediaComments',
-          description: 'List bounded comments for media proven to belong to the selected Unified Instagram account.',
+          description:
+            'List bounded comments for media proven to belong to the selected Unified Instagram account.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
-            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
-            { name: 'mediaId', in: 'path', required: true, schema: { type: 'string', minLength: 1 } },
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'mediaId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1 },
+            },
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
             { name: 'after', in: 'query', schema: { type: 'string' } },
           ],
@@ -535,10 +554,16 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
       '/api/v1/destinations/{accountId}/instagram-unified-conversations': {
         get: {
           operationId: 'listInstagramUnifiedConversations',
-          description: 'List bounded conversations for the selected Unified Instagram account; requires verified instagram_manage_messages.',
+          description:
+            'List bounded conversations for the selected Unified Instagram account; requires verified instagram_manage_messages.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
-            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
             { name: 'after', in: 'query', schema: { type: 'string' } },
           ],
@@ -550,22 +575,70 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
-      '/api/v1/destinations/{accountId}/instagram-unified-conversations/{conversationId}/messages': {
-        get: {
-          operationId: 'listInstagramUnifiedConversationMessages',
-          description: 'List bounded messages after proving the conversation belongs to the selected Unified Instagram account.',
+      '/api/v1/destinations/{accountId}/instagram-unified-conversations/{conversationId}/messages':
+        {
+          get: {
+            operationId: 'listInstagramUnifiedConversationMessages',
+            description:
+              'List bounded messages after proving the conversation belongs to the selected Unified Instagram account.',
+            security: [{ bearerAuth: [], workspace: [] }],
+            parameters: [
+              {
+                name: 'accountId',
+                in: 'path',
+                required: true,
+                schema: { type: 'string', format: 'uuid' },
+              },
+              {
+                name: 'conversationId',
+                in: 'path',
+                required: true,
+                schema: { type: 'string', minLength: 1 },
+              },
+              { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+              { name: 'after', in: 'query', schema: { type: 'string' } },
+            ],
+            responses: {
+              '200': { description: 'Bounded message summaries and opaque nextCursor' },
+              '401': { description: 'Authentication required' },
+              '403': { description: 'Missing dms:read capability or conversation ownership proof' },
+              '409': { description: 'Unified Instagram messaging grant unavailable' },
+            },
+          },
+        },
+      '/api/v1/destinations/{accountId}/instagram-unified-actions': {
+        post: {
+          operationId: 'sendInstagramUnifiedManualReply',
+          description:
+            'Send one bounded manual Unified Instagram reply. Comment replies require comments:send and exact comment/media ancestry; DM replies require dms:send, exact conversation/message ancestry, and the provider reply window. Confirmed, failed, and unknown outcomes are not blindly resent.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
-            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
-            { name: 'conversationId', in: 'path', required: true, schema: { type: 'string', minLength: 1 } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
-            { name: 'after', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
           ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['clientActionId', 'kind', 'targetId', 'parentId', 'text'],
+                },
+              },
+            },
+          },
           responses: {
-            '200': { description: 'Bounded message summaries and opaque nextCursor' },
+            '200': { description: 'Confirmed, definite failure, or unknown bounded action state' },
+            '400': { description: 'Invalid action' },
             '401': { description: 'Authentication required' },
-            '403': { description: 'Missing dms:read capability or conversation ownership proof' },
-            '409': { description: 'Unified Instagram messaging grant unavailable' },
+            '403': { description: 'Missing comments:send or dms:send capability' },
+            '409': {
+              description: 'Grant, ancestry, reply-window, or idempotency eligibility unavailable',
+            },
           },
         },
       },

@@ -38,7 +38,17 @@ export async function scheduleInstagramUnifiedIntent(database: NodePgDatabase, i
       eq(instagramUnifiedPendingIntents.workspaceId, input.workspaceId),
       eq(instagramUnifiedPendingIntents.clientActionId, input.clientActionId),
     )).limit(1);
-    if (!existing || existing.requestFingerprint !== input.requestFingerprint || existing.actorId !== input.actor.id || existing.actorType !== actorType)
+    const immutablePayloadMatches = existing
+      && existing.accountId === input.accountId
+      && existing.kind === input.kind
+      && existing.targetId === input.targetId
+      && existing.parentId === input.parentId
+      && existing.recipientId === (input.recipientId ?? null)
+      && existing.text === input.text
+      && existing.requestFingerprint === input.requestFingerprint
+      && existing.targetFingerprint === input.targetFingerprint
+      && existing.dueAt.getTime() === input.dueAt.getTime();
+    if (!immutablePayloadMatches || existing.actorId !== input.actor.id || existing.actorType !== actorType)
       throw new InstagramUnifiedPendingConflictError('Scheduled Unified Instagram action conflicts with an existing action');
     return existing;
   });

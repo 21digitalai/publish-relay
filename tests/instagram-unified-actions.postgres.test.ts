@@ -40,6 +40,8 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
   let databaseUrl: string;
   let webDatabase: ReturnType<typeof drizzle>;
   let webPool: pg.Pool;
+  let workerDatabase: ReturnType<typeof drizzle>;
+  let workerPool: pg.Pool;
 
   beforeAll(async () => {
     admin = new Client({ connectionString });
@@ -111,11 +113,18 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     webUrl.password = 'relay4765-web';
     webPool = new pg.Pool({ connectionString: webUrl.toString(), max: 2 });
     webDatabase = drizzle(webPool);
+    const workerUrl = new URL(databaseUrl);
+    workerUrl.username = workerLoginRole;
+    workerUrl.password = 'relay4765-worker';
+    workerUrl.searchParams.set('options', `-c role=${workerRole}`);
+    workerPool = new pg.Pool({ connectionString: workerUrl.toString(), max: 2 });
+    workerDatabase = drizzle(workerPool);
   });
 
   afterAll(async () => {
     await Promise.all(clients.map((client) => client.end()));
     await webPool.end();
+    await workerPool.end();
     await admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
     for (const role of createdRoles.reverse()) await admin.query(`DROP ROLE IF EXISTS "${role}"`);
     await admin.end();
@@ -352,12 +361,12 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     ).rejects.toThrow('conflicts with an existing action');
 
     const [first, second] = await Promise.all([
-      claimDueInstagramUnifiedIntent(webDatabase as never, {
+      claimDueInstagramUnifiedIntent(workerDatabase as never, {
         workerId: 'worker-a',
         now: new Date(),
         leaseMs: 30_000,
       }),
-      claimDueInstagramUnifiedIntent(webDatabase as never, {
+      claimDueInstagramUnifiedIntent(workerDatabase as never, {
         workerId: 'worker-b',
         now: new Date(),
         leaseMs: 30_000,
@@ -375,7 +384,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
       }),
     ).toBe(false);
     expect(
-      await finishClaimedInstagramUnifiedIntent(webDatabase as never, {
+      await finishClaimedInstagramUnifiedIntent(workerDatabase as never, {
         workspaceId,
         id: inserted.id,
         leaseOwner: claim?.leaseOwner ?? '',
@@ -383,7 +392,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
       }),
     ).toBe(true);
     expect(
-      await claimDueInstagramUnifiedIntent(webDatabase as never, {
+      await claimDueInstagramUnifiedIntent(workerDatabase as never, {
         workerId: 'worker-c',
         now: new Date(),
         leaseMs: 30_000,
@@ -404,7 +413,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
       }),
     ).toBe(true);
     expect(
-      await claimDueInstagramUnifiedIntent(webDatabase as never, {
+      await claimDueInstagramUnifiedIntent(workerDatabase as never, {
         workerId: 'worker-d',
         now: new Date(Date.now() + 120_000),
         leaseMs: 30_000,

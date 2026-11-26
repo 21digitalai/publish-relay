@@ -41,6 +41,18 @@ const ROUTES = {
   'proposals:create': { method: 'POST', path: '/api/v1/engagement-proposals', body: true },
   'proposals:status': { method: 'GET', path: '/api/v1/engagement-proposals/:id/status' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
+  'instagram-unified:status': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-status',
+  },
+  'instagram-unified:media': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-media',
+  },
+  'instagram-unified:comments': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-comments/:mediaId',
+  },
   'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
   'facebook-comments:list': {
     method: 'GET',
@@ -216,6 +228,29 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ];
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
+  'instagram-unified:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'instagram_basic', 'instagram_manage_comments']),
+  'instagram-unified:media': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'media',
+    'nextCursor',
+    'id',
+    'type',
+    'url',
+    'permalink',
+    'timestamp',
+    'caption',
+    'commentsCount',
+  ]),
+  'instagram-unified:comments': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'comments',
+    'nextCursor',
+    'id',
+    'text',
+    'timestamp',
+    'username',
+    'authorId',
+  ]),
   'proposals:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'plannedDueAt']),
   'facebook-comments:posts': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

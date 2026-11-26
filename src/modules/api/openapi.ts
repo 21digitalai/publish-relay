@@ -473,6 +473,65 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/destinations/{accountId}/instagram-unified-status': {
+        get: {
+          operationId: 'getInstagramUnifiedPermissionStatus',
+          description:
+            'Verify the provider-reported Unified Instagram grants for the selected account. This is not inferred from connection status.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'accountId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+          ],
+          responses: {
+            '200': { description: 'Verified grant states for instagram_basic and instagram_manage_comments' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing destinations:read capability' },
+            '409': { description: 'Provider grant verification failed' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/instagram-unified-media': {
+        get: {
+          operationId: 'listInstagramUnifiedMedia',
+          description: 'List bounded media owned by the selected Unified Instagram account.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Bounded own-media summaries and opaque nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing destinations:read capability' },
+            '409': { description: 'Unified Instagram provider grant unavailable' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/instagram-unified-comments/{mediaId}': {
+        get: {
+          operationId: 'listInstagramUnifiedMediaComments',
+          description: 'List bounded comments for media proven to belong to the selected Unified Instagram account.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+            { name: 'mediaId', in: 'path', required: true, schema: { type: 'string', minLength: 1 } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Bounded comments and opaque nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing comments:read capability or media ownership proof' },
+            '409': { description: 'Unified Instagram provider grant unavailable' },
+          },
+        },
+      },
       '/api/v1/destinations/{accountId}/facebook-posts/{postId}/comments/{commentId}/replies': {
         post: {
           operationId: 'replyToFacebookPageComment',

@@ -37,11 +37,26 @@ export function registerInstagramUnifiedReadRoutes(application: FastifyInstance,
 
 export function registerInstagramUnifiedReadApiRoutes(application: FastifyInstance, runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: InstagramUnifiedReadClient }, apiKeys: ApiKeyService, rateLimiter: ApiRateLimiter, delegatedAuthorization?: DelegatedAuthorizationService) {
   const service = createInstagramUnifiedReadService(runtime);
+  application.get('/api/v1/destinations/:accountId/instagram-unified-status', async (request, reply) => {
+    const input = params.safeParse(request.params);
+    if (!input.success) return reply.code(400).send(errorEnvelope('invalid_request', 'Invalid Unified Instagram account', request.id));
+    try {
+      const principal = await authorizeMachineRequest(request, apiKeys, delegatedAuthorization, 'destinations:read');
+      if (!principal) return await reply.code(401).send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
+      if (!decision.allowed) return await reply.code(429).send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
+      return await reply.send(successEnvelope(await service.permissions({ workspaceId: principal.workspaceId, accountId: input.data.accountId }), request.id));
+    } catch (error) {
+      if (error instanceof MachineAuthorizationError) return reply.code(403).send(errorEnvelope(error.code, 'Unified Instagram status access denied', request.id));
+      const outcome = instagramUnifiedReadStatus(error);
+      return reply.code(outcome.status).send(errorEnvelope('provider_read_failed', outcome.error, request.id));
+    }
+  });
   for (const kind of ['media', 'comments'] as const) application.get(`/api/v1/destinations/:accountId/instagram-unified-${kind}${kind === 'comments' ? '/:mediaId' : ''}`, async (request, reply) => {
     const input = params.safeParse(request.params); const filters = query.safeParse(request.query);
     if (!input.success || !filters.success || (kind === 'comments' && !input.data.mediaId)) return reply.code(400).send(errorEnvelope('invalid_request', 'Invalid Unified Instagram read query', request.id));
     try {
-      const principal = await authorizeMachineRequest(request, apiKeys, delegatedAuthorization, 'comments:read');
+      const principal = await authorizeMachineRequest(request, apiKeys, delegatedAuthorization, kind === 'comments' ? 'comments:read' : 'destinations:read');
       if (!principal) return await reply.code(401).send(errorEnvelope('authentication_required', 'Authentication required', request.id));
       const decision = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
       if (!decision.allowed) return await reply.code(429).send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));

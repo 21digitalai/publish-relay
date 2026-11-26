@@ -41,6 +41,9 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - media upload: content:write. Send exact local bytes with --file, an explicit --content-type, and a unique idempotency key. Remote URL fetching is not supported.
 - drafts create/show: content:write. Create a tenant-scoped imported-media draft with a stable opaque externalId, ordered ready mediaIds, and optional label/HTTPS returnUrl. Open the returned cockpit link for the user to complete the canonical Relay composer; the resulting post link appears after that one-time transition.
 - destinations list: destinations:read.
+- instagram-unified status: destinations:read; returns only the verified instagram_basic and instagram_manage_comments states for the selected Unified Instagram account. granted is provider-verified, while missing and declined require reconnect/consent review.
+- instagram-unified media: destinations:read on the selected Unified Instagram account. Returns bounded own-media summaries and an opaque nextCursor; it never exposes provider credentials or legacy Instagram/Facebook account data.
+- instagram-unified comments: comments:read on the selected Unified Instagram account and the selected media must be owned by that account. Returns bounded comments and an opaque nextCursor; no send or reply operation is available in stage 1.
 - publishes retry: publishes:retry. Retry only a failed job after inspection; Relay rejects jobs whose outcome still requires reconciliation.
 - facebook-comments reply/schedule/status/cancel: comments:send on the selected Page plus the optional Comments grant with pages_manage_engagement. A scheduled receipt is not delivery.
 - facebook-comments posts/list: comments:read on the selected Page, plus its optional Comments module and verified provider grant. Publishing connection alone does not authorize comment reading.

@@ -17,7 +17,11 @@ import type { InstagramUnifiedLoginClient } from './instagram-unified-login-clie
 
 export const INSTAGRAM_UNIFIED_PROVIDER = 'instagram_unified_login';
 
-type Input = { workspaceId: string; userId: string; requestId: string };
+interface Input {
+  workspaceId: string;
+  userId: string;
+  requestId: string;
+}
 
 export async function beginInstagramUnifiedLogin(
   database: NodePgDatabase,

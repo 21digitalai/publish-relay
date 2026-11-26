@@ -26,22 +26,23 @@ describe('Instagram Unified Login client', () => {
       configId: 'config',
       graphVersion: 'v27.0',
       now: () => 1_000,
-      fetch: async (input) => {
-        const url = new URL(String(input));
+      fetch: (input) => {
+        const url =
+          input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
         requests.push(url);
         if (url.pathname.endsWith('/oauth/access_token'))
-          return new Response(JSON.stringify({ access_token: 'token', expires_in: 60 }), {
+          return Promise.resolve(new Response(JSON.stringify({ access_token: 'token', expires_in: 60 }), {
             status: 200,
-          });
+          }));
         if (url.pathname.endsWith('/me'))
-          return new Response(
+          return Promise.resolve(new Response(
             JSON.stringify({ id: 'system-user', client_business_id: 'business' }),
             { status: 200 },
-          );
-        return new Response(
+          ));
+        return Promise.resolve(new Response(
           JSON.stringify({ data: [{ id: 'ig-1', username: 'one' }], paging: {} }),
           { status: 200 },
-        );
+        ));
       },
     });
     await expect(

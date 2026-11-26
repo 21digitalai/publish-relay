@@ -7,7 +7,7 @@ const tokenSchema = z.object({
 const meSchema = z.object({ id: z.string().min(1), client_business_id: z.string().min(1) });
 const accountsSchema = z.object({
   data: z.array(z.object({ id: z.string().min(1), username: z.string().min(1) })),
-  paging: z.object({ next: z.string().url().optional() }).optional(),
+  paging: z.object({ next: z.url().optional() }).optional(),
 });
 
 const MAX_ACCOUNT_PAGES = 20;
@@ -147,7 +147,7 @@ export class InstagramUnifiedLoginClient {
     } catch {
       throw new InstagramUnifiedLoginError(stage, 'transport');
     }
-    const body = await response.json().catch(() => null);
+    const body: unknown = await response.json().catch(() => null);
     if (!response.ok) throw new InstagramUnifiedLoginError(stage, 'provider request rejected');
     const parsed = schema.safeParse(body);
     if (!parsed.success) throw new InstagramUnifiedLoginError(stage, 'invalid provider response');

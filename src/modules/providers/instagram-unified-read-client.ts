@@ -8,7 +8,12 @@ const timestamp = z
 const page = <T extends z.ZodType>(item: T) =>
   z.object({
     data: z.array(item).max(100),
-    paging: z.object({ next: z.url().optional() }).optional(),
+    paging: z
+      .object({
+        next: z.url().optional(),
+        cursors: z.object({ after: z.string().min(1).max(2048).optional() }).optional(),
+      })
+      .optional(),
   });
 const media = z.object({
   id: graphId,
@@ -201,16 +206,18 @@ export class InstagramUnifiedReadClient {
     fields: Record<string, string>,
     schema: T,
   ): Promise<{ items: z.infer<T>[]; nextCursor: string | null }> {
-    let next: string | undefined = this.url(path, fields).toString();
+    let nextAfter: string | undefined;
     const items: z.infer<T>[] = [];
-    for (let pageNumber = 0; next && pageNumber < MAX_PAGES; pageNumber += 1) {
-      const body = await this.get(new URL(next), input.accessToken);
+    for (let pageNumber = 0; pageNumber < MAX_PAGES; pageNumber += 1) {
+      const requestFields = nextAfter ? { ...fields, after: nextAfter } : fields;
+      const body = await this.get(this.url(path, requestFields), input.accessToken);
       const parsed = page(schema).safeParse(body);
       if (!parsed.success) throw new InstagramUnifiedReadError('permanent', 502);
       items.push(...parsed.data.data);
-      next = parsed.data.paging?.next;
+      nextAfter = parsed.data.paging?.next ? parsed.data.paging.cursors?.after : undefined;
+      if (!nextAfter) break;
     }
-    return { items, nextCursor: next ?? null };
+    return { items, nextCursor: nextAfter ?? null };
   }
 
   private url(path: string, fields: Record<string, string>): URL {

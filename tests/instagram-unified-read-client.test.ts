@@ -53,6 +53,67 @@ describe('Instagram Unified read client', () => {
     expect(requests[0]?.searchParams.get('fields')).toContain('comments_count');
   });
 
+  it('replays only the opaque provider cursor and never returns a paging URL', async () => {
+    const requests: URL[] = [];
+    let pageNumber = 0;
+    const client = new InstagramUnifiedReadClient({
+      graphVersion: 'v27.0',
+      fetch: (input) => {
+        const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+        requests.push(url);
+        pageNumber += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{ id: `m${String(pageNumber)}`, media_type: 'IMAGE', timestamp: '2026-11-26T10:00:00+0000' }],
+              paging:
+                pageNumber === 1
+                  ? {
+                      next: 'https://graph.facebook.com/v27.0/ig1/media?access_token=secret&after=cursor-1',
+                      cursors: { after: 'cursor-1' },
+                    }
+                  : {},
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    });
+
+    await expect(client.listMedia({ accountId: 'ig1', accessToken: 'secret', limit: 10 })).resolves.toMatchObject({
+      media: [{ id: 'm1' }, { id: 'm2' }],
+      nextCursor: null,
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.searchParams.get('after')).toBe('cursor-1');
+    expect(requests[1]?.search).not.toContain('access_token');
+  });
+
+  it('stops at the twenty-page cap and returns the safe cursor for continuation', async () => {
+    let calls = 0;
+    const client = new InstagramUnifiedReadClient({
+      graphVersion: 'v27.0',
+      fetch: () => {
+        calls += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{ id: `m${String(calls)}`, media_type: 'IMAGE', timestamp: '2026-11-26T10:00:00+0000' }],
+              paging: { next: 'https://graph.facebook.com/next?access_token=secret', cursors: { after: `cursor-${String(calls)}` } },
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    });
+
+    await expect(client.listMedia({ accountId: 'ig1', accessToken: 'secret' })).resolves.toMatchObject({
+      media: { length: 20 },
+      nextCursor: 'cursor-20',
+    });
+    expect(calls).toBe(20);
+  });
+
   it('returns truthful verified, missing, and declined grant states', async () => {
     const responses = [
       {

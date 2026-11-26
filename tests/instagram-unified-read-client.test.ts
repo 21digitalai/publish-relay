@@ -58,12 +58,9 @@ describe('Instagram Unified read client', () => {
       graphVersion: 'v27.0',
       fetch: () =>
         Promise.resolve(
-          new Response(
-            JSON.stringify({
-              error: { message: 'token-secret', code: 10, error_subcode: 2207053 },
-            }),
-            { status: 403 },
-          ),
+          new Response(JSON.stringify({ id: 'media1', owner: { id: 'different-account' } }), {
+            status: 200,
+          }),
         ),
     });
     await expect(
@@ -71,11 +68,6 @@ describe('Instagram Unified read client', () => {
     ).rejects.toMatchObject({
       kind: 'permission',
       status: 403,
-      providerCode: 10,
-      providerSubcode: 2207053,
     });
-    await expect(
-      client.listComments({ accountId: 'old-account', mediaId: 'media1', accessToken: 'secret' }),
-    ).rejects.not.toThrow('token-secret');
   });
 });

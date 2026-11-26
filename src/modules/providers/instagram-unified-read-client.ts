@@ -26,6 +26,7 @@ const comment = z.object({
   username: z.string().max(256).optional(),
   from: z.object({ id: graphId, username: z.string().max(256).optional() }).optional(),
 });
+const ownedMedia = z.object({ id: graphId, owner: z.object({ id: graphId }) });
 
 const MAX_PAGES = 20;
 
@@ -88,25 +89,45 @@ export class InstagramUnifiedReadClient {
     limit?: number;
     after?: string;
   }) {
-    return this.list(
-      input,
-      `/${this.id(input.mediaId)}/comments`,
-      {
-        fields: 'id,text,timestamp,username,from{id,username}',
-        ...(input.limit === undefined ? {} : { limit: this.limit(input.limit) }),
-        ...(input.after ? { after: this.cursor(input.after) } : {}),
-      },
-      comment,
-    ).then((result) => ({
-      comments: result.items.map((item) => ({
-        id: item.id,
-        text: item.text ?? '',
-        timestamp: item.timestamp,
-        username: item.username ?? item.from?.username ?? null,
-        authorId: item.from?.id ?? null,
+    return this.assertMediaOwner(input).then(() =>
+      this.list(
+        input,
+        `/${this.id(input.mediaId)}/comments`,
+        {
+          fields: 'id,text,timestamp,username,from{id,username}',
+          ...(input.limit === undefined ? {} : { limit: this.limit(input.limit) }),
+          ...(input.after ? { after: this.cursor(input.after) } : {}),
+        },
+        comment,
+      ).then((result) => ({
+        comments: result.items.map((item) => ({
+          id: item.id,
+          text: item.text ?? '',
+          timestamp: item.timestamp,
+          username: item.username ?? item.from?.username ?? null,
+          authorId: item.from?.id ?? null,
+        })),
+        nextCursor: result.nextCursor,
       })),
-      nextCursor: result.nextCursor,
-    }));
+    );
+  }
+
+  private async assertMediaOwner(input: {
+    accountId: string;
+    mediaId: string;
+    accessToken: string;
+  }) {
+    const body = await this.get(
+      this.url(`/${this.id(input.mediaId)}`, { fields: 'id,owner{id}' }),
+      input.accessToken,
+    );
+    const parsed = ownedMedia.safeParse(body);
+    if (
+      !parsed.success ||
+      parsed.data.id !== input.mediaId ||
+      parsed.data.owner.id !== input.accountId
+    )
+      throw new InstagramUnifiedReadError('permission', 403);
   }
 
   private async list<T extends z.ZodType>(

@@ -532,6 +532,43 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/v1/destinations/{accountId}/instagram-unified-conversations': {
+        get: {
+          operationId: 'listInstagramUnifiedConversations',
+          description: 'List bounded conversations for the selected Unified Instagram account; requires verified instagram_manage_messages.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Bounded conversation summaries and opaque nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing dms:read capability' },
+            '409': { description: 'Unified Instagram messaging grant unavailable' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/instagram-unified-conversations/{conversationId}/messages': {
+        get: {
+          operationId: 'listInstagramUnifiedConversationMessages',
+          description: 'List bounded messages after proving the conversation belongs to the selected Unified Instagram account.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            { name: 'accountId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+            { name: 'conversationId', in: 'path', required: true, schema: { type: 'string', minLength: 1 } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            { name: 'after', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Bounded message summaries and opaque nextCursor' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing dms:read capability or conversation ownership proof' },
+            '409': { description: 'Unified Instagram messaging grant unavailable' },
+          },
+        },
+      },
       '/api/v1/destinations/{accountId}/facebook-posts/{postId}/comments/{commentId}/replies': {
         post: {
           operationId: 'replyToFacebookPageComment',

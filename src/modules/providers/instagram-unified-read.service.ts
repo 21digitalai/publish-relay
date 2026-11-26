@@ -43,6 +43,18 @@ export function createInstagramUnifiedReadService(runtime: { database: NodePgDat
       const token = await loadToken(runtime, input);
       return runtime.client.listComments({ accountId: token.remoteAccountId, mediaId: input.mediaId, accessToken: token.accessToken, ...(input.limit === undefined ? {} : { limit: input.limit }), ...(input.after === undefined ? {} : { after: input.after }) });
     },
+    async conversations(input: { workspaceId: string; accountId: string; limit?: number; after?: string }) {
+      const token = await loadToken(runtime, input);
+      const permission = await runtime.client.verifyMessagingPermission(token.accessToken);
+      if (permission !== 'granted') throw new InstagramUnifiedReadError('permission', 403);
+      return runtime.client.listConversations({ accountId: token.remoteAccountId, accessToken: token.accessToken, ...(input.limit === undefined ? {} : { limit: input.limit }), ...(input.after === undefined ? {} : { after: input.after }) });
+    },
+    async messages(input: { workspaceId: string; accountId: string; conversationId: string; limit?: number; after?: string }) {
+      const token = await loadToken(runtime, input);
+      const permission = await runtime.client.verifyMessagingPermission(token.accessToken);
+      if (permission !== 'granted') throw new InstagramUnifiedReadError('permission', 403);
+      return runtime.client.listMessages({ accountId: token.remoteAccountId, conversationId: input.conversationId, accessToken: token.accessToken, ...(input.limit === undefined ? {} : { limit: input.limit }), ...(input.after === undefined ? {} : { after: input.after }) });
+    },
   };
 }
 

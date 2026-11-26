@@ -28,6 +28,17 @@ const comment = z.object({
 });
 const ownedMedia = z.object({ id: graphId, owner: z.object({ id: graphId }) });
 const permission = z.object({ permission: z.string().min(1).max(128), status: z.string().min(1).max(32) });
+const conversation = z.object({
+  id: graphId,
+  updated_time: timestamp.optional(),
+  participants: z.object({ data: z.array(z.object({ id: graphId, username: z.string().max(256).optional() })).max(20) }).optional(),
+});
+const message = z.object({
+  id: graphId,
+  created_time: timestamp,
+  from: z.object({ id: graphId, username: z.string().max(256).optional() }).optional(),
+  message: z.string().max(2200).optional(),
+});
 
 const MAX_PAGES = 20;
 
@@ -93,6 +104,47 @@ export class InstagramUnifiedReadClient {
       result[name] = row?.status === 'granted' ? 'granted' : row?.status === 'declined' ? 'declined' : 'missing';
       return result;
     }, {});
+  }
+
+  public async verifyMessagingPermission(accessToken: string) {
+    const body = await this.get(this.url('/me/permissions', {}), accessToken);
+    const parsed = z.object({ data: z.array(permission).max(100) }).safeParse(body);
+    if (!parsed.success) throw new InstagramUnifiedReadError('permanent', 502);
+    const row = parsed.data.data.find((item) => item.permission === 'instagram_manage_messages');
+    return row?.status === 'granted' ? 'granted' : row?.status === 'declined' ? 'declined' : 'missing';
+  }
+
+  public listConversations(input: { accountId: string; accessToken: string; limit?: number; after?: string }) {
+    return this.list(input, `/${this.id(input.accountId)}/conversations`, {
+      fields: 'id,updated_time,participants{id,username}',
+      ...(input.limit === undefined ? {} : { limit: this.limit(input.limit) }),
+      ...(input.after ? { after: this.cursor(input.after) } : {}),
+    }, conversation).then((result) => ({
+      conversations: result.items.map((item) => ({
+        id: item.id,
+        updatedAt: item.updated_time ?? null,
+        participants: (item.participants?.data ?? []).map((participant) => ({ id: participant.id, username: participant.username ?? null })),
+      })),
+      nextCursor: result.nextCursor,
+    }));
+  }
+
+  public listMessages(input: { accountId: string; conversationId: string; accessToken: string; limit?: number; after?: string }) {
+    return this.assertConversationOwner(input).then(() => this.list(input, `/${this.id(input.conversationId)}/messages`, {
+      fields: 'id,created_time,from{id,username},message',
+      ...(input.limit === undefined ? {} : { limit: this.limit(input.limit) }),
+      ...(input.after ? { after: this.cursor(input.after) } : {}),
+    }, message)).then((result) => ({
+      messages: result.items.map((item) => ({ id: item.id, createdAt: item.created_time, senderId: item.from?.id ?? null, senderUsername: item.from?.username ?? null, text: item.message ?? '' })),
+      nextCursor: result.nextCursor,
+    }));
+  }
+
+  private async assertConversationOwner(input: { accountId: string; conversationId: string; accessToken: string }) {
+    const body = await this.get(this.url(`/${this.id(input.conversationId)}`, { fields: 'id,participants{id}' }), input.accessToken);
+    const parsed = conversation.safeParse(body);
+    if (!parsed.success || parsed.data.id !== input.conversationId || !parsed.data.participants?.data.some((participant) => participant.id === input.accountId))
+      throw new InstagramUnifiedReadError('permission', 403);
   }
 
   public listComments(input: {

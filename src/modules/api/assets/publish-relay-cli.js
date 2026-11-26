@@ -33,6 +33,8 @@ const MUTATIONS = new Set([
   'facebook-dms:group-schedule',
   'facebook-dms:group-cancel',
   'facebook-dms:cancel',
+  'instagram-unified:schedule',
+  'instagram-unified:cancel',
   'facebook-dms:memory-upsert',
   'proposals:create',
 ]);
@@ -60,6 +62,23 @@ const ROUTES = {
   'instagram-unified:messages': {
     method: 'GET',
     path: '/api/v1/destinations/:id/instagram-unified-conversations/:conversationId/messages',
+  },
+  'instagram-unified:schedule': {
+    method: 'POST',
+    path: '/api/v1/destinations/:id/instagram-unified-schedules',
+    body: true,
+  },
+  'instagram-unified:list': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-schedules',
+  },
+  'instagram-unified:schedule-status': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-schedules/:intentId',
+  },
+  'instagram-unified:cancel': {
+    method: 'DELETE',
+    path: '/api/v1/destinations/:id/instagram-unified-schedules/:intentId',
   },
   'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
   'facebook-comments:list': {
@@ -282,6 +301,34 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'text',
     'nextCursor',
   ]),
+  'instagram-unified:schedule': new Set([...ENVELOPE_OUTPUT_KEYS, 'id', 'status', 'dueAt']),
+  'instagram-unified:list': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'items',
+    'id',
+    'clientActionId',
+    'kind',
+    'targetId',
+    'parentId',
+    'recipientId',
+    'text',
+    'dueAt',
+    'status',
+    'hasMore',
+  ]),
+  'instagram-unified:schedule-status': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'id',
+    'clientActionId',
+    'kind',
+    'targetId',
+    'parentId',
+    'recipientId',
+    'text',
+    'dueAt',
+    'status',
+  ]),
+  'instagram-unified:cancel': new Set([...ENVELOPE_OUTPUT_KEYS, 'id', 'status']),
   'proposals:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'plannedDueAt']),
   'facebook-comments:posts': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

@@ -231,6 +231,30 @@ const pageDmProposalStatusSchema = z.object({
   status: z.string(),
   plannedDueAt: z.iso.datetime().optional(),
 });
+const instagramUnifiedScheduleRequestSchema = z.object({
+  clientActionId: z.uuid(),
+  kind: z.enum(['comment_reply', 'dm_reply']),
+  targetId: z.string().min(1).max(256),
+  parentId: z.string().min(1).max(256),
+  recipientId: z.string().min(1).max(256).optional(),
+  text: z.string().min(1).max(2000),
+  dueAt: z.iso.datetime({ offset: true }),
+});
+const instagramUnifiedScheduleSchema = z.object({
+  id: z.uuid(),
+  clientActionId: z.uuid(),
+  kind: z.enum(['comment_reply', 'dm_reply']),
+  targetId: z.string(),
+  parentId: z.string(),
+  recipientId: z.string().nullable(),
+  text: z.string(),
+  dueAt: z.iso.datetime(),
+  status: z.string(),
+});
+const instagramUnifiedScheduleCollectionSchema = z.object({
+  items: z.array(instagramUnifiedScheduleSchema).max(100),
+  hasMore: z.boolean(),
+});
 
 export function apiV1OpenApiDocument(): Record<string, unknown> {
   return {
@@ -386,7 +410,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
             '400': { description: 'Invalid draft input' },
             '401': { description: 'Authentication required' },
-            '403': { description: 'Missing content:write capability' },
+            '403': { description: 'Missing schedules:write capability' },
             '409': { description: 'External ID conflicts with existing input' },
             '429': { description: 'Mutation rate limit exceeded' },
           },
@@ -639,6 +663,113 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             '409': {
               description: 'Grant, ancestry, reply-window, or idempotency eligibility unavailable',
             },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/instagram-unified-schedules': {
+        post: {
+          operationId: 'scheduleInstagramUnifiedReply',
+          description:
+            'Create one explicit Unified Instagram comment or existing-conversation DM reply schedule. Scheduling is not provider delivery.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [uuidPathParameter('accountId')],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: openApiJsonSchema(instagramUnifiedScheduleRequestSchema),
+              },
+            },
+          },
+          responses: {
+            '202': {
+              description: 'Pending schedule receipt',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(
+                    successResponseSchema(
+                      instagramUnifiedScheduleSchema.pick({ id: true, status: true, dueAt: true }),
+                    ),
+                  ),
+                },
+              },
+            },
+            '400': { description: 'Invalid schedule request' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing content:write capability' },
+            '409': { description: 'Eligibility, freshness, or idempotency conflict' },
+          },
+        },
+        get: {
+          operationId: 'listInstagramUnifiedSchedules',
+          description: 'List bounded tenant/account-scoped Unified Instagram schedule history.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            uuidPathParameter('accountId'),
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+            {
+              name: 'status',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: [
+                  'pending',
+                  'claimed',
+                  'cancelled',
+                  'confirmed',
+                  'failed',
+                  'unknown',
+                  'expired',
+                ],
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Bounded schedule history',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(
+                    successResponseSchema(instagramUnifiedScheduleCollectionSchema),
+                  ),
+                },
+              },
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing schedules:read capability' },
+          },
+        },
+      },
+      '/api/v1/destinations/{accountId}/instagram-unified-schedules/{intentId}': {
+        get: {
+          operationId: 'getInstagramUnifiedSchedule',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [uuidPathParameter('accountId'), uuidPathParameter('intentId')],
+          responses: {
+            '200': {
+              description: 'Schedule status and bounded payload',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(instagramUnifiedScheduleSchema)),
+                },
+              },
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing schedules:read capability' },
+            '404': { description: 'Intent not found in this workspace' },
+          },
+        },
+        delete: {
+          operationId: 'cancelInstagramUnifiedSchedule',
+          description:
+            'Cancel a pending schedule only; claimed or terminal actions are truthful non-cancellable conflicts.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [uuidPathParameter('accountId'), uuidPathParameter('intentId')],
+          responses: {
+            '200': { description: 'Pending schedule cancelled' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing schedules:write capability' },
+            '409': { description: 'Schedule is already claimed or terminal' },
           },
         },
       },

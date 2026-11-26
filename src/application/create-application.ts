@@ -54,9 +54,18 @@ import {
   sendAccountPageConversationMessage,
 } from '../modules/providers/facebook-messenger-send.service.js';
 import { registerFacebookPageBrowserReadRoutes } from '../modules/providers/facebook-page-browser-read.routes.js';
-import { registerInstagramUnifiedReadApiRoutes, registerInstagramUnifiedReadRoutes } from '../modules/providers/instagram-unified-read.routes.js';
-import { registerInstagramUnifiedSendApiRoutes, registerInstagramUnifiedSendRoutes } from '../modules/providers/instagram-unified-send.routes.js';
-import { registerInstagramUnifiedScheduleRoutes } from '../modules/providers/instagram-unified-schedule.routes.js';
+import {
+  registerInstagramUnifiedReadApiRoutes,
+  registerInstagramUnifiedReadRoutes,
+} from '../modules/providers/instagram-unified-read.routes.js';
+import {
+  registerInstagramUnifiedSendApiRoutes,
+  registerInstagramUnifiedSendRoutes,
+} from '../modules/providers/instagram-unified-send.routes.js';
+import {
+  registerInstagramUnifiedScheduleApiRoutes,
+  registerInstagramUnifiedScheduleRoutes,
+} from '../modules/providers/instagram-unified-schedule.routes.js';
 import type { InstagramUnifiedReadClient } from '../modules/providers/instagram-unified-read-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
@@ -238,7 +247,15 @@ function registerMachineApiRoutes(
   options: CoreApplicationOptions,
   actionPolicy: ActionPolicy,
 ): void {
-  const { config, apiKeys, auth, database, delegatedAuthorization, mediaStorage, instagramUnifiedOauth } = options;
+  const {
+    config,
+    apiKeys,
+    auth,
+    database,
+    delegatedAuthorization,
+    mediaStorage,
+    instagramUnifiedOauth,
+  } = options;
   if (!apiKeys) return;
   const rateLimiter = createApiRateLimiter();
   registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
@@ -312,9 +329,29 @@ function registerMachineApiRoutes(
     );
   }
   if (instagramUnifiedOauth?.readClient)
-    registerInstagramUnifiedReadApiRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, apiKeys, rateLimiter, delegatedAuthorization);
+    registerInstagramUnifiedReadApiRoutes(
+      application,
+      { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient },
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
   if (instagramUnifiedOauth?.readClient)
-    registerInstagramUnifiedSendApiRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, apiKeys, rateLimiter, delegatedAuthorization);
+    registerInstagramUnifiedSendApiRoutes(
+      application,
+      { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient },
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
+  if (instagramUnifiedOauth?.readClient)
+    registerInstagramUnifiedScheduleApiRoutes(
+      application,
+      { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient },
+      apiKeys,
+      rateLimiter,
+      delegatedAuthorization,
+    );
   if (enabledAdapters.has('fanvue') && options.fanvueOauth) {
     const reads = new FanvueReadService(
       database,
@@ -444,11 +481,23 @@ function registerBrowserRoutes(
   }
   if (auth && database) {
     if (instagramUnifiedOauth?.readClient)
-      registerInstagramUnifiedReadRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, auth);
+      registerInstagramUnifiedReadRoutes(
+        application,
+        { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient },
+        auth,
+      );
     if (instagramUnifiedOauth?.readClient)
-      registerInstagramUnifiedSendRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, auth);
+      registerInstagramUnifiedSendRoutes(
+        application,
+        { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient },
+        auth,
+      );
     if (instagramUnifiedOauth?.readClient)
-      registerInstagramUnifiedScheduleRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, auth);
+      registerInstagramUnifiedScheduleRoutes(
+        application,
+        { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient },
+        auth,
+      );
     if (enabledAdapters.has('facebook_page') && options.facebookRead)
       registerFacebookPageBrowserReadRoutes(
         application,

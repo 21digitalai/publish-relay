@@ -762,3 +762,9 @@ SQL is backward compatible: release review and disposable PostgreSQL recovery
 evidence remain required. update-release.sh gates the existing publish transaction
 with shipped backup/isolated restore and authority bootstrap; it does not create
 a second activation/rollback engine. Restore failure never mutates live current.
+
+When expiry-priority would move an existing capped Page root across a Sofia day,
+the group scheduler uses its already sampled append slot only if that slot fits
+the new provider deadline. Existing roots/tails are untouched; daily admission
+still runs on the accepted new day. If append cannot fit, the civil-day conflict
+remains fail-closed. No accepted action is replayed by this admission fallback.

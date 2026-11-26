@@ -192,6 +192,58 @@ run('requested Page DM due time on real PostgreSQL', () => {
         clientActionId: randomUUID(),
       });
       expect(defaultGroup.status).toBe('pending');
+
+      // Regression #16829: the next-day floor makes EDF shift yesterday's
+      // accepted roots across midnight even though a safe append still fits.
+      await pool.query('DELETE FROM facebook_page_dm_pending_intents');
+      const midnightClock = vi
+        .spyOn(Date, 'now')
+        .mockReturnValue(Date.parse('2026-11-26T21:05:00Z'));
+      try {
+        for (const [index, time] of ['21:47:38', '21:54:44', '22:01:34'].entries()) {
+          await schedulePageDmGroup(database, {
+            ...base,
+            conversationId: 'midnight-' + String(index),
+            clientActionId: randomUUID(),
+            dueAt: '2026-11-26T' + time + 'Z',
+            windowDeadline: new Date(
+              '2026-11-27T' + (['17:34:38', '19:39:08', '19:48:46'][index] ?? '') + 'Z',
+            ),
+          });
+        }
+        const snapshot = async () =>
+          (
+            await pool.query<{ id: string; [key: string]: unknown }>(
+              'SELECT * FROM facebook_page_dm_pending_intents ORDER BY id',
+            )
+          ).rows;
+        const before = await snapshot();
+        const appendRequest = {
+          ...base,
+          conversationId: 'midnight-append',
+          clientActionId: randomUUID(),
+          dueAt: '2026-11-26T22:05:09Z',
+          windowDeadline: new Date('2026-11-27T18:16:07Z'),
+        };
+        const appended = await schedulePageDmGroup(database, appendRequest);
+        expect(appended.dueAt.getTime()).toBeGreaterThanOrEqual(Date.parse(appendRequest.dueAt));
+        const after = await snapshot();
+        expect(after.filter((row) => before.some((old) => old.id === row.id))).toEqual(before);
+        expect((await schedulePageDmGroup(database, appendRequest)).id).toBe(appended.id);
+        const frozen = await snapshot();
+        await expect(
+          schedulePageDmGroup(database, {
+            ...base,
+            conversationId: 'midnight-expired',
+            clientActionId: randomUUID(),
+            dueAt: '2026-11-26T22:05:09Z',
+            windowDeadline: new Date('2026-11-26T22:05:09Z'),
+          }),
+        ).rejects.toThrow();
+        expect(await snapshot()).toEqual(frozen);
+      } finally {
+        midnightClock.mockRestore();
+      }
     } finally {
       await pool.end();
       await admin.query('DROP SCHEMA ' + schema + ' CASCADE');

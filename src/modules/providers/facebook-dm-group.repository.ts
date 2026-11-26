@@ -233,7 +233,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       Math.max(now, roots[0]?.dueAt.getTime() ?? 0, earliestAt.getTime() - minimumGapMs) +
         randomInt(dailyLimit.pacingMinimumSeconds, dailyLimit.pacingMaximumSeconds + 1) * 1000,
     );
-    const plan = planPageDmRootPriority({
+    let plan = planPageDmRootPriority({
       pending: roots
         .filter((root) => root.status === 'pending')
         .map((root) => ({ ...root, immovable: root.preSendAttempts > 0 })),
@@ -246,15 +246,22 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       throw new PendingDmConflictError(
         'The Messenger reply window cannot fit an eligible paced Page DM slot',
       );
-    const dueAt = plan.dueAt;
     if (dailyLimit.enabled) {
-      for (const change of plan.changes) {
+      const crossesDay = plan.changes.some((change) => {
         const original = roots.find((root) => root.id === change.id);
-        if (original && pageDmCivilDay(original.dueAt) !== pageDmCivilDay(change.dueAt))
+        return original && pageDmCivilDay(original.dueAt) !== pageDmCivilDay(change.dueAt);
+      });
+      if (crossesDay) {
+        // Preserve existing promises when the sampled append slot still fits.
+        if (appendAt > input.windowDeadline)
           throw new PendingDmConflictError(
             'Page DM priority would move an existing group to another Sofia day',
           );
+        plan = { dueAt: appendAt, changes: [] };
       }
+    }
+    const dueAt = plan.dueAt;
+    if (dailyLimit.enabled) {
       // Page lock serializes all group creations, including separate machine callers.
       const [sameInbound] = await tx
         .select({ id: facebookPageDmPendingIntents.id })

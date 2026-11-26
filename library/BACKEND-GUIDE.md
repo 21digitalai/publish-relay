@@ -17,6 +17,14 @@ tenant/account binding, reply-window/ancestry freshness, and cancellation before
 the existing Unified send service with the original `clientActionId`; reserved or unknown
 actions are never reposted.
 
+The authenticated Unified browser schedule surface also exposes a bounded account-scoped list
+with an allowlisted status filter and newest-due ordering. Detail and list responses include only
+intent identity, kind, target references, reply text, due time, and durable status; provider
+tokens, raw responses, and lease/fingerprint internals remain server-only. Cancellation remains a
+pending-only compare-and-set, so a non-pending row is reported as in-flight/terminal rather than
+pretending the provider action can be recalled. The Unified Accounts control reuses the existing
+account capability/read primitives for explicit scheduling, refreshable history, and cancellation.
+
 ### Unified Instagram stage-1 reads
 
 The `instagram_unified_login` connection family has a separate read contract. `GET /api/v1/destinations/:accountId/instagram-unified-status` performs a live provider permission check and returns only the bounded states for `instagram_basic` and `instagram_manage_comments`; an active connection is not treated as grant proof. `instagram-unified-media` requires `destinations:read`, while `instagram-unified-comments/:mediaId` requires `comments:read` and first proves that the media belongs to the selected Unified account. Both collections cap page size at 100, follow opaque cursors for at most 20 provider pages, and project allowlisted fields only. The `instagram-unified-conversations` and `.../messages` reads require `dms:read`, live `instagram_manage_messages`, and selected-account ancestry proof; they project only IDs, timestamps, participants, sender summaries, and text. Stage 2 adds the separate manual action route: comment replies require the comments grant and exact comment/media ancestry, while DM replies require only the messaging grant plus exact conversation/message ancestry and the recent inbound window. Legacy `instagram_login` and Facebook Page families remain separate.

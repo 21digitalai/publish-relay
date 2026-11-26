@@ -9,6 +9,7 @@ import { createInstagramUnifiedScheduleService, InstagramUnifiedPendingConflictE
 import { InstagramUnifiedEligibilityError } from './instagram-unified-send.service.js';
 
 const params = z.strictObject({ accountId: z.uuid(), intentId: z.uuid().optional() });
+const listQuery = z.strictObject({ limit: z.coerce.number().int().min(1).max(100).optional(), status: z.enum(['pending', 'claimed', 'cancelled', 'confirmed', 'failed', 'unknown', 'expired']).optional() });
 const body = z.strictObject({ clientActionId: z.uuid(), kind: z.enum(['comment_reply', 'dm_reply']), targetId: z.string().min(1).max(256), parentId: z.string().min(1).max(256), recipientId: z.string().min(1).max(256).optional(), text: z.string().trim().min(1).max(2000), dueAt: z.iso.datetime({ offset: true }) });
 
 export function registerInstagramUnifiedScheduleRoutes(application: FastifyInstance, runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: InstagramUnifiedReadClient }, auth: AuthService) {
@@ -25,7 +26,14 @@ export function registerInstagramUnifiedScheduleRoutes(application: FastifyInsta
     const identity = await authorizeRequest(request, auth, 'content:read'); if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
     const path = params.safeParse(request.params); if (!path.success || !path.data.intentId) return reply.code(400).send({ data: null, error: 'Invalid intent' });
     const result = await service.get({ workspaceId: identity.workspaceId, accountId: path.data.accountId, id: path.data.intentId });
-    return result ? reply.send({ data: { id: result.id, status: result.status, dueAt: result.dueAt.toISOString() }, error: null }) : reply.code(404).send({ data: null, error: 'Intent not found' });
+    return result ? reply.send({ data: present(result), error: null }) : reply.code(404).send({ data: null, error: 'Intent not found' });
+  });
+  application.get('/api/provider-accounts/:accountId/instagram-unified-schedules', async (request, reply) => {
+    const identity = await authorizeRequest(request, auth, 'content:read'); if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
+    const path = params.pick({ accountId: true }).safeParse(request.params); const query = listQuery.safeParse(request.query);
+    if (!path.success || !query.success) return reply.code(400).send({ data: null, error: 'Invalid schedule query' });
+    const result = await service.list({ workspaceId: identity.workspaceId, accountId: path.data.accountId, ...query.data });
+    return reply.send({ data: { items: result.rows.map(present), hasMore: result.hasMore }, error: null });
   });
   application.delete('/api/provider-accounts/:accountId/instagram-unified-schedules/:intentId', async (request, reply) => {
     const identity = await authorizeRequest(request, auth, 'content:write'); if (!identity) return reply.code(401).send({ data: null, error: 'Authentication required' });
@@ -33,4 +41,8 @@ export function registerInstagramUnifiedScheduleRoutes(application: FastifyInsta
     const cancelled = await service.cancel({ workspaceId: identity.workspaceId, accountId: path.data.accountId, id: path.data.intentId });
     return cancelled ? reply.send({ data: { id: path.data.intentId, status: 'cancelled' }, error: null }) : reply.code(409).send({ data: null, error: 'Intent is not pending' });
   });
+}
+
+function present(result: { id: string; clientActionId: string; kind: string; targetId: string; parentId: string; recipientId: string | null; text: string; dueAt: Date; status: string }) {
+  return { id: result.id, clientActionId: result.clientActionId, kind: result.kind, targetId: result.targetId, parentId: result.parentId, recipientId: result.recipientId, text: result.text, dueAt: result.dueAt.toISOString(), status: result.status };
 }

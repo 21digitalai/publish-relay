@@ -5,7 +5,7 @@ import type { MasterKeyProvider } from '../credentials/envelope.js';
 import { loadInstagramUnifiedToken } from './instagram-unified-read.service.js';
 import type { InstagramUnifiedReadClient } from './instagram-unified-read-client.js';
 import { InstagramUnifiedEligibilityError } from './instagram-unified-send.service.js';
-import { getInstagramUnifiedIntent, cancelInstagramUnifiedIntent, scheduleInstagramUnifiedIntent, InstagramUnifiedPendingConflictError } from './instagram-unified-pending.repository.js';
+import { getInstagramUnifiedIntent, listInstagramUnifiedIntents, cancelInstagramUnifiedIntent, scheduleInstagramUnifiedIntent, InstagramUnifiedPendingConflictError } from './instagram-unified-pending.repository.js';
 
 const inputSchema = z.strictObject({
   workspaceId: z.uuid(), accountId: z.uuid(), clientActionId: z.uuid(), kind: z.enum(['comment_reply', 'dm_reply']),
@@ -47,6 +47,7 @@ export function createInstagramUnifiedScheduleService(runtime: { database: NodeP
       return { id: intent.id, status: intent.status, dueAt: intent.dueAt.toISOString() };
     },
     get(input: { workspaceId: string; accountId: string; id: string }) { return getInstagramUnifiedIntent(runtime.database, input); },
+    list(input: { workspaceId: string; accountId: string; limit?: number | undefined; status?: string | undefined }) { return listInstagramUnifiedIntents(runtime.database, input); },
     cancel(input: { workspaceId: string; accountId: string; id: string }) { return cancelInstagramUnifiedIntent(runtime.database, input); },
   };
 }

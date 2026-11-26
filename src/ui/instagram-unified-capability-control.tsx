@@ -31,6 +31,7 @@ interface Message {
   senderUsername: string | null;
   text: string;
 }
+interface ScheduledReply { id: string; kind: ActionKind; text: string; dueAt: string; status: string; }
 
 interface CapabilityRow {
   label: string;
@@ -80,6 +81,8 @@ export function InstagramUnifiedCapabilityControl({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionState, setActionState] = useState<ActionState>('idle');
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [scheduleDueAt, setScheduleDueAt] = useState('');
+  const [scheduled, setScheduled] = useState<ScheduledReply[]>([]);
   const sendTrigger = useRef<HTMLButtonElement>(null);
 
   const loadPermissions = useCallback(async () => {
@@ -228,6 +231,41 @@ export function InstagramUnifiedCapabilityControl({
       setBusy(false);
       setConfirmOpen(false);
     }
+  };
+
+  const loadScheduled = useCallback(async () => {
+    try {
+      const result = await read<{ items: ScheduledReply[] }>(
+        `/api/provider-accounts/${accountId}/instagram-unified-schedules?limit=25`,
+      );
+      setScheduled(result.items);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Scheduled replies unavailable');
+    }
+  }, [accountId, read]);
+
+  const schedule = async () => {
+    const targetId = kind === 'comment_reply' ? selectedComment : selectedMessage;
+    const parentId = kind === 'comment_reply' ? selectedMedia : selectedConversation;
+    const recipientId = kind === 'dm_reply' ? messages.find((item) => item.id === selectedMessage)?.senderId : undefined;
+    if (!targetId || !parentId || !text.trim() || !scheduleDueAt || (kind === 'dm_reply' && !recipientId)) return;
+    setBusy(true); setActionError(null);
+    try {
+      const response = await fetch(`/api/provider-accounts/${accountId}/instagram-unified-schedules`, {
+        method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ clientActionId: crypto.randomUUID(), kind, targetId, parentId, ...(recipientId ? { recipientId } : {}), text: text.trim(), dueAt: new Date(scheduleDueAt).toISOString() }),
+      });
+      const result = (await response.json()) as { data: ScheduledReply | null; error: string | null };
+      if (!response.ok || !result.data) throw new Error(result.error ?? 'Scheduling failed');
+      setText(''); setScheduleDueAt(''); setAnnouncement('Reply scheduled.'); await loadScheduled();
+    } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Scheduling failed'); }
+    finally { setBusy(false); }
+  };
+
+  const cancelScheduled = async (id: string) => {
+    const response = await fetch(`/api/provider-accounts/${accountId}/instagram-unified-schedules/${id}`, { method: 'DELETE', headers: { accept: 'application/json' } });
+    if (!response.ok) { setActionError('Scheduled reply is already in flight or finished.'); return; }
+    await loadScheduled(); setAnnouncement('Scheduled reply cancelled.');
   };
 
   const targetLabel =
@@ -457,6 +495,20 @@ export function InstagramUnifiedCapabilityControl({
             {actionState === 'unknown' && 'Reply outcome is unknown; do not resend automatically.'}
           </small>
         )}
+        <label>
+          Schedule for
+          <input type="datetime-local" value={scheduleDueAt} onChange={(event) => setScheduleDueAt(event.target.value)} />
+        </label>
+        <button type="button" className="secondary-button" onClick={() => void schedule()} disabled={busy || !scheduleDueAt || !text.trim()}>
+          {busy ? 'Scheduling…' : 'Schedule reply'}
+        </button>
+        <button type="button" className="secondary-button" onClick={() => void loadScheduled()} disabled={busy}>Refresh scheduled replies</button>
+        {scheduled.length > 0 && <div aria-label="Scheduled Unified Instagram replies">
+          {scheduled.map((item) => <div key={item.id} className="instagram-unified-action-state">
+            <span>{new Date(item.dueAt).toLocaleString()} · {item.status} · {item.text}</span>
+            {item.status === 'pending' && <button type="button" className="secondary-button" onClick={() => void cancelScheduled(item.id)}>Cancel</button>}
+          </div>)}
+        </div>}
       </div>
       {confirmOpen && (
         <ConfirmationDialog

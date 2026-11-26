@@ -104,6 +104,7 @@ import { registerInstagramMediaRoutes } from '../modules/providers/instagram-med
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
 import type { InstagramUnifiedLoginClient } from '../modules/providers/instagram-unified-login-client.js';
+import { createInstagramUnifiedScheduleService } from '../modules/providers/instagram-unified-schedule.service.js';
 import { registerInstagramUnifiedLoginRoutes } from '../modules/providers/instagram-unified-login.routes.js';
 import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
 import { registerTikTokMediaRoutes } from '../modules/providers/tiktok-media.routes.js';
@@ -514,6 +515,9 @@ function registerBrowserRoutes(
         ? { database, ...options.facebookRead, policy: actionPolicy }
         : null;
     const approvalCommands: EngagementSendCommands = {
+      ...(instagramUnifiedOauth?.readClient
+        ? { unified: createInstagramUnifiedScheduleService({ database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }) }
+        : {}),
       ...(facebookRuntime
         ? {
             facebook: {

@@ -2,6 +2,15 @@
 
 ## Core integration check
 
+### Unified Instagram engagement proposal approval
+
+Unified-only engagement proposals use the existing proposal review routes and approval UI, but
+must carry `sourceContext.parentId` (and `recipientId` for DMs) plus an explicit future
+`plannedDueAt`. Approval never sends inline: it performs fresh Unified grant/ancestry/window
+checks through the existing schedule service and inserts the immutable pending intent with the
+proposal's stable `clientActionId`. Cancellation resolves that same intent by action ID. Legacy
+Facebook and Fanvue proposal routes, tables, and semantics remain unchanged.
+
 ### Unified Instagram stage-2 manual replies
 
 `POST /api/provider-accounts/:accountId/instagram-unified-actions` and the corresponding ForgeKey route are the only stage-2 send paths. They accept bounded `comment_reply` and existing-conversation `dm_reply` commands for `instagram_unified_login` accounts only. The server proves selected-account media/comment or conversation ancestry, live Unified grants, a recent recipient-authored DM window, tenant/account binding, and the exact recipient before the provider POST. Every request reserves an immutable row in `instagram_unified_actions` using `(workspace_id, client_action_id)` and a canonical request fingerprint; confirmed, definite failure, and unknown outcomes replay truthfully. Reserved/unknown actions never automatically resend or mint replacement IDs. This ledger is Unified-specific and must not be generalized with Facebook Page action tables. The routes expose only bounded outcome state and provider receipt IDs, never tokens or raw provider bodies.

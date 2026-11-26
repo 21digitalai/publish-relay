@@ -250,7 +250,7 @@ export async function listEngagementReviewQueue(
   page?: {
     beforeCreatedAt?: Date;
     beforeId?: string;
-    provider?: 'facebook_page' | 'fanvue';
+    provider?: 'facebook_page' | 'fanvue' | 'instagram_unified_login';
     kind?: 'dm' | 'comment';
     view?: 'review' | 'history' | 'attention';
     limit: number;

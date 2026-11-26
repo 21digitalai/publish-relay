@@ -35,6 +35,7 @@ import {
 } from './facebook-messenger-send.service.js';
 import { ActionPolicyDeniedError } from '../policy/action-policy.js';
 import type { scheduleApprovedPageComment } from './facebook-comment-approval.service.js';
+import type { createInstagramUnifiedScheduleService } from './instagram-unified-schedule.service.js';
 
 export interface EngagementSendCommands {
   comments?: Pick<FanvueCommentService, 'send'> &
@@ -56,6 +57,7 @@ export interface EngagementSendCommands {
       conversationId: string;
     }) => Promise<{ latestInboundMessageId: string; latestInboundAt: Date; windowDeadline: Date }>;
   };
+  unified?: Pick<ReturnType<typeof createInstagramUnifiedScheduleService>, 'schedule'>;
 }
 
 type SendResult =
@@ -126,6 +128,19 @@ function sendableProposal(row: NonNullable<Awaited<ReturnType<typeof getEngageme
       ...(source.data.postId ? { postId: source.data.postId } : {}),
     };
   }
+  if (row.provider === 'instagram_unified_login') {
+    const source = z.strictObject({
+      parentId: z.string().min(1).max(256),
+      recipientId: z.string().min(1).max(256).optional(),
+    }).safeParse(row.sourceContext);
+    if (!kind.success || !content.success || !source.success || content.data.mediaIds?.length || content.data.priceCents !== undefined || content.data.text.length > 2000)
+      throw new EngagementProposalError('This proposal has no available send command', 409);
+    if (row.kind === 'dm' && !source.data.recipientId)
+      throw new EngagementProposalError('Unified Instagram recipient is required', 409);
+    if (!row.plannedDueAt || row.plannedDueAt.getTime() <= Date.now())
+      throw new EngagementProposalError('Unified Instagram approval requires a future due time', 409);
+    return { provider: 'instagram_unified_login' as const, kind: kind.data, targetId: row.targetId, text: content.data.text, parentId: source.data.parentId, ...(source.data.recipientId ? { recipientId: source.data.recipientId } : {}), dueAt: row.plannedDueAt };
+  }
   const target = z.uuid().safeParse(row.targetId);
   if (
     row.provider !== 'fanvue' ||
@@ -165,7 +180,7 @@ async function sendProposal(
     text: string;
     mediaIds?: string[];
     price?: number;
-    provider: 'fanvue' | 'facebook_page';
+    provider: 'fanvue' | 'facebook_page' | 'instagram_unified_login';
     postId?: string;
   },
 ): Promise<SendResult> {
@@ -237,6 +252,33 @@ async function sendProposal(
     if (isProvenPreSendError(error)) throw error;
     // A thrown command can have reached the provider; never turn it into a retryable state.
     return { state: 'unknown' };
+  }
+}
+
+export async function scheduleInstagramUnifiedProposal(
+  database: NodePgDatabase,
+  commands: EngagementSendCommands,
+  input: { workspaceId: string; userId: string; proposalId: string; expectedRevision: number },
+) {
+  const proposal = await getEngagementProposal(database, input.workspaceId, input.proposalId);
+  if (proposal?.status !== 'pending' || proposal.revision !== input.expectedRevision)
+    throw new EngagementProposalError('Proposal is stale or unavailable', 409);
+  const sendable = sendableProposal(proposal);
+  if (sendable.provider !== 'instagram_unified_login' || !commands.unified)
+    throw new EngagementProposalError('Unified Instagram scheduling is unavailable', 409);
+  try {
+    return await commands.unified.schedule({
+      workspaceId: input.workspaceId, accountId: proposal.accountId,
+      clientActionId: proposal.clientActionId,
+      kind: sendable.kind === 'comment' ? 'comment_reply' : 'dm_reply',
+      targetId: sendable.targetId, parentId: sendable.parentId,
+      ...(sendable.recipientId ? { recipientId: sendable.recipientId } : {}),
+      text: sendable.text, dueAt: sendable.dueAt.toISOString(),
+      actor: { type: 'user', id: input.userId },
+    });
+  } catch (error) {
+    if (error instanceof EngagementProposalError) throw error;
+    throw new EngagementProposalError('Unified Instagram reply is no longer eligible', 409);
   }
 }
 

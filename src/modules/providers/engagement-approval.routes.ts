@@ -33,11 +33,13 @@ import {
 } from './facebook-comment-pending.repository.js';
 import {
   approveEngagementProposal,
+  scheduleInstagramUnifiedProposal,
   scheduleFanvueProposal,
   type EngagementSendCommands,
 } from './engagement-approval.service.js';
 import { cancelScheduledProposalFanvueDm } from './fanvue-dm-pending.repository.js';
 import { cancelScheduledProposalFanvueComment } from './fanvue-comment-pending.repository.js';
+import { cancelInstagramUnifiedIntent, listInstagramUnifiedIntents } from './instagram-unified-pending.repository.js';
 
 const paramsSchema = z.strictObject({ proposalId: z.uuid() });
 const approvalSchema = z.strictObject({
@@ -162,7 +164,16 @@ export function registerEngagementApprovalRoutes(
         identity.workspaceId,
         params.data.proposalId,
       );
-      const cancelled = await (proposal?.provider === 'fanvue' && proposal.kind === 'comment'
+      const cancelled = await (proposal?.provider === 'instagram_unified_login'
+        ? (async () => {
+            const intents = await listInstagramUnifiedIntents(dependencies.database, {
+              workspaceId: identity.workspaceId,
+              accountId: proposal.accountId,
+            });
+            const intent = intents.rows.find((row) => row.clientActionId === proposal.clientActionId);
+            return intent ? cancelInstagramUnifiedIntent(dependencies.database, { workspaceId: identity.workspaceId, accountId: proposal.accountId, id: intent.id }) : false;
+          })()
+        : proposal?.provider === 'fanvue' && proposal.kind === 'comment'
         ? cancelScheduledProposalFanvueComment(dependencies.database, {
             workspaceId: identity.workspaceId,
             proposalId: params.data.proposalId,
@@ -290,6 +301,15 @@ export function registerEngagementApprovalRoutes(
           (proposal.kind === 'comment' && body.data.sendMode === 'scheduled'))
       ) {
         const scheduled = await scheduleFanvueProposal(dependencies.database, dependencies, {
+          workspaceId: identity.workspaceId,
+          userId: identity.userId,
+          proposalId: params.data.proposalId,
+          expectedRevision: body.data.expectedRevision,
+        });
+        return await reply.code(202).send({ data: scheduled, error: null });
+      }
+      if (proposal?.provider === 'instagram_unified_login') {
+        const scheduled = await scheduleInstagramUnifiedProposal(dependencies.database, dependencies, {
           workspaceId: identity.workspaceId,
           userId: identity.userId,
           proposalId: params.data.proposalId,

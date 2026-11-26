@@ -29,7 +29,7 @@ interface ProposalDetail {
   provider: string;
   kind: 'dm' | 'comment';
   targetId: string;
-  sourceContext: { text?: string; authorLabel?: string; postId?: string; sourceMessageId?: string };
+  sourceContext: { text?: string; authorLabel?: string; postId?: string; sourceMessageId?: string; parentId?: string; recipientId?: string };
   content: { text: string; followUps?: [string, string]; mediaIds?: string[]; priceCents?: number };
   plannedDueAt?: string;
   revision: number;
@@ -51,12 +51,13 @@ interface NoGoEntry {
   createdAt: string;
 }
 
-type ProviderFilter = 'all' | 'facebook_page' | 'fanvue';
+type ProviderFilter = 'all' | 'facebook_page' | 'fanvue' | 'instagram_unified_login';
 
 const providerFilters: { value: ProviderFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'facebook_page', label: 'Facebook Page' },
   { value: 'fanvue', label: 'Fanvue' },
+  { value: 'instagram_unified_login', label: 'Instagram Unified' },
 ];
 
 type ReplyWindow =
@@ -119,7 +120,7 @@ export function EngagementProposalsPage() {
   const [items, setItems] = useState<ProposalSummary[]>([]);
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>(() => {
     const provider = new URLSearchParams(window.location.search).get('provider');
-    return provider === 'facebook_page' || provider === 'fanvue' ? provider : 'all';
+    return provider === 'facebook_page' || provider === 'fanvue' || provider === 'instagram_unified_login' ? provider : 'all';
   });
   const providerFilterRef = useRef(providerFilter);
   providerFilterRef.current = providerFilter;
@@ -184,7 +185,7 @@ export function EngagementProposalsPage() {
       const provider = params.get('provider');
       const kind = params.get('kind');
       setView(readView());
-      setProviderFilter(provider === 'facebook_page' || provider === 'fanvue' ? provider : 'all');
+      setProviderFilter(provider === 'facebook_page' || provider === 'fanvue' || provider === 'instagram_unified_login' ? provider : 'all');
       setKindFilter(kind === 'dm' || kind === 'comment' ? kind : 'all');
     };
     window.addEventListener('popstate', restore);
@@ -690,6 +691,13 @@ export function EngagementProposalsPage() {
     priceHasMedia &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(detail.targetId) &&
     detail.content.text.length <= (detail.kind === 'comment' ? 600 : 5000);
+  const unifiedReady =
+    detail?.provider === 'instagram_unified_login' &&
+    !detail.content.followUps && !detail.content.mediaIds?.length &&
+    detail.content.priceCents === undefined && detail.content.text.length <= 2000 &&
+    Boolean(detail.sourceContext.parentId) &&
+    (detail.kind === 'comment' || Boolean(detail.sourceContext.recipientId)) &&
+    Boolean(detail.plannedDueAt && Date.parse(detail.plannedDueAt) > now);
 
   const expiredScheduled =
     detail?.status === 'expired' ||
@@ -709,7 +717,7 @@ export function EngagementProposalsPage() {
     detail.canApprove &&
     (detail.provider !== 'facebook_page' || detail.kind !== 'dm' || pageDmWindowReady) &&
     !detail.noGo &&
-    (facebookReady || fanvueReady) &&
+    (facebookReady || fanvueReady || unifiedReady) &&
     draft.trim() === detail.content.text &&
     (!detail.content.followUps ||
       detail.content.followUps.every((text, index) => draftFollowUps[index]?.trim() === text)) &&
@@ -1419,7 +1427,7 @@ export function EngagementProposalsPage() {
                             }}
                           >
                             {(detail.provider === 'facebook_page' && dmTiming === 'scheduled') ||
-                            detail.provider === 'fanvue'
+                            detail.provider === 'fanvue' || detail.provider === 'instagram_unified_login'
                               ? detail.content.followUps
                                 ? 'Approve and schedule 3 bubbles'
                                 : 'Approve and schedule'

@@ -65,6 +65,8 @@ export const createEngagementProposalSchema = z.strictObject({
         .max(256)
         .optional(),
       sourceMessageId: z.string().max(256).optional(),
+      parentId: z.string().min(1).max(256).optional(),
+      recipientId: z.string().min(1).max(256).optional(),
     })
     .optional(),
   content: contentSchema,
@@ -87,6 +89,12 @@ const cursorSchema = z.strictObject({ createdAt: z.iso.datetime(), id: z.uuid() 
 const PAGE_SIZE = 50;
 
 function validFacebookProposal(input: z.infer<typeof createEngagementProposalSchema>): boolean {
+  if (input.provider === 'instagram_unified_login')
+    return Boolean(input.sourceContext?.parentId) &&
+      (input.kind === 'comment' || Boolean(input.sourceContext?.recipientId)) &&
+      !input.content.followUps && !input.content.mediaIds && input.content.priceCents === undefined &&
+      input.content.text.length <= 2000 && Boolean(input.plannedDueAt) &&
+      Date.parse(input.plannedDueAt ?? '') > Date.now();
   if (input.provider !== 'facebook_page') return !input.content.followUps;
   if (
     input.content.mediaIds?.length ||
@@ -672,7 +680,7 @@ export function registerEngagementProposalRoutes(
     const query = z
       .strictObject({
         cursor: z.string().max(512).optional(),
-        provider: z.enum(['facebook_page', 'fanvue']).optional(),
+        provider: z.enum(['facebook_page', 'fanvue', 'instagram_unified_login']).optional(),
         kind: z.enum(['dm', 'comment']).optional(),
         view: z.enum(['review', 'history', 'attention']).optional(),
       })

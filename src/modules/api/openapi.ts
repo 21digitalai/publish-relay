@@ -760,7 +760,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
         post: {
           operationId: 'scheduleFacebookPageDmGroup',
           description:
-            'Atomically schedule 1–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; optional finalExit or bioLinkMention marks only the last bubble and has no confirmed effect before provider delivery. No provider send on this request.',
+            'Atomically schedule 1–4 Page DM bubbles with an exact latest-inbound guard and persisted Page pacing; optional future ISO dueAt is a not-before floor, not an exact dispatch promise. Invalid, past or unfit requests fail closed; optional finalExit or bioLinkMention marks only the last bubble and has no confirmed effect before provider delivery. No provider send on this request.',
           security: [{ bearerAuth: [], workspace: [] }],
           parameters: [
             {

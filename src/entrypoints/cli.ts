@@ -1037,6 +1037,7 @@ async function run(): Promise<Json> {
     const payload = JSON.parse(String(body)) as {
       clientActionId?: unknown;
       texts?: unknown;
+      dueAt?: unknown;
       expectedLatestInboundMessageId?: unknown;
       schedule?: { earliestDelaySeconds?: unknown; latestDelaySeconds?: unknown };
     };
@@ -1045,6 +1046,12 @@ async function run(): Promise<Json> {
       throw new CliError(EXIT.usage, 'Facebook DM clientActionId must match --idempotency-key');
     if (parsed.command === 'facebook-dms:send' && payload.schedule !== undefined)
       throw new CliError(EXIT.usage, 'Use facebook-dms schedule for a delayed message');
+    if (
+      parsed.command === 'facebook-dms:group-schedule' &&
+      payload.dueAt !== undefined &&
+      (typeof payload.dueAt !== 'string' || !Number.isFinite(Date.parse(payload.dueAt)))
+    )
+      throw new CliError(EXIT.usage, 'Page DM group dueAt must be an ISO timestamp');
     if (
       parsed.command === 'facebook-dms:group-schedule' &&
       (!Array.isArray(payload.texts) ||

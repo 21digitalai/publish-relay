@@ -58,7 +58,9 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        data: { media: [{ id: 'media-1', caption: 'Launch post', timestamp: '2026-11-26T18:00:00Z' }] },
+        data: {
+          media: [{ id: 'media-1', caption: 'Launch post', timestamp: '2026-11-26T18:00:00Z' }],
+        },
         error: null,
       }),
     }),
@@ -72,11 +74,64 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
       }),
     }),
   );
-  await page.route(`**/api/provider-accounts/${accountId}/instagram-unified-actions`, (route) =>
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ data: { state: 'confirmed', receipt: 'receipt-1' }, error: null }),
-    }),
+  await page.route(
+    `**/api/provider-accounts/${accountId}/instagram-unified-conversations*`,
+    (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            conversations: [
+              {
+                id: 'conversation-1',
+                updatedAt: '2026-11-26T18:30:00Z',
+                participants: [
+                  { id: accountId, username: 'unifiedstudio' },
+                  { id: 'person-1', username: 'alice' },
+                ],
+              },
+            ],
+          },
+          error: null,
+        }),
+      }),
+  );
+  await page.route(
+    `**/api/provider-accounts/${accountId}/instagram-unified-conversations/conversation-1/messages*`,
+    (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: {
+            messages: [
+              {
+                id: 'message-1',
+                createdAt: '2026-11-26T18:29:00Z',
+                senderId: 'person-1',
+                senderUsername: 'alice',
+                text: 'Can you tell me more?',
+              },
+            ],
+          },
+          error: null,
+        }),
+      }),
+  );
+  await page.route(
+    `**/api/provider-accounts/${accountId}/instagram-unified-actions`,
+    async (route) => {
+      const payload = route.request().postDataJSON() as { kind?: string };
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data:
+            payload.kind === 'dm_reply'
+              ? { state: 'confirmed', receipt: 'dm-receipt-1' }
+              : { state: 'unknown' },
+          error: null,
+        }),
+      });
+    },
   );
 
   await page.goto(`/w/${workspace.data.slug}/accounts`);
@@ -98,7 +153,24 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   await expect(dialog).toBeHidden();
   await control.getByRole('button', { name: 'Send reply' }).click();
   await dialog.getByRole('button', { name: 'Confirm and send' }).click();
-  await expect(control.getByText('Reply is pending provider confirmation.')).toBeVisible();
+  await expect(
+    control.getByText('Reply outcome is unknown; do not resend automatically.'),
+  ).toBeVisible();
+
+  await control.getByRole('tab', { name: 'Conversation reply' }).click();
+  await control.getByRole('button', { name: 'Load conversations' }).click();
+  const conversationSelect = control.getByRole('button', { name: 'Conversation', exact: true });
+  await expect(conversationSelect).toBeVisible();
+  await conversationSelect.click();
+  await expect(control.getByRole('option', { name: /alice/ })).toBeVisible();
+  await control.getByRole('option', { name: /alice/ }).click();
+  await control.getByRole('textbox', { name: 'Reply' }).fill('Absolutely, here are the details.');
+  await control.getByRole('button', { name: 'Send reply' }).click();
+  const dmDialog = page.getByRole('alertdialog', { name: 'Confirm conversation reply' });
+  await expect(dmDialog).toContainText('alice');
+  await expect(dmDialog).toContainText('Absolutely, here are the details.');
+  await dmDialog.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect(control.getByText('Reply confirmed by the provider.')).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('instagram-unified-reply-mobile.png') });
 });

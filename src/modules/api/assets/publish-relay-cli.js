@@ -53,8 +53,14 @@ const ROUTES = {
     method: 'GET',
     path: '/api/v1/destinations/:id/instagram-unified-comments/:mediaId',
   },
-  'instagram-unified:conversations': { method: 'GET', path: '/api/v1/destinations/:id/instagram-unified-conversations' },
-  'instagram-unified:messages': { method: 'GET', path: '/api/v1/destinations/:id/instagram-unified-conversations/:conversationId/messages' },
+  'instagram-unified:conversations': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-conversations',
+  },
+  'instagram-unified:messages': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-conversations/:conversationId/messages',
+  },
   'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
   'facebook-comments:list': {
     method: 'GET',
@@ -230,7 +236,11 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ];
 const SAFE_OUTPUT_KEYS_BY_COMMAND = {
-  'instagram-unified:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'instagram_basic', 'instagram_manage_comments']),
+  'instagram-unified:status': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'instagram_basic',
+    'instagram_manage_comments',
+  ]),
   'instagram-unified:media': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'media',
@@ -253,8 +263,25 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'username',
     'authorId',
   ]),
-  'instagram-unified:conversations': new Set([...ENVELOPE_OUTPUT_KEYS, 'conversations', 'id', 'updatedAt', 'participants', 'username', 'nextCursor']),
-  'instagram-unified:messages': new Set([...ENVELOPE_OUTPUT_KEYS, 'messages', 'id', 'createdAt', 'senderId', 'senderUsername', 'text', 'nextCursor']),
+  'instagram-unified:conversations': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'conversations',
+    'id',
+    'updatedAt',
+    'participants',
+    'username',
+    'nextCursor',
+  ]),
+  'instagram-unified:messages': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'messages',
+    'id',
+    'createdAt',
+    'senderId',
+    'senderUsername',
+    'text',
+    'nextCursor',
+  ]),
   'proposals:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'plannedDueAt']),
   'facebook-comments:posts': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

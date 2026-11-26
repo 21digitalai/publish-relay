@@ -51,6 +51,26 @@ const ROUTES: Record<string, { method: string; path: string; body?: boolean }> =
   'proposals:create': { method: 'POST', path: '/api/v1/engagement-proposals', body: true },
   'proposals:status': { method: 'GET', path: '/api/v1/engagement-proposals/:id/status' },
   'destinations:list': { method: 'GET', path: '/api/v1/destinations' },
+  'instagram-unified:status': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-status',
+  },
+  'instagram-unified:media': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-media',
+  },
+  'instagram-unified:comments': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-comments/:mediaId',
+  },
+  'instagram-unified:conversations': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-conversations',
+  },
+  'instagram-unified:messages': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-conversations/:conversationId/messages',
+  },
   'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
   'facebook-comments:list': {
     method: 'GET',
@@ -226,6 +246,52 @@ const ENVELOPE_OUTPUT_KEYS = [
   'version',
 ] as const;
 const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
+  'instagram-unified:status': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'instagram_basic',
+    'instagram_manage_comments',
+  ]),
+  'instagram-unified:media': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'media',
+    'nextCursor',
+    'id',
+    'type',
+    'url',
+    'permalink',
+    'timestamp',
+    'caption',
+    'commentsCount',
+  ]),
+  'instagram-unified:comments': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'comments',
+    'nextCursor',
+    'id',
+    'text',
+    'timestamp',
+    'username',
+    'authorId',
+  ]),
+  'instagram-unified:conversations': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'conversations',
+    'id',
+    'updatedAt',
+    'participants',
+    'username',
+    'nextCursor',
+  ]),
+  'instagram-unified:messages': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'messages',
+    'id',
+    'createdAt',
+    'senderId',
+    'senderUsername',
+    'text',
+    'nextCursor',
+  ]),
   'proposals:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'plannedDueAt']),
   'facebook-comments:posts': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

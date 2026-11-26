@@ -2353,6 +2353,73 @@ test('Unified Instagram approval confirms account, target, exact text and planne
   expect(approvals).toBe(0);
 });
 
+test('Unified Instagram unknown outcome is review-only and cannot be approved again', async ({
+  page,
+}) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Unified Unknown Owner',
+      email: `unified-unknown-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Unified Unknown Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const proposalId = '00000000-0000-4000-8000-000000000414';
+  const status = 'unknown';
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const list = path.endsWith('/api/engagement-proposals');
+    const data = list
+      ? {
+          items: [
+            {
+              id: proposalId,
+              accountDisplayName: 'Unified Unknown Studio',
+              provider: 'instagram_unified_login',
+              kind: 'dm',
+              status,
+              sourcePreview: 'Incoming message',
+              contentPreview: 'Do not resend this',
+              createdAt: '2026-10-25T12:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        }
+      : {
+          id: proposalId,
+          accountId: '00000000-0000-4000-8000-000000000415',
+          accountDisplayName: 'Unified Unknown Studio',
+          provider: 'instagram_unified_login',
+          kind: 'dm',
+          targetId: 'message-414',
+          sourceContext: { parentId: 'conversation-414', recipientId: 'recipient-414' },
+          content: { text: 'Do not resend this' },
+          plannedDueAt: '2099-11-11T10:00:00.000Z',
+          revision: 2,
+          status,
+          canApprove: false,
+          noGo: false,
+          noGoReason: null,
+          canReopenCampaignFinal: false,
+        };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.goto(`/w/${workspace.data.slug}/proposals?view=attention`);
+  await expect(page.getByText('Send outcome unknown')).toBeVisible();
+  await page.getByRole('button', { name: /Instagram Unified message/ }).click();
+  await expect(page.getByRole('button', { name: 'Approve and schedule', exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText('Send outcome is unknown; do not send again')).toBeVisible();
+});
+
 test('unknown Fanvue comment dispatch stays visible after scheduled approval without a resend control', async ({
   page,
 }) => {

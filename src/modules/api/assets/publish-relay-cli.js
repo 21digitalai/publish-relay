@@ -35,6 +35,7 @@ const MUTATIONS = new Set([
   'facebook-dms:cancel',
   'instagram-unified:schedule',
   'instagram-unified:cancel',
+  'instagram-unified:stop',
   'facebook-dms:memory-upsert',
   'proposals:create',
 ]);
@@ -79,6 +80,15 @@ const ROUTES = {
   'instagram-unified:cancel': {
     method: 'DELETE',
     path: '/api/v1/destinations/:id/instagram-unified-schedules/:intentId',
+  },
+  'instagram-unified:stop': {
+    method: 'PUT',
+    path: '/api/v1/destinations/:id/instagram-unified-conversations/:conversationId/stop',
+    body: true,
+  },
+  'instagram-unified:history': {
+    method: 'GET',
+    path: '/api/v1/destinations/:id/instagram-unified-conversations/:conversationId/history',
   },
   'facebook-comments:posts': { method: 'GET', path: '/api/v1/destinations/:id/facebook-posts' },
   'facebook-comments:list': {
@@ -329,6 +339,19 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'status',
   ]),
   'instagram-unified:cancel': new Set([...ENVELOPE_OUTPUT_KEYS, 'id', 'status']),
+  'instagram-unified:stop': new Set([...ENVELOPE_OUTPUT_KEYS, 'stopped', 'cancelled']),
+  'instagram-unified:history': new Set([
+    ...ENVELOPE_OUTPUT_KEYS,
+    'items',
+    'id',
+    'kind',
+    'targetId',
+    'text',
+    'status',
+    'receipt',
+    'createdAt',
+    'updatedAt',
+  ]),
   'proposals:status': new Set([...ENVELOPE_OUTPUT_KEYS, 'plannedDueAt']),
   'facebook-comments:posts': new Set([
     ...ENVELOPE_OUTPUT_KEYS,

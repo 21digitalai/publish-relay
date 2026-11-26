@@ -4,6 +4,7 @@ import {
   instagramUnifiedActions,
   instagramUnifiedDmNoGo,
   instagramUnifiedPendingIntents,
+  providerConnections,
   providerAccounts,
 } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -40,8 +41,18 @@ export async function setInstagramUnifiedConversationNoGo(
 ) {
   return withTenantTransaction(database, input, async (tx) => {
     const [account] = await tx
-      .select({ provider: providerAccounts.destinationProvider })
+      .select({
+        destinationProvider: providerAccounts.destinationProvider,
+        connectionProvider: providerConnections.provider,
+      })
       .from(providerAccounts)
+      .innerJoin(
+        providerConnections,
+        and(
+          eq(providerConnections.workspaceId, providerAccounts.workspaceId),
+          eq(providerConnections.id, providerAccounts.connectionId),
+        ),
+      )
       .where(
         and(
           eq(providerAccounts.workspaceId, input.workspaceId),
@@ -50,7 +61,10 @@ export async function setInstagramUnifiedConversationNoGo(
       )
       .for('update')
       .limit(1);
-    if (account?.provider !== 'instagram_unified_login')
+    if (
+      account?.destinationProvider !== 'instagram' ||
+      account.connectionProvider !== 'instagram_unified_login'
+    )
       throw new Error('Unified Instagram account unavailable');
     const scope = and(
       eq(instagramUnifiedDmNoGo.workspaceId, input.workspaceId),

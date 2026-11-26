@@ -20,6 +20,14 @@ import {
   finishClaimedInstagramUnifiedIntent,
   scheduleInstagramUnifiedIntent,
 } from '../src/modules/providers/instagram-unified-pending.repository.js';
+import {
+  listInstagramUnifiedConversationHistory,
+  setInstagramUnifiedConversationNoGo,
+} from '../src/modules/providers/instagram-unified-no-go.repository.js';
+import {
+  reserveInstagramUnifiedAction,
+  settleInstagramUnifiedAction,
+} from '../src/modules/providers/instagram-unified-action.repository.js';
 
 const connectionString = process.env.PUBLISH_RELAY_POSTGRES_URL;
 const describePostgres = describe.skipIf(!connectionString);
@@ -513,5 +521,119 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     );
     expect(revokedState.rows).toEqual([{ status: 'expired' }]);
     expect(provider.sendConversationMessage).not.toHaveBeenCalled();
+  });
+
+  it('atomically cancels pending DM work, preserves terminal outcomes, and projects DM-only history', async () => {
+    const conversationId = 'conversation-stop-history';
+    const dm = await scheduleInstagramUnifiedIntent(webDatabase as never, {
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-4000-8000-000000000505',
+      kind: 'dm_reply',
+      targetId: 'message-stop-history',
+      parentId: conversationId,
+      recipientId: 'recipient-stop-history',
+      text: 'Cancel me',
+      requestFingerprint: 'stop-history-dm',
+      targetFingerprint: '2'.repeat(64),
+      actor: { type: 'user', id: '00000000-0000-0000-0000-000000000401' },
+      dueAt: new Date(Date.now() + 60_000),
+    });
+    const comment = await scheduleInstagramUnifiedIntent(webDatabase as never, {
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-4000-8000-000000000506',
+      kind: 'comment_reply',
+      targetId: 'comment-stop-history',
+      parentId: conversationId,
+      text: 'Keep comment work separate',
+      requestFingerprint: 'stop-history-comment',
+      targetFingerprint: '3'.repeat(64),
+      actor: { type: 'user', id: '00000000-0000-0000-0000-000000000401' },
+      dueAt: new Date(Date.now() + 60_000),
+    });
+    const action = await reserveInstagramUnifiedAction(webDatabase as never, {
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-0000-0000-000000000507',
+      kind: 'dm_reply',
+      targetId: 'message-terminal-history',
+      parentId: conversationId,
+      recipientId: 'recipient-stop-history',
+      text: 'Already unknown',
+      requestFingerprint: 'stop-history-terminal',
+      actor: { type: 'user', id: '00000000-0000-0000-0000-000000000401' },
+    });
+    if (action.kind !== 'new') throw new Error('expected a new action reservation');
+    await settleInstagramUnifiedAction(webDatabase as never, {
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-0000-0000-000000000507',
+      kind: 'dm_reply',
+      targetId: 'message-terminal-history',
+      parentId: conversationId,
+      recipientId: 'recipient-stop-history',
+      text: 'Already unknown',
+      requestFingerprint: 'stop-history-terminal',
+      actor: { type: 'user', id: '00000000-0000-0000-0000-000000000401' },
+      reservationId: action.id,
+      outcome: { state: 'unknown' },
+    });
+
+    await expect(
+      setInstagramUnifiedConversationNoGo(webDatabase as never, {
+        workspaceId,
+        accountId,
+        conversationId,
+        blocked: true,
+      }),
+    ).resolves.toEqual({ cancelled: 1 });
+    const statuses = await owner.query<{ id: string; status: string }>(
+      'SELECT id, status FROM instagram_unified_pending_intents WHERE id IN ($1, $2) ORDER BY id',
+      [dm.id, comment.id],
+    );
+    expect(Object.fromEntries(statuses.rows.map((row) => [row.id, row.status]))).toEqual({
+      [comment.id]: 'pending',
+      [dm.id]: 'cancelled',
+    });
+
+    const history = await listInstagramUnifiedConversationHistory(webDatabase as never, {
+      workspaceId,
+      accountId,
+      conversationId,
+      limit: 20,
+    });
+    expect(history.map((item) => ({ kind: item.kind, status: item.status }))).toEqual([
+      { kind: 'dm_reply', status: 'unknown' },
+      { kind: 'dm_reply', status: 'cancelled' },
+    ]);
+    expect(history.every((item) => item.kind === 'dm_reply')).toBe(true);
+
+    await expect(
+      setInstagramUnifiedConversationNoGo(webDatabase as never, {
+        workspaceId,
+        accountId,
+        conversationId,
+        blocked: false,
+      }),
+    ).resolves.toBeUndefined();
+    const afterResume = await claimDueInstagramUnifiedIntent(workerDatabase as never, {
+      workerId: 'stop-history-worker',
+      now: new Date(Date.now() + 120_000),
+      leaseMs: 30_000,
+    });
+    expect(afterResume?.id).toBe(comment.id);
+    await finishClaimedInstagramUnifiedIntent(workerDatabase as never, {
+      workspaceId,
+      id: comment.id,
+      leaseOwner: afterResume?.leaseOwner ?? '',
+      state: 'expired',
+    });
+    const cancelledClaim = await claimDueInstagramUnifiedIntent(workerDatabase as never, {
+      workerId: 'stop-history-worker-2',
+      now: new Date(Date.now() + 120_000),
+      leaseMs: 30_000,
+    });
+    expect(cancelledClaim?.id).not.toBe(dm.id);
   });
 });

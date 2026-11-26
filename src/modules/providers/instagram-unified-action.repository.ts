@@ -3,7 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { instagramUnifiedActions } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
-export type InstagramUnifiedActionInput = {
+export interface InstagramUnifiedActionInput {
   workspaceId: string;
   accountId: string;
   clientActionId: string;
@@ -14,7 +14,7 @@ export type InstagramUnifiedActionInput = {
   text: string;
   requestFingerprint: string;
   actor: { type: 'user' | 'api-key' | 'delegated'; id: string };
-};
+}
 
 export type InstagramUnifiedActionOutcome =
   | { state: 'confirmed'; receipt: string }

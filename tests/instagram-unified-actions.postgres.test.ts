@@ -2,7 +2,17 @@ import { readFile } from 'node:fs/promises';
 import pg, { Client } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  loadToken: vi.fn(),
+}));
+
+vi.mock('../src/modules/providers/instagram-unified-read.service.js', () => ({
+  loadInstagramUnifiedToken: mocks.loadToken,
+}));
+
+import { createInstagramUnifiedSendService } from '../src/modules/providers/instagram-unified-send.service.js';
 
 const connectionString = process.env.PUBLISH_RELAY_POSTGRES_URL;
 const describePostgres = describe.skipIf(!connectionString);
@@ -22,6 +32,8 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
   let admin: Client;
   let owner: Client;
   let databaseUrl: string;
+  let webDatabase: ReturnType<typeof drizzle>;
+  let webPool: pg.Pool;
 
   beforeAll(async () => {
     admin = new Client({ connectionString });
@@ -36,6 +48,8 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
         createdRoles.push(role);
       }
     }
+    await admin.query(`ALTER ROLE "${webLoginRole}" PASSWORD 'relay4765-web'`);
+    await admin.query(`ALTER ROLE "${workerLoginRole}" PASSWORD 'relay4765-worker'`);
     await admin.query(`CREATE DATABASE "${databaseName}"`);
     databaseUrl = connectionString!.replace(/\/postgres(?:\?|$)/, `/${databaseName}?`);
     const provision = await readFile(
@@ -77,7 +91,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     );
     await owner.query(
       `INSERT INTO provider_connections (id, workspace_id, provider, credential_id, external_subject_id)
-       VALUES ($1, $2, 'meta', $3, 'unified-test-subject')`,
+       VALUES ($1, $2, 'instagram_unified_login', $3, 'unified-test-subject')`,
       [connectionId, workspaceId, credentialId],
     );
     await owner.query(
@@ -85,10 +99,16 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
        VALUES ($1, $2, $3, 'unified-test-account', 'instagram', 'unified-test-remote', 'Unified test')`,
       [accountId, workspaceId, connectionId],
     );
+    const webUrl = new URL(databaseUrl);
+    webUrl.username = webLoginRole;
+    webUrl.password = 'relay4765-web';
+    webPool = new pg.Pool({ connectionString: webUrl.toString(), max: 2 });
+    webDatabase = drizzle(webPool);
   });
 
   afterAll(async () => {
     await Promise.all(clients.map((client) => client.end()));
+    await webPool.end();
     await admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
     for (const role of createdRoles.reverse()) await admin.query(`DROP ROLE IF EXISTS "${role}"`);
     await admin.end();
@@ -119,7 +139,7 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     expect(result.rows[0]).toEqual({ forced: true, web_insert: true, worker_select: true });
   });
 
-  it('allows one concurrent reservation, isolates tenants, and preserves unknown without replay', async () => {
+  it('allows one concurrent reservation and rejects a cross-tenant composite account row', async () => {
     const first = await webClient();
     const second = await webClient();
     const actionId = '00000000-0000-4000-8000-000000000301';
@@ -155,10 +175,6 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     );
     expect(ownerCount.rows[0]?.count).toBe('1');
 
-    await owner.query(
-      `UPDATE instagram_unified_actions SET state = 'unknown' WHERE workspace_id = $1 AND client_action_id = $2`,
-      [workspaceId, actionId],
-    );
     const isolated = await webClient();
     await isolated.query('SELECT set_config($1, $2, false)', [
       'app.workspace_id',
@@ -172,29 +188,121 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     await isolated.query('ROLLBACK').catch(() => undefined);
     await isolated.end();
 
-    const visible = await webClient();
-    await visible.query('SELECT set_config($1, $2, false)', ['app.workspace_id', workspaceId]);
-    const state = await visible.query<{ state: string }>(
-      'SELECT state FROM instagram_unified_actions WHERE client_action_id = $1',
-      [actionId],
-    );
-    expect(state.rows).toEqual([{ state: 'unknown' }]);
-    const replay = await visible.query(
-      `INSERT INTO instagram_unified_actions (
+    const foreignInsert = await webClient();
+    await foreignInsert.query('BEGIN');
+    await foreignInsert.query('SELECT set_config($1, $2, true)', [
+      'app.workspace_id',
+      otherWorkspaceId,
+    ]);
+    await expect(
+      foreignInsert.query(
+        `INSERT INTO instagram_unified_actions (
         workspace_id, account_id, client_action_id, kind, target_id, parent_id,
         text_body, request_fingerprint, actor_type, actor_id
-      ) VALUES ($1, $2, $3, 'dm_reply', 'message-1', 'conversation-1', 'Hello', 'fingerprint-1', 'user', $4)
-      ON CONFLICT (workspace_id, client_action_id) DO NOTHING`,
-      values,
-    );
-    expect(replay.rowCount).toBe(0);
-    const replayCount = await visible.query<{ count: string }>(
-      'SELECT count(*) FROM instagram_unified_actions WHERE workspace_id = $1 AND client_action_id = $2',
-      [workspaceId, actionId],
-    );
-    expect(replayCount.rows[0]?.count).toBe('1');
-    await visible.end();
+      ) VALUES ($1, $2, $3, 'dm_reply', 'message-1', 'conversation-1', 'Hello', 'fingerprint-1', 'user', $4)`,
+        [otherWorkspaceId, accountId, '00000000-0000-4000-8000-000000000302', actorId],
+      ),
+    ).rejects.toMatchObject({ code: '23503' });
+    await foreignInsert.query('ROLLBACK');
+    await foreignInsert.end();
     await first.end();
     await second.end();
+  });
+
+  it('records provider transport loss through the real service and never replays it', async () => {
+    mocks.loadToken.mockResolvedValue({
+      accessToken: 'synthetic-token',
+      remoteAccountId: 'unified-test-remote',
+    });
+    const calls = { count: 0 };
+    const client = {
+      verifyMessagingPermission: vi.fn().mockResolvedValue('granted'),
+      listMessages: vi.fn().mockResolvedValue({
+        messages: [
+          { id: 'message-transport', senderId: 'recipient-1', createdAt: new Date().toISOString() },
+        ],
+      }),
+      sendConversationMessage: vi.fn().mockImplementation(async () => {
+        calls.count += 1;
+        throw new Error('transport lost');
+      }),
+    };
+    const input = {
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-4000-8000-000000000303',
+      kind: 'dm_reply' as const,
+      targetId: 'message-transport',
+      parentId: 'conversation-transport',
+      recipientId: 'recipient-1',
+      text: 'Transport test',
+      actor: { type: 'user' as const, id: '00000000-0000-4000-8000-000000000401' },
+    };
+    const service = createInstagramUnifiedSendService({
+      database: webDatabase as never,
+      keys: {} as never,
+      client: client as never,
+    });
+
+    await expect(service.send(input)).resolves.toEqual({ state: 'unknown' });
+    await expect(service.send(input)).resolves.toEqual({ state: 'unknown' });
+    expect(calls.count).toBe(1);
+    const state = await owner.query<{ state: string }>(
+      'SELECT state FROM instagram_unified_actions WHERE workspace_id = $1 AND client_action_id = $2',
+      [workspaceId, input.clientActionId],
+    );
+    expect(state.rows).toEqual([{ state: 'unknown' }]);
+  });
+
+  it('leaves a lost settlement reserved and replays it as unknown without another provider call', async () => {
+    mocks.loadToken.mockResolvedValue({
+      accessToken: 'synthetic-token',
+      remoteAccountId: 'unified-test-remote',
+    });
+    const calls = { count: 0 };
+    const client = {
+      verifyMessagingPermission: vi.fn().mockResolvedValue('granted'),
+      listMessages: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            id: 'message-settlement',
+            senderId: 'recipient-1',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      }),
+      sendConversationMessage: vi.fn().mockImplementation(async () => {
+        calls.count += 1;
+        return 'provider-receipt-after-lost-settlement';
+      }),
+    };
+    const input = {
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-4000-8000-000000000304',
+      kind: 'dm_reply' as const,
+      targetId: 'message-settlement',
+      parentId: 'conversation-settlement',
+      recipientId: 'recipient-1',
+      text: 'Settlement test',
+      actor: { type: 'user' as const, id: '00000000-0000-4000-8000-000000000401' },
+    };
+    const service = createInstagramUnifiedSendService({
+      database: webDatabase as never,
+      keys: {} as never,
+      client: client as never,
+    });
+
+    await owner.query('REVOKE UPDATE ON instagram_unified_actions FROM publish_relay_web');
+    await expect(service.send(input)).rejects.toBeTruthy();
+    const reserved = await owner.query<{ state: string }>(
+      'SELECT state FROM instagram_unified_actions WHERE workspace_id = $1 AND client_action_id = $2',
+      [workspaceId, input.clientActionId],
+    );
+    expect(reserved.rows).toEqual([{ state: 'reserved' }]);
+    await owner.query('GRANT UPDATE ON instagram_unified_actions TO publish_relay_web');
+
+    await expect(service.send(input)).resolves.toEqual({ state: 'unknown' });
+    expect(calls.count).toBe(1);
   });
 });

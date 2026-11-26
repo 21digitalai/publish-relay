@@ -66,6 +66,10 @@ import {
   registerInstagramUnifiedScheduleApiRoutes,
   registerInstagramUnifiedScheduleRoutes,
 } from '../modules/providers/instagram-unified-schedule.routes.js';
+import {
+  registerInstagramUnifiedNoGoApiRoutes,
+  registerInstagramUnifiedNoGoRoutes,
+} from '../modules/providers/instagram-unified-no-go.routes.js';
 import type { InstagramUnifiedReadClient } from '../modules/providers/instagram-unified-read-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
@@ -353,6 +357,13 @@ function registerMachineApiRoutes(
       rateLimiter,
       delegatedAuthorization,
     );
+  registerInstagramUnifiedNoGoApiRoutes(
+    application,
+    database,
+    apiKeys,
+    rateLimiter,
+    delegatedAuthorization,
+  );
   if (enabledAdapters.has('fanvue') && options.fanvueOauth) {
     const reads = new FanvueReadService(
       database,
@@ -499,6 +510,8 @@ function registerBrowserRoutes(
         { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient },
         auth,
       );
+    if (instagramUnifiedOauth?.readClient)
+      registerInstagramUnifiedNoGoRoutes(application, database, auth);
     if (enabledAdapters.has('facebook_page') && options.facebookRead)
       registerFacebookPageBrowserReadRoutes(
         application,
@@ -516,7 +529,13 @@ function registerBrowserRoutes(
         : null;
     const approvalCommands: EngagementSendCommands = {
       ...(instagramUnifiedOauth?.readClient
-        ? { unified: createInstagramUnifiedScheduleService({ database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }) }
+        ? {
+            unified: createInstagramUnifiedScheduleService({
+              database,
+              keys: instagramUnifiedOauth.keys,
+              client: instagramUnifiedOauth.readClient,
+            }),
+          }
         : {}),
       ...(facebookRuntime
         ? {

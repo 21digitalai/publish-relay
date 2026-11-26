@@ -39,6 +39,12 @@ interface ScheduledReply {
   dueAt: string;
   status: string;
 }
+interface UnifiedHistoryItem {
+  id: string;
+  text: string;
+  status: string;
+  createdAt: string;
+}
 
 interface CapabilityRow {
   label: string;
@@ -91,6 +97,8 @@ export function InstagramUnifiedCapabilityControl({
   const [scheduleDueAt, setScheduleDueAt] = useState('');
   const [scheduleDueAtOption, setScheduleDueAtOption] = useState(0);
   const [scheduled, setScheduled] = useState<ScheduledReply[]>([]);
+  const [conversationStopped, setConversationStopped] = useState(false);
+  const [history, setHistory] = useState<UnifiedHistoryItem[]>([]);
   const sendTrigger = useRef<HTMLButtonElement>(null);
 
   const loadPermissions = useCallback(async () => {
@@ -182,12 +190,55 @@ export function InstagramUnifiedCapabilityControl({
     }
   }, [accountId, read, selectedConversation]);
 
+  const loadConversationControls = useCallback(async () => {
+    if (!selectedConversation) return;
+    try {
+      const [stop, historyResult] = await Promise.all([
+        read<{ stopped: boolean }>(
+          `/api/provider-accounts/${accountId}/instagram-unified-conversations/${encodeURIComponent(selectedConversation)}/stop`,
+        ),
+        read<{ items: UnifiedHistoryItem[] }>(
+          `/api/provider-accounts/${accountId}/instagram-unified-conversations/${encodeURIComponent(selectedConversation)}/history?limit=25`,
+        ),
+      ]);
+      setConversationStopped(stop.stopped);
+      setHistory(historyResult.items);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Conversation controls unavailable');
+    }
+  }, [accountId, read, selectedConversation]);
+
   useEffect(() => {
     if (selectedMedia) void loadComments();
   }, [loadComments, selectedMedia]);
   useEffect(() => {
     if (selectedConversation) void loadMessages();
   }, [loadMessages, selectedConversation]);
+  useEffect(() => {
+    if (selectedConversation) void loadConversationControls();
+  }, [loadConversationControls, selectedConversation]);
+
+  const toggleConversationStop = async () => {
+    if (!selectedConversation) return;
+    const response = await fetch(
+      `/api/provider-accounts/${accountId}/instagram-unified-conversations/${encodeURIComponent(selectedConversation)}/stop`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ blocked: !conversationStopped }),
+      },
+    );
+    if (!response.ok) {
+      setActionError('Could not update conversation stop control');
+      return;
+    }
+    await loadConversationControls();
+    setAnnouncement(
+      conversationStopped
+        ? 'Conversation resumed; cancelled replies remain cancelled.'
+        : 'Conversation stopped; unsent replies were cancelled.',
+    );
+  };
 
   const send = async () => {
     const targetId = kind === 'comment_reply' ? selectedComment : selectedMessage;
@@ -503,6 +554,34 @@ export function InstagramUnifiedCapabilityControl({
                 />
               </label>
             )}
+            {selectedConversation && (
+              <div
+                className="instagram-unified-conversation-controls"
+                aria-label="Conversation stop and history"
+              >
+                <button
+                  type="button"
+                  className={conversationStopped ? 'secondary-button' : 'danger-button'}
+                  onClick={() => void toggleConversationStop()}
+                >
+                  {conversationStopped ? 'Resume conversation' : 'Stop conversation'}
+                </button>
+                <small>
+                  {conversationStopped
+                    ? 'Manual and scheduled replies are blocked.'
+                    : 'Replies remain allowed for this conversation.'}
+                </small>
+                {history.length > 0 && (
+                  <ul aria-label="Unified Instagram conversation history">
+                    {history.map((item) => (
+                      <li key={`${item.id}:${item.createdAt}`}>
+                        {new Date(item.createdAt).toLocaleString()} · {item.status} · {item.text}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </>
         )}
         <label>
@@ -530,7 +609,10 @@ export function InstagramUnifiedCapabilityControl({
             setConfirmOpen(true);
           }}
           disabled={
-            busy || !text.trim() || (kind === 'comment_reply' ? !selectedComment : !selectedMessage)
+            busy ||
+            conversationStopped ||
+            !text.trim() ||
+            (kind === 'comment_reply' ? !selectedComment : !selectedMessage)
           }
         >
           {busy ? 'Sending…' : 'Send reply'}
@@ -572,7 +654,9 @@ export function InstagramUnifiedCapabilityControl({
                   type="radio"
                   name="instagram-unified-schedule-offset"
                   checked={scheduleDueAtOption === index}
-                  onChange={() => { setScheduleDueAtOption(index); }}
+                  onChange={() => {
+                    setScheduleDueAtOption(index);
+                  }}
                 />
                 {offsetLabel(option)}
               </label>
@@ -588,6 +672,7 @@ export function InstagramUnifiedCapabilityControl({
           onClick={() => void schedule()}
           disabled={
             busy ||
+            conversationStopped ||
             !scheduleDueAt ||
             !text.trim() ||
             matchingLocalInstants(scheduleDueAt).length === 0 ||

@@ -740,15 +740,27 @@ export const instagramUnifiedActions = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex('instagram_unified_actions_workspace_action_unique').on(table.workspaceId, table.clientActionId),
+    uniqueIndex('instagram_unified_actions_workspace_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
     foreignKey({
       columns: [table.workspaceId, table.accountId],
       foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
       name: 'instagram_unified_actions_account_fk',
     }).onDelete('restrict'),
-    check('instagram_unified_actions_kind_check', sql`${table.kind} IN ('comment_reply', 'dm_reply')`),
-    check('instagram_unified_actions_state_check', sql`${table.state} IN ('reserved', 'confirmed', 'failed', 'unknown')`),
-    check('instagram_unified_actions_text_check', sql`length(trim(${table.textBody})) BETWEEN 1 AND 2000`),
+    check(
+      'instagram_unified_actions_kind_check',
+      sql`${table.kind} IN ('comment_reply', 'dm_reply')`,
+    ),
+    check(
+      'instagram_unified_actions_state_check',
+      sql`${table.state} IN ('reserved', 'confirmed', 'failed', 'unknown')`,
+    ),
+    check(
+      'instagram_unified_actions_text_check',
+      sql`length(trim(${table.textBody})) BETWEEN 1 AND 2000`,
+    ),
   ],
 );
 
@@ -775,17 +787,51 @@ export const instagramUnifiedPendingIntents = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex('instagram_unified_pending_intents_action_unique').on(table.workspaceId, table.clientActionId),
+    uniqueIndex('instagram_unified_pending_intents_action_unique').on(
+      table.workspaceId,
+      table.clientActionId,
+    ),
     index('instagram_unified_pending_intents_due_idx').on(table.dueAt, table.id),
     foreignKey({
       columns: [table.workspaceId, table.accountId],
       foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
       name: 'instagram_unified_pending_intents_account_fk',
     }).onDelete('restrict'),
-    check('instagram_unified_pending_intents_kind_check', sql`${table.kind} IN ('comment_reply', 'dm_reply')`),
-    check('instagram_unified_pending_intents_status_check', sql`${table.status} IN ('pending', 'claimed', 'cancelled', 'confirmed', 'failed', 'unknown', 'expired')`),
-    check('instagram_unified_pending_intents_text_check', sql`length(trim(${table.textBody})) BETWEEN 1 AND 2000`),
-    check('instagram_unified_pending_intents_lease_check', sql`(${table.status} = 'claimed') = (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`),
+    check(
+      'instagram_unified_pending_intents_kind_check',
+      sql`${table.kind} IN ('comment_reply', 'dm_reply')`,
+    ),
+    check(
+      'instagram_unified_pending_intents_status_check',
+      sql`${table.status} IN ('pending', 'claimed', 'cancelled', 'confirmed', 'failed', 'unknown', 'expired')`,
+    ),
+    check(
+      'instagram_unified_pending_intents_text_check',
+      sql`length(trim(${table.textBody})) BETWEEN 1 AND 2000`,
+    ),
+    check(
+      'instagram_unified_pending_intents_lease_check',
+      sql`(${table.status} = 'claimed') = (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const instagramUnifiedDmNoGo = pgTable(
+  'instagram_unified_dm_no_go',
+  {
+    workspaceId: uuid('workspace_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    displayName: text('display_name'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.accountId, table.conversationId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.accountId],
+      foreignColumns: [providerAccounts.workspaceId, providerAccounts.id],
+      name: 'instagram_unified_dm_no_go_account_fk',
+    }).onDelete('cascade'),
   ],
 );
 

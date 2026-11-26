@@ -11,6 +11,7 @@ import {
   type InstagramUnifiedActionOutcome,
 } from './instagram-unified-action.repository.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
+import { isInstagramUnifiedConversationNoGo } from './instagram-unified-no-go.repository.js';
 
 const inputSchema = z.strictObject({
   workspaceId: z.uuid(),
@@ -42,6 +43,14 @@ export function createInstagramUnifiedSendService(runtime: {
       const command = inputSchema.parse(input);
       const token = await loadInstagramUnifiedToken(runtime, command);
       if (command.kind === 'dm_reply') {
+        if (
+          await isInstagramUnifiedConversationNoGo(runtime.database, {
+            workspaceId: command.workspaceId,
+            accountId: command.accountId,
+            conversationId: command.parentId,
+          })
+        )
+          throw new InstagramUnifiedEligibilityError('Unified Instagram conversation is stopped');
         const messaging = await runtime.client.verifyMessagingPermission(token.accessToken);
         if (messaging !== 'granted' || !command.recipientId)
           throw new InstagramUnifiedEligibilityError();
@@ -62,13 +71,16 @@ export function createInstagramUnifiedSendService(runtime: {
           latest.senderId !== command.recipientId
         )
           throw new InstagramUnifiedEligibilityError();
-        if (command.targetFingerprint && fingerprint({
-          kind: command.kind,
-          target: command.targetId,
-          parent: command.parentId,
-          latest: latest.id,
-          latestAt: latest.createdAt,
-        }) !== command.targetFingerprint)
+        if (
+          command.targetFingerprint &&
+          fingerprint({
+            kind: command.kind,
+            target: command.targetId,
+            parent: command.parentId,
+            latest: latest.id,
+            latestAt: latest.createdAt,
+          }) !== command.targetFingerprint
+        )
           throw new InstagramUnifiedEligibilityError();
       } else {
         const permission = await runtime.client.verifyPermissions(token.accessToken);
@@ -80,7 +92,10 @@ export function createInstagramUnifiedSendService(runtime: {
           mediaId: command.parentId,
           accessToken: token.accessToken,
         });
-        if (command.targetFingerprint && fingerprint(JSON.parse(target.targetFingerprint)) !== command.targetFingerprint)
+        if (
+          command.targetFingerprint &&
+          fingerprint(JSON.parse(target.targetFingerprint)) !== command.targetFingerprint
+        )
           throw new InstagramUnifiedEligibilityError();
       }
       const action: InstagramUnifiedActionInput = {
@@ -94,13 +109,13 @@ export function createInstagramUnifiedSendService(runtime: {
         text: command.text,
         actor: command.actor,
         requestFingerprint: fingerprint({
-              accountId: command.accountId,
-              kind: command.kind,
-              targetId: command.targetId,
-              parentId: command.parentId,
-              recipientId: command.recipientId ?? null,
-              text: command.text,
-            }),
+          accountId: command.accountId,
+          kind: command.kind,
+          targetId: command.targetId,
+          parentId: command.parentId,
+          recipientId: command.recipientId ?? null,
+          text: command.text,
+        }),
       };
       const reservation = await reserveInstagramUnifiedAction(runtime.database, action);
       if (reservation.kind === 'conflict') throw new InstagramUnifiedActionConflictError();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConfirmationDialog } from './confirmation-dialog.js';
 import { LiveRegion } from './feedback.js';
+import { matchingLocalInstants, offsetLabel } from './schedule-time.js';
 
 type GrantState = 'granted' | 'missing' | 'declined';
 type PermissionState = Record<'instagram_basic' | 'instagram_manage_comments', GrantState>;
@@ -31,7 +32,13 @@ interface Message {
   senderUsername: string | null;
   text: string;
 }
-interface ScheduledReply { id: string; kind: ActionKind; text: string; dueAt: string; status: string; }
+interface ScheduledReply {
+  id: string;
+  kind: ActionKind;
+  text: string;
+  dueAt: string;
+  status: string;
+}
 
 interface CapabilityRow {
   label: string;
@@ -82,6 +89,7 @@ export function InstagramUnifiedCapabilityControl({
   const [actionState, setActionState] = useState<ActionState>('idle');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [scheduleDueAt, setScheduleDueAt] = useState('');
+  const [scheduleDueAtOption, setScheduleDueAtOption] = useState(0);
   const [scheduled, setScheduled] = useState<ScheduledReply[]>([]);
   const sendTrigger = useRef<HTMLButtonElement>(null);
 
@@ -247,25 +255,68 @@ export function InstagramUnifiedCapabilityControl({
   const schedule = async () => {
     const targetId = kind === 'comment_reply' ? selectedComment : selectedMessage;
     const parentId = kind === 'comment_reply' ? selectedMedia : selectedConversation;
-    const recipientId = kind === 'dm_reply' ? messages.find((item) => item.id === selectedMessage)?.senderId : undefined;
-    if (!targetId || !parentId || !text.trim() || !scheduleDueAt || (kind === 'dm_reply' && !recipientId)) return;
-    setBusy(true); setActionError(null);
+    const recipientId =
+      kind === 'dm_reply'
+        ? messages.find((item) => item.id === selectedMessage)?.senderId
+        : undefined;
+    const dueAtOptions = matchingLocalInstants(scheduleDueAt);
+    const dueAt = dueAtOptions[scheduleDueAtOption];
+    if (
+      !targetId ||
+      !parentId ||
+      !text.trim() ||
+      !dueAt ||
+      dueAt.getTime() <= Date.now() ||
+      (kind === 'dm_reply' && !recipientId)
+    )
+      return;
+    setBusy(true);
+    setActionError(null);
     try {
-      const response = await fetch(`/api/provider-accounts/${accountId}/instagram-unified-schedules`, {
-        method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ clientActionId: crypto.randomUUID(), kind, targetId, parentId, ...(recipientId ? { recipientId } : {}), text: text.trim(), dueAt: new Date(scheduleDueAt).toISOString() }),
-      });
-      const result = (await response.json()) as { data: ScheduledReply | null; error: string | null };
+      const response = await fetch(
+        `/api/provider-accounts/${accountId}/instagram-unified-schedules`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({
+            clientActionId: crypto.randomUUID(),
+            kind,
+            targetId,
+            parentId,
+            ...(recipientId ? { recipientId } : {}),
+            text: text.trim(),
+            dueAt: dueAt.toISOString(),
+          }),
+        },
+      );
+      const result = (await response.json()) as {
+        data: ScheduledReply | null;
+        error: string | null;
+      };
       if (!response.ok || !result.data) throw new Error(result.error ?? 'Scheduling failed');
-      setText(''); setScheduleDueAt(''); setAnnouncement('Reply scheduled.'); await loadScheduled();
-    } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Scheduling failed'); }
-    finally { setBusy(false); }
+      setText('');
+      setScheduleDueAt('');
+      setScheduleDueAtOption(0);
+      setAnnouncement('Reply scheduled.');
+      await loadScheduled();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Scheduling failed');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const cancelScheduled = async (id: string) => {
-    const response = await fetch(`/api/provider-accounts/${accountId}/instagram-unified-schedules/${id}`, { method: 'DELETE', headers: { accept: 'application/json' } });
-    if (!response.ok) { setActionError('Scheduled reply is already in flight or finished.'); return; }
-    await loadScheduled(); setAnnouncement('Scheduled reply cancelled.');
+    const response = await fetch(
+      `/api/provider-accounts/${accountId}/instagram-unified-schedules/${id}`,
+      { method: 'DELETE', headers: { accept: 'application/json' } },
+    );
+    if (!response.ok) {
+      setActionError('Scheduled reply is already in flight or finished.');
+      return;
+    }
+    await loadScheduled();
+    setAnnouncement('Scheduled reply cancelled.');
   };
 
   const targetLabel =
@@ -497,18 +548,83 @@ export function InstagramUnifiedCapabilityControl({
         )}
         <label>
           Schedule for
-          <input type="datetime-local" value={scheduleDueAt} onChange={(event) => setScheduleDueAt(event.target.value)} />
+          <input
+            type="datetime-local"
+            value={scheduleDueAt}
+            onChange={(event) => {
+              setScheduleDueAt(event.target.value);
+              setScheduleDueAtOption(0);
+            }}
+            aria-describedby="instagram-unified-schedule-help"
+          />
         </label>
-        <button type="button" className="secondary-button" onClick={() => void schedule()} disabled={busy || !scheduleDueAt || !text.trim()}>
+        {scheduleDueAt && matchingLocalInstants(scheduleDueAt).length === 0 && (
+          <p className="field-error" role="alert">
+            This local time does not exist because the clock changes.
+          </p>
+        )}
+        {matchingLocalInstants(scheduleDueAt).length > 1 && (
+          <fieldset className="schedule-offset-choice">
+            <legend>Choose the intended time offset</legend>
+            {matchingLocalInstants(scheduleDueAt).map((option, index) => (
+              <label key={option.toISOString()}>
+                <input
+                  type="radio"
+                  name="instagram-unified-schedule-offset"
+                  checked={scheduleDueAtOption === index}
+                  onChange={() => setScheduleDueAtOption(index)}
+                />
+                {offsetLabel(option)}
+              </label>
+            ))}
+          </fieldset>
+        )}
+        <small id="instagram-unified-schedule-help">
+          Choose a future local time; scheduling is explicit and sends only once.
+        </small>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => void schedule()}
+          disabled={
+            busy ||
+            !scheduleDueAt ||
+            !text.trim() ||
+            matchingLocalInstants(scheduleDueAt).length === 0 ||
+            (matchingLocalInstants(scheduleDueAt)[scheduleDueAtOption]?.getTime() ?? 0) <=
+              Date.now()
+          }
+        >
           {busy ? 'Scheduling…' : 'Schedule reply'}
         </button>
-        <button type="button" className="secondary-button" onClick={() => void loadScheduled()} disabled={busy}>Refresh scheduled replies</button>
-        {scheduled.length > 0 && <div aria-label="Scheduled Unified Instagram replies">
-          {scheduled.map((item) => <div key={item.id} className="instagram-unified-action-state">
-            <span>{new Date(item.dueAt).toLocaleString()} · {item.status} · {item.text}</span>
-            {item.status === 'pending' && <button type="button" className="secondary-button" onClick={() => void cancelScheduled(item.id)}>Cancel</button>}
-          </div>)}
-        </div>}
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => void loadScheduled()}
+          disabled={busy}
+        >
+          Refresh scheduled replies
+        </button>
+        {scheduled.length > 0 && (
+          <div aria-label="Scheduled Unified Instagram replies">
+            {scheduled.map((item) => (
+              <div key={item.id} className="instagram-unified-action-state">
+                <span>
+                  {new Date(item.dueAt).toLocaleString()} · {item.status} · {item.text}
+                </span>
+                {item.status === 'pending' && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void cancelScheduled(item.id)}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {confirmOpen && (
         <ConfirmationDialog

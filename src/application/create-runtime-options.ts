@@ -28,6 +28,7 @@ import {
 } from '../modules/providers/meta-http-client.js';
 import { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { InstagramUnifiedLoginClient } from '../modules/providers/instagram-unified-login-client.js';
+import { InstagramUnifiedReadClient } from '../modules/providers/instagram-unified-read-client.js';
 import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
 import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
@@ -219,6 +220,7 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                 configId: config.PUBLISH_RELAY_INSTAGRAM_UNIFIED_CONFIG_ID,
                 graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
               }),
+              readClient: new InstagramUnifiedReadClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
               callbackUrl: new URL(
                 '/api/oauth/instagram-unified/callback',
                 publicOrigin,

@@ -27,6 +27,7 @@ const comment = z.object({
   from: z.object({ id: graphId, username: z.string().max(256).optional() }).optional(),
 });
 const ownedMedia = z.object({ id: graphId, owner: z.object({ id: graphId }) });
+const permission = z.object({ permission: z.string().min(1).max(128), status: z.string().min(1).max(32) });
 
 const MAX_PAGES = 20;
 
@@ -80,6 +81,18 @@ export class InstagramUnifiedReadClient {
       })),
       nextCursor: result.nextCursor,
     }));
+  }
+
+  public async verifyPermissions(accessToken: string) {
+    const body = await this.get(this.url('/me/permissions', {}), accessToken);
+    const parsed = z.object({ data: z.array(permission).max(100) }).safeParse(body);
+    if (!parsed.success) throw new InstagramUnifiedReadError('permanent', 502);
+    const required = ['instagram_basic', 'instagram_manage_comments'];
+    return required.reduce<Record<string, 'granted' | 'missing' | 'declined'>>((result, name) => {
+      const row = parsed.data.data.find((item) => item.permission === name);
+      result[name] = row?.status === 'granted' ? 'granted' : row?.status === 'declined' ? 'declined' : 'missing';
+      return result;
+    }, {});
   }
 
   public listComments(input: {

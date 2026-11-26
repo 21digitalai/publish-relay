@@ -696,7 +696,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
             '400': { description: 'Invalid schedule request' },
             '401': { description: 'Authentication required' },
-            '403': { description: 'Missing content:write capability' },
+            '403': { description: 'Missing schedules:write capability' },
             '409': { description: 'Eligibility, freshness, or idempotency conflict' },
           },
         },

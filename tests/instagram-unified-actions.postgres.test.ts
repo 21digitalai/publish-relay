@@ -13,6 +13,12 @@ vi.mock('../src/modules/providers/instagram-unified-read.service.js', () => ({
 }));
 
 import { createInstagramUnifiedSendService } from '../src/modules/providers/instagram-unified-send.service.js';
+import {
+  cancelInstagramUnifiedIntent,
+  claimDueInstagramUnifiedIntent,
+  finishClaimedInstagramUnifiedIntent,
+  scheduleInstagramUnifiedIntent,
+} from '../src/modules/providers/instagram-unified-pending.repository.js';
 
 const connectionString = process.env.PUBLISH_RELAY_POSTGRES_URL;
 const describePostgres = describe.skipIf(!connectionString);
@@ -305,5 +311,116 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
 
     await expect(service.send(input)).resolves.toEqual({ state: 'unknown' });
     expect(calls.count).toBe(1);
+  });
+
+  it('proves pending-intent RLS, idempotency, cancellation, and one-winner due claims', async () => {
+    const pendingRole = await owner.query<{
+      forced: boolean;
+      web_insert: boolean;
+      worker_update: boolean;
+    }>(
+      `SELECT c.relforcerowsecurity AS forced,
+        has_table_privilege($1, 'public.instagram_unified_pending_intents', 'INSERT') AS web_insert,
+        has_table_privilege($2, 'public.instagram_unified_pending_intents', 'UPDATE') AS worker_update
+       FROM pg_class c WHERE c.oid = 'public.instagram_unified_pending_intents'::regclass`,
+      [webRole, workerRole],
+    );
+    expect(pendingRole.rows[0]).toEqual({ forced: true, web_insert: true, worker_update: true });
+
+    const base = {
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-4000-8000-000000000501',
+      kind: 'dm_reply' as const,
+      targetId: 'message-pending-1',
+      parentId: 'conversation-pending-1',
+      recipientId: 'recipient-1',
+      text: 'Scheduled once',
+      requestFingerprint: 'pending-fingerprint-1',
+      targetFingerprint: 'target-fingerprint-1',
+      actor: { type: 'user' as const, id: '00000000-0000-4000-8000-000000000401' },
+      dueAt: new Date(Date.now() - 1_000),
+    };
+    const inserted = await scheduleInstagramUnifiedIntent(webDatabase as never, base);
+    const replay = await scheduleInstagramUnifiedIntent(webDatabase as never, base);
+    expect(replay.id).toBe(inserted.id);
+    await expect(
+      scheduleInstagramUnifiedIntent(webDatabase as never, {
+        ...base,
+        text: 'Conflicting payload',
+      }),
+    ).rejects.toThrow('conflicts with an existing action');
+
+    const [first, second] = await Promise.all([
+      claimDueInstagramUnifiedIntent(webDatabase as never, {
+        workerId: 'worker-a',
+        now: new Date(),
+        leaseMs: 30_000,
+      }),
+      claimDueInstagramUnifiedIntent(webDatabase as never, {
+        workerId: 'worker-b',
+        now: new Date(),
+        leaseMs: 30_000,
+      }),
+    ]);
+    const claimed = [first, second].filter((row) => row?.id === inserted.id);
+    expect(claimed).toHaveLength(1);
+    const claim = claimed[0];
+    expect(claim?.status).toBe('claimed');
+    expect(
+      await cancelInstagramUnifiedIntent(webDatabase as never, {
+        workspaceId,
+        accountId,
+        id: inserted.id,
+      }),
+    ).toBe(false);
+    expect(
+      await finishClaimedInstagramUnifiedIntent(webDatabase as never, {
+        workspaceId,
+        id: inserted.id,
+        leaseOwner: claim?.leaseOwner ?? '',
+        state: 'unknown',
+      }),
+    ).toBe(true);
+    expect(
+      await claimDueInstagramUnifiedIntent(webDatabase as never, {
+        workerId: 'worker-c',
+        now: new Date(),
+        leaseMs: 30_000,
+      }),
+    ).toBeNull();
+
+    const cancellable = await scheduleInstagramUnifiedIntent(webDatabase as never, {
+      ...base,
+      clientActionId: '00000000-0000-4000-8000-000000000502',
+      requestFingerprint: 'pending-fingerprint-2',
+      dueAt: new Date(Date.now() + 60_000),
+    });
+    expect(
+      await cancelInstagramUnifiedIntent(webDatabase as never, {
+        workspaceId,
+        accountId,
+        id: cancellable.id,
+      }),
+    ).toBe(true);
+    expect(
+      await claimDueInstagramUnifiedIntent(webDatabase as never, {
+        workerId: 'worker-d',
+        now: new Date(Date.now() + 120_000),
+        leaseMs: 30_000,
+      }),
+    ).toBeNull();
+
+    const isolated = await webClient();
+    await isolated.query('SELECT set_config($1, $2, false)', [
+      'app.workspace_id',
+      otherWorkspaceId,
+    ]);
+    const hidden = await isolated.query<{ count: string }>(
+      'SELECT count(*) FROM instagram_unified_pending_intents WHERE id = $1',
+      [inserted.id],
+    );
+    expect(hidden.rows[0]?.count).toBe('0');
+    await isolated.end();
   });
 });

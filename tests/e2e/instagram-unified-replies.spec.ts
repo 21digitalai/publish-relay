@@ -10,6 +10,13 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   let statusDelayMs = 0;
   let mediaMode: 'ready' | 'empty' | 'error' = 'ready';
   let dmFailure = true;
+  let scheduledItems: Array<{
+    id: string;
+    kind: 'comment_reply' | 'dm_reply';
+    text: string;
+    dueAt: string;
+    status: string;
+  }> = [];
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Unified Reply Owner',
@@ -155,6 +162,46 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
       if (payload.kind === 'dm_reply') dmFailure = false;
     },
   );
+  await page.route(
+    `**/api/provider-accounts/${accountId}/instagram-unified-schedules**`,
+    async (route) => {
+      const method = route.request().method();
+      if (method === 'GET') {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ data: { items: scheduledItems }, error: null }),
+        });
+        return;
+      }
+      if (method === 'POST') {
+        const payload = route.request().postDataJSON() as {
+          kind: 'comment_reply' | 'dm_reply';
+          text: string;
+          dueAt: string;
+        };
+        const item = {
+          id: `scheduled-${scheduledItems.length + 1}`,
+          ...payload,
+          status: 'pending',
+        };
+        scheduledItems = [item];
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ data: item, error: null }),
+        });
+        return;
+      }
+      if (method === 'DELETE') {
+        scheduledItems = scheduledItems.map((item) => ({ ...item, status: 'cancelled' }));
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ data: { cancelled: true }, error: null }),
+        });
+        return;
+      }
+      await route.fallback();
+    },
+  );
 
   await page.goto(`/w/${workspace.data.slug}/accounts`);
   const account = page.locator('.account-row').first();
@@ -165,6 +212,16 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   await control.getByRole('button', { name: 'Load recent posts' }).click();
   await expect(control.getByRole('button', { name: 'Post' })).toBeVisible();
   await expect(control.getByRole('button', { name: 'Comment' })).toBeVisible();
+  await control.getByRole('textbox', { name: 'Reply' }).fill('Thanks for asking!');
+  const future = new Date(Date.now() + 10 * 60 * 1000);
+  const futureLocal = new Date(future.getTime() - future.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+  await control.locator('input[type="datetime-local"]').fill(futureLocal);
+  await control.getByRole('button', { name: 'Schedule reply' }).click();
+  await expect(control).toContainText('pending · Thanks for asking!');
+  await control.getByRole('button', { name: 'Cancel' }).click();
+  await expect(control).toContainText('cancelled · Thanks for asking!');
   await control.getByRole('textbox', { name: 'Reply' }).fill('Thanks for asking!');
   await control.getByRole('button', { name: 'Send reply' }).click();
   const dialog = page.getByRole('alertdialog', { name: 'Confirm comment reply' });

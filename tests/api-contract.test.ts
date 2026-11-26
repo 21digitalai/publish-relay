@@ -95,6 +95,21 @@ describe('API v1 contract', () => {
     expect(JSON.stringify(command.post.responses['201'])).toContain('commentUuid');
   });
 
+  it('documents the bounded Unified Instagram schedule machine contract', () => {
+    const paths = apiV1OpenApiDocument().paths as Record<string, any>;
+    const collection = paths['/api/v1/destinations/{accountId}/instagram-unified-schedules'];
+    const detail = paths['/api/v1/destinations/{accountId}/instagram-unified-schedules/{intentId}'];
+    expect(collection.post.operationId).toBe('scheduleInstagramUnifiedReply');
+    expect(collection.get.operationId).toBe('listInstagramUnifiedSchedules');
+    expect(detail.get.operationId).toBe('getInstagramUnifiedSchedule');
+    expect(detail.delete.operationId).toBe('cancelInstagramUnifiedSchedule');
+    expect(JSON.stringify(collection.post)).toContain('schedules:write');
+    expect(JSON.stringify(collection.get)).toContain('schedules:read');
+    expect(JSON.stringify(detail.delete)).toContain('schedules:write');
+    expect(JSON.stringify(collection)).not.toContain('accessToken');
+    expect(JSON.stringify(collection)).not.toContain('requestFingerprint');
+  });
+
   it('documents the Fanvue vault catalog cursor contract', () => {
     const paths = apiV1OpenApiDocument().paths as Record<string, unknown>;
     const catalog = paths['/api/v1/fanvue/accounts/{accountId}/vault/catalog/{folderName}'] as {

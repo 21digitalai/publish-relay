@@ -714,3 +714,11 @@ account discovery projects only enabled destinations, create/edit/reschedule adm
 targets, and the worker constructs no disabled dispatch or engagement loop. Disabling is non-destructive:
 stored accounts, content, history, and queued jobs remain intact for a later restart with the adapter
 enabled.
+
+Optional guarded Facebook group `dueAt` is a future ISO not-before instant. The
+strict API schema, CLI body and immutable root fingerprint carry it; exact replays
+retain their receipt even after the instant passes. Creation rejects past/invalid
+instants and any paced plan beyond the provider deadline atomically. The existing
+`due_at` stores the accepted floor (possibly later for pacing); priority never
+moves existing roots earlier, so no additional mutable scheduling state is needed.
+The due worker still owns Page cursor pacing, civil-day caps and provider preflight.

@@ -35,6 +35,7 @@ interface GroupKey {
 }
 
 interface GroupRequest extends GroupKey {
+  dueAt?: string | undefined;
   clientActionId: string;
   texts: string[];
   finalExit?: boolean | undefined;
@@ -46,12 +47,15 @@ interface GroupRequest extends GroupKey {
 }
 
 function fingerprint(input: Omit<GroupRequest, 'windowDeadline' | 'latestInboundAt'>) {
+  if (input.dueAt !== undefined && !Number.isFinite(Date.parse(input.dueAt)))
+    throw new PendingDmConflictError('Requested Page DM dueAt must be a valid future instant');
   return createHash('sha256')
     .update(
       JSON.stringify({
         accountId: input.accountId,
         conversationId: input.conversationId,
         texts: input.texts,
+        ...(input.dueAt !== undefined ? { dueAt: new Date(input.dueAt).toISOString() } : {}),
         expectedLatestInboundMessageId: input.expectedLatestInboundMessageId,
         ...(input.finalExit ? { finalExit: true } : {}),
         ...(input.bioLinkMention ? { bioLinkMention: true } : {}),
@@ -145,6 +149,9 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
         throw new PendingDmConflictError();
       return { id: prior.id, groupId: prior.groupId, dueAt: prior.dueAt, status: prior.status };
     }
+    const requestedAt = input.dueAt === undefined ? 0 : Date.parse(input.dueAt);
+    if (!Number.isFinite(requestedAt) || (input.dueAt !== undefined && requestedAt <= Date.now()))
+      throw new PendingDmConflictError('Requested Page DM dueAt must be a valid future instant');
     const [sent] = await tx
       .select({ id: facebookPageDmActions.id })
       .from(facebookPageDmActions)
@@ -220,7 +227,7 @@ export async function schedulePageDmGroup(database: NodePgDatabase, input: Group
       .filter((root) => root.status === 'claimed')
       .reduce((latest, root) => Math.max(latest, root.dueAt.getTime() + minimumGapMs), 0);
     const earliestAt = new Date(
-      Math.max(now + minimumGapMs, claimedAt, cursor?.nextRootAt.getTime() ?? 0),
+      Math.max(now + minimumGapMs, requestedAt, claimedAt, cursor?.nextRootAt.getTime() ?? 0),
     );
     const appendAt = new Date(
       Math.max(now, roots[0]?.dueAt.getTime() ?? 0, earliestAt.getTime() - minimumGapMs) +

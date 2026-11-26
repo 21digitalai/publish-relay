@@ -177,6 +177,7 @@ describe('Facebook Page DM send machine route', () => {
           texts: ['First', 'Second'],
           finalExit: true,
           bioLinkMention: true,
+          dueAt: '2099-01-01T01:00:00.000Z',
           expectedLatestInboundMessageId: 'mid-1',
         },
       });
@@ -190,6 +191,7 @@ describe('Facebook Page DM send machine route', () => {
           texts: ['First', 'Second'],
           finalExit: true,
           bioLinkMention: true,
+          dueAt: '2099-01-01T01:00:00.000Z',
           expectedLatestInboundMessageId: 'mid-1',
         }),
       );

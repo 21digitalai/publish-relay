@@ -1006,6 +1006,12 @@ async function run() {
       throw new CliError(EXIT.usage, 'Use facebook-dms schedule for a delayed message');
     if (
       parsed.command === 'facebook-dms:group-schedule' &&
+      payload.dueAt !== undefined &&
+      (typeof payload.dueAt !== 'string' || !Number.isFinite(Date.parse(payload.dueAt)))
+    )
+      throw new CliError(EXIT.usage, 'Page DM group dueAt must be an ISO timestamp');
+    if (
+      parsed.command === 'facebook-dms:group-schedule' &&
       (!Array.isArray(payload.texts) ||
         payload.texts.length < 1 ||
         payload.texts.length > 4 ||

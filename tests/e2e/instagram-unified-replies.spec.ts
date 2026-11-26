@@ -1,0 +1,104 @@
+import { expect, test } from '@playwright/test';
+
+const accountId = '00000000-0000-4000-8000-000000000981';
+
+test('Unified Instagram manual replies expose confirmation and bounded outcome states', async ({
+  page,
+}, testInfo) => {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Unified Reply Owner',
+      email: `unified-reply-${suffix}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: `Unified Reply ${suffix}`,
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+
+  await page.route('**/api/provider-accounts', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          accounts: [
+            {
+              id: accountId,
+              provider: 'instagram_unified_login',
+              connectionFamily: 'instagram_unified_login',
+              destinationProvider: 'instagram',
+              name: 'Unified Studio',
+              displayName: 'Unified Studio',
+              status: 'active',
+              availability: 'active',
+              capabilityFreshness: 'fresh',
+              capabilitySnapshot: { contentKinds: ['text'] },
+              adapterDefaults: {},
+            },
+          ],
+          nextCursor: null,
+        },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/instagram-unified/status`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { instagram_basic: 'granted', instagram_manage_comments: 'granted' },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/instagram-unified-media*`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { media: [{ id: 'media-1', caption: 'Launch post', timestamp: '2026-11-26T18:00:00Z' }] },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/instagram-unified-comments/*`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { comments: [{ id: 'comment-1', text: 'Is this available?', username: 'alice' }] },
+        error: null,
+      }),
+    }),
+  );
+  await page.route(`**/api/provider-accounts/${accountId}/instagram-unified-actions`, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { state: 'confirmed', receipt: 'receipt-1' }, error: null }),
+    }),
+  );
+
+  await page.goto(`/w/${workspace.data.slug}/accounts`);
+  const account = page.locator('.account-row').first();
+  await account.getByRole('button', { name: 'Manage', exact: true }).click();
+  const control = page.getByRole('region', { name: 'Unified Instagram capabilities' });
+  await expect(control).toBeVisible();
+  await expect(control.getByText('Verified').first()).toBeVisible();
+  await control.getByRole('button', { name: 'Load recent posts' }).click();
+  await expect(control.getByRole('button', { name: 'Post' })).toBeVisible();
+  await expect(control.getByRole('button', { name: 'Comment' })).toBeVisible();
+  await control.getByRole('textbox', { name: 'Reply' }).fill('Thanks for asking!');
+  await control.getByRole('button', { name: 'Send reply' }).click();
+  const dialog = page.getByRole('alertdialog', { name: 'Confirm comment reply' });
+  await expect(dialog).toContainText('Unified Studio');
+  await expect(dialog).toContainText('Thanks for asking!');
+  await page.screenshot({ path: testInfo.outputPath('instagram-unified-reply-desktop.png') });
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+  await control.getByRole('button', { name: 'Send reply' }).click();
+  await dialog.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect(control.getByText('Reply is pending provider confirmation.')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath('instagram-unified-reply-mobile.png') });
+});

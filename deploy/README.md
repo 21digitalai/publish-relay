@@ -163,4 +163,4 @@ allows only the explicitly configured HTTPS direct origin, preserves cookies and
 headers, replaces untrusted forwarding headers, rewrites same-origin redirects, and
 forces `Cache-Control: no-store`. It deliberately has no tunnel fallback.
 
-Historical cleanup is never inferred from age or release count. `release-filesystem.mjs` validates canonical roots, links, migrations, active process working directories, and open-file use before bounded removal. Migration differences, legacy extra releases, or stale/unknown observations fail closed. See [RELEASE-RETENTION.md](RELEASE-RETENTION.md) for activation and recovery boundaries.
+Historical cleanup is never inferred from age or release count. `release-filesystem.mjs` validates canonical roots, links, migrations, active process working directories, and open-file use before bounded removal. Non-append-only migration differences, legacy extra releases, or stale/unknown observations fail closed. See [RELEASE-RETENTION.md](RELEASE-RETENTION.md) for activation and recovery boundaries.

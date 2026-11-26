@@ -17,6 +17,7 @@ import { PostingAdapterList } from './posting-adapter-list.js';
 import { getPostingAdapter, type PostingAdapterConfig } from './posting-adapter-registry.js';
 import { linkedInExpiringSoon, linkedInExpiryWarning } from './linkedin-expiry.js';
 import { LinkedInExpiryNotice } from './linkedin-expiry-notice.js';
+import { InstagramUnifiedCapabilityControl } from './instagram-unified-capability-control.js';
 import { beginAdapterConnection, getCsrfToken } from './posting-adapter-connection.js';
 import {
   CalendarPage,
@@ -30,6 +31,7 @@ import {
 interface Account {
   id: string;
   provider: string;
+  connectionFamily?: string | null;
   grantFamily?: 'facebook_pages' | 'instagram' | null;
   destinationProvider: string;
   name: string;
@@ -106,6 +108,7 @@ function mapAccountDto(account: AccountDto): Account {
               : account.provider.toLowerCase() === 'meta'
                 ? 'Meta'
                 : account.provider,
+    connectionFamily: account.provider,
     destinationProvider: account.destinationProvider ?? account.provider,
     ...(account.grantFamily !== undefined ? { grantFamily: account.grantFamily } : {}),
     ...(account.fanvueModules ? { fanvueModules: account.fanvueModules } : {}),
@@ -1249,6 +1252,11 @@ function AccountRow({
           account.destinationProvider === 'facebook_page' &&
           originWorkspaceId && (
             <FacebookEngagementControl key={account.id} accountId={account.id} />
+          )}
+        {!account.isExposed &&
+          account.connectionFamily === 'instagram_unified_login' &&
+          account.destinationProvider === 'instagram' && (
+            <InstagramUnifiedCapabilityControl accountId={account.id} accountName={account.name} />
           )}
         {!account.isExposed &&
           account.destinationProvider === 'facebook_page' &&

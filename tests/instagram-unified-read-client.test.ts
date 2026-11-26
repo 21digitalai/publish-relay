@@ -53,6 +53,61 @@ describe('Instagram Unified read client', () => {
     expect(requests[0]?.searchParams.get('fields')).toContain('comments_count');
   });
 
+  it('returns truthful verified, missing, and declined grant states', async () => {
+    const responses = [
+      {
+        data: [
+          { permission: 'instagram_basic', status: 'granted' },
+          { permission: 'instagram_manage_comments', status: 'declined' },
+        ],
+      },
+      { data: [{ permission: 'instagram_basic', status: 'granted' }] },
+    ];
+    const client = new InstagramUnifiedReadClient({
+      graphVersion: 'v27.0',
+      fetch: () =>
+        Promise.resolve(new Response(JSON.stringify(responses.shift()), { status: 200 })),
+    });
+    await expect(client.verifyPermissions('secret')).resolves.toEqual({
+      instagram_basic: 'granted',
+      instagram_manage_comments: 'declined',
+    });
+    await expect(client.verifyPermissions('secret')).resolves.toEqual({
+      instagram_basic: 'granted',
+      instagram_manage_comments: 'missing',
+    });
+  });
+
+  it('does not turn an invalid permission response into a connected state', async () => {
+    const client = new InstagramUnifiedReadClient({
+      graphVersion: 'v27.0',
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ data: [{ permission: 'instagram_basic' }] }), {
+            status: 200,
+          }),
+        ),
+    });
+    await expect(client.verifyPermissions('secret')).rejects.toMatchObject({
+      kind: 'permanent',
+      status: 502,
+    });
+  });
+
+  it('keeps messaging reads unavailable when the separate grant is missing or declined', async () => {
+    const responses = [
+      { data: [{ permission: 'instagram_basic', status: 'granted' }] },
+      { data: [{ permission: 'instagram_manage_messages', status: 'declined' }] },
+    ];
+    const client = new InstagramUnifiedReadClient({
+      graphVersion: 'v27.0',
+      fetch: () =>
+        Promise.resolve(new Response(JSON.stringify(responses.shift()), { status: 200 })),
+    });
+    await expect(client.verifyMessagingPermission('secret')).resolves.toBe('missing');
+    await expect(client.verifyMessagingPermission('secret')).resolves.toBe('declined');
+  });
+
   it('reads comments and rejects provider permission failures without leaking body text', async () => {
     const client = new InstagramUnifiedReadClient({
       graphVersion: 'v27.0',
@@ -76,20 +131,55 @@ describe('Instagram Unified read client', () => {
     const client = new InstagramUnifiedReadClient({
       graphVersion: 'v27.0',
       fetch: (input) => {
-        const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+        const url =
+          input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
         paths.push(url.pathname);
         const body = url.pathname.endsWith('/permissions')
           ? { data: [{ permission: 'instagram_manage_messages', status: 'granted' }] }
           : url.pathname.endsWith('/conversations')
-            ? { data: [{ id: 'c1', updated_time: '2026-11-26T10:00:00+0000', participants: { data: [{ id: 'ig1', username: 'relay' }] } }], paging: {} }
+            ? {
+                data: [
+                  {
+                    id: 'c1',
+                    updated_time: '2026-11-26T10:00:00+0000',
+                    participants: { data: [{ id: 'ig1', username: 'relay' }] },
+                  },
+                ],
+                paging: {},
+              }
             : url.pathname.endsWith('/messages')
-              ? { data: [{ id: 'msg1', created_time: '2026-11-26T10:01:00+0000', from: { id: 'u1' }, message: 'hi' }], paging: {} }
+              ? {
+                  data: [
+                    {
+                      id: 'msg1',
+                      created_time: '2026-11-26T10:01:00+0000',
+                      from: { id: 'u1' },
+                      message: 'hi',
+                    },
+                  ],
+                  paging: {},
+                }
               : { id: 'c1', participants: { data: [{ id: 'ig1' }] } };
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
       },
     });
-    await expect(client.listConversations({ accountId: 'ig1', accessToken: 'secret' })).resolves.toMatchObject({ conversations: [{ id: 'c1' }] });
-    await expect(client.listMessages({ accountId: 'ig1', conversationId: 'c1', accessToken: 'secret' })).resolves.toEqual({ messages: [{ id: 'msg1', createdAt: '2026-11-26T10:01:00+0000', senderId: 'u1', senderUsername: null, text: 'hi' }], nextCursor: null });
+    await expect(
+      client.listConversations({ accountId: 'ig1', accessToken: 'secret' }),
+    ).resolves.toMatchObject({ conversations: [{ id: 'c1' }] });
+    await expect(
+      client.listMessages({ accountId: 'ig1', conversationId: 'c1', accessToken: 'secret' }),
+    ).resolves.toEqual({
+      messages: [
+        {
+          id: 'msg1',
+          createdAt: '2026-11-26T10:01:00+0000',
+          senderId: 'u1',
+          senderUsername: null,
+          text: 'hi',
+        },
+      ],
+      nextCursor: null,
+    });
     expect(paths).toContain('/v27.0/c1');
   });
 });

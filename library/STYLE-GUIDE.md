@@ -216,6 +216,15 @@ Auth uses a centered 440px panel on the canvas with a restrained violet radial g
 
 ## Connected accounts
 
+Unified Instagram accounts reuse the shared AccountRow Manage disclosure for a live capability
+status control. `InstagramUnifiedCapabilityControl` is the canonical source for the connection
+family's read-only posts, comments, and conversation/message status rows. It labels provider
+verified grants as `Verified`, distinguishes `Permission needed` and `Declined`, and keeps
+provider-check failures as `Unknown`; a connected account badge never substitutes for a grant
+check. Refresh is explicit and uses an inline error/live-region state. The control does not offer
+send or reply actions, and it appears only for `instagram_unified_login`, never legacy
+`instagram_login` or Facebook destinations.
+
 Origin-owned Facebook Page rows show separate optional Comments and Page DMs local switches. The control labels provider grant evidence independently as unknown, missing, or verified, and says that local enablement alone gives agents no access before verification. Exposed Page rows never show origin engagement controls. The shared account row remains the only account-management shell; `FacebookEngagementControl` owns its narrow read/save state and inline feedback.
 
 Fanvue is a separate option in the shared `PostingAdapterList` registry, visible only when the confidential OAuth client pair is configured. Its description states that the first connection grants publishing only and that messages/comments require separate consent. The existing account-row and reconnect/disconnect controls own its connected and reconnect-required states; no second provider-specific account screen is introduced. The Composer sees an empty Fanvue content-kind capability snapshot until posting dispatch is reviewed, so connection never implies a usable publish action.

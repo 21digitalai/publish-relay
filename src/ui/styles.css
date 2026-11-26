@@ -3786,3 +3786,42 @@ textarea:focus-visible {
   box-sizing: border-box;
   resize: vertical;
 }
+.instagram-unified-capability-control {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.instagram-unified-capability-heading,
+.instagram-unified-capability-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.instagram-unified-capability-heading small,
+.instagram-unified-capability-row small,
+.instagram-unified-capability-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.instagram-unified-capability-list {
+  display: grid;
+  gap: 10px;
+}
+
+.instagram-unified-capability-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.instagram-unified-capability-row > div {
+  display: grid;
+  gap: 3px;
+}

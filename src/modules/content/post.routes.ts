@@ -1,4 +1,5 @@
 import { registerPostMediaRoutes } from './post-media.routes.js';
+import { isPublicationAdapterEnabled } from '../providers/publication-adapter-availability.js';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
@@ -400,7 +401,7 @@ export function registerPostRoutes(
         },
         async (transaction) => {
           const provider = await getMachineJobProvider(transaction, principal.workspaceId, jobId);
-          if (provider && enabledAdapters?.has(provider) === false)
+          if (provider && !isPublicationAdapterEnabled(enabledAdapters, provider))
             return {
               statusCode: 409,
               body: errorEnvelope(

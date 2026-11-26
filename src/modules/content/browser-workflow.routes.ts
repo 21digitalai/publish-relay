@@ -1,3 +1,4 @@
+import { isPublicationAdapterEnabled } from '../providers/publication-adapter-availability.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Readable } from 'node:stream';
@@ -1071,7 +1072,10 @@ export function registerBrowserWorkflowRoutes(
       );
       if (
         existing &&
-        dependencies.enabledAdapters?.has(existing.providerAccount.provider) === false
+        !isPublicationAdapterEnabled(
+          dependencies.enabledAdapters,
+          existing.providerAccount.provider,
+        )
       )
         return await reply
           .code(409)

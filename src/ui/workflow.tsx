@@ -1,3 +1,4 @@
+import { isPublicationAdapterEnabled } from '../modules/providers/publication-adapter-availability.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { emitAnalyticsAction, showAnalyticsError } from './analytics-events.js';
 
@@ -3707,7 +3708,7 @@ export function JobDetailPage() {
   const adapterEnabled =
     !job ||
     configuredAdapters === undefined ||
-    configuredAdapters.split(',').includes(job.provider.toLowerCase());
+    isPublicationAdapterEnabled(new Set(configuredAdapters.split(',')), job.provider);
   const [detail, setDetail] = useState<JobDetailDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'cancel' | 'retry' | 'approve' | 'toggle_approval' | null>(

@@ -46,6 +46,8 @@ import {
 import { FacebookHttpClient } from '../modules/providers/facebook-http-client.js';
 import { dispatchDuePageDms } from '../modules/providers/facebook-dm-pending.worker.js';
 import { dispatchDuePageComments } from '../modules/providers/facebook-comment-pending.worker.js';
+import { dispatchDueInstagramUnifiedIntent } from '../modules/providers/instagram-unified-pending.worker.js';
+import { InstagramUnifiedReadClient } from '../modules/providers/instagram-unified-read-client.js';
 import { expireScheduledEngagementProposals } from '../modules/providers/engagement-proposal.repository.js';
 import { FanvueHttpClient } from '../modules/providers/fanvue-http-client.js';
 import { FanvueReadClient } from '../modules/providers/fanvue-read-client.js';
@@ -195,6 +197,10 @@ const facebookRuntime =
         ...metaMediaRuntime,
         client: new FacebookHttpClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
       }
+    : null;
+const instagramUnifiedRuntime =
+  isAdapterEnabled(config, 'instagram') && metaMediaRuntime && config.PUBLISH_RELAY_META_GRAPH_VERSION
+    ? { ...metaMediaRuntime, client: new InstagramUnifiedReadClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }) }
     : null;
 const tiktokConfig = resolveTikTokProviderConfig(config);
 const tiktokRuntime =
@@ -362,6 +368,15 @@ while (!shutdownController.signal.aborted) {
       process.stderr.write(
         `${JSON.stringify({ event: 'facebook_page_dm_cycle_failed', error: String(error) })}\n`,
       );
+    }
+  }
+  if (instagramUnifiedRuntime) {
+    try {
+      const unified = await dispatchDueInstagramUnifiedIntent({ ...instagramUnifiedRuntime, workerId: config.WORKER_ID ?? 'publish-relay-worker', leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000) });
+      if (unified.confirmed || unified.failed || unified.unknown || unified.expired)
+        process.stdout.write(`${JSON.stringify({ event: 'instagram_unified_pending_cycle', ...unified })}\n`);
+    } catch (error) {
+      process.stderr.write(`${JSON.stringify({ event: 'instagram_unified_pending_cycle_failed', error: String(error) })}\n`);
     }
   }
   if (fanvueRuntime) {

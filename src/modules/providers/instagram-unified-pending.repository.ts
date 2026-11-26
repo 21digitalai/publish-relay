@@ -1,4 +1,5 @@
-import { and, eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { and, eq, lte, or } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { instagramUnifiedPendingIntents } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
@@ -17,6 +18,8 @@ const projection = {
   text: instagramUnifiedPendingIntents.textBody, requestFingerprint: instagramUnifiedPendingIntents.requestFingerprint,
   actorType: instagramUnifiedPendingIntents.actorType, actorId: instagramUnifiedPendingIntents.actorId,
   dueAt: instagramUnifiedPendingIntents.dueAt, status: instagramUnifiedPendingIntents.status,
+  targetFingerprint: instagramUnifiedPendingIntents.targetFingerprint,
+  leaseOwner: instagramUnifiedPendingIntents.leaseOwner,
 };
 
 export class InstagramUnifiedPendingConflictError extends Error {}
@@ -57,4 +60,22 @@ export async function cancelInstagramUnifiedIntent(database: NodePgDatabase, inp
     )).returning({ id: instagramUnifiedPendingIntents.id });
     return Boolean(row);
   });
+}
+
+export async function claimDueInstagramUnifiedIntent(database: NodePgDatabase, input: { workerId: string; now: Date; leaseMs: number }) {
+  return database.transaction(async (tx) => {
+    const eligible = or(eq(instagramUnifiedPendingIntents.status, 'pending'), and(eq(instagramUnifiedPendingIntents.status, 'claimed'), lte(instagramUnifiedPendingIntents.leaseUntil, input.now)));
+    const [candidate] = await tx.select({ id: instagramUnifiedPendingIntents.id }).from(instagramUnifiedPendingIntents).where(and(lte(instagramUnifiedPendingIntents.dueAt, input.now), eligible)).orderBy(instagramUnifiedPendingIntents.dueAt, instagramUnifiedPendingIntents.id).limit(1);
+    if (!candidate) return null;
+    const [row] = await tx.update(instagramUnifiedPendingIntents).set({ status: 'claimed', leaseOwner: `${input.workerId}:${randomUUID()}`, leaseUntil: new Date(input.now.getTime() + input.leaseMs), updatedAt: input.now }).where(and(eq(instagramUnifiedPendingIntents.id, candidate.id), lte(instagramUnifiedPendingIntents.dueAt, input.now), eligible)).returning(projection);
+    return row ?? null;
+  });
+}
+
+export async function renewClaimedInstagramUnifiedIntent(database: NodePgDatabase, input: { workspaceId: string; id: string; leaseOwner: string; leaseMs: number }) {
+  return withTenantTransaction(database, input, async (tx) => Boolean((await tx.update(instagramUnifiedPendingIntents).set({ leaseUntil: new Date(Date.now() + input.leaseMs), updatedAt: new Date() }).where(and(eq(instagramUnifiedPendingIntents.workspaceId, input.workspaceId), eq(instagramUnifiedPendingIntents.id, input.id), eq(instagramUnifiedPendingIntents.status, 'claimed'), eq(instagramUnifiedPendingIntents.leaseOwner, input.leaseOwner))).returning({ id: instagramUnifiedPendingIntents.id }))[0]));
+}
+
+export async function finishClaimedInstagramUnifiedIntent(database: NodePgDatabase, input: { workspaceId: string; id: string; leaseOwner: string; state: 'confirmed' | 'failed' | 'unknown' | 'expired' }) {
+  return withTenantTransaction(database, input, async (tx) => Boolean((await tx.update(instagramUnifiedPendingIntents).set({ status: input.state, leaseOwner: null, leaseUntil: null, updatedAt: new Date() }).where(and(eq(instagramUnifiedPendingIntents.workspaceId, input.workspaceId), eq(instagramUnifiedPendingIntents.id, input.id), eq(instagramUnifiedPendingIntents.status, 'claimed'), eq(instagramUnifiedPendingIntents.leaseOwner, input.leaseOwner))).returning({ id: instagramUnifiedPendingIntents.id }))[0]));
 }

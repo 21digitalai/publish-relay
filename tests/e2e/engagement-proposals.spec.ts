@@ -2260,6 +2260,99 @@ test('Fanvue comment approval schedules once and survives reload without claimin
   await expect(page.getByRole('button', { name: /Cancel scheduled reply/ })).toBeVisible();
 });
 
+test('Unified Instagram approval confirms account, target, exact text and planned time', async ({
+  page,
+}, testInfo) => {
+  const registered = await page.request.post('/api/auth/register', {
+    data: {
+      displayName: 'Unified Approval Owner',
+      email: `unified-approval-${String(Date.now())}@example.test`,
+      password: 'long-password-123!',
+      workspaceName: 'Unified Approval Studio',
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const workspace = (await (await page.request.get('/api/workspaces/current')).json()) as {
+    data: { slug: string };
+  };
+  const proposalId = '00000000-0000-4000-8000-000000000404';
+  const plannedDueAt = '2099-11-11T10:00:00.000Z';
+  let approvals = 0;
+  await page.route('**/api/engagement-proposals**', async (route) => {
+    const request = route.request();
+    if (request.method() === 'POST' && request.url().endsWith('/approve')) {
+      approvals += 1;
+      expect(request.postDataJSON()).toEqual({ expectedRevision: 1 });
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: { id: proposalId, status: 'scheduled', dueAt: plannedDueAt },
+          error: null,
+        }),
+      });
+      return;
+    }
+    const list = new URL(request.url()).pathname.endsWith('/api/engagement-proposals');
+    const data = list
+      ? {
+          items: [
+            {
+              id: proposalId,
+              accountDisplayName: 'Unified Studio',
+              provider: 'instagram_unified_login',
+              kind: 'dm',
+              status: 'pending',
+              sourcePreview: 'Incoming question',
+              contentPreview: 'Exact Unified reply',
+              createdAt: '2026-10-25T12:00:00Z',
+            },
+          ],
+          nextCursor: null,
+        }
+      : {
+          id: proposalId,
+          accountId: '00000000-0000-4000-8000-000000000405',
+          accountDisplayName: 'Unified Studio',
+          provider: 'instagram_unified_login',
+          kind: 'dm',
+          targetId: 'conversation-404',
+          sourceContext: {
+            parentId: 'message-404',
+            recipientId: 'recipient-404',
+            authorLabel: 'Alex',
+          },
+          content: { text: 'Exact Unified reply' },
+          plannedDueAt,
+          revision: 1,
+          status: 'pending',
+          canApprove: true,
+          noGo: false,
+          noGoReason: null,
+          canReopenCampaignFinal: false,
+        };
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data, error: null }),
+    });
+  });
+  await page.setViewportSize(
+    testInfo.project.name.includes('mobile')
+      ? { width: 390, height: 844 }
+      : { width: 1440, height: 900 },
+  );
+  await page.goto(`/w/${workspace.data.slug}/proposals`);
+  await page.getByRole('button', { name: /Instagram Unified message/ }).click();
+  await page.getByRole('button', { name: 'Approve and schedule', exact: true }).click();
+  const dialog = page.getByRole('alertdialog');
+  await expect(dialog).toContainText('Account: Unified Studio');
+  await expect(dialog).toContainText('Recipient: recipient-404');
+  await expect(dialog).toContainText('Exact text: “Exact Unified reply”');
+  await expect(dialog).toContainText('Planned for');
+  await expect(dialog.getByRole('button', { name: 'Approve and schedule' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Keep reviewing' }).click();
+  expect(approvals).toBe(0);
+});
+
 test('unknown Fanvue comment dispatch stays visible after scheduled approval without a resend control', async ({
   page,
 }) => {

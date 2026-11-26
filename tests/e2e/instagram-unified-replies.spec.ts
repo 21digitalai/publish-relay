@@ -10,6 +10,7 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   let statusDelayMs = 0;
   let mediaMode: 'ready' | 'empty' | 'error' = 'ready';
   let dmFailure = true;
+  let forceNonPendingCancellation = false;
   let scheduledItems: {
     id: string;
     kind: 'comment_reply' | 'dm_reply';
@@ -192,6 +193,15 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
         return;
       }
       if (method === 'DELETE') {
+        if (forceNonPendingCancellation) {
+          scheduledItems = scheduledItems.map((item) => ({ ...item, status: 'confirmed' }));
+          await route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ data: null, error: 'Intent is not pending' }),
+          });
+          return;
+        }
         scheduledItems = scheduledItems.map((item) => ({ ...item, status: 'cancelled' }));
         await route.fulfill({
           contentType: 'application/json',
@@ -222,6 +232,17 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   await expect(control).toContainText('pending · Thanks for asking!');
   await control.getByRole('button', { name: 'Cancel' }).click();
   await expect(control).toContainText('cancelled · Thanks for asking!');
+  await control.getByRole('textbox', { name: 'Reply' }).fill('Already in flight');
+  await control.locator('input[type="datetime-local"]').fill(futureLocal);
+  await control.getByRole('button', { name: 'Schedule reply' }).click();
+  await expect(control).toContainText('pending · Already in flight');
+  forceNonPendingCancellation = true;
+  await control.getByRole('button', { name: 'Cancel' }).click();
+  await expect(control.getByRole('alert')).toContainText(
+    'Scheduled reply is already in flight or finished.',
+  );
+  await control.getByRole('button', { name: 'Refresh scheduled replies' }).click();
+  await expect(control).toContainText('confirmed · Already in flight');
   await control.getByRole('textbox', { name: 'Reply' }).fill('Thanks for asking!');
   await control.getByRole('button', { name: 'Send reply' }).click();
   const dialog = page.getByRole('alertdialog', { name: 'Confirm comment reply' });

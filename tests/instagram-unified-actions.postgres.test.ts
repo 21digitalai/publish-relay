@@ -13,6 +13,7 @@ vi.mock('../src/modules/providers/instagram-unified-read.service.js', () => ({
 }));
 
 import { createInstagramUnifiedSendService } from '../src/modules/providers/instagram-unified-send.service.js';
+import { dispatchDueInstagramUnifiedIntent } from '../src/modules/providers/instagram-unified-pending.worker.js';
 import {
   cancelInstagramUnifiedIntent,
   claimDueInstagramUnifiedIntent,
@@ -431,5 +432,86 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     );
     expect(hidden.rows[0]?.count).toBe('0');
     await isolated.end();
+  });
+
+  it('marks stale inbound and revoked-grant dispatches terminal without sending', async () => {
+    mocks.loadToken.mockResolvedValue({
+      accessToken: 'synthetic-token',
+      remoteAccountId: 'unified-test-remote',
+    });
+    const provider = {
+      verifyMessagingPermission: vi.fn().mockResolvedValue('granted'),
+      listMessages: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            id: 'message-stale',
+            senderId: 'recipient-stale',
+            createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+      sendConversationMessage: vi.fn(),
+    };
+    const base = {
+      workspaceId,
+      accountId,
+      kind: 'dm_reply' as const,
+      targetId: 'message-stale',
+      parentId: 'conversation-stale',
+      recipientId: 'recipient-stale',
+      text: 'Must not send',
+      requestFingerprint: 'dispatch-terminal-fingerprint',
+      targetFingerprint: '0'.repeat(64),
+      actor: { type: 'user' as const, id: '00000000-0000-4000-8000-000000000401' },
+      dueAt: new Date(Date.now() - 1_000),
+    };
+    const stale = await scheduleInstagramUnifiedIntent(webDatabase as never, {
+      ...base,
+      clientActionId: '00000000-0000-4000-8000-000000000503',
+    });
+    const runtime = {
+      database: workerDatabase as never,
+      keys: {} as never,
+      client: provider as never,
+      workerId: 'terminal-worker',
+      leaseMs: 30_000,
+    };
+    await expect(dispatchDueInstagramUnifiedIntent(runtime)).resolves.toEqual({
+      confirmed: 0,
+      failed: 0,
+      unknown: 0,
+      expired: 1,
+    });
+    const staleState = await owner.query<{ status: string }>(
+      'SELECT status FROM instagram_unified_pending_intents WHERE id = $1',
+      [stale.id],
+    );
+    expect(staleState.rows).toEqual([{ status: 'expired' }]);
+    expect(provider.sendConversationMessage).not.toHaveBeenCalled();
+
+    const revoked = await scheduleInstagramUnifiedIntent(webDatabase as never, {
+      ...base,
+      clientActionId: '00000000-0000-4000-8000-000000000504',
+      targetId: 'message-revoked',
+      parentId: 'conversation-revoked',
+      recipientId: 'recipient-revoked',
+      targetFingerprint: '1'.repeat(64),
+    });
+    provider.verifyMessagingPermission.mockResolvedValueOnce('missing');
+    provider.listMessages.mockResolvedValueOnce({
+      messages: [{ id: 'message-revoked', senderId: 'recipient-revoked', createdAt: new Date().toISOString() }],
+    });
+    await expect(dispatchDueInstagramUnifiedIntent(runtime)).resolves.toEqual({
+      confirmed: 0,
+      failed: 0,
+      unknown: 0,
+      expired: 1,
+    });
+    const revokedState = await owner.query<{ status: string }>(
+      'SELECT status FROM instagram_unified_pending_intents WHERE id = $1',
+      [revoked.id],
+    );
+    expect(revokedState.rows).toEqual([{ status: 'expired' }]);
+    expect(provider.sendConversationMessage).not.toHaveBeenCalled();
   });
 });

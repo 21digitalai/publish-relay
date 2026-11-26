@@ -90,6 +90,8 @@ import { registerEngagementDmMediaRoutes } from '../modules/providers/engagement
 import { registerInstagramMediaRoutes } from '../modules/providers/instagram-media.routes.js';
 import type { InstagramLoginClient } from '../modules/providers/instagram-login-client.js';
 import { registerInstagramLoginRoutes } from '../modules/providers/instagram-login.routes.js';
+import type { InstagramUnifiedLoginClient } from '../modules/providers/instagram-unified-login-client.js';
+import { registerInstagramUnifiedLoginRoutes } from '../modules/providers/instagram-unified-login.routes.js';
 import { InstagramMediaTokenCodec } from '../modules/providers/instagram-media-token.js';
 import { registerTikTokMediaRoutes } from '../modules/providers/tiktok-media.routes.js';
 import { TikTokMediaGrantService } from '../modules/providers/tiktok-media-grant.service.js';
@@ -136,6 +138,11 @@ interface InstagramOauthOptions {
   client: InstagramLoginClient;
   callbackUrl: string;
 }
+interface InstagramUnifiedOauthOptions {
+  keys: MasterKeyProvider;
+  client: InstagramUnifiedLoginClient;
+  callbackUrl: string;
+}
 interface TikTokOauthOptions {
   keys: MasterKeyProvider;
   client: TikTokHttpClient;
@@ -168,6 +175,7 @@ export interface CoreApplicationOptions {
   metaOauth?: MetaOauthOptions;
   facebookRead?: FacebookReadOptions;
   instagramOauth?: InstagramOauthOptions;
+  instagramUnifiedOauth?: InstagramUnifiedOauthOptions;
   tiktokOauth?: TikTokOauthOptions;
   snapchatOauth?: SnapchatOauthOptions;
   fanvueOauth?: FanvueOauthOptions;
@@ -405,6 +413,7 @@ function registerBrowserRoutes(
     linkedinOauth,
     metaOauth,
     instagramOauth,
+    instagramUnifiedOauth,
     tiktokOauth,
     snapchatOauth,
     fanvueOauth,
@@ -545,6 +554,13 @@ function registerBrowserRoutes(
       database,
       actionPolicy,
       ...(instagramOauth ? { oauth: instagramOauth } : {}),
+    });
+  if (auth && database && enabledAdapters.has('instagram'))
+    registerInstagramUnifiedLoginRoutes(application, {
+      auth,
+      database,
+      actionPolicy,
+      ...(instagramUnifiedOauth ? { oauth: instagramUnifiedOauth } : {}),
     });
   if (auth && database && enabledAdapters.has('tiktok') && tiktokOauth)
     registerTikTokOauthRoutes(application, { auth, database, actionPolicy, ...tiktokOauth });

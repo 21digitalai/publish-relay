@@ -249,7 +249,11 @@ async function resolveRevisionTargets(
           accountId,
           buildFanvueEffectivePayload(input.content, input.mediaIds, mediaMimeTypes),
         ] as const;
-      if (account.provider !== 'meta' && account.provider !== 'instagram_login')
+      if (
+        account.provider !== 'meta' &&
+        account.provider !== 'instagram_login' &&
+        account.provider !== 'instagram_unified_login'
+      )
         return [accountId, null] as const;
       if (account.provider === 'instagram_login') {
         if (

@@ -33,6 +33,7 @@ function normalizeDestination(
     youtube: ['youtube'],
     meta: ['instagram', 'facebook_page'],
     instagram_login: ['instagram'],
+    instagram_unified_login: ['instagram'],
     tiktok: ['tiktok'],
     snapchat: ['snapchat'],
     fanvue: ['fanvue'],
@@ -198,8 +199,12 @@ export async function replaceProviderConnection(
       .where(
         and(
           eq(providerAccounts.workspaceId, input.workspaceId),
-          input.provider === 'instagram_login'
-            ? inArray(providerConnections.provider, ['instagram_login', 'meta'])
+          input.provider === 'instagram_login' || input.provider === 'instagram_unified_login'
+            ? inArray(providerConnections.provider, [
+                'instagram_login',
+                'instagram_unified_login',
+                'meta',
+              ])
             : eq(providerConnections.provider, input.provider),
           eq(providerAccounts.destinationProvider, destination.destinationProvider),
           eq(providerAccounts.remoteAccountId, destination.remoteAccountId),

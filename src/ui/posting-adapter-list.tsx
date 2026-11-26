@@ -17,7 +17,7 @@ export function PostingAdapterList({
         <button
           className="adapter-picker-option"
           type="button"
-          key={adapter.id}
+          key={adapter.connectionKey ?? adapter.id}
           onClick={() => {
             onSelect(adapter);
           }}

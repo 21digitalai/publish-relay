@@ -133,7 +133,10 @@ async function loadContext(database: NodePgDatabase, workspaceId: string, jobId:
         rows.some((row) => row.mimeType !== 'image/jpeg')
       )
         throw new Error('Instagram Login grant or JPEG media is unavailable');
-    } else if (first.connectionProvider !== 'meta') {
+    } else if (
+      first.connectionProvider !== 'meta' &&
+      first.connectionProvider !== 'instagram_unified_login'
+    ) {
       throw new Error('Unsupported Instagram connection provider');
     }
     return {

@@ -61,7 +61,7 @@ describe('Instagram Unified Login client', () => {
       '/v27.0/me',
       '/v27.0/me/assigned_instagram_accounts',
     ]);
-    expect(requests[2]?.search).toBe('');
+    expect(requests[2]?.searchParams.get('fields')).toBe('id,username');
     expect(requests[0]?.searchParams.get('client_secret')).toBe('secret');
     expect(requests[0]?.searchParams.get('redirect_uri')).toBe('https://relay.test/callback');
   });

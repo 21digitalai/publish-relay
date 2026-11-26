@@ -109,8 +109,10 @@ export class InstagramUnifiedLoginClient {
 
   private async discoverAccounts(accessToken: string): Promise<InstagramUnifiedLoginAccount[]> {
     const accounts: InstagramUnifiedLoginAccount[] = [];
-    // Meta's v27 reference declares that this edge has no query parameters.
-    let next: string | undefined = this.graphUrl('/me/assigned_instagram_accounts', {}).toString();
+    // Unified Login's setup guide explicitly requests both fields for account import.
+    let next: string | undefined = this.graphUrl('/me/assigned_instagram_accounts', {
+      fields: 'id,username',
+    }).toString();
     for (let page = 0; next && page < MAX_ACCOUNT_PAGES; page += 1) {
       const result: z.infer<typeof accountsSchema> = await this.getJson(
         new URL(next),

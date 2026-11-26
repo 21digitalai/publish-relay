@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { ConfirmationDialog } from './confirmation-dialog.js';
 import { LiveRegion } from './feedback.js';
 
 type GrantState = 'granted' | 'missing' | 'declined';
 type PermissionState = Record<'instagram_basic' | 'instagram_manage_comments', GrantState>;
 type CapabilityStatus = 'available' | 'needs_permission' | 'declined' | 'unknown';
 type ActionKind = 'comment_reply' | 'dm_reply';
+type ActionState = 'idle' | 'pending' | 'success' | 'failure' | 'unknown';
 
 interface Media {
   id: string;
@@ -76,6 +78,9 @@ export function InstagramUnifiedCapabilityControl({
   const [kind, setKind] = useState<ActionKind>('comment_reply');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<ActionState>('idle');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const sendTrigger = useRef<HTMLButtonElement>(null);
 
   const loadPermissions = useCallback(async () => {
     setLoading(true);
@@ -182,6 +187,7 @@ export function InstagramUnifiedCapabilityControl({
         : undefined;
     if (!targetId || !parentId || !text.trim() || (kind === 'dm_reply' && !recipientId)) return;
     setBusy(true);
+    setActionState('pending');
     setActionError(null);
     try {
       const response = await fetch(
@@ -205,15 +211,34 @@ export function InstagramUnifiedCapabilityControl({
       };
       if (!response.ok || !result.data) throw new Error(result.error ?? 'Reply failed');
       setText('');
+      setActionState(
+        result.data.state === 'confirmed'
+          ? 'success'
+          : result.data.state === 'unknown'
+            ? 'unknown'
+            : 'failure',
+      );
       setAnnouncement(
         result.data.state === 'confirmed' ? 'Reply sent.' : `Reply outcome: ${result.data.state}.`,
       );
     } catch (cause) {
+      setActionState('failure');
       setActionError(cause instanceof Error ? cause.message : 'Reply failed');
     } finally {
       setBusy(false);
+      setConfirmOpen(false);
     }
   };
+
+  const targetLabel =
+    kind === 'comment_reply'
+      ? (comments.find((item) => item.id === selectedComment)?.text ?? selectedComment)
+      : (messages.find((item) => item.id === selectedMessage)?.senderUsername ?? selectedMessage);
+  const recipientLabel =
+    kind === 'comment_reply'
+      ? accountName
+      : (messages.find((item) => item.id === selectedMessage)?.senderUsername ??
+        'conversation participant');
 
   useEffect(() => {
     void loadPermissions();
@@ -319,36 +344,29 @@ export function InstagramUnifiedCapabilityControl({
             {media.length > 0 && (
               <label>
                 Post
-                <select
+                <UnifiedSelect
+                  label="Post"
                   value={selectedMedia}
-                  onChange={(event) => {
-                    setSelectedMedia(event.target.value);
-                  }}
-                >
-                  {media.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.caption || new Date(item.timestamp).toLocaleString()}
-                    </option>
-                  ))}
-                </select>
+                  options={media.map((item) => [
+                    item.id,
+                    item.caption || new Date(item.timestamp).toLocaleString(),
+                  ])}
+                  onChange={setSelectedMedia}
+                />
               </label>
             )}
             {comments.length > 0 && (
               <label>
                 Comment
-                <select
+                <UnifiedSelect
+                  label="Comment"
                   value={selectedComment}
-                  onChange={(event) => {
-                    setSelectedComment(event.target.value);
-                  }}
-                >
-                  {comments.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.username ? `${item.username}: ` : ''}
-                      {item.text}
-                    </option>
-                  ))}
-                </select>
+                  options={comments.map((item) => [
+                    item.id,
+                    `${item.username ? `${item.username}: ` : ''}${item.text}`,
+                  ])}
+                  onChange={setSelectedComment}
+                />
               </label>
             )}
           </>
@@ -365,39 +383,31 @@ export function InstagramUnifiedCapabilityControl({
             {conversations.length > 0 && (
               <label>
                 Conversation
-                <select
+                <UnifiedSelect
+                  label="Conversation"
                   value={selectedConversation}
-                  onChange={(event) => {
-                    setSelectedConversation(event.target.value);
-                  }}
-                >
-                  {conversations.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.participants.find((participant) => participant.id !== accountId)
-                        ?.username ?? 'Conversation'}
-                      {item.updatedAt ? ` · ${new Date(item.updatedAt).toLocaleString()}` : ''}
-                    </option>
-                  ))}
-                </select>
+                  options={conversations.map((item) => [
+                    item.id,
+                    `${item.participants.find((participant) => participant.id !== accountId)?.username ?? 'Conversation'}${item.updatedAt ? ` · ${new Date(item.updatedAt).toLocaleString()}` : ''}`,
+                  ])}
+                  onChange={setSelectedConversation}
+                />
               </label>
             )}
             {messages.length > 0 && (
               <label>
                 Inbound message
-                <select
+                <UnifiedSelect
+                  label="Inbound message"
                   value={selectedMessage}
-                  onChange={(event) => {
-                    setSelectedMessage(event.target.value);
-                  }}
-                >
-                  {messages
+                  options={messages
                     .filter((item) => item.senderId !== accountId)
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.senderUsername ?? 'Participant'}: {item.text}
-                      </option>
-                    ))}
-                </select>
+                    .map((item) => [
+                      item.id,
+                      `${item.senderUsername ?? 'Participant'}: ${item.text}`,
+                    ])}
+                  onChange={setSelectedMessage}
+                />
               </label>
             )}
           </>
@@ -421,15 +431,107 @@ export function InstagramUnifiedCapabilityControl({
         <button
           type="button"
           className="primary-button"
-          onClick={() => void send()}
+          ref={sendTrigger}
+          onClick={() => {
+            setConfirmOpen(true);
+          }}
           disabled={
             busy || !text.trim() || (kind === 'comment_reply' ? !selectedComment : !selectedMessage)
           }
         >
           {busy ? 'Sending…' : 'Send reply'}
         </button>
+        {actionState !== 'idle' && (
+          <small
+            className={actionState === 'failure' ? 'field-error' : 'instagram-unified-action-state'}
+            role="status"
+          >
+            {actionState === 'pending' && 'Reply is pending provider confirmation.'}
+            {actionState === 'success' && 'Reply confirmed by the provider.'}
+            {actionState === 'failure' && 'Reply was rejected; it was not retried automatically.'}
+            {actionState === 'unknown' && 'Reply outcome is unknown; do not resend automatically.'}
+          </small>
+        )}
       </div>
+      {confirmOpen && (
+        <ConfirmationDialog
+          titleId="instagram-unified-reply-confirmation"
+          title={kind === 'comment_reply' ? 'Confirm comment reply' : 'Confirm conversation reply'}
+          description={
+            <>
+              Send to <strong>{recipientLabel}</strong> for <strong>{targetLabel}</strong>:
+              <br />“{text.trim()}”
+            </>
+          }
+          cancelLabel="Cancel"
+          confirmLabel={busy ? 'Sending…' : 'Confirm and send'}
+          confirmTone="primary"
+          disabled={busy}
+          returnFocusTo={sendTrigger.current}
+          onCancel={() => {
+            setConfirmOpen(false);
+          }}
+          onConfirm={() => void send()}
+        />
+      )}
       <LiveRegion message={announcement} />
     </section>
+  );
+}
+
+function UnifiedSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[][];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(([option]) => option === value)?.[1] ?? 'Select';
+  return (
+    <div className="filter-select">
+      <button
+        type="button"
+        className="filter-button"
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => {
+          setOpen((current) => !current);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false);
+        }}
+      >
+        {selected} <span aria-hidden="true">⌄</span>
+      </button>
+      {open && (
+        <div className="filter-select-menu" role="listbox" aria-label={label}>
+          {options.map((entry) => {
+            const [option, text] = entry;
+            if (!option || !text) return null;
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={option === value}
+                className={option === value ? 'selected' : ''}
+                key={option}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+              >
+                {text}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

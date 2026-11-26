@@ -59,13 +59,20 @@ describe('Instagram Unified read client', () => {
     const client = new InstagramUnifiedReadClient({
       graphVersion: 'v27.0',
       fetch: (input) => {
-        const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+        const url =
+          input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
         requests.push(url);
         pageNumber += 1;
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              data: [{ id: `m${String(pageNumber)}`, media_type: 'IMAGE', timestamp: '2026-11-26T10:00:00+0000' }],
+              data: [
+                {
+                  id: `m${String(pageNumber)}`,
+                  media_type: 'IMAGE',
+                  timestamp: '2026-11-26T10:00:00+0000',
+                },
+              ],
               paging:
                 pageNumber === 1
                   ? {
@@ -80,7 +87,9 @@ describe('Instagram Unified read client', () => {
       },
     });
 
-    await expect(client.listMedia({ accountId: 'ig1', accessToken: 'secret', limit: 10 })).resolves.toMatchObject({
+    await expect(
+      client.listMedia({ accountId: 'ig1', accessToken: 'secret', limit: 10 }),
+    ).resolves.toMatchObject({
       media: [{ id: 'm1' }, { id: 'm2' }],
       nextCursor: null,
     });
@@ -98,8 +107,17 @@ describe('Instagram Unified read client', () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              data: [{ id: `m${String(calls)}`, media_type: 'IMAGE', timestamp: '2026-11-26T10:00:00+0000' }],
-              paging: { next: 'https://graph.facebook.com/next?access_token=secret', cursors: { after: `cursor-${String(calls)}` } },
+              data: [
+                {
+                  id: `m${String(calls)}`,
+                  media_type: 'IMAGE',
+                  timestamp: '2026-11-26T10:00:00+0000',
+                },
+              ],
+              paging: {
+                next: 'https://graph.facebook.com/next?access_token=secret',
+                cursors: { after: `cursor-${String(calls)}` },
+              },
             }),
             { status: 200 },
           ),
@@ -107,7 +125,9 @@ describe('Instagram Unified read client', () => {
       },
     });
 
-    await expect(client.listMedia({ accountId: 'ig1', accessToken: 'secret' })).resolves.toMatchObject({
+    await expect(
+      client.listMedia({ accountId: 'ig1', accessToken: 'secret' }),
+    ).resolves.toMatchObject({
       media: { length: 20 },
       nextCursor: 'cursor-20',
     });
@@ -242,5 +262,25 @@ describe('Instagram Unified read client', () => {
       nextCursor: null,
     });
     expect(paths).toContain('/v27.0/c1');
+  });
+
+  it.each([
+    [401, 190, 'auth'],
+    [403, 10, 'permission'],
+    [400, 100, 'validation'],
+    [429, 4, 'rate_limit'],
+    [503, undefined, 'transient'],
+  ] as const)('preserves safe provider error kind for %s responses', async (status, code, kind) => {
+    const client = new InstagramUnifiedReadClient({
+      graphVersion: 'v27.0',
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code, message: 'secret provider body' } }), {
+            status,
+          }),
+        ),
+    });
+    await expect(client.verifyPermissions('secret')).rejects.toMatchObject({ kind, status });
+    await expect(client.verifyPermissions('secret')).rejects.not.toThrow('secret provider body');
   });
 });

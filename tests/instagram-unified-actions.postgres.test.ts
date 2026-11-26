@@ -636,4 +636,45 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     });
     expect(cancelledClaim?.id).not.toBe(dm.id);
   });
+
+  it('holds the account lock across a stop-winning concurrent send and never calls the provider', async () => {
+    const conversationId = 'conversation-stop-race';
+    const client = {
+      verifyMessagingPermission: vi.fn().mockResolvedValue('granted'),
+      listMessages: vi.fn().mockResolvedValue({
+        messages: [{ id: 'message-stop-race', senderId: 'recipient-stop-race', createdAt: new Date().toISOString() }],
+      }),
+      sendConversationMessage: vi.fn().mockResolvedValue('must-not-send'),
+    };
+    mocks.loadToken.mockResolvedValue({
+      accessToken: 'synthetic-token',
+      remoteAccountId: 'unified-test-remote',
+    });
+    const service = createInstagramUnifiedSendService({
+      database: webDatabase as never,
+      keys: {} as never,
+      client: client as never,
+    });
+    const stop = setInstagramUnifiedConversationNoGo(webDatabase as never, {
+      workspaceId,
+      accountId,
+      conversationId,
+      blocked: true,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const send = service.send({
+      workspaceId,
+      accountId,
+      clientActionId: '00000000-0000-4000-8000-000000000508',
+      kind: 'dm_reply',
+      targetId: 'message-stop-race',
+      parentId: conversationId,
+      recipientId: 'recipient-stop-race',
+      text: 'Must not send',
+      actor: { type: 'user', id: '00000000-0000-4000-8000-000000000401' },
+    });
+    await stop;
+    await expect(send).rejects.toThrow('conversation is stopped');
+    expect(client.sendConversationMessage).not.toHaveBeenCalled();
+  });
 });

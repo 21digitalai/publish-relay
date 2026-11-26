@@ -5,13 +5,17 @@ import { loadInstagramUnifiedToken } from './instagram-unified-read.service.js';
 import type { InstagramUnifiedReadClient } from './instagram-unified-read-client.js';
 import { InstagramUnifiedReadError } from './instagram-unified-read-client.js';
 import {
+  withInstagramUnifiedActionDispatch,
   reserveInstagramUnifiedAction,
   settleInstagramUnifiedAction,
   type InstagramUnifiedActionInput,
   type InstagramUnifiedActionOutcome,
 } from './instagram-unified-action.repository.js';
 import type { MasterKeyProvider } from '../credentials/envelope.js';
-import { isInstagramUnifiedConversationNoGo } from './instagram-unified-no-go.repository.js';
+import {
+  isInstagramUnifiedConversationNoGo,
+  isInstagramUnifiedConversationNoGoInTransaction,
+} from './instagram-unified-no-go.repository.js';
 
 const inputSchema = z.strictObject({
   workspaceId: z.uuid(),
@@ -117,6 +121,40 @@ export function createInstagramUnifiedSendService(runtime: {
           text: command.text,
         }),
       };
+      if (command.kind === 'dm_reply' && typeof runtime.database.transaction === 'function') {
+        const result = await withInstagramUnifiedActionDispatch(runtime.database, action, async (transaction, reservationId) => {
+          if (await isInstagramUnifiedConversationNoGoInTransaction(transaction, {
+            workspaceId: command.workspaceId,
+            accountId: command.accountId,
+            conversationId: command.parentId,
+          }))
+            throw new InstagramUnifiedEligibilityError('Unified Instagram conversation is stopped');
+          let dispatchOutcome: InstagramUnifiedActionOutcome;
+          try {
+            const receipt = await runtime.client.sendConversationMessage({
+              conversationId: command.parentId,
+              recipientId: command.recipientId ?? '',
+              text: command.text,
+              accessToken: token.accessToken,
+            });
+            dispatchOutcome = { state: 'confirmed', receipt };
+          } catch (error) {
+            dispatchOutcome = error instanceof InstagramUnifiedReadError && error.status >= 400 && error.status < 500 && error.status !== 429
+              ? { state: 'failed', failureStatus: error.status }
+              : { state: 'unknown' };
+          }
+          void reservationId;
+          return dispatchOutcome;
+        });
+        if ('kind' in result) {
+          if (result.kind === 'conflict') throw new InstagramUnifiedActionConflictError();
+          if (result.kind === 'existing') return result.outcome;
+          if (result.kind === 'settlement-error') throw result.error;
+          throw new Error('Unified Instagram dispatch returned an unhandled reservation');
+        }
+        return result;
+      }
+
       const reservation = await reserveInstagramUnifiedAction(runtime.database, action);
       if (reservation.kind === 'conflict') throw new InstagramUnifiedActionConflictError();
       if (reservation.kind === 'existing') return reservation.outcome;

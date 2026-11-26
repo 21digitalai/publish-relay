@@ -290,6 +290,20 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   await control.getByRole('button', { name: 'Stop conversation' }).click();
   await expect(control.getByRole('button', { name: 'Resume conversation' })).toBeVisible();
   await expect(control.getByRole('button', { name: 'Send reply' })).toBeDisabled();
+  await expect(control.getByRole('button', { name: 'Schedule reply' })).toBeDisabled();
+
+  await page.reload();
+  const reloadedAccount = page.locator('.account-row').first();
+  await reloadedAccount.getByRole('button', { name: 'Manage', exact: true }).click();
+  const reloadedControl = page.getByRole('region', { name: 'Unified Instagram capabilities' });
+  await reloadedControl.getByRole('tab', { name: 'Conversation reply' }).click();
+  await reloadedControl.getByRole('button', { name: 'Load conversations' }).click();
+  await reloadedControl.getByRole('button', { name: 'Conversation', exact: true }).click();
+  await reloadedControl.getByRole('option', { name: /alice/ }).click();
+  await reloadedControl.getByRole('button', { name: 'Conversation', exact: true }).click();
+  await reloadedControl.getByRole('option', { name: /alice/ }).click();
+  await expect(reloadedControl.getByRole('button', { name: 'Resume conversation' })).toBeVisible();
+  await expect(reloadedControl.getByRole('button', { name: 'Schedule reply' })).toBeDisabled();
   await control.getByRole('button', { name: 'Resume conversation' }).click();
   await expect(control.getByRole('button', { name: 'Stop conversation' })).toBeVisible();
   await control.getByRole('textbox', { name: 'Reply' }).fill('Absolutely, here are the details.');

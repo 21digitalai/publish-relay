@@ -15,24 +15,31 @@ export interface InstagramUnifiedConversationKey {
   conversationId: string;
 }
 
+export async function isInstagramUnifiedConversationNoGoInTransaction(
+  transaction: NodePgDatabase,
+  key: InstagramUnifiedConversationKey,
+) {
+  const [row] = await transaction
+    .select({ conversationId: instagramUnifiedDmNoGo.conversationId })
+    .from(instagramUnifiedDmNoGo)
+    .where(
+      and(
+        eq(instagramUnifiedDmNoGo.workspaceId, key.workspaceId),
+        eq(instagramUnifiedDmNoGo.accountId, key.accountId),
+        eq(instagramUnifiedDmNoGo.conversationId, key.conversationId),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
 export async function isInstagramUnifiedConversationNoGo(
   database: NodePgDatabase,
   key: InstagramUnifiedConversationKey,
 ) {
-  return withTenantTransaction(database, key, async (tx) => {
-    const [row] = await tx
-      .select({ conversationId: instagramUnifiedDmNoGo.conversationId })
-      .from(instagramUnifiedDmNoGo)
-      .where(
-        and(
-          eq(instagramUnifiedDmNoGo.workspaceId, key.workspaceId),
-          eq(instagramUnifiedDmNoGo.accountId, key.accountId),
-          eq(instagramUnifiedDmNoGo.conversationId, key.conversationId),
-        ),
-      )
-      .limit(1);
-    return Boolean(row);
-  });
+  return withTenantTransaction(database, key, (tx) =>
+    isInstagramUnifiedConversationNoGoInTransaction(tx, key),
+  );
 }
 
 export async function setInstagramUnifiedConversationNoGo(

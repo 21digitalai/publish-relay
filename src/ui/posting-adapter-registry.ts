@@ -1,5 +1,12 @@
 export type PostingAdapterId =
-  'x' | 'youtube' | 'linkedin' | 'facebook_page' | 'instagram' | 'tiktok' | 'fanvue';
+  | 'x'
+  | 'youtube'
+  | 'linkedin'
+  | 'facebook_page'
+  | 'instagram'
+  | 'instagram_unified_login'
+  | 'tiktok'
+  | 'fanvue';
 
 export interface PostingAdapterIcon {
   readonly viewBox: string;
@@ -19,6 +26,7 @@ export interface PostingAdapterConfig {
   readonly configuration: {
     readonly requiredBeforeConnect: readonly string[];
   };
+  readonly connectionKey?: string;
 }
 
 export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
@@ -83,6 +91,17 @@ export const POSTING_ADAPTERS: readonly PostingAdapterConfig[] = [
     configuration: { requiredBeforeConnect: [] },
   },
   {
+    id: 'instagram_unified_login',
+    connectionKey: 'instagram-unified-login',
+    label: 'Instagram — Unified Login',
+    description:
+      'Connect through Meta Business Login without changing the existing Instagram Login connection.',
+    icon: { viewBox: '0 0 24 24', paths: ['M2 12c2-10 7-10 10 0 3 10 8 10 10 0'] },
+    enabled: true,
+    auth: { kind: 'oauth', startPath: '/api/oauth/instagram-unified' },
+    configuration: { requiredBeforeConnect: [] },
+  },
+  {
     id: 'tiktok',
     label: 'TikTok',
     description: 'Publish a video with creator-reviewed options to a TikTok account.',
@@ -115,7 +134,9 @@ export function getEnabledPostingAdapters(
   return adapters.filter(
     (adapter) =>
       adapter.enabled &&
-      (configured === null || configured.includes(adapter.id)) &&
+      (configured === null ||
+        configured.includes(adapter.id) ||
+        (adapter.id === 'instagram_unified_login' && configured.includes('instagram'))) &&
       (adapter.id !== 'linkedin' ||
         (typeof document !== 'undefined' && document.body.dataset.linkedinEnabled === 'true')) &&
       (adapter.id !== 'tiktok' ||
@@ -131,5 +152,9 @@ export function getPostingAdapter(
 ): PostingAdapterConfig | undefined {
   const normalized =
     provider.toLowerCase() === 'meta' ? destinationProvider?.toLowerCase() : provider.toLowerCase();
-  return POSTING_ADAPTERS.find((adapter) => adapter.id === normalized);
+  return POSTING_ADAPTERS.find(
+    (adapter) =>
+      adapter.id === normalized &&
+      (normalized === 'instagram_unified_login' || !adapter.connectionKey),
+  );
 }

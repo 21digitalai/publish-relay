@@ -18,6 +18,7 @@ describe('posting adapter registry', () => {
       'linkedin',
       'facebook_page',
       'instagram',
+      'instagram_unified_login',
       'tiktok',
       'fanvue',
     ]);
@@ -76,6 +77,7 @@ describe('posting adapter registry', () => {
       'x',
       'facebook_page',
       'instagram',
+      'instagram_unified_login',
     ]);
     const markup = renderToStaticMarkup(
       createElement(PostingAdapterList, { adapters, onSelect: () => undefined }),
@@ -90,6 +92,9 @@ describe('posting adapter registry', () => {
       '/api/oauth/meta/facebook-pages',
     );
     expect(getPostingAdapter('Meta', 'instagram')?.auth.startPath).toBe('/api/oauth/instagram');
+    expect(getPostingAdapter('instagram_unified_login')?.auth.startPath).toBe(
+      '/api/oauth/instagram-unified',
+    );
     expect(getPostingAdapter('Meta')).toBeUndefined();
     expect(getPostingAdapter('unknown')).toBeUndefined();
   });

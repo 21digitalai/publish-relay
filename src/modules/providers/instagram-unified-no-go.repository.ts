@@ -110,6 +110,7 @@ export async function listInstagramUnifiedConversationHistory(
           eq(instagramUnifiedActions.workspaceId, input.workspaceId),
           eq(instagramUnifiedActions.accountId, input.accountId),
           eq(instagramUnifiedActions.parentId, input.conversationId),
+          eq(instagramUnifiedActions.kind, 'dm_reply'),
         ),
       )
       .orderBy(desc(instagramUnifiedActions.createdAt))
@@ -131,6 +132,7 @@ export async function listInstagramUnifiedConversationHistory(
           eq(instagramUnifiedPendingIntents.workspaceId, input.workspaceId),
           eq(instagramUnifiedPendingIntents.accountId, input.accountId),
           eq(instagramUnifiedPendingIntents.parentId, input.conversationId),
+          eq(instagramUnifiedPendingIntents.kind, 'dm_reply'),
         ),
       )
       .orderBy(desc(instagramUnifiedPendingIntents.createdAt))

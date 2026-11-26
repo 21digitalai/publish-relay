@@ -561,7 +561,7 @@ export function InstagramUnifiedCapabilityControl({
               >
                 <button
                   type="button"
-                  className={conversationStopped ? 'secondary-button' : 'danger-button'}
+                  className={`instagram-unified-conversation-stop ${conversationStopped ? 'secondary-button' : 'danger-button'}`}
                   onClick={() => void toggleConversationStop()}
                 >
                   {conversationStopped ? 'Resume conversation' : 'Stop conversation'}
@@ -571,15 +571,17 @@ export function InstagramUnifiedCapabilityControl({
                     ? 'Manual and scheduled replies are blocked.'
                     : 'Replies remain allowed for this conversation.'}
                 </small>
-                {history.length > 0 && (
-                  <ul aria-label="Unified Instagram conversation history">
-                    {history.map((item) => (
+                <ul className="instagram-unified-conversation-history" aria-label="Unified Instagram conversation history">
+                  {history.length > 0 ? (
+                    history.map((item) => (
                       <li key={`${item.id}:${item.createdAt}`}>
                         {new Date(item.createdAt).toLocaleString()} · {item.status} · {item.text}
                       </li>
-                    ))}
-                  </ul>
-                )}
+                    ))
+                  ) : (
+                    <li className="instagram-unified-conversation-history-empty">No conversation actions yet.</li>
+                  )}
+                </ul>
               </div>
             )}
           </>

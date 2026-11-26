@@ -195,6 +195,11 @@ export function registerInstagramUnifiedNoGoApiRoutes(
         return reply
           .code(401)
           .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
+      const limit = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
+      if (!limit.allowed)
+        return reply
+          .code(429)
+          .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
       const items = await listInstagramUnifiedConversationHistory(database, {
         workspaceId: principal.workspaceId,
         ...path.data,
@@ -204,7 +209,12 @@ export function registerInstagramUnifiedNoGoApiRoutes(
         successEnvelope(
           {
             items: items.map((item) => ({
-              ...item,
+              id: item.id,
+              kind: item.kind,
+              targetId: item.targetId,
+              text: item.text,
+              status: item.status,
+              receipt: item.receipt,
               createdAt: item.createdAt.toISOString(),
               updatedAt: item.updatedAt.toISOString(),
             })),

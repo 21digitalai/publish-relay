@@ -120,6 +120,21 @@ export function createInstagramUnifiedSendService(runtime: {
       const reservation = await reserveInstagramUnifiedAction(runtime.database, action);
       if (reservation.kind === 'conflict') throw new InstagramUnifiedActionConflictError();
       if (reservation.kind === 'existing') return reservation.outcome;
+      if (
+        command.kind === 'dm_reply' &&
+        (await isInstagramUnifiedConversationNoGo(runtime.database, {
+          workspaceId: command.workspaceId,
+          accountId: command.accountId,
+          conversationId: command.parentId,
+        }))
+      ) {
+        await settleInstagramUnifiedAction(runtime.database, {
+          ...action,
+          reservationId: reservation.id,
+          outcome: { state: 'failed', failureStatus: 409 },
+        });
+        throw new InstagramUnifiedEligibilityError('Unified Instagram conversation is stopped');
+      }
       let outcome: InstagramUnifiedActionOutcome;
       try {
         const receipt =

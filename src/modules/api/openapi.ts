@@ -630,6 +630,32 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
           },
         },
+      '/api/v1/destinations/{accountId}/instagram-unified-conversations/{conversationId}/stop': {
+        get: {
+          operationId: 'getInstagramUnifiedConversationStop',
+          description: 'Read the conversation-local Unified Instagram stop state.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [uuidPathParameter('accountId'), { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Stop state' }, '401': { description: 'Authentication required' }, '403': { description: 'Missing destinations:read capability' } },
+        },
+        put: {
+          operationId: 'setInstagramUnifiedConversationStop',
+          description: 'Set or clear the conversation-local Unified Instagram stop; clearing never replays cancelled work.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [uuidPathParameter('accountId'), { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['blocked'], properties: { blocked: { type: 'boolean' }, displayName: { type: 'string', maxLength: 200 } } } } } },
+          responses: { '200': { description: 'Updated stop state and cancelled pending count' }, '401': { description: 'Authentication required' }, '403': { description: 'Missing dms:send capability' }, '409': { description: 'Account unavailable' } },
+        },
+      },
+      '/api/v1/destinations/{accountId}/instagram-unified-conversations/{conversationId}/history': {
+        get: {
+          operationId: 'getInstagramUnifiedConversationHistory',
+          description: 'Read bounded DM action and pending history for one Unified Instagram conversation.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [uuidPathParameter('accountId'), { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }],
+          responses: { '200': { description: 'Allowlisted bounded DM history projection' }, '401': { description: 'Authentication required' }, '403': { description: 'Missing destinations:read capability' }, '429': { description: 'Rate limit exceeded' } },
+        },
+      },
       '/api/v1/destinations/{accountId}/instagram-unified-actions': {
         post: {
           operationId: 'sendInstagramUnifiedManualReply',

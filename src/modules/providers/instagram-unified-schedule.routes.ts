@@ -167,12 +167,12 @@ export function registerInstagramUnifiedScheduleApiRoutes(
       try {
         const principal = await authorize(request, 'schedules:write');
         if (!principal)
-          return reply
+          return await reply
             .code(401)
             .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
         const limit = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
         if (!limit.allowed)
-          return reply
+          return await reply
             .code(429)
             .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
         const result = await service.schedule({
@@ -181,18 +181,18 @@ export function registerInstagramUnifiedScheduleApiRoutes(
           workspaceId: principal.workspaceId,
           actor: { type: principal.kind, id: principal.actorId },
         });
-        return reply.code(202).send(successEnvelope(result, request.id));
+        return await reply.code(202).send(successEnvelope(result, request.id));
       } catch (error) {
         if (error instanceof MachineAuthorizationError)
-          return reply
+          return await reply
             .code(403)
             .send(
               errorEnvelope(error.code, 'Unified Instagram schedule access denied', request.id),
             );
         if (error instanceof InstagramUnifiedPendingConflictError)
-          return reply.code(409).send(errorEnvelope('action_conflict', error.message, request.id));
+          return await reply.code(409).send(errorEnvelope('action_conflict', error.message, request.id));
         if (error instanceof InstagramUnifiedEligibilityError)
-          return reply
+          return await reply
             .code(409)
             .send(
               errorEnvelope(
@@ -224,12 +224,12 @@ export function registerInstagramUnifiedScheduleApiRoutes(
       try {
         const principal = await authorize(request, 'schedules:read');
         if (!principal)
-          return reply
+          return await reply
             .code(401)
             .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
         const limit = rateLimiter.check(principal.workspaceId, principal.actorId, 'read');
         if (!limit.allowed)
-          return reply
+          return await reply
             .code(429)
             .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
         const result = await service.list({
@@ -237,12 +237,12 @@ export function registerInstagramUnifiedScheduleApiRoutes(
           accountId: path.data.accountId,
           ...query.data,
         });
-        return reply.send(
+        return await reply.send(
           successEnvelope({ items: result.rows.map(present), hasMore: result.hasMore }, request.id),
         );
       } catch (error) {
         if (error instanceof MachineAuthorizationError)
-          return reply
+          return await reply
             .code(403)
             .send(
               errorEnvelope(error.code, 'Unified Instagram schedule access denied', request.id),
@@ -263,7 +263,7 @@ export function registerInstagramUnifiedScheduleApiRoutes(
       try {
         const principal = await authorize(request, 'schedules:read');
         if (!principal)
-          return reply
+          return await reply
             .code(401)
             .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
         const result = await service.get({
@@ -272,11 +272,11 @@ export function registerInstagramUnifiedScheduleApiRoutes(
           id: path.data.intentId,
         });
         return result
-          ? reply.send(successEnvelope(present(result), request.id))
-          : reply.code(404).send(errorEnvelope('not_found', 'Intent not found', request.id));
+          ? await reply.send(successEnvelope(present(result), request.id))
+          : await reply.code(404).send(errorEnvelope('not_found', 'Intent not found', request.id));
       } catch (error) {
         if (error instanceof MachineAuthorizationError)
-          return reply
+          return await reply
             .code(403)
             .send(
               errorEnvelope(error.code, 'Unified Instagram schedule access denied', request.id),
@@ -297,12 +297,12 @@ export function registerInstagramUnifiedScheduleApiRoutes(
       try {
         const principal = await authorize(request, 'schedules:write');
         if (!principal)
-          return reply
+          return await reply
             .code(401)
             .send(errorEnvelope('authentication_required', 'Authentication required', request.id));
         const limit = rateLimiter.check(principal.workspaceId, principal.actorId, 'mutation');
         if (!limit.allowed)
-          return reply
+          return await reply
             .code(429)
             .send(errorEnvelope('rate_limit_exceeded', 'Rate limit exceeded', request.id));
         const cancelled = await service.cancel({
@@ -311,11 +311,11 @@ export function registerInstagramUnifiedScheduleApiRoutes(
           id: path.data.intentId,
         });
         return cancelled
-          ? reply.send(successEnvelope({ id: path.data.intentId, status: 'cancelled' }, request.id))
-          : reply.code(409).send(errorEnvelope('not_pending', 'Intent is not pending', request.id));
+          ? await reply.send(successEnvelope({ id: path.data.intentId, status: 'cancelled' }, request.id))
+          : await reply.code(409).send(errorEnvelope('not_pending', 'Intent is not pending', request.id));
       } catch (error) {
         if (error instanceof MachineAuthorizationError)
-          return reply
+          return await reply
             .code(403)
             .send(
               errorEnvelope(error.code, 'Unified Instagram schedule access denied', request.id),

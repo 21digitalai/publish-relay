@@ -4,11 +4,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { instagramUnifiedPendingIntents } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
 
-export type InstagramUnifiedPendingInput = {
+export interface InstagramUnifiedPendingInput {
   workspaceId: string; accountId: string; clientActionId: string; kind: 'comment_reply' | 'dm_reply';
   targetId: string; parentId: string; recipientId?: string; text: string; requestFingerprint: string;
   targetFingerprint: string; actor: { type: 'user' | 'api-key' | 'delegated'; id: string }; dueAt: Date;
-};
+}
 
 const projection = {
   id: instagramUnifiedPendingIntents.id, workspaceId: instagramUnifiedPendingIntents.workspaceId,
@@ -38,8 +38,8 @@ export async function scheduleInstagramUnifiedIntent(database: NodePgDatabase, i
       eq(instagramUnifiedPendingIntents.workspaceId, input.workspaceId),
       eq(instagramUnifiedPendingIntents.clientActionId, input.clientActionId),
     )).limit(1);
-    const immutablePayloadMatches = existing
-      && existing.accountId === input.accountId
+    const immutablePayloadMatches = existing?.accountId === input.accountId
+      && existing.kind === input.kind
       && existing.kind === input.kind
       && existing.targetId === input.targetId
       && existing.parentId === input.parentId
@@ -64,14 +64,14 @@ export async function getInstagramUnifiedIntent(database: NodePgDatabase, input:
 }
 
 export async function listInstagramUnifiedIntents(database: NodePgDatabase, input: {
-  workspaceId: string; accountId: string; limit?: number | undefined; status?: string | undefined;
+  workspaceId: string; accountId: string; limit?: number | undefined; status?: typeof instagramUnifiedPendingIntents.status.enumValues[number] | undefined;
 }) {
   return withTenantTransaction(database, input, async (tx) => {
     const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
     const rows = await tx.select(projection).from(instagramUnifiedPendingIntents).where(and(
       eq(instagramUnifiedPendingIntents.workspaceId, input.workspaceId),
       eq(instagramUnifiedPendingIntents.accountId, input.accountId),
-      input.status ? eq(instagramUnifiedPendingIntents.status, input.status as typeof instagramUnifiedPendingIntents.status.enumValues[number]) : undefined,
+      input.status ? eq(instagramUnifiedPendingIntents.status, input.status) : undefined,
     )).orderBy(desc(instagramUnifiedPendingIntents.dueAt), desc(instagramUnifiedPendingIntents.id)).limit(limit + 1);
     return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
   });

@@ -4,7 +4,7 @@ import { InstagramUnifiedEligibilityError, createInstagramUnifiedSendService } f
 import { claimDueInstagramUnifiedIntent, finishClaimedInstagramUnifiedIntent, renewClaimedInstagramUnifiedIntent } from './instagram-unified-pending.repository.js';
 import type { InstagramUnifiedReadClient } from './instagram-unified-read-client.js';
 
-type Runtime = { database: NodePgDatabase; keys: MasterKeyProvider; client: InstagramUnifiedReadClient; workerId: string; leaseMs: number };
+interface Runtime { database: NodePgDatabase; keys: MasterKeyProvider; client: InstagramUnifiedReadClient; workerId: string; leaseMs: number }
 type Intent = NonNullable<Awaited<ReturnType<typeof claimDueInstagramUnifiedIntent>>>;
 
 export async function dispatchDueInstagramUnifiedIntent(runtime: Runtime, now = new Date()) {
@@ -17,7 +17,7 @@ export async function dispatchDueInstagramUnifiedIntent(runtime: Runtime, now = 
     const send = createInstagramUnifiedSendService(runtime);
     if (intent.kind !== 'comment_reply' && intent.kind !== 'dm_reply') throw new InstagramUnifiedEligibilityError();
     if (intent.actorType !== 'user' && intent.actorType !== 'api_key' && intent.actorType !== 'delegated') throw new InstagramUnifiedEligibilityError();
-    const outcome = await send.send({ workspaceId: intent.workspaceId, accountId: intent.accountId, clientActionId: intent.clientActionId, kind: intent.kind as 'comment_reply' | 'dm_reply', targetId: intent.targetId, parentId: intent.parentId, ...(intent.recipientId ? { recipientId: intent.recipientId } : {}), text: intent.text, targetFingerprint: intent.targetFingerprint, actor: { type: (intent.actorType === 'api_key' ? 'api-key' : intent.actorType) as 'user' | 'api-key' | 'delegated', id: intent.actorId } });
+    const outcome = await send.send({ workspaceId: intent.workspaceId, accountId: intent.accountId, clientActionId: intent.clientActionId, kind: intent.kind, targetId: intent.targetId, parentId: intent.parentId, ...(intent.recipientId ? { recipientId: intent.recipientId } : {}), text: intent.text, targetFingerprint: intent.targetFingerprint, actor: { type: intent.actorType === 'api_key' ? 'api-key' : intent.actorType, id: intent.actorId } });
     state = outcome.state;
   } catch (error) {
     state = error instanceof InstagramUnifiedEligibilityError ? 'expired' : 'unknown';

@@ -34,7 +34,8 @@ export function createInstagramUnifiedScheduleService(runtime: { database: NodeP
         const messages = await runtime.client.listMessages({ accountId: token.remoteAccountId, conversationId: command.parentId, accessToken: token.accessToken, limit: 100 });
         const target = messages.messages.find((message) => message.id === command.targetId);
         const latest = messages.messages.filter((message) => message.senderId && message.senderId !== token.remoteAccountId).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-        if (!target || !latest || latest.senderId !== command.recipientId || Date.parse(latest.createdAt) < Date.now() - 24 * 60 * 60 * 1000) throw new InstagramUnifiedEligibilityError();
+        if (!target || !latest) throw new InstagramUnifiedEligibilityError();
+        if (latest.senderId !== command.recipientId || Date.parse(latest.createdAt) < Date.now() - 24 * 60 * 60 * 1000) throw new InstagramUnifiedEligibilityError();
         targetFingerprint = createHash('sha256').update(JSON.stringify({ kind: command.kind, target: target.id, parent: command.parentId, latest: latest.id, latestAt: latest.createdAt })).digest('hex');
       }
       const requestFingerprint = createHash('sha256').update(JSON.stringify({ accountId: command.accountId, kind: command.kind, targetId: command.targetId, parentId: command.parentId, recipientId: command.recipientId ?? null, text: command.text, dueAt: dueAt.toISOString() })).digest('hex');

@@ -96,9 +96,15 @@ describe('API v1 contract', () => {
   });
 
   it('documents the bounded Unified Instagram schedule machine contract', () => {
-    const paths = apiV1OpenApiDocument().paths as Record<string, any>;
+    const paths = apiV1OpenApiDocument().paths as Record<string, {
+      post?: { operationId: string };
+      get?: { operationId: string };
+      delete?: { operationId: string };
+    }>;
     const collection = paths['/api/v1/destinations/{accountId}/instagram-unified-schedules'];
     const detail = paths['/api/v1/destinations/{accountId}/instagram-unified-schedules/{intentId}'];
+    if (!collection || !detail || !collection.post || !collection.get || !detail.get || !detail.delete)
+      throw new Error('Unified Instagram schedule paths are missing from OpenAPI');
     expect(collection.post.operationId).toBe('scheduleInstagramUnifiedReply');
     expect(collection.get.operationId).toBe('listInstagramUnifiedSchedules');
     expect(detail.get.operationId).toBe('getInstagramUnifiedSchedule');

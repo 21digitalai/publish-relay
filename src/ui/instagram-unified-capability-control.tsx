@@ -572,7 +572,7 @@ export function InstagramUnifiedCapabilityControl({
                   type="radio"
                   name="instagram-unified-schedule-offset"
                   checked={scheduleDueAtOption === index}
-                  onChange={() => setScheduleDueAtOption(index)}
+                  onChange={() => { setScheduleDueAtOption(index); }}
                 />
                 {offsetLabel(option)}
               </label>

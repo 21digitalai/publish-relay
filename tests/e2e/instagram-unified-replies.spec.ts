@@ -10,13 +10,13 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
   let statusDelayMs = 0;
   let mediaMode: 'ready' | 'empty' | 'error' = 'ready';
   let dmFailure = true;
-  let scheduledItems: Array<{
+  let scheduledItems: {
     id: string;
     kind: 'comment_reply' | 'dm_reply';
     text: string;
     dueAt: string;
     status: string;
-  }> = [];
+  }[] = [];
   const registered = await page.request.post('/api/auth/register', {
     data: {
       displayName: 'Unified Reply Owner',
@@ -180,7 +180,7 @@ test('Unified Instagram manual replies expose confirmation and bounded outcome s
           dueAt: string;
         };
         const item = {
-          id: `scheduled-${scheduledItems.length + 1}`,
+          id: `scheduled-${String(scheduledItems.length + 1)}`,
           ...payload,
           status: 'pending',
         };

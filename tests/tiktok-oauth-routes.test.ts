@@ -22,10 +22,11 @@ afterEach(async () => {
   await Promise.all(applications.splice(0).map((application) => application.close()));
 });
 
-function application(authenticated: boolean) {
+function application(authenticated: boolean, role: 'owner' | 'editor' | 'viewer' = 'owner') {
   const store: AuthStore = {
     register: vi.fn(),
     findLogin: vi.fn(),
+    findReviewerLogin: vi.fn(),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),
     revokeSession: vi.fn(),
@@ -44,11 +45,11 @@ function application(authenticated: boolean) {
     vi.mocked(store.findSession).mockResolvedValue({
       userId: 'user',
       workspaceId: 'workspace',
-      role: 'owner',
+      role,
       expiresAt: new Date(Date.now() + 60_000),
       revokedAt: null,
     });
-    vi.mocked(store.findCurrentRole).mockResolvedValue('owner');
+    vi.mocked(store.findCurrentRole).mockResolvedValue(role);
   }
   const keys: MasterKeyProvider = {
     currentVersion: () => 'v1',
@@ -121,5 +122,45 @@ describe('TikTok OAuth HTTP boundary', () => {
     const conflict = await callback();
     expect(conflict.statusCode).toBe(409);
     expect(conflict.body).not.toContain('secret-code');
+  });
+
+  it('requires publish management for both start and callback', async () => {
+    const viewer = application(true, 'viewer');
+    expect(
+      (await viewer.inject({ method: 'POST', url: '/api/oauth/tiktok', headers: csrf })).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await viewer.inject({
+          method: 'GET',
+          url: '/api/oauth/tiktok/callback?state=state&code=code',
+          headers: { cookie: session },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(beginTikTokOauthConnection).not.toHaveBeenCalled();
+    expect(completeTikTokOauthConnection).not.toHaveBeenCalled();
+
+    const editor = application(true, 'editor');
+    vi.mocked(beginTikTokOauthConnection).mockResolvedValue({
+      authorizationUrl: 'https://www.tiktok.com/v2/auth/authorize/',
+      expiresAt: new Date('2026-11-24'),
+    });
+    expect(
+      (await editor.inject({ method: 'POST', url: '/api/oauth/tiktok', headers: csrf })).statusCode,
+    ).toBe(200);
+    vi.mocked(completeTikTokOauthConnection).mockResolvedValue({
+      connectionId: 'id',
+      accounts: [],
+    });
+    expect(
+      (
+        await editor.inject({
+          method: 'GET',
+          url: '/api/oauth/tiktok/callback?state=state&code=code',
+          headers: { cookie: session },
+        })
+      ).statusCode,
+    ).toBe(302);
   });
 });

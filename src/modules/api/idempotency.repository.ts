@@ -20,7 +20,7 @@ export interface IdempotentMutationInput {
   operation: string;
   idempotencyKey: string;
   requestFingerprint: string;
-  machineCapability?: 'schedules:read' | 'schedules:write';
+  machineCapability?: 'schedules:read' | 'schedules:write' | 'content:write';
 }
 
 export async function executeIdempotentMutation(

@@ -918,6 +918,20 @@
       "when": 1795247000000,
       "tag": "0130_fanvue_dm_checkpoint_action_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1795441500000,
+      "tag": "0131_reviewer_access_expiry",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1795441500001,
+      "tag": "0132_content_media_amendment_admission",
+      "breakpoints": true
     }
   ]
 }

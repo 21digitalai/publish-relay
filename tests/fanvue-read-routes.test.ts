@@ -39,6 +39,13 @@ function fixture(capabilities: string[]) {
   const listSubscribers = vi
     .fn()
     .mockResolvedValue({ data: [], pagination: { nextCursor: 'next-page' } });
+  const getSubscriber = vi.fn().mockResolvedValue({
+    uuid: fanUuid,
+    handle: 'fan',
+    displayName: 'Fan',
+    relationship: 'subscriber',
+    subscriptionStatus: 'active',
+  });
   const listVaultFolders = vi
     .fn()
     .mockResolvedValue({ data: [{ name: 'DMs', createdAt: null, mediaCount: 7 }], pagination: {} });
@@ -58,6 +65,7 @@ function fixture(capabilities: string[]) {
     listComments,
     listFollowers,
     listSubscribers,
+    getSubscriber,
     listPosts: vi.fn(),
     getPost: vi.fn(),
     listChats: vi.fn(),
@@ -90,6 +98,7 @@ function fixture(capabilities: string[]) {
     listComments,
     listFollowers,
     listSubscribers,
+    getSubscriber,
     listVaultFolders,
     listVaultFolderMedia,
     listDueDmConversations,
@@ -128,6 +137,37 @@ describe('Fanvue agent read boundary', () => {
       expect.anything(),
       'fanvue:audience:read',
       expect.any(String),
+    );
+  });
+
+  it('reads exact subscriber status through the same selected-account audience boundary', async () => {
+    const denied = fixture(['fanvue:chats:read']);
+    const deniedResponse = await denied.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/subscribers/${fanUuid}`,
+      headers,
+    });
+    expect(deniedResponse.statusCode).toBe(403);
+    expect(denied.getSubscriber).not.toHaveBeenCalled();
+
+    const granted = fixture(['fanvue:audience:read']);
+    const response = await granted.application.inject({
+      method: 'GET',
+      url: `/api/v1/fanvue/accounts/${accountId}/subscribers/${fanUuid}`,
+      headers,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        uuid: fanUuid,
+        handle: 'fan',
+        displayName: 'Fan',
+        relationship: 'subscriber',
+        subscriptionStatus: 'active',
+      },
+    });
+    expect(granted.getSubscriber).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId, accountId, fanUuid }),
     );
   });
 

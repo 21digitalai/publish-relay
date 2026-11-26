@@ -1,6 +1,7 @@
 import { createOpaqueToken, hashOpaqueToken } from './session.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { requireWorkspaceAction, type MembershipRole } from './authorization.js';
+import { deriveAuthRateLimitKeys, type AuthRateLimitSecret } from './auth-rate-limit.js';
 
 export const MAX_WORKSPACES_PER_USER = 100;
 
@@ -18,6 +19,14 @@ export interface AuthStore {
     workspaceName: string;
   }) => Promise<AuthIdentity>;
   findLogin: (email: string) => Promise<(AuthIdentity & { passwordHash: string }) | null>;
+  findReviewerLogin: (
+    email: string,
+    now: Date,
+  ) => Promise<(AuthIdentity & { passwordHash: string; reviewAccessExpiresAt: Date }) | null>;
+  consumeReviewerRateLimit?: (input: {
+    emailKeyHash: string;
+    networkKeyHash: string;
+  }) => Promise<boolean>;
   createSession: (
     input: AuthIdentity & { tokenHash: string; csrfSecretHash: string; expiresAt: Date },
   ) => Promise<void>;
@@ -81,6 +90,7 @@ export class AuthService {
   constructor(
     private readonly store: AuthStore,
     private readonly sessionLifetimeMs = 1000 * 60 * 60 * 24 * 30,
+    private readonly authRateLimitSecret?: AuthRateLimitSecret,
   ) {}
 
   async register(
@@ -105,10 +115,35 @@ export class AuthService {
     return this.issueSession(identity, now);
   }
 
-  private async issueSession(identity: AuthIdentity, now: Date): Promise<SessionResult> {
+  async loginReviewer(
+    email: string,
+    password: string,
+    now = new Date(),
+  ): Promise<SessionResult | null> {
+    const identity = await this.store.findReviewerLogin(email.trim().toLowerCase(), now);
+    if (!identity || !(await verifyPassword(identity.passwordHash, password))) return null;
+    await this.store.revokeSessionsForUser(identity.workspaceId, identity.userId);
+    return this.issueSession(identity, now, identity.reviewAccessExpiresAt);
+  }
+
+  async admitReviewerLogin(email: string, networkKey: string): Promise<boolean> {
+    const consume = this.store.consumeReviewerRateLimit;
+    if (!consume || !this.authRateLimitSecret) return false;
+    return consume(
+      deriveAuthRateLimitKeys({ email, networkKey, secret: this.authRateLimitSecret }),
+    );
+  }
+
+  private async issueSession(
+    identity: AuthIdentity,
+    now: Date,
+    maximumExpiresAt?: Date,
+  ): Promise<SessionResult> {
     const token = createOpaqueToken();
     const csrfToken = createOpaqueToken();
-    const expiresAt = new Date(now.getTime() + this.sessionLifetimeMs);
+    const normalExpiresAt = new Date(now.getTime() + this.sessionLifetimeMs);
+    const expiresAt =
+      maximumExpiresAt && maximumExpiresAt < normalExpiresAt ? maximumExpiresAt : normalExpiresAt;
     await this.store.createSession({
       ...identity,
       tokenHash: hashOpaqueToken(token),

@@ -118,6 +118,17 @@ const subscriberPage = z.object({
     ),
   pagination: offsetPagination.extend({ nextCursor: z.string().max(1024).nullable() }),
 });
+const subscriberDetail = audiencePerson
+  .extend({
+    subscription: z
+      .object({ status: z.enum(['active', 'cancelled', 'pending_confirmation', 'paused']) })
+      .nullable(),
+  })
+  .transform(({ subscription, ...row }) => ({
+    ...row,
+    relationship: 'subscriber' as const,
+    subscriptionStatus: subscription?.status ?? null,
+  }));
 
 function page(value: number, name: string, maximum: number): number {
   if (!Number.isInteger(value) || value < 1 || value > maximum)
@@ -148,6 +159,11 @@ export class FanvueReadClient {
     if (options.cursor) query.set('cursor', z.string().min(1).max(1024).parse(options.cursor));
     else query.set('page', String(page(options.page ?? 1, 'page', Number.MAX_SAFE_INTEGER)));
     return this.get(accessToken, `/subscribers?${query}`, subscriberPage);
+  }
+
+  getSubscriber(accessToken: string, fanUuid: string) {
+    const id = z.uuid().parse(fanUuid);
+    return this.get(accessToken, `/subscribers/${id}`, subscriberDetail);
   }
 
   listChats(

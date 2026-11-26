@@ -11,6 +11,7 @@ function createStore(): AuthStore {
   return {
     register: vi.fn(),
     findLogin: vi.fn(),
+    findReviewerLogin: vi.fn(),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),
     revokeSession: vi.fn(),
@@ -61,6 +62,26 @@ describe('AuthService', () => {
     expect(store.revokeSessionsForUser).toHaveBeenCalledWith('w1', 'u1');
     expect(result?.expiresAt).toEqual(new Date(1_000));
     expect(result?.token).toBeTruthy();
+  });
+
+  it('caps reviewer sessions at the active grant expiry', async () => {
+    const store = createStore();
+    const reviewAccessExpiresAt = new Date(500);
+    vi.mocked(store.findReviewerLogin).mockResolvedValue({
+      userId: 'reviewer',
+      workspaceId: 'review-workspace',
+      role: 'editor',
+      passwordHash: await hashPassword('password'),
+      reviewAccessExpiresAt,
+    });
+    const result = await new AuthService(store, 1_000).loginReviewer(
+      'REVIEWER@EXAMPLE.TEST',
+      'password',
+      new Date(0),
+    );
+    expect(store.findReviewerLogin).toHaveBeenCalledWith('reviewer@example.test', new Date(0));
+    expect(store.revokeSessionsForUser).toHaveBeenCalledWith('review-workspace', 'reviewer');
+    expect(result).toMatchObject({ role: 'editor', expiresAt: reviewAccessExpiresAt });
   });
 
   it('revokes logout by the hashed token', async () => {

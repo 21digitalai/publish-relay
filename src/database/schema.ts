@@ -76,6 +76,7 @@ export const users = pgTable(
     displayName: text('display_name').notNull(),
     email: text('email').notNull(),
     passwordHash: text('password_hash'),
+    reviewAccessExpiresAt: timestamp('review_access_expires_at', { withTimezone: true }),
     defaultWorkspaceId: uuid('default_workspace_id').references(() => workspaces.id, {
       onDelete: 'restrict',
     }),

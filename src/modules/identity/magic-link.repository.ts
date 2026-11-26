@@ -11,9 +11,7 @@ import {
   workspaces,
 } from '../../database/schema.js';
 import type { MagicLinkStore } from './magic-link.service.js';
-
-const EMAIL_REQUESTS_PER_MINUTE = 5;
-const NETWORK_REQUESTS_PER_MINUTE = 20;
+import { consumePersistentAuthRateLimit } from './auth-rate-limit.repository.js';
 
 function createWorkspaceSlug(name: string): string {
   const base =
@@ -29,47 +27,25 @@ export interface PostgresMagicLinkStore extends MagicLinkStore {
   cleanupExpired: () => Promise<number>;
 }
 
-async function incrementRateBucket(
-  database: NodePgDatabase,
-  kind: 'email' | 'network',
-  keyHash: string,
-): Promise<number> {
-  const result = await database.execute<{ request_count: number }>(sql`
-    INSERT INTO auth_rate_limit_buckets (
-      kind, key_hash, window_started_at, expires_at
-    ) VALUES (${kind}, ${keyHash}, date_trunc('minute', now()), date_trunc('minute', now()) + interval '2 minutes')
-    ON CONFLICT (kind, key_hash, window_started_at)
-    DO UPDATE SET request_count = auth_rate_limit_buckets.request_count + 1
-    RETURNING request_count
-  `);
-  const count = result.rows[0]?.request_count;
-  if (!count) throw new Error('Auth rate-limit bucket was not updated');
-  return count;
-}
-
 export function createPostgresMagicLinkStore(database: NodePgDatabase): PostgresMagicLinkStore {
   return {
     async findEnabledUserIdByEmail(email) {
       const [user] = await database
         .select({ id: users.id })
         .from(users)
-        .where(and(sql`lower(${users.email}) = ${email}`, eq(users.isDisabled, false)))
+        .where(
+          and(
+            sql`lower(${users.email}) = ${email}`,
+            eq(users.isDisabled, false),
+            sql`(${users.reviewAccessExpiresAt} is null or ${users.reviewAccessExpiresAt} <= now())`,
+          ),
+        )
         .limit(1);
       return user?.id ?? null;
     },
 
     async consumeRateLimit(input) {
-      return database.transaction(async (transaction) => {
-        const emailCount = await incrementRateBucket(transaction, 'email', input.emailKeyHash);
-        const networkCount = await incrementRateBucket(
-          transaction,
-          'network',
-          input.networkKeyHash,
-        );
-        return (
-          emailCount <= EMAIL_REQUESTS_PER_MINUTE && networkCount <= NETWORK_REQUESTS_PER_MINUTE
-        );
-      });
+      return consumePersistentAuthRateLimit(database, input);
     },
 
     async createChallenge(input) {
@@ -107,6 +83,7 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
             AND challenge.consumed_at IS NULL
             AND challenge.expires_at > now()
             AND users.is_disabled = false
+            AND (users.review_access_expires_at IS NULL OR users.review_access_expires_at <= now())
           FOR UPDATE OF challenge
         `);
         const challenge = result.rows[0];
@@ -146,7 +123,11 @@ export function createPostgresMagicLinkStore(database: NodePgDatabase): Postgres
           );
         await transaction
           .update(users)
-          .set({ passwordHash: null, updatedAt: input.now })
+          .set({
+            passwordHash: null,
+            reviewAccessExpiresAt: null,
+            updatedAt: input.now,
+          })
           .where(eq(users.id, challenge.user_id));
         await transaction.insert(sessions).values({
           userId: challenge.user_id,

@@ -7,7 +7,7 @@ export interface TenantTransactionOptions {
   machineActor?: {
     type: 'api-key' | 'delegated';
     id: string;
-    capability: 'schedules:read' | 'schedules:write' | 'destinations:read';
+    capability: 'schedules:read' | 'schedules:write' | 'content:write' | 'destinations:read';
   };
 }
 

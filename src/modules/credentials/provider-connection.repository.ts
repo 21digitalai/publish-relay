@@ -3,6 +3,8 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
   auditEvents,
+  credentials,
+  facebookPageEngagementModules,
   memberships,
   providerAccounts,
   providerConnections,
@@ -307,6 +309,40 @@ export async function replaceProviderConnection(
       account.id,
     ]),
   );
+  const activeMessagesCredentials =
+    input.provider === 'meta' &&
+    input.grantFamily === 'facebook_pages' &&
+    existingAccounts.length > 0
+      ? await database
+          .select({
+            accountId: facebookPageEngagementModules.accountId,
+            credentialId: facebookPageEngagementModules.dmsCredentialId,
+          })
+          .from(facebookPageEngagementModules)
+          .innerJoin(
+            credentials,
+            and(
+              eq(credentials.workspaceId, facebookPageEngagementModules.workspaceId),
+              eq(credentials.id, facebookPageEngagementModules.dmsCredentialId),
+              isNull(credentials.revokedAt),
+            ),
+          )
+          .where(
+            and(
+              eq(facebookPageEngagementModules.workspaceId, input.workspaceId),
+              eq(facebookPageEngagementModules.dmsProviderGrant, 'verified'),
+              inArray(
+                facebookPageEngagementModules.accountId,
+                existingAccounts.map((account) => account.id),
+              ),
+            ),
+          )
+      : [];
+  const activeMessagesCredentialByAccount = new Map(
+    activeMessagesCredentials.flatMap((binding) =>
+      binding.credentialId ? [[binding.accountId, binding.credentialId] as const] : [],
+    ),
+  );
   const replacedAccountCredentialIds = existingAccounts.flatMap((account) =>
     account.credentialId ? [account.credentialId] : [],
   );
@@ -353,13 +389,15 @@ export async function replaceProviderConnection(
     );
     if (!existingId) continue;
     const previous = existingAccounts.find((account) => account.id === existingId);
+    const preservedMessagesCredentialId = activeMessagesCredentialByAccount.get(existingId);
+    const nextCredentialId = preservedMessagesCredentialId ?? account.credentialId ?? null;
     await database
       .update(providerAccounts)
       .set({
         providerAccountId: account.providerAccountId,
         displayName: account.displayName,
         remoteParentAccountId: account.remoteParentAccountId ?? null,
-        credentialId: account.credentialId ?? null,
+        credentialId: nextCredentialId,
         capabilitySnapshot: account.capabilitySnapshot ?? {},
         capabilitiesCheckedAt: account.capabilitiesCheckedAt ?? null,
         availability: account.availability ?? 'active',
@@ -378,7 +416,13 @@ export async function replaceProviderConnection(
         targetId: existingId,
         metadata: { destinationProvider: account.destinationProvider },
       });
-    if (previous?.credentialId && previous.credentialId !== (account.credentialId ?? null))
+    if (preservedMessagesCredentialId)
+      lifecycleEvents.push({
+        action: 'provider.destination.credential_preserved',
+        targetId: existingId,
+        metadata: { destinationProvider: account.destinationProvider, module: 'dms' },
+      });
+    else if (previous?.credentialId && previous.credentialId !== nextCredentialId)
       lifecycleEvents.push({
         action: 'provider.destination.credential_rotated',
         targetId: existingId,
@@ -451,6 +495,7 @@ export async function replaceProviderConnection(
     ...new Set([
       ...(replacedCredentialId ? [replacedCredentialId] : []),
       ...replacedAccountCredentialIds,
+      ...destinations.flatMap((account) => (account.credentialId ? [account.credentialId] : [])),
     ]),
   ];
   const [referencingAccounts, referencingConnections] = candidates.length
@@ -487,8 +532,8 @@ export async function replaceProviderConnection(
       replacedCredentialId && !stillReferenced.has(replacedCredentialId)
         ? replacedCredentialId
         : null,
-    replacedAccountCredentialIds: replacedAccountCredentialIds.filter(
-      (id) => !stillReferenced.has(id),
+    replacedAccountCredentialIds: candidates.filter(
+      (id) => id !== replacedCredentialId && !stillReferenced.has(id),
     ),
   };
 }

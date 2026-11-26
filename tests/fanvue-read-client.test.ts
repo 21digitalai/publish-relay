@@ -367,4 +367,69 @@ describe('Fanvue read transport', () => {
     expect(request.mock.calls[1]?.[0]).toContain('cursor=prior');
     expect(() => client.listFollowers('token', { size: 51 })).toThrow();
   });
+
+  it('reads one exact subscriber and drops private or financial provider fields', async () => {
+    const request = vi.fn((url: string | URL | Request) => {
+      expect(typeof url).toBe('string');
+      expect(url).toContain(`/subscribers/${person.uuid}`);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            uuid: person.uuid,
+            handle: 'fan',
+            displayName: 'Fan',
+            subscription: { status: 'pending_confirmation', price: 999 },
+            amountPaid: 999,
+            email: 'private@example.test',
+          }),
+        ),
+      );
+    });
+    const result = await new FanvueReadClient(request).getSubscriber('token', person.uuid);
+    expect(result).toEqual({
+      uuid: person.uuid,
+      handle: 'fan',
+      displayName: 'Fan',
+      relationship: 'subscriber',
+      subscriptionStatus: 'pending_confirmation',
+    });
+    expect(result).not.toHaveProperty('amountPaid');
+    expect(result).not.toHaveProperty('email');
+  });
+
+  it('preserves null status and rejects malformed exact subscriber responses', async () => {
+    const valid = new FanvueReadClient(
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            uuid: person.uuid,
+            handle: 'fan',
+            displayName: 'Fan',
+            subscription: null,
+          }),
+        ),
+      ),
+    );
+    await expect(valid.getSubscriber('token', person.uuid)).resolves.toMatchObject({
+      subscriptionStatus: null,
+    });
+
+    const malformed = new FanvueReadClient(
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ uuid: person.uuid, subscription: { status: 'paid' } })),
+        ),
+    );
+    await expect(malformed.getSubscriber('token', person.uuid)).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+  });
+
+  it('preserves provider 404 for an exact subscriber miss', async () => {
+    const client = new FanvueReadClient(
+      vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
+    );
+    await expect(client.getSubscriber('token', person.uuid)).rejects.toMatchObject({ status: 404 });
+  });
 });

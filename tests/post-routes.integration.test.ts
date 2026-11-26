@@ -3158,3 +3158,143 @@ describe('agent publication retry PostgreSQL boundary', () => {
     expect(limited.statusCode).toBe(429);
   });
 });
+
+describe('media-only amendment API and CLI', () => {
+  const oldMediaId = '00000000-0000-4000-8000-000000000881';
+  const newMediaId = '00000000-0000-4000-8000-000000000882';
+  const headers = {
+    authorization: 'Bearer pr_test.secret',
+    'x-publish-relay-workspace': workspaceId,
+  };
+  async function fixture() {
+    await database.exec(`SELECT set_config('app.workspace_id','${workspaceId}',false);
+      INSERT INTO media_objects (id,workspace_id,storage_key,sha256,mime_type,byte_size,state)
+      VALUES ('${oldMediaId}','${workspaceId}','old.jpg','old','image/jpeg',100,'ready'),
+        ('${newMediaId}','${workspaceId}','new.jpg','new','image/jpeg',100,'ready')`);
+    const response = await application.inject({
+      method: 'POST',
+      url: '/api/v1/posts',
+      headers: { ...headers, 'idempotency-key': 'original' },
+      payload: { ...requestPayload('Unchanged caption'), mediaIds: [oldMediaId] },
+    });
+    expect(response.statusCode).toBe(201);
+    const created = response.json<{ data: { id: string; revisionId: string } }>().data;
+    const url = '/api/v1/posts/' + created.id + '/media';
+    const payload = {
+      expectedRevisionId: created.revisionId,
+      replacements: [{ oldMediaId, newMediaId }],
+    };
+    return { url, payload, created };
+  }
+
+  it('uses content:write, replays exactly once, rejects stale revision and serializes only a bounded receipt', async () => {
+    const { url, payload } = await fixture();
+    const options = {
+      method: 'PATCH' as const,
+      url,
+      payload,
+      headers: { ...headers, 'idempotency-key': 'replace-1' },
+    };
+    const first = await application.inject(options);
+    expect(first.statusCode).toBe(200);
+    expect(requireCapability).toHaveBeenCalledWith(
+      expect.anything(),
+      'content:write',
+      expect.any(String),
+    );
+    expect(
+      Object.keys(
+        first.json<{ data: { postId: string; revisionId: string; jobIds: string[] } }>().data,
+      ).sort(),
+    ).toEqual(['jobIds', 'postId', 'revisionId']);
+    expect(first.body.length).toBeLessThan(600);
+    const replay = await application.inject(options);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.headers['idempotency-replayed']).toBe('true');
+    expect(
+      replay.json<{ data: { postId: string; revisionId: string; jobIds: string[] } }>().data,
+    ).toEqual(
+      first.json<{ data: { postId: string; revisionId: string; jobIds: string[] } }>().data,
+    );
+    const stale = await application.inject({
+      ...options,
+      headers: { ...headers, 'idempotency-key': 'replace-2' },
+    });
+    expect(stale.statusCode).toBe(409);
+    const mismatch = await application.inject({
+      ...options,
+      payload: { ...payload, expectedRevisionId: foreignRevisionId },
+    });
+    expect(mismatch.statusCode).toBe(409);
+    expect(
+      (
+        await database.query(
+          `SELECT id FROM post_revisions WHERE post_id='${first.json<{ data: { postId: string; revisionId: string; jobIds: string[] } }>().data.postId}'`,
+        )
+      ).rows,
+    ).toHaveLength(2);
+  });
+
+  it('rejects extra mutable fields, foreign post, missing key and missing capability', async () => {
+    const { url, payload } = await fixture();
+    const options = {
+      method: 'PATCH' as const,
+      url,
+      payload,
+      headers: { ...headers, 'idempotency-key': 'replace-1' },
+    };
+    expect(
+      (
+        await application.inject({
+          ...options,
+          payload: { ...payload, scheduledAt: '2030-01-01T00:00:00Z' },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (await application.inject({ ...options, url: '/api/v1/posts/' + foreignPostId + '/media' }))
+        .statusCode,
+    ).toBe(404);
+    expect((await application.inject({ ...options, headers })).statusCode).toBe(400);
+    expect(
+      (
+        await application.inject({
+          ...options,
+          payload: { ...payload, replacements: [{ oldMediaId, newMediaId: foreignMediaId }] },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await database.query(
+          `SELECT id FROM post_revisions WHERE post_id='${url.split('/')[4] ?? ''}'`,
+        )
+      ).rows,
+    ).toHaveLength(1);
+    requireCapability.mockRejectedValueOnce(new ApiKeyAuthorizationError('Missing content write'));
+    expect((await application.inject(options)).statusCode).toBe(403);
+  });
+
+  it('ships the CLI command over the same endpoint with the same receipt allowlist', async () => {
+    const { payload, created } = await fixture();
+    const directory = await mkdtemp(join(tmpdir(), 'relay-media-cli-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'body.json');
+    await writeFile(path, JSON.stringify(payload));
+    const result = await runCli([
+      'posts',
+      'replace-media',
+      created.id,
+      '--body-file',
+      path,
+      '--idempotency-key',
+      'cli-replace',
+    ]);
+    expect(result.code).toBe(0);
+    expect(Object.keys(result.body.data as Record<string, unknown>).sort()).toEqual([
+      'jobIds',
+      'postId',
+      'revisionId',
+    ]);
+  });
+});

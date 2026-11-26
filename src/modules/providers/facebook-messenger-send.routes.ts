@@ -60,6 +60,7 @@ export const facebookDmSendRequestSchema = z.strictObject({
 const cancelParamsSchema = paramsSchema.extend({ intentId: z.uuid() });
 const groupParamsSchema = paramsSchema.extend({ rootId: z.uuid() });
 export const facebookDmGroupRequestSchema = z.strictObject({
+  dueAt: z.iso.datetime({ offset: true }).optional(),
   clientActionId: z.uuid(),
   texts: z.array(z.string().trim().min(1).max(2000)).min(1).max(4),
   finalExit: z.boolean().optional(),

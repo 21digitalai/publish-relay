@@ -3,6 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { auditEvents, memberships, sessions, users, workspaces } from '../../database/schema.js';
 import { withTenantTransaction } from '../../database/tenant-transaction.js';
+import { consumePersistentAuthRateLimit } from './auth-rate-limit.repository.js';
 import type { AuthStore, WorkspaceSummary } from './auth.service.js';
 
 function workspaceSlug(name: string): string {
@@ -58,6 +59,7 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
           and(
             sql`lower(${users.email}) = ${email}`,
             eq(users.isDisabled, false),
+            isNull(users.reviewAccessExpiresAt),
             isNull(workspaces.deletedAt),
           ),
         )
@@ -81,6 +83,59 @@ export function createPostgresAuthStore(database: NodePgDatabase): AuthStore {
             : null;
         },
       );
+    },
+    async findReviewerLogin(email, now) {
+      const [user] = await database
+        .select({
+          userId: users.id,
+          passwordHash: users.passwordHash,
+          workspaceId: users.defaultWorkspaceId,
+          reviewAccessExpiresAt: users.reviewAccessExpiresAt,
+        })
+        .from(users)
+        .innerJoin(workspaces, eq(workspaces.id, users.defaultWorkspaceId))
+        .where(
+          and(
+            sql`lower(${users.email}) = ${email}`,
+            eq(users.isDisabled, false),
+            sql`${users.reviewAccessExpiresAt} > ${now}`,
+            isNull(workspaces.deletedAt),
+          ),
+        )
+        .limit(1);
+      const workspaceId = user?.workspaceId;
+      const reviewAccessExpiresAt = user?.reviewAccessExpiresAt;
+      if (!user || !workspaceId || !user.passwordHash || !reviewAccessExpiresAt) return null;
+      const passwordHash = user.passwordHash;
+      return withTenantTransaction(
+        database,
+        { workspaceId, userId: user.userId },
+        async (transaction) => {
+          const [membership] = await transaction
+            .select({ role: memberships.role })
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.workspaceId, workspaceId),
+                eq(memberships.userId, user.userId),
+                eq(memberships.role, 'editor'),
+              ),
+            )
+            .limit(1);
+          return membership
+            ? {
+                userId: user.userId,
+                passwordHash,
+                workspaceId,
+                role: membership.role,
+                reviewAccessExpiresAt,
+              }
+            : null;
+        },
+      );
+    },
+    async consumeReviewerRateLimit(input) {
+      return consumePersistentAuthRateLimit(database, input);
     },
     async createSession(input) {
       await withTenantTransaction(database, input, async (transaction) => {

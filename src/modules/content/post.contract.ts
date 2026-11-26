@@ -171,3 +171,17 @@ export const postDetailResponseSchema = postSummarySchema.extend({
     }),
   ),
 });
+
+export const replacePostMediaSchema = z.strictObject({
+  expectedRevisionId: z.uuid(),
+  replacements: z
+    .array(z.strictObject({ oldMediaId: z.uuid(), newMediaId: z.uuid() }))
+    .min(1)
+    .max(100),
+});
+
+export const replacePostMediaResponseSchema = z.object({
+  postId: z.uuid(),
+  revisionId: z.uuid(),
+  jobIds: z.array(z.uuid()).max(100),
+});

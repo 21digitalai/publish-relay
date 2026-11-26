@@ -41,6 +41,12 @@ beforeEach(async () => {
   await database.exec(
     await readFile(new URL('../migrations/0058_workspace_tombstone.sql', import.meta.url), 'utf8'),
   );
+  await database.exec(
+    await readFile(
+      new URL('../migrations/0131_reviewer_access_expiry.sql', import.meta.url),
+      'utf8',
+    ),
+  );
 });
 
 afterEach(async () => database.close());
@@ -51,8 +57,11 @@ describe('PostgreSQL magic-link repository', () => {
     const workspaceId = '00000000-0000-4000-8000-000000000912';
     await database.exec(`
       INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Magic', 'magic');
-      INSERT INTO users (id, display_name, email, password_hash, default_workspace_id)
-        VALUES ('${userId}', 'Magic Owner', 'magic@example.test', 'legacy-password-hash', '${workspaceId}');
+      INSERT INTO users
+        (id, display_name, email, password_hash, default_workspace_id, review_access_expires_at)
+      VALUES
+        ('${userId}', 'Magic Owner', 'magic@example.test', 'legacy-password-hash',
+         '${workspaceId}', '2020-01-01T00:00:00Z');
       SELECT set_config('app.workspace_id', '${workspaceId}', false);
       INSERT INTO memberships (workspace_id, user_id, role)
         VALUES ('${workspaceId}', '${userId}', 'owner');
@@ -68,6 +77,7 @@ describe('PostgreSQL magic-link repository', () => {
       SET ROLE magic_link_test_web;
     `);
     const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
+    await expect(store.findEnabledUserIdByEmail('magic@example.test')).resolves.toBe(userId);
     const input = {
       tokenHash: 'token-hash',
       sessionTokenHash: 'session-hash',
@@ -86,10 +96,11 @@ describe('PostgreSQL magic-link repository', () => {
     await database.exec('RESET ROLE');
     const rows = await database.query<{ token_hash: string }>('SELECT token_hash FROM sessions');
     expect(rows.rows).toEqual([{ token_hash: 'session-hash' }]);
-    const users = await database.query<{ password_hash: string | null }>(
-      `SELECT password_hash FROM users WHERE id = '${userId}'`,
-    );
-    expect(users.rows).toEqual([{ password_hash: null }]);
+    const users = await database.query<{
+      password_hash: string | null;
+      review_access_expires_at: Date | null;
+    }>(`SELECT password_hash, review_access_expires_at FROM users WHERE id = '${userId}'`);
+    expect(users.rows).toEqual([{ password_hash: null, review_access_expires_at: null }]);
     const audit = await database.query<{ action: string; metadata: unknown }>(
       'SELECT action, metadata FROM audit_events',
     );
@@ -110,6 +121,47 @@ describe('PostgreSQL magic-link repository', () => {
         now: new Date('2029-12-01T00:00:00Z'),
       }),
     ).resolves.toBeNull();
+  });
+
+  it('keeps active reviewer accounts out of magic-link request and consume paths', async () => {
+    const userId = '00000000-0000-4000-8000-000000000921';
+    const workspaceId = '00000000-0000-4000-8000-000000000922';
+    await database.exec(`
+      INSERT INTO workspaces (id, name, slug) VALUES ('${workspaceId}', 'Reviewer', 'reviewer');
+      INSERT INTO users
+        (id, display_name, email, password_hash, default_workspace_id, review_access_expires_at)
+      VALUES
+        ('${userId}', 'Reviewer', 'reviewer@example.test', 'reviewer-password-hash',
+         '${workspaceId}', '2030-01-01T00:00:00Z');
+      SELECT set_config('app.workspace_id', '${workspaceId}', false);
+      INSERT INTO memberships (workspace_id, user_id, role)
+        VALUES ('${workspaceId}', '${userId}', 'editor');
+      INSERT INTO login_challenges
+        (user_id, token_hash, email_key_hash, network_key_hash, user_agent_hash, purpose,
+         redirect_path, delivery_state, correlation_id, expires_at)
+      VALUES
+        ('${userId}', 'review-token', 'email-hash', 'network-hash', 'agent-hash',
+         'login', '/app', 'sent', 'request-review', '2030-01-01T00:00:00Z');
+    `);
+    const store = createPostgresMagicLinkStore(drizzle(database) as unknown as NodePgDatabase);
+    await expect(store.findEnabledUserIdByEmail('reviewer@example.test')).resolves.toBeNull();
+    await expect(
+      store.consumeLoginChallenge({
+        tokenHash: 'review-token',
+        sessionTokenHash: 'session-hash',
+        csrfSecretHash: 'csrf-hash',
+        sessionExpiresAt: new Date('2030-02-01T00:00:00Z'),
+        now: new Date('2029-12-01T00:00:00Z'),
+      }),
+    ).resolves.toBeNull();
+    const users = await database.query<{ password_hash: string | null }>(
+      `SELECT password_hash FROM users WHERE id = '${userId}'`,
+    );
+    expect(users.rows).toEqual([{ password_hash: 'reviewer-password-hash' }]);
+    const sessions = await database.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM sessions',
+    );
+    expect(sessions.rows).toEqual([{ count: 0 }]);
   });
 
   it('atomically creates one signup aggregate and rolls a duplicate race back', async () => {

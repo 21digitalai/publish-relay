@@ -42,7 +42,11 @@ import {
   validateMediaContentType,
 } from './media.service.js';
 import { createPostRequestSchema, normalizeCreatePostRequest } from './post.contract.js';
-import { PostNotFoundError, PostValidationError } from './post.errors.js';
+import {
+  PostNotFoundError,
+  PostValidationError,
+  PostRevisionConflictError,
+} from './post.errors.js';
 import {
   createPostInTransaction,
   editPostInTransaction,
@@ -132,6 +136,8 @@ function isPastSchedule(value: string, now = new Date()): boolean {
 }
 
 function mutationError(request: FastifyRequest, reply: FastifyReply, error: unknown) {
+  if (error instanceof PostRevisionConflictError)
+    return reply.code(409).send({ data: null, error: error.message });
   if (error instanceof WorkspaceAuthorizationError)
     return reply
       .code(403)

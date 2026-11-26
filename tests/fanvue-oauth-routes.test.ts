@@ -37,6 +37,7 @@ function application(authenticated: boolean) {
   const store: AuthStore = {
     register: vi.fn(),
     findLogin: vi.fn(),
+    findReviewerLogin: vi.fn(),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),
     revokeSession: vi.fn(),

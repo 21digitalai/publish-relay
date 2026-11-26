@@ -97,6 +97,8 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
   const database = drizzle(pool);
   const mediaStorage = new LocalMediaStorage(config.MEDIA_STORAGE_ROOT);
   const masterKeys = new RuntimeMasterKeyProvider(activeKeyVersion);
+  const authRateLimitSecret =
+    config.PUBLISH_RELAY_MAGIC_LINK_PEPPER ?? (await masterKeys.getKey(activeKeyVersion));
   await mediaStorage.cleanupStaleStaging({
     staleBefore: new Date(Date.now() - (config.MEDIA_STAGING_STALE_MS ?? DEFAULT_STAGING_STALE_MS)),
   });
@@ -104,7 +106,7 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
   return {
     options: {
       config,
-      auth: new AuthService(createPostgresAuthStore(database)),
+      auth: new AuthService(createPostgresAuthStore(database), undefined, authRateLimitSecret),
       apiKeys: new ApiKeyService(createPostgresApiKeyStore(database)),
       database,
       mediaStorage,

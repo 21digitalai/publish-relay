@@ -175,6 +175,32 @@ export function registerAuthRoutes(
     };
   });
 
+  application.post('/api/auth/reviewer-login', async (request, reply) => {
+    const input = loginSchema.safeParse(request.body);
+    if (!input.success) return reply.code(400).send({ data: null, error: 'Invalid login details' });
+    if (!(await auth.admitReviewerLogin(input.data.email, request.ip))) {
+      return reply.code(429).send({ data: null, error: 'Too many login attempts' });
+    }
+    let redirectPath: string;
+    try {
+      redirectPath = validateMagicLinkRedirect(input.data.redirectPath);
+    } catch {
+      return reply.code(400).send({ data: null, error: 'Invalid login continuation' });
+    }
+    const session = await auth.loginReviewer(input.data.email, input.data.password);
+    if (!session) return reply.code(401).send({ data: null, error: 'Invalid email or password' });
+    setSessionCookies(reply, session, options.secureCookies);
+    return {
+      data: {
+        userId: session.userId,
+        workspaceId: session.workspaceId,
+        role: session.role,
+        redirectPath,
+      },
+      error: null,
+    };
+  });
+
   application.post('/api/auth/forgot-password', (_request, reply) =>
     options.humanAuthMode === 'magic_link'
       ? reply.code(404).send()

@@ -7,7 +7,10 @@ import { authenticateRequest, CSRF_COOKIE } from '../identity/auth.routes.js';
 import type { AuthService } from '../identity/auth.service.js';
 import { verifyCsrfToken } from '../identity/session.js';
 import { ActionPolicyDeniedError, type ActionPolicy } from '../policy/action-policy.js';
-import type { InstagramUnifiedLoginClient } from './instagram-unified-login-client.js';
+import {
+  InstagramUnifiedLoginError,
+  type InstagramUnifiedLoginClient,
+} from './instagram-unified-login-client.js';
 import {
   beginInstagramUnifiedLogin,
   completeInstagramUnifiedLogin,
@@ -83,7 +86,20 @@ export function registerInstagramUnifiedLoginRoutes(
       const outcome =
         error instanceof ProviderDestinationConflictError ? 'conflict' : 'service-error';
       request.log.warn(
-        { provider: 'instagram_unified_login', outcome },
+        {
+          provider: 'instagram_unified_login',
+          outcome,
+          ...(error instanceof InstagramUnifiedLoginError
+            ? {
+                stage: error.stage,
+                category: error.category,
+                ...(error.providerCode === undefined ? {} : { providerCode: error.providerCode }),
+                ...(error.providerSubcode === undefined
+                  ? {}
+                  : { providerSubcode: error.providerSubcode }),
+              }
+            : {}),
+        },
         'Instagram Unified Login callback failed',
       );
       return reply.redirect(`/app?oauth=instagram-unified-${outcome}`);

@@ -28,9 +28,11 @@ export interface InstagramUnifiedLoginGrant {
 export class InstagramUnifiedLoginError extends Error {
   public constructor(
     public readonly stage: 'token-exchange' | 'business-lookup' | 'account-discovery',
-    message: string,
+    public readonly category: 'transport' | 'provider' | 'invalid-response',
+    public readonly providerCode?: number,
+    public readonly providerSubcode?: number,
   ) {
-    super(`Instagram Unified Login ${stage} failed: ${message}`);
+    super(`Instagram Unified Login ${stage} failed (${category})`);
   }
 }
 
@@ -106,9 +108,8 @@ export class InstagramUnifiedLoginClient {
 
   private async discoverAccounts(accessToken: string): Promise<InstagramUnifiedLoginAccount[]> {
     const accounts: InstagramUnifiedLoginAccount[] = [];
-    let next: string | undefined = this.graphUrl('/me/assigned_instagram_accounts', {
-      fields: 'id,username',
-    }).toString();
+    // Meta's v27 reference declares that this edge has no query parameters.
+    let next: string | undefined = this.graphUrl('/me/assigned_instagram_accounts', {}).toString();
     for (let page = 0; next && page < MAX_ACCOUNT_PAGES; page += 1) {
       const result: z.infer<typeof accountsSchema> = await this.getJson(
         new URL(next),
@@ -148,9 +149,26 @@ export class InstagramUnifiedLoginClient {
       throw new InstagramUnifiedLoginError(stage, 'transport');
     }
     const body: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw new InstagramUnifiedLoginError(stage, 'provider request rejected');
+    if (!response.ok) {
+      const error = z
+        .object({
+          error: z
+            .object({
+              code: z.number().int().optional(),
+              error_subcode: z.number().int().optional(),
+            })
+            .optional(),
+        })
+        .safeParse(body);
+      throw new InstagramUnifiedLoginError(
+        stage,
+        'provider',
+        error.success ? error.data.error?.code : undefined,
+        error.success ? error.data.error?.error_subcode : undefined,
+      );
+    }
     const parsed = schema.safeParse(body);
-    if (!parsed.success) throw new InstagramUnifiedLoginError(stage, 'invalid provider response');
+    if (!parsed.success) throw new InstagramUnifiedLoginError(stage, 'invalid-response');
     return parsed.data;
   }
 }

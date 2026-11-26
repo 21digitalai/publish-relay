@@ -31,18 +31,22 @@ describe('Instagram Unified Login client', () => {
           input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
         requests.push(url);
         if (url.pathname.endsWith('/oauth/access_token'))
-          return Promise.resolve(new Response(JSON.stringify({ access_token: 'token', expires_in: 60 }), {
-            status: 200,
-          }));
+          return Promise.resolve(
+            new Response(JSON.stringify({ access_token: 'token', expires_in: 60 }), {
+              status: 200,
+            }),
+          );
         if (url.pathname.endsWith('/me'))
-          return Promise.resolve(new Response(
-            JSON.stringify({ id: 'system-user', client_business_id: 'business' }),
-            { status: 200 },
-          ));
-        return Promise.resolve(new Response(
-          JSON.stringify({ data: [{ id: 'ig-1', username: 'one' }], paging: {} }),
-          { status: 200 },
-        ));
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: 'system-user', client_business_id: 'business' }), {
+              status: 200,
+            }),
+          );
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [{ id: 'ig-1', username: 'one' }], paging: {} }), {
+            status: 200,
+          }),
+        );
       },
     });
     await expect(
@@ -57,6 +61,33 @@ describe('Instagram Unified Login client', () => {
       '/v27.0/me',
       '/v27.0/me/assigned_instagram_accounts',
     ]);
+    expect(requests[2]?.search).toBe('');
     expect(requests[0]?.searchParams.get('client_secret')).toBe('secret');
+  });
+
+  it('retains only safe numeric provider diagnostics', async () => {
+    const client = new InstagramUnifiedLoginClient({
+      appId: 'app',
+      appSecret: 'secret',
+      configId: 'config',
+      graphVersion: 'v27.0',
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: { message: 'token-secret', code: 100, error_subcode: 33 } }),
+            {
+              status: 400,
+            },
+          ),
+        ),
+    });
+    await expect(
+      client.exchangeCode({ code: 'one-use', redirectUri: 'https://relay.test/callback' }),
+    ).rejects.toMatchObject({
+      stage: 'token-exchange',
+      category: 'provider',
+      providerCode: 100,
+      providerSubcode: 33,
+    });
   });
 });

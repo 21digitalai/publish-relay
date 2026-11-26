@@ -54,7 +54,7 @@ import {
   sendAccountPageConversationMessage,
 } from '../modules/providers/facebook-messenger-send.service.js';
 import { registerFacebookPageBrowserReadRoutes } from '../modules/providers/facebook-page-browser-read.routes.js';
-import { registerInstagramUnifiedReadRoutes } from '../modules/providers/instagram-unified-read.routes.js';
+import { registerInstagramUnifiedReadApiRoutes, registerInstagramUnifiedReadRoutes } from '../modules/providers/instagram-unified-read.routes.js';
 import type { InstagramUnifiedReadClient } from '../modules/providers/instagram-unified-read-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
@@ -236,7 +236,7 @@ function registerMachineApiRoutes(
   options: CoreApplicationOptions,
   actionPolicy: ActionPolicy,
 ): void {
-  const { config, apiKeys, auth, database, delegatedAuthorization, mediaStorage } = options;
+  const { config, apiKeys, auth, database, delegatedAuthorization, mediaStorage, instagramUnifiedOauth } = options;
   if (!apiKeys) return;
   const rateLimiter = createApiRateLimiter();
   registerApiKeyRoutes(application, apiKeys, rateLimiter, auth, delegatedAuthorization);
@@ -309,6 +309,8 @@ function registerMachineApiRoutes(
       delegatedAuthorization,
     );
   }
+  if (instagramUnifiedOauth?.readClient)
+    registerInstagramUnifiedReadApiRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, apiKeys, rateLimiter, delegatedAuthorization);
   if (enabledAdapters.has('fanvue') && options.fanvueOauth) {
     const reads = new FanvueReadService(
       database,

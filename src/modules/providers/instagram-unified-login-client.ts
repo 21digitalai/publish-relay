@@ -88,6 +88,7 @@ export class InstagramUnifiedLoginClient {
       client_id: this.options.appId,
       client_secret: this.options.appSecret,
       code: input.code,
+      redirect_uri: input.redirectUri,
     }).toString();
     const token = await this.getJson(url, 'token-exchange', tokenSchema);
     const me = await this.getJson(

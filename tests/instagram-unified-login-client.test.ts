@@ -63,6 +63,7 @@ describe('Instagram Unified Login client', () => {
     ]);
     expect(requests[2]?.search).toBe('');
     expect(requests[0]?.searchParams.get('client_secret')).toBe('secret');
+    expect(requests[0]?.searchParams.get('redirect_uri')).toBe('https://relay.test/callback');
   });
 
   it('retains only safe numeric provider diagnostics', async () => {

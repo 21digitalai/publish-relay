@@ -16,6 +16,7 @@ const WORKSPACE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 const MUTATIONS = new Set([
   'drafts:create',
   'posts:create',
+  'posts:replace-media',
   'media:upload',
   'publishes:retry',
   'fanvue-guidance:set',
@@ -178,6 +179,7 @@ const ROUTES = {
   },
   'drafts:create': { method: 'POST', path: '/api/v1/drafts', body: true },
   'drafts:show': { method: 'GET', path: '/api/v1/drafts/:id' },
+  'posts:replace-media': { method: 'PATCH', path: '/api/v1/posts/:id/media', body: true },
   'posts:create': { method: 'POST', path: '/api/v1/posts', body: true },
   'posts:validate': { method: 'POST', path: '/api/v1/posts/validate', body: true },
   'posts:list': { method: 'GET', path: '/api/v1/posts' },
@@ -445,6 +447,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND = {
     'self',
     'cockpit',
   ]),
+  'posts:replace-media': new Set([...ENVELOPE_OUTPUT_KEYS, 'postId', 'revisionId', 'jobIds']),
   'posts:create': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'self',
@@ -912,7 +915,7 @@ async function pollJob(profile, key, workspace, path, jobId, flags) {
 async function run() {
   const parsed = parseArgs(process.argv.slice(2));
   activeCommand = parsed.command;
-  if (parsed.command === 'version') return { success: true, data: { version: '1.8.10' } };
+  if (parsed.command === 'version') return { success: true, data: { version: '1.8.12' } };
   const route = ROUTES[parsed.command];
   if (!route) throw new CliError(EXIT.usage, `Unknown command ${parsed.command.replace(':', ' ')}`);
   const env = await loadEnvironment(parsed.flags['env-file']);

@@ -1,3 +1,9 @@
+import {
+  approvePublicationJob,
+  replacePublicationApproval,
+} from '../src/modules/scheduler/job.repository.js';
+import { replacePostMediaInTransaction } from '../src/modules/content/post-media.service.js';
+import { withTenantTransaction } from '../src/database/tenant-transaction.js';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
@@ -739,7 +745,7 @@ describe('post revision lifecycle', () => {
     ).rejects.toThrow(/foreign key/i);
   });
 
-  it('creates independent targets and supersedes only jobs that have not started dispatch', async () => {
+  it('rejects the entire browser edit when any target has started dispatch', async () => {
     const db = drizzle(database) as unknown as NodePgDatabase;
     const scheduledAt = new Date('2026-09-01T10:00:00.000Z');
     const created = await createPost(db, {
@@ -756,30 +762,25 @@ describe('post revision lifecycle', () => {
     await database.exec(
       `UPDATE publication_jobs SET state = 'dispatching' WHERE id = '${dispatchingJobId}'`,
     );
-    const edited = await editPost(db, {
-      workspaceId,
-      userId,
-      postId: created.postId,
-      content: { type: 'text', text: 'Second revision' },
-      mediaIds: [],
-      providerAccountIds: [accountOne, accountTwo],
-      scheduledAt,
-      now: new Date('2026-08-31T16:00:00.000Z'),
-    });
-    expect(edited.jobIds).toHaveLength(2);
-    expect(edited.supersededJobIds).toEqual([created.jobIds[1]]);
+    await expect(
+      editPost(db, {
+        workspaceId,
+        userId,
+        postId: created.postId,
+        content: { type: 'text', text: 'Second revision' },
+        mediaIds: [],
+        providerAccountIds: [accountOne, accountTwo],
+        scheduledAt,
+        now: new Date('2026-08-31T16:00:00.000Z'),
+      }),
+    ).rejects.toThrow('before every target dispatches');
     const jobs = await database.query<{ state: string; revision_number: number }>(`
       SELECT j.state, r.revision_number
       FROM publication_jobs j JOIN post_revisions r ON r.id = j.revision_id
       ORDER BY r.revision_number, j.id
     `);
-    expect(jobs.rows.map((row) => row.state).sort()).toEqual([
-      'dispatching',
-      'scheduled',
-      'scheduled',
-      'superseded',
-    ]);
-    expect(jobs.rows.map((row) => row.revision_number)).toEqual([1, 1, 2, 2]);
+    expect(jobs.rows.map((row) => row.state).sort()).toEqual(['dispatching', 'scheduled']);
+    expect(jobs.rows.map((row) => row.revision_number)).toEqual([1, 1]);
   });
 
   it('reschedules the complete immutable revision without losing targets, media, or content shape', async () => {
@@ -1624,5 +1625,213 @@ describe('X media staging', () => {
     expect(results[0].mediaId).toBe(results[1].mediaId);
     expect(append).toHaveBeenCalledTimes(1);
     expect(finalize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('guarded media-only amendment', () => {
+  async function fixture(page = false) {
+    const db = drizzle(database) as unknown as NodePgDatabase;
+    const oldMediaId = '00000000-0000-4000-8000-000000000291';
+    const newMediaId = '00000000-0000-4000-8000-000000000292';
+    await database.exec(`
+      INSERT INTO media_objects (id,workspace_id,storage_key,sha256,mime_type,byte_size,state)
+      VALUES ('${oldMediaId}','${workspaceId}','old.jpg','old','image/jpeg',100,'ready'),
+        ('${newMediaId}','${workspaceId}','new.jpg','new','image/jpeg',100,'ready');
+    `);
+    const scheduledAt = new Date('2026-12-01T10:00:00Z');
+    if (page)
+      await database.exec(`UPDATE provider_connections SET provider='meta';
+      UPDATE provider_accounts SET destination_provider='facebook_page'`);
+    const content = {
+      kind: page ? 'single_image' : 'text',
+      text: 'Caption must stay byte-identical',
+    };
+    const created = await createPost(db, {
+      workspaceId,
+      userId,
+      content,
+      mediaIds: [oldMediaId],
+      providerAccountIds: [accountOne, accountTwo],
+      scheduledAt,
+      approvalRequired: true,
+    });
+    const input = {
+      workspaceId,
+      userId,
+      postId: created.postId,
+      expectedRevisionId: created.revisionId,
+      replacements: [{ oldMediaId, newMediaId }],
+    };
+    const replace = (overrides = {}) =>
+      withTenantTransaction(db, { workspaceId, userId }, (tx) =>
+        replacePostMediaInTransaction(tx, { ...input, ...overrides }),
+      );
+    return { db, created, input, replace, content, scheduledAt, newMediaId };
+  }
+
+  it('preserves every target schedule, settings and exact approval receipt while retaining old media history', async () => {
+    const { created, replace, content, scheduledAt, newMediaId } = await fixture();
+    await database.exec(`UPDATE publication_jobs SET approved_at = '2026-11-26T12:00:00Z',
+      approved_by_user_id = '${userId}', effective_provider_settings = '{"schemaVersion":1,"keep":true}'
+      WHERE id = '${String(created.jobIds[0])}'`);
+    const before = await database.query(
+      'SELECT provider_account_id, scheduled_at, approval_required, approved_at, approved_by_user_id,effective_provider_settings FROM publication_jobs ORDER BY provider_account_id',
+    );
+    const changed = await replace();
+    const after = await database.query<{ scheduled_at: Date }>(
+      `SELECT provider_account_id, scheduled_at, approval_required, approved_at, approved_by_user_id,effective_provider_settings FROM publication_jobs WHERE revision_id = '${changed.revisionId}' ORDER BY provider_account_id`,
+    );
+    expect(after.rows).toEqual(before.rows);
+    expect(after.rows[0]?.scheduled_at).toEqual(scheduledAt);
+    expect(
+      (
+        await database.query<{ content: unknown }>(
+          `SELECT content FROM post_revisions WHERE id = '${changed.revisionId}'`,
+        )
+      ).rows[0]?.content,
+    ).toEqual(content);
+    expect(
+      (
+        await database.query(
+          `SELECT media_id FROM revision_media WHERE revision_id = '${changed.revisionId}'`,
+        )
+      ).rows,
+    ).toEqual([{ media_id: newMediaId }]);
+    expect((await database.query('SELECT media_id FROM revision_media')).rows).toHaveLength(2);
+    expect(
+      (await database.query("SELECT id FROM audit_events WHERE action='post.media.replace'")).rows,
+    ).toHaveLength(1);
+    await expect(replace()).rejects.toThrow('revision changed');
+    expect(
+      (await database.query("SELECT id FROM publication_jobs WHERE state='scheduled'")).rows,
+    ).toHaveLength(2);
+  });
+
+  it('preserves real operator approval events and same-revision approval successors', async () => {
+    const { db, created, replace } = await fixture();
+    const [first, second] = created.jobIds;
+    if (!first || !second) throw new Error('Missing test jobs');
+    const toggled = await replacePublicationApproval(db, {
+      workspaceId,
+      jobId: first,
+      approvalRequired: false,
+    });
+    expect(toggled.kind).toBe('replaced');
+    const approved = await approvePublicationJob(db, { workspaceId, userId, jobId: second });
+    expect(approved.kind).toBe('approved');
+    const changed = await replace();
+    const current = await database.query<{ approval_required: boolean; approved_at: Date | null }>(
+      `SELECT approval_required,approved_at FROM publication_jobs WHERE revision_id='${changed.revisionId}'`,
+    );
+    expect(current.rows).toHaveLength(2);
+    expect(current.rows.filter((job) => !job.approval_required)).toHaveLength(1);
+    expect(current.rows.filter((job) => job.approved_at !== null)).toHaveLength(1);
+  });
+
+  it('changes only media IDs in a real Facebook Page payload, preserving caption and Page', async () => {
+    const { replace, newMediaId, created } = await fixture(true);
+    const before = await database.query<{
+      provider_account_id: string;
+      effective_payload: Record<string, unknown>;
+    }>(
+      `SELECT provider_account_id,effective_payload FROM publication_jobs WHERE revision_id='${created.revisionId}' ORDER BY provider_account_id`,
+    );
+    const changed = await replace();
+    const after = await database.query<{
+      provider_account_id: string;
+      effective_payload: Record<string, unknown>;
+    }>(
+      `SELECT provider_account_id,effective_payload FROM publication_jobs WHERE revision_id='${changed.revisionId}' ORDER BY provider_account_id`,
+    );
+    expect(after.rows).toEqual(
+      before.rows.map((row) => ({
+        ...row,
+        effective_payload: { ...row.effective_payload, mediaIds: [newMediaId] },
+      })),
+    );
+  });
+
+  it.each([
+    'leased',
+    'dispatching',
+    'published',
+    'accepted_pending',
+    'retry_wait',
+    'failed',
+    'cancelled',
+  ])('refuses %s without a new revision or job', async (state) => {
+    const { created, replace } = await fixture();
+    await database.exec(
+      `UPDATE publication_jobs SET state='${state}' WHERE id='${String(created.jobIds[0])}'`,
+    );
+    await expect(replace()).rejects.toThrow('before every target dispatches');
+    expect((await database.query('SELECT id FROM post_revisions')).rows).toHaveLength(1);
+    expect((await database.query('SELECT id FROM publication_jobs')).rows).toHaveLength(2);
+  });
+
+  it.each(['attempt_number=1', "lease_owner='old-worker'", 'reconciliation_required=true'])(
+    'refuses scheduled job with %s',
+    async (patch) => {
+      const { created, replace } = await fixture();
+      await database.exec(
+        `UPDATE publication_jobs SET ${patch} WHERE id='${String(created.jobIds[0])}'`,
+      );
+      await expect(replace()).rejects.toThrow('before every target dispatches');
+    },
+  );
+
+  it('rejects stale mapping, missing/non-ready media, foreign workspace and forbidden fields', async () => {
+    const { replace, input, newMediaId } = await fixture();
+    await expect(
+      replace({
+        replacements: [
+          { oldMediaId: newMediaId, newMediaId: input.replacements[0]?.oldMediaId ?? '' },
+        ],
+      }),
+    ).rejects.toThrow('mapping');
+    await expect(
+      replace({
+        replacements: [
+          { oldMediaId: input.replacements[0]?.oldMediaId ?? '', newMediaId: accountOne },
+        ],
+      }),
+    ).rejects.toThrow();
+    await database.exec(`UPDATE media_objects SET state='temporary' WHERE id='${newMediaId}'`);
+    await expect(replace()).rejects.toThrow();
+    await expect(replace({ workspaceId: '00000000-0000-4000-8000-000000000299' })).rejects.toThrow(
+      'Post not found',
+    );
+    expect((await database.query('SELECT id FROM post_revisions')).rows).toHaveLength(1);
+  });
+
+  it('rejects persisted unknown attempt or claim event even if a job was reset to scheduled', async () => {
+    const { created, replace } = await fixture();
+    await database.exec(`INSERT INTO publication_attempts
+      (workspace_id,job_id,attempt_number,idempotency_key,request_fingerprint,started_at,outcome)
+      VALUES ('${workspaceId}','${String(created.jobIds[0])}',1,'unknown-attempt','test',now(),'unknown')`);
+    await expect(replace()).rejects.toThrow('before every target dispatches');
+    await database.exec('DELETE FROM publication_attempts');
+    await database.exec(`INSERT INTO publication_job_events (workspace_id,job_id,from_state,to_state,reason)
+      VALUES ('${workspaceId}','${String(created.jobIds[0])}','scheduled','leased','worker_claim')`);
+    await expect(replace()).rejects.toThrow('before every target dispatches');
+    expect((await database.query('SELECT id FROM post_revisions')).rows).toHaveLength(1);
+  });
+
+  it('applies the same fence to the browser edit lifecycle', async () => {
+    const { db, created, content, scheduledAt } = await fixture();
+    await database.exec(
+      `UPDATE publication_jobs SET state='published' WHERE id='${String(created.jobIds[0])}'`,
+    );
+    await expect(
+      editPost(db, {
+        workspaceId,
+        userId,
+        postId: created.postId,
+        content,
+        scheduledAt,
+        mediaIds: [],
+        providerAccountIds: [accountOne, accountTwo],
+      }),
+    ).rejects.toThrow('before every target dispatches');
   });
 });

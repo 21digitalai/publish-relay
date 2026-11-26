@@ -1,3 +1,4 @@
+import { registerPostMediaRoutes } from './post-media.routes.js';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
@@ -128,6 +129,14 @@ export function registerPostRoutes(
   delegatedAuthorization?: DelegatedAuthorizationService,
   enabledAdapters?: ReadonlySet<string>,
 ): void {
+  registerPostMediaRoutes(application, {
+    database,
+    apiKeys,
+    rateLimiter,
+    actionPolicy,
+    ...(delegatedAuthorization ? { delegatedAuthorization } : {}),
+    ...(enabledAdapters ? { enabledAdapters } : {}),
+  });
   application.get('/api/v1/posts', async (request, reply) => {
     try {
       const principal = await authorizeMachineRequest(

@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-const CONTRACT_VERSION = '1.9.11';
-const CLI_VERSION = '1.8.11';
+const CONTRACT_VERSION = '1.9.12';
+const CLI_VERSION = '1.8.12';
 const CACHE_CONTROL = 'public, max-age=300';
 const CLI_JAVASCRIPT = readFileSync(
   new URL('./assets/publish-relay-cli.js', import.meta.url),
@@ -37,6 +37,7 @@ Send the delegated access token in the Authorization header using the Bearer sch
 - posts list/show and publishes show/poll: schedules:read.
 - posts validate: schedules:read. Use posts validate --body-file <request.json> for read-only per-destination admission, including X weighted length and the selected account limit. It accepts the create body plus optional validationPreview: { xMediaPresent: true } for an X object thread without uploaded media IDs. That mode checks each part's length and returns mediaNotValidated: true because future media ownership/content cannot be checked; create must revalidate after upload. No idempotency key is needed. A valid preview does not reserve a future create.
 - posts create: schedules:write. Live provider submission also requires publishes:submit on the server-side operation.
+- posts replace-media <post-id> --body-file <json> --idempotency-key <key>: content:write. PATCH /api/v1/posts/:postId/media accepts only {expectedRevisionId, replacements:[{oldMediaId,newMediaId}]}. Read the current post/revision/attachments first with schedules:read, then upload ready workspace-owned replacement media. No captions, Pages, schedules, approval or provider options can be supplied. A 409 means stale mapping/revision, dispatch already started, incompatible admission, or idempotency conflict; reread and skip published/claimed posts, never cancel/recreate/reschedule. Replay the exact same key/body only to recover its existing receipt. Success returns postId, revisionId and jobIds, not delivery.
 - media upload: content:write. Send exact local bytes with --file, an explicit --content-type, and a unique idempotency key. Remote URL fetching is not supported.
 - drafts create/show: content:write. Create a tenant-scoped imported-media draft with a stable opaque externalId, ordered ready mediaIds, and optional label/HTTPS returnUrl. Open the returned cockpit link for the user to complete the canonical Relay composer; the resulting post link appears after that one-time transition.
 - destinations list: destinations:read.

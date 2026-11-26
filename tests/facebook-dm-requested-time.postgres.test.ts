@@ -161,10 +161,11 @@ run('requested Page DM due time on real PostgreSQL', () => {
           }),
         );
       }
-      for (let index = 0; index < batch.length; index++) {
-        expect(batch[index]!.dueAt.getTime()).toBeGreaterThanOrEqual(Date.parse(commonFloor));
-        if (index > 0) {
-          const gap = batch[index]!.dueAt.getTime() - batch[index - 1]!.dueAt.getTime();
+      for (const [index, current] of batch.entries()) {
+        expect(current.dueAt.getTime()).toBeGreaterThanOrEqual(Date.parse(commonFloor));
+        const previous = batch[index - 1];
+        if (previous) {
+          const gap = current.dueAt.getTime() - previous.dueAt.getTime();
           expect(gap).toBeGreaterThanOrEqual(300_000);
           expect(gap).toBeLessThanOrEqual(420_000);
         }
@@ -178,10 +179,12 @@ run('requested Page DM due time on real PostgreSQL', () => {
       const reordered = await pool.query<{ due_at: Date }>(
         'SELECT due_at FROM facebook_page_dm_pending_intents WHERE sequence_index=0 ORDER BY due_at',
       );
-      for (let index = 1; index < reordered.rows.length; index++) {
-        expect(
-          reordered.rows[index]!.due_at.getTime() - reordered.rows[index - 1]!.due_at.getTime(),
-        ).toBeGreaterThanOrEqual(300_000);
+      for (const [index, current] of reordered.rows.entries()) {
+        const previous = reordered.rows[index - 1];
+        if (previous)
+          expect(current.due_at.getTime() - previous.due_at.getTime()).toBeGreaterThanOrEqual(
+            300_000,
+          );
       }
       const defaultGroup = await schedulePageDmGroup(database, {
         ...base,

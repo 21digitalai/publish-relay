@@ -1,3 +1,7 @@
+import {
+  replacePostMediaSchema,
+  replacePostMediaResponseSchema,
+} from '../content/post.contract.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -1797,6 +1801,51 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
               description: 'Read rate limit exceeded',
               content: { 'application/json': { schema: openApiJsonSchema(errorResponseSchema) } },
             },
+          },
+        },
+      },
+      '/api/v1/posts/{postId}/media': {
+        patch: {
+          operationId: 'replacePostMedia',
+          description:
+            'content:write. Replace mapped media only before all current targets dispatch; preserve captions, targets, schedules, settings and approval. No provider writes.',
+          security: [{ bearerAuth: [], workspace: [] }],
+          parameters: [
+            {
+              name: 'postId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', format: 'uuid' },
+            },
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', minLength: 1, maxLength: 200 },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: openApiJsonSchema(replacePostMediaSchema) } },
+          },
+          responses: {
+            '200': {
+              description: 'Revision receipt only; replay returns the original receipt',
+              content: {
+                'application/json': {
+                  schema: openApiJsonSchema(successResponseSchema(replacePostMediaResponseSchema)),
+                },
+              },
+            },
+            '400': { description: 'Invalid request or unavailable replacement media' },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Missing content:write or policy denied' },
+            '404': { description: 'Post not found in selected workspace' },
+            '409': {
+              description:
+                'Revision/mapping/dispatch conflict or idempotency mismatch; no changes committed',
+            },
+            '429': { description: 'Rate limited' },
           },
         },
       },

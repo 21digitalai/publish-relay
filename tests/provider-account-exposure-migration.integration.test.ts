@@ -572,7 +572,7 @@ describe('provider account exposure migration', () => {
           content: { kind: 'link', text: 'Denied revision', linkUrl: 'https://example.test/' },
           scheduledAt: new Date('2026-10-19T12:00:00Z'),
         }),
-      ).rejects.toThrow('do not belong to the workspace');
+      ).rejects.toThrow('before every target dispatches');
       expect((await edit(true)).rows[0]?.result).toBe('updated');
       await database.exec('RESET ROLE');
       const rows = await database.query<{ count: number; preference: boolean }>(

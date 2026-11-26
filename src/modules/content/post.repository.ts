@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import {
@@ -9,6 +9,7 @@ import {
   publicationJobs,
   revisionMedia,
 } from '../../database/schema.js';
+import { lockUnstartedPost } from './post-revision-fence.js';
 import { loadPostAccounts } from './exposed-post-accounts.js';
 import { PostNotFoundError, PostValidationError } from './post.errors.js';
 import { fanvueContentSchema } from './publication-target.js';
@@ -99,6 +100,8 @@ export interface PostRevisionInput {
   selectedDestination?: string;
   scheduledAt: Date;
   approvalRequired?: boolean;
+  /** Internal media-only amendment invariant, never a client preference. */
+  requireReadyMedia?: boolean;
   actor?: { type: 'user' | 'api-key' | 'delegated'; id: string };
   enabledAdapters?: ReadonlySet<string>;
 }
@@ -122,7 +125,12 @@ async function validateTargetOwnership(
   database: NodePgDatabase,
   input: Pick<
     PostRevisionInput,
-    'content' | 'mediaIds' | 'providerAccountIds' | 'selectedDestination' | 'enabledAdapters'
+    | 'content'
+    | 'mediaIds'
+    | 'providerAccountIds'
+    | 'selectedDestination'
+    | 'enabledAdapters'
+    | 'requireReadyMedia'
   > & {
     workspaceId: string;
     xMediaPresent?: boolean;
@@ -185,7 +193,7 @@ async function validateTargetOwnership(
         input.mediaIds.map((mediaId) => sql`${mediaId}`),
         sql`, `,
       )})
-      and state in ('ready', 'cleanup_eligible', 'cleanup_failed')
+      and (state = 'ready' or (${input.requireReadyMedia ?? false} = false and state in ('cleanup_eligible', 'cleanup_failed')))
     order by id
     ${readOnly ? sql`` : sql`for update`}
   `);
@@ -649,17 +657,8 @@ async function revisePostIntentInternal(
   validateXText: boolean,
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
   const actor = persistedActor(input.actor, input.userId);
+  const { revision: current, jobs: lockedJobs } = await lockUnstartedPost(database, input);
   await validateTargetOwnership(database, input, validateXText);
-  const existing = await database
-    .select({ revisionNumber: postRevisions.revisionNumber })
-    .from(postRevisions)
-    .where(
-      and(eq(postRevisions.workspaceId, input.workspaceId), eq(postRevisions.postId, input.postId)),
-    )
-    .orderBy(desc(postRevisions.revisionNumber))
-    .limit(1);
-  const current = existing[0];
-  if (!current) throw new PostNotFoundError('Post not found in workspace');
   const superseded = await database
     .update(publicationJobs)
     .set({ state: 'superseded', supersededAt: input.now, updatedAt: input.now })
@@ -672,8 +671,9 @@ async function revisePostIntentInternal(
     )
     .returning({ id: publicationJobs.id, approvalRequired: publicationJobs.approvalRequired });
   if (
-    input.expectedSupersededJobCount !== undefined &&
-    superseded.length !== input.expectedSupersededJobCount
+    superseded.length !== lockedJobs.length ||
+    (input.expectedSupersededJobCount !== undefined &&
+      superseded.length !== input.expectedSupersededJobCount)
   )
     throw new PostValidationError('Schedule changed after dispatch started; no changes were saved');
   const priorApproval = superseded[0]?.approvalRequired;
@@ -719,33 +719,7 @@ export async function reschedulePostIntent(
     enabledAdapters?: ReadonlySet<string>;
   },
 ): Promise<{ postId: string; revisionId: string; jobIds: string[]; supersededJobIds: string[] }> {
-  const revisions = await database
-    .select({ id: postRevisions.id, content: postRevisions.content })
-    .from(postRevisions)
-    .where(
-      and(eq(postRevisions.workspaceId, input.workspaceId), eq(postRevisions.postId, input.postId)),
-    )
-    .orderBy(desc(postRevisions.revisionNumber))
-    .limit(1);
-  const revision = revisions[0];
-  if (!revision) throw new PostNotFoundError('Post not found in workspace');
-  // Scheduler claims lock the same rows with FOR UPDATE SKIP LOCKED. Holding these
-  // locks through supersession makes the pre-dispatch check atomic with claiming.
-  const jobs = await database
-    .select({
-      providerAccountId: publicationJobs.providerAccountId,
-      state: publicationJobs.state,
-    })
-    .from(publicationJobs)
-    .where(
-      and(
-        eq(publicationJobs.workspaceId, input.workspaceId),
-        eq(publicationJobs.revisionId, revision.id),
-      ),
-    )
-    .for('update');
-  if (jobs.length === 0 || jobs.some((job) => job.state !== 'scheduled'))
-    throw new PostValidationError('Schedule can only be edited before every target dispatches');
+  const { revision, jobs } = await lockUnstartedPost(database, input);
   const media = await database
     .select({ id: revisionMedia.mediaId })
     .from(revisionMedia)

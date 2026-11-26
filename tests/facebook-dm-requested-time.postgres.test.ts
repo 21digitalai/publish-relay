@@ -145,6 +145,44 @@ run('requested Page DM due time on real PostgreSQL', () => {
       const mediumRequest = schedule('medium', 60);
       const medium = await schedulePageDmGroup(database, mediumRequest);
       expect(medium.dueAt.getTime()).toBeGreaterThanOrEqual(Date.parse(mediumRequest.dueAt));
+      // Reuse one account/run floor and canonical recovery pacing.
+      await pool.query(
+        'UPDATE facebook_page_engagement_modules SET dm_root_pacing_minimum_seconds=300, dm_root_pacing_maximum_seconds=420 WHERE account_id=$1',
+        [accountId],
+      );
+      await pool.query('DELETE FROM facebook_page_dm_pending_intents');
+      const commonFloor = new Date(Date.now() + 60 * 60_000).toISOString();
+      const batch = [];
+      for (const conversationId of ['batch-a', 'batch-b', 'batch-c']) {
+        batch.push(
+          await schedulePageDmGroup(database, {
+            ...schedule(conversationId, 60),
+            dueAt: commonFloor,
+          }),
+        );
+      }
+      for (let index = 0; index < batch.length; index++) {
+        expect(batch[index]!.dueAt.getTime()).toBeGreaterThanOrEqual(Date.parse(commonFloor));
+        if (index > 0) {
+          const gap = batch[index]!.dueAt.getTime() - batch[index - 1]!.dueAt.getTime();
+          expect(gap).toBeGreaterThanOrEqual(300_000);
+          expect(gap).toBeLessThanOrEqual(420_000);
+        }
+      }
+      const priority = await schedulePageDmGroup(database, {
+        ...schedule('batch-urgent', 60),
+        dueAt: commonFloor,
+        windowDeadline: new Date(Date.parse(commonFloor) + 2 * 60_000),
+      });
+      expect(priority.dueAt.getTime()).toBeGreaterThanOrEqual(Date.parse(commonFloor));
+      const reordered = await pool.query<{ due_at: Date }>(
+        'SELECT due_at FROM facebook_page_dm_pending_intents WHERE sequence_index=0 ORDER BY due_at',
+      );
+      for (let index = 1; index < reordered.rows.length; index++) {
+        expect(
+          reordered.rows[index]!.due_at.getTime() - reordered.rows[index - 1]!.due_at.getTime(),
+        ).toBeGreaterThanOrEqual(300_000);
+      }
       const defaultGroup = await schedulePageDmGroup(database, {
         ...base,
         conversationId: 'default',

@@ -722,3 +722,7 @@ instants and any paced plan beyond the provider deadline atomically. The existin
 `due_at` stores the accepted floor (possibly later for pacing); priority never
 moves existing roots earlier, so no additional mutable scheduling state is needed.
 The due worker still owns Page cursor pacing, civil-day caps and provider preflight.
+
+### Shared Facebook batch floor
+
+A caller may reuse one future `dueAt` for all groups in an account/run. The existing Page-locked scheduler treats it as a not-before floor, appends recipient roots using the selected Page pacing preset (recovery: 300–420 seconds), and preserves that floor through deadline-priority reordering. It does not sample a new batch start, own agent wake times, or introduce a batch API. The agent owns the once-sampled run/account plan; existing accepted actions are not rewritten. Claimed/attempted roots, dispatch cursors, daily caps and provider deadlines remain authoritative. Priority shifts may extend a gap to protect an existing promise; the safe contract is no shortened pacing, not a guaranteed delivery deadline.

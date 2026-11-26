@@ -28,6 +28,7 @@ afterEach(async () => {
 function application(configured: boolean) {
   const store = {
     register: vi.fn(),
+    findReviewerLogin: vi.fn(),
     findLogin: vi.fn(),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),

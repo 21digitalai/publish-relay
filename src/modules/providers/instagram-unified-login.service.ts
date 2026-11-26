@@ -101,18 +101,16 @@ export async function completeInstagramUnifiedLogin(
         ...connection.replacedAccountCredentialIds,
       ]))
         await revokeCredential(transaction, input.workspaceId, id, now);
-      await transaction
-        .insert(auditEvents)
-        .values({
-          workspaceId: input.workspaceId,
-          actorType: 'user',
-          actorId: input.userId,
-          action: 'instagram.unified_login.connected',
-          targetType: 'provider_connection',
-          targetId: connection.connectionId,
-          requestId: input.requestId,
-          metadata: { destinationCount: grant.accounts.length },
-        });
+      await transaction.insert(auditEvents).values({
+        workspaceId: input.workspaceId,
+        actorType: 'user',
+        actorId: input.userId,
+        action: 'instagram.unified_login.connected',
+        targetType: 'provider_connection',
+        targetId: connection.connectionId,
+        requestId: input.requestId,
+        metadata: { destinationCount: grant.accounts.length },
+      });
       return { connectionId: connection.connectionId, accountCount: grant.accounts.length };
     });
   } finally {
@@ -133,18 +131,16 @@ export async function failInstagramUnifiedLogin(
   });
   if (!state) return false;
   await withTenantTransaction(database, input, (transaction) =>
-    transaction
-      .insert(auditEvents)
-      .values({
-        workspaceId: input.workspaceId,
-        actorType: 'user',
-        actorId: input.userId,
-        action: 'instagram.unified_login.denied',
-        targetType: 'user',
-        targetId: input.userId,
-        requestId: input.requestId,
-        metadata: {},
-      }),
+    transaction.insert(auditEvents).values({
+      workspaceId: input.workspaceId,
+      actorType: 'user',
+      actorId: input.userId,
+      action: 'instagram.unified_login.denied',
+      targetType: 'user',
+      targetId: input.userId,
+      requestId: input.requestId,
+      metadata: {},
+    }),
   );
   return true;
 }

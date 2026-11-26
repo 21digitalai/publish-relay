@@ -20,12 +20,17 @@ const inputSchema = z.strictObject({
   targetId: z.string().min(1).max(256),
   parentId: z.string().min(1).max(256),
   recipientId: z.string().min(1).max(256).optional(),
+  targetFingerprint: z.string().length(64).optional(),
   text: z.string().trim().min(1).max(2000),
   actor: z.strictObject({ type: z.enum(['user', 'api-key', 'delegated']), id: z.uuid() }),
 });
 
 export class InstagramUnifiedActionConflictError extends Error {}
 export class InstagramUnifiedEligibilityError extends Error {}
+
+function fingerprint(value: unknown) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
 
 export function createInstagramUnifiedSendService(runtime: {
   database: NodePgDatabase;
@@ -57,16 +62,26 @@ export function createInstagramUnifiedSendService(runtime: {
           latest.senderId !== command.recipientId
         )
           throw new InstagramUnifiedEligibilityError();
+        if (command.targetFingerprint && fingerprint({
+          kind: command.kind,
+          target: command.targetId,
+          parent: command.parentId,
+          latest: latest.id,
+          latestAt: latest.createdAt,
+        }) !== command.targetFingerprint)
+          throw new InstagramUnifiedEligibilityError();
       } else {
         const permission = await runtime.client.verifyPermissions(token.accessToken);
         if (permission.instagram_manage_comments !== 'granted')
           throw new InstagramUnifiedEligibilityError();
-        await runtime.client.assertCommentOwner({
+        const target = await runtime.client.assertCommentOwner({
           accountId: token.remoteAccountId,
           commentId: command.targetId,
           mediaId: command.parentId,
           accessToken: token.accessToken,
         });
+        if (command.targetFingerprint && fingerprint(JSON.parse(target.targetFingerprint)) !== command.targetFingerprint)
+          throw new InstagramUnifiedEligibilityError();
       }
       const action: InstagramUnifiedActionInput = {
         workspaceId: command.workspaceId,
@@ -78,9 +93,7 @@ export function createInstagramUnifiedSendService(runtime: {
         ...(command.recipientId ? { recipientId: command.recipientId } : {}),
         text: command.text,
         actor: command.actor,
-        requestFingerprint: createHash('sha256')
-          .update(
-            JSON.stringify({
+        requestFingerprint: fingerprint({
               accountId: command.accountId,
               kind: command.kind,
               targetId: command.targetId,
@@ -88,8 +101,6 @@ export function createInstagramUnifiedSendService(runtime: {
               recipientId: command.recipientId ?? null,
               text: command.text,
             }),
-          )
-          .digest('hex'),
       };
       const reservation = await reserveInstagramUnifiedAction(runtime.database, action);
       if (reservation.kind === 'conflict') throw new InstagramUnifiedActionConflictError();

@@ -25,8 +25,8 @@ export function createInstagramUnifiedScheduleService(runtime: { database: NodeP
       if (command.kind === 'comment_reply') {
         const permissions = await runtime.client.verifyPermissions(token.accessToken);
         if (permissions.instagram_manage_comments !== 'granted') throw new InstagramUnifiedEligibilityError();
-        await runtime.client.assertCommentOwner({ accountId: token.remoteAccountId, commentId: command.targetId, mediaId: command.parentId, accessToken: token.accessToken });
-        targetFingerprint = createHash('sha256').update(JSON.stringify({ kind: command.kind, target: command.targetId, parent: command.parentId })).digest('hex');
+        const target = await runtime.client.assertCommentOwner({ accountId: token.remoteAccountId, commentId: command.targetId, mediaId: command.parentId, accessToken: token.accessToken });
+        targetFingerprint = createHash('sha256').update(target.targetFingerprint).digest('hex');
       } else {
         if (!command.recipientId) throw new InstagramUnifiedEligibilityError();
         const permission = await runtime.client.verifyMessagingPermission(token.accessToken);

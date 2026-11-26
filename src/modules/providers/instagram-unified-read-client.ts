@@ -34,6 +34,9 @@ const comment = z.object({
 const ownedMedia = z.object({ id: graphId, owner: z.object({ id: graphId }) });
 const ownedComment = z.object({
   id: graphId,
+  text: z.string().max(2200).optional(),
+  timestamp: timestamp.optional(),
+  from: z.object({ id: graphId }).optional(),
   media: z.object({ id: graphId, owner: z.object({ id: graphId }) }),
 });
 const permission = z.object({
@@ -212,9 +215,9 @@ export class InstagramUnifiedReadClient {
     commentId: string;
     mediaId: string;
     accessToken: string;
-  }) {
+  }): Promise<{ targetFingerprint: string }> {
     const body = await this.get(
-      this.url(`/${this.id(input.commentId)}`, { fields: 'id,media{id,owner{id}}' }),
+      this.url(`/${this.id(input.commentId)}`, { fields: 'id,text,timestamp,from{id},media{id,owner{id}}' }),
       input.accessToken,
     );
     const parsed = ownedComment.safeParse(body);
@@ -225,6 +228,16 @@ export class InstagramUnifiedReadClient {
       parsed.data.media.owner.id !== input.accountId
     )
       throw new InstagramUnifiedReadError('permission', 403);
+    return {
+      targetFingerprint: JSON.stringify({
+        kind: 'comment_reply',
+        target: parsed.data.id,
+        parent: parsed.data.media.id,
+        text: parsed.data.text ?? '',
+        timestamp: parsed.data.timestamp ?? null,
+        from: parsed.data.from?.id ?? null,
+      }),
+    };
   }
 
   public sendConversationMessage(input: {

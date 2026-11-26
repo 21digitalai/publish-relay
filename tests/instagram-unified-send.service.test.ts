@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 
 const mocks = vi.hoisted(() => ({
   loadToken: vi.fn(),
@@ -105,6 +106,25 @@ describe('Instagram Unified manual reply service', () => {
       createInstagramUnifiedSendService(client as never).send(input),
     ).rejects.toBeInstanceOf(InstagramUnifiedEligibilityError);
     expect(mocks.reserve).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the scheduled inbound fingerprint is stale', async () => {
+    const client = runtime();
+    const targetFingerprint = createHash('sha256')
+      .update(JSON.stringify({
+        kind: 'dm_reply', target: 'message-1', parent: 'conversation-1',
+        latest: 'message-1', latestAt: '2026-01-01T00:00:00.000Z',
+      }))
+      .digest('hex');
+
+    await expect(
+      createInstagramUnifiedSendService(client as never).send({
+        ...input,
+        targetFingerprint,
+      }),
+    ).rejects.toBeInstanceOf(InstagramUnifiedEligibilityError);
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(client.client.sendConversationMessage).not.toHaveBeenCalled();
   });
 
   it('replays an existing action without a second provider request', async () => {

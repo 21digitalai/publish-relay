@@ -56,6 +56,7 @@ import {
 import { registerFacebookPageBrowserReadRoutes } from '../modules/providers/facebook-page-browser-read.routes.js';
 import { registerInstagramUnifiedReadApiRoutes, registerInstagramUnifiedReadRoutes } from '../modules/providers/instagram-unified-read.routes.js';
 import { registerInstagramUnifiedSendApiRoutes, registerInstagramUnifiedSendRoutes } from '../modules/providers/instagram-unified-send.routes.js';
+import { registerInstagramUnifiedScheduleRoutes } from '../modules/providers/instagram-unified-schedule.routes.js';
 import type { InstagramUnifiedReadClient } from '../modules/providers/instagram-unified-read-client.js';
 import { registerMetaOauthRoutes } from '../modules/providers/meta-oauth.routes.js';
 import type { TikTokHttpClient } from '../modules/providers/tiktok-http-client.js';
@@ -446,6 +447,8 @@ function registerBrowserRoutes(
       registerInstagramUnifiedReadRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, auth);
     if (instagramUnifiedOauth?.readClient)
       registerInstagramUnifiedSendRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, auth);
+    if (instagramUnifiedOauth?.readClient)
+      registerInstagramUnifiedScheduleRoutes(application, { database, keys: instagramUnifiedOauth.keys, client: instagramUnifiedOauth.readClient }, auth);
     if (enabledAdapters.has('facebook_page') && options.facebookRead)
       registerFacebookPageBrowserReadRoutes(
         application,

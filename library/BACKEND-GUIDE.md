@@ -6,6 +6,17 @@
 
 `POST /api/provider-accounts/:accountId/instagram-unified-actions` and the corresponding ForgeKey route are the only stage-2 send paths. They accept bounded `comment_reply` and existing-conversation `dm_reply` commands for `instagram_unified_login` accounts only. The server proves selected-account media/comment or conversation ancestry, live Unified grants, a recent recipient-authored DM window, tenant/account binding, and the exact recipient before the provider POST. Every request reserves an immutable row in `instagram_unified_actions` using `(workspace_id, client_action_id)` and a canonical request fingerprint; confirmed, definite failure, and unknown outcomes replay truthfully. Reserved/unknown actions never automatically resend or mint replacement IDs. This ledger is Unified-specific and must not be generalized with Facebook Page action tables. The routes expose only bounded outcome state and provider receipt IDs, never tokens or raw provider bodies.
 
+### Unified Instagram scheduled replies
+
+Stage 3a scheduling uses `instagram_unified_pending_intents` as timing state and keeps
+`instagram_unified_actions` as the sole provider-send ledger. Scheduling accepts only an
+explicit future `dueAt`, snapshots the exact target/thread fingerprint, and enforces the
+Unified account and actor server-side. Cancellation is pending-only; once claimed, the API
+reports truthful in-flight state and never promises recall. Dispatch must recheck grants,
+tenant/account binding, reply-window/ancestry freshness, and cancellation before invoking
+the existing Unified send service with the original `clientActionId`; reserved or unknown
+actions are never reposted.
+
 ### Unified Instagram stage-1 reads
 
 The `instagram_unified_login` connection family has a separate read contract. `GET /api/v1/destinations/:accountId/instagram-unified-status` performs a live provider permission check and returns only the bounded states for `instagram_basic` and `instagram_manage_comments`; an active connection is not treated as grant proof. `instagram-unified-media` requires `destinations:read`, while `instagram-unified-comments/:mediaId` requires `comments:read` and first proves that the media belongs to the selected Unified account. Both collections cap page size at 100, follow opaque cursors for at most 20 provider pages, and project allowlisted fields only. The `instagram-unified-conversations` and `.../messages` reads require `dms:read`, live `instagram_manage_messages`, and selected-account ancestry proof; they project only IDs, timestamps, participants, sender summaries, and text. Stage 2 adds the separate manual action route: comment replies require the comments grant and exact comment/media ancestry, while DM replies require only the messaging grant plus exact conversation/message ancestry and the recent inbound window. Legacy `instagram_login` and Facebook Page families remain separate.

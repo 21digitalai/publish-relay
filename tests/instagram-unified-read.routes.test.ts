@@ -25,6 +25,7 @@ function application() {
   const store = {
     register: vi.fn(),
     findLogin: vi.fn(),
+    findReviewerLogin: vi.fn().mockResolvedValue(null),
     createSession: vi.fn(),
     revokeSessionsForUser: vi.fn(),
     revokeSession: vi.fn(),

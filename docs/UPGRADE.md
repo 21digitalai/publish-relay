@@ -49,3 +49,18 @@ cluster. Backup, restore, migration, authority grants and prior-app readiness/AP
 checks are real; Linux/systemd/process observations use the existing deployment
 fixture on non-Linux hosts. Release-owner checks on the actual supported Linux
 installation remain necessary before claiming deployment.
+
+## Divergent reviewer/media migration histories
+
+Migration `0134_catch_up_reviewer_and_media_admission` converges installations
+that applied the Unified Instagram migrations before incorporating
+`0131_reviewer_access_expiry` and `0132_content_media_amendment_admission`.
+Drizzle orders upgrades by timestamp, so older absent entries are not replayed.
+The catch-up adds the missing nullable reviewer column/constraint and restores
+the canonical media-admission function through a new forward migration.
+It is also safe after both historical migrations have already run. Incompatible
+reviewer columns or constraints fail closed. Historical SQL, journal entries and
+applied ledger rows must not be rewritten; a repaired divergent installation
+can legitimately retain fewer historical ledger rows than a fresh installation.
+Verify the catch-up hash and resulting schema/authorities, not row count alone.
+Back up and rehearse the exact upgrade on an isolated restore before activation.

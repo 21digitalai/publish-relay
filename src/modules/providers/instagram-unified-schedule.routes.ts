@@ -53,27 +53,23 @@ export function registerInstagramUnifiedScheduleRoutes(
       if (!path.success || !parsed.success)
         return reply.code(400).send({ data: null, error: 'Invalid Unified Instagram schedule' });
       try {
-        return await reply
-          .code(202)
-          .send({
-            data: await service.schedule({
-              ...parsed.data,
-              accountId: path.data.accountId,
-              workspaceId: identity.workspaceId,
-              actor: { type: 'user', id: identity.userId },
-            }),
-            error: null,
-          });
+        return await reply.code(202).send({
+          data: await service.schedule({
+            ...parsed.data,
+            accountId: path.data.accountId,
+            workspaceId: identity.workspaceId,
+            actor: { type: 'user', id: identity.userId },
+          }),
+          error: null,
+        });
       } catch (error) {
         if (error instanceof InstagramUnifiedPendingConflictError)
           return reply.code(409).send({ data: null, error: error.message });
         if (error instanceof InstagramUnifiedEligibilityError)
-          return reply
-            .code(409)
-            .send({
-              data: null,
-              error: 'Unified Instagram reply is not currently eligible for scheduling',
-            });
+          return reply.code(409).send({
+            data: null,
+            error: 'Unified Instagram reply is not currently eligible for scheduling',
+          });
         throw error;
       }
     },
@@ -190,7 +186,9 @@ export function registerInstagramUnifiedScheduleApiRoutes(
               errorEnvelope(error.code, 'Unified Instagram schedule access denied', request.id),
             );
         if (error instanceof InstagramUnifiedPendingConflictError)
-          return await reply.code(409).send(errorEnvelope('action_conflict', error.message, request.id));
+          return await reply
+            .code(409)
+            .send(errorEnvelope('action_conflict', error.message, request.id));
         if (error instanceof InstagramUnifiedEligibilityError)
           return await reply
             .code(409)
@@ -311,8 +309,12 @@ export function registerInstagramUnifiedScheduleApiRoutes(
           id: path.data.intentId,
         });
         return cancelled
-          ? await reply.send(successEnvelope({ id: path.data.intentId, status: 'cancelled' }, request.id))
-          : await reply.code(409).send(errorEnvelope('not_pending', 'Intent is not pending', request.id));
+          ? await reply.send(
+              successEnvelope({ id: path.data.intentId, status: 'cancelled' }, request.id),
+            )
+          : await reply
+              .code(409)
+              .send(errorEnvelope('not_pending', 'Intent is not pending', request.id));
       } catch (error) {
         if (error instanceof MachineAuthorizationError)
           return await reply

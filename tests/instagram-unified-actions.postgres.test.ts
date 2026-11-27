@@ -282,11 +282,14 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
 
   it('retains the committed no-replay receipt when dispatch transaction aborts after a provider effect', async () => {
     const input = {
-      workspaceId, accountId,
+      workspaceId,
+      accountId,
       clientActionId: '00000000-0000-4000-8000-000000000399',
       kind: 'dm_reply' as const,
-      targetId: 'rollback-message', parentId: 'rollback-conversation',
-      recipientId: 'recipient-1', text: 'Synthetic rollback test',
+      targetId: 'rollback-message',
+      parentId: 'rollback-conversation',
+      recipientId: 'recipient-1',
+      text: 'Synthetic rollback test',
       requestFingerprint: 'rollback-after-provider',
       actor: { type: 'user' as const, id: '00000000-0000-4000-8000-000000000401' },
     };
@@ -295,15 +298,17 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
       providerCalls += 1;
       return Promise.reject(new Error('connection lost after synthetic provider acceptance'));
     };
-    await expect(withInstagramUnifiedActionDispatch(webDatabase as never, input, dispatch))
-      .rejects.toThrow('connection lost');
+    await expect(
+      withInstagramUnifiedActionDispatch(webDatabase as never, input, dispatch),
+    ).rejects.toThrow('connection lost');
     const persisted = await owner.query(
       'SELECT state FROM instagram_unified_actions WHERE workspace_id = $1 AND client_action_id = $2',
       [workspaceId, input.clientActionId],
     );
     expect(persisted.rows).toEqual([{ state: 'reserved' }]);
-    await expect(withInstagramUnifiedActionDispatch(webDatabase as never, input, dispatch))
-      .resolves.toEqual({ kind: 'existing', outcome: { state: 'unknown' } });
+    await expect(
+      withInstagramUnifiedActionDispatch(webDatabase as never, input, dispatch),
+    ).resolves.toEqual({ kind: 'existing', outcome: { state: 'unknown' } });
     expect(providerCalls).toBe(1);
   });
 
@@ -535,7 +540,13 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     });
     provider.verifyMessagingPermission.mockResolvedValueOnce('missing');
     provider.listMessages.mockResolvedValueOnce({
-      messages: [{ id: 'message-revoked', senderId: 'recipient-revoked', createdAt: new Date().toISOString() }],
+      messages: [
+        {
+          id: 'message-revoked',
+          senderId: 'recipient-revoked',
+          createdAt: new Date().toISOString(),
+        },
+      ],
     });
     await expect(dispatchDueInstagramUnifiedIntent(runtime)).resolves.toEqual({
       confirmed: 0,
@@ -670,7 +681,13 @@ describePostgres('Instagram Unified action ledger on isolated PostgreSQL', () =>
     const client = {
       verifyMessagingPermission: vi.fn().mockResolvedValue('granted'),
       listMessages: vi.fn().mockResolvedValue({
-        messages: [{ id: 'message-stop-race', senderId: 'recipient-stop-race', createdAt: new Date().toISOString() }],
+        messages: [
+          {
+            id: 'message-stop-race',
+            senderId: 'recipient-stop-race',
+            createdAt: new Date().toISOString(),
+          },
+        ],
       }),
       sendConversationMessage: vi.fn().mockResolvedValue('must-not-send'),
     };

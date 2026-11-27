@@ -220,7 +220,9 @@ export async function createCoreRuntime(config: RuntimeConfig): Promise<CoreRunt
                 configId: config.PUBLISH_RELAY_INSTAGRAM_UNIFIED_CONFIG_ID,
                 graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
               }),
-              readClient: new InstagramUnifiedReadClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }),
+              readClient: new InstagramUnifiedReadClient({
+                graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+              }),
               callbackUrl: new URL(
                 '/api/oauth/instagram-unified/callback',
                 publicOrigin,

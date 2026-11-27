@@ -90,11 +90,16 @@ const PAGE_SIZE = 50;
 
 function validFacebookProposal(input: z.infer<typeof createEngagementProposalSchema>): boolean {
   if (input.provider === 'instagram_unified_login')
-    return Boolean(input.sourceContext?.parentId) &&
+    return (
+      Boolean(input.sourceContext?.parentId) &&
       (input.kind === 'comment' || Boolean(input.sourceContext?.recipientId)) &&
-      !input.content.followUps && !input.content.mediaIds && input.content.priceCents === undefined &&
-      input.content.text.length <= 2000 && Boolean(input.plannedDueAt) &&
-      Date.parse(input.plannedDueAt ?? '') > Date.now();
+      !input.content.followUps &&
+      !input.content.mediaIds &&
+      input.content.priceCents === undefined &&
+      input.content.text.length <= 2000 &&
+      Boolean(input.plannedDueAt) &&
+      Date.parse(input.plannedDueAt ?? '') > Date.now()
+    );
   if (input.provider !== 'facebook_page') return !input.content.followUps;
   if (
     input.content.mediaIds?.length ||

@@ -199,8 +199,15 @@ const facebookRuntime =
       }
     : null;
 const instagramUnifiedRuntime =
-  isAdapterEnabled(config, 'instagram') && metaMediaRuntime && config.PUBLISH_RELAY_META_GRAPH_VERSION
-    ? { ...metaMediaRuntime, client: new InstagramUnifiedReadClient({ graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION }) }
+  isAdapterEnabled(config, 'instagram') &&
+  metaMediaRuntime &&
+  config.PUBLISH_RELAY_META_GRAPH_VERSION
+    ? {
+        ...metaMediaRuntime,
+        client: new InstagramUnifiedReadClient({
+          graphVersion: config.PUBLISH_RELAY_META_GRAPH_VERSION,
+        }),
+      }
     : null;
 const tiktokConfig = resolveTikTokProviderConfig(config);
 const tiktokRuntime =
@@ -372,11 +379,19 @@ while (!shutdownController.signal.aborted) {
   }
   if (instagramUnifiedRuntime) {
     try {
-      const unified = await dispatchDueInstagramUnifiedIntent({ ...instagramUnifiedRuntime, workerId: config.WORKER_ID ?? 'publish-relay-worker', leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000) });
+      const unified = await dispatchDueInstagramUnifiedIntent({
+        ...instagramUnifiedRuntime,
+        workerId: config.WORKER_ID ?? 'publish-relay-worker',
+        leaseMs: Math.max(config.WORKER_POLL_INTERVAL_MS * 10, 30_000),
+      });
       if (unified.confirmed || unified.failed || unified.unknown || unified.expired)
-        process.stdout.write(`${JSON.stringify({ event: 'instagram_unified_pending_cycle', ...unified })}\n`);
+        process.stdout.write(
+          `${JSON.stringify({ event: 'instagram_unified_pending_cycle', ...unified })}\n`,
+        );
     } catch (error) {
-      process.stderr.write(`${JSON.stringify({ event: 'instagram_unified_pending_cycle_failed', error: String(error) })}\n`);
+      process.stderr.write(
+        `${JSON.stringify({ event: 'instagram_unified_pending_cycle_failed', error: String(error) })}\n`,
+      );
     }
   }
   if (fanvueRuntime) {

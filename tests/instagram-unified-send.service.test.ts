@@ -116,10 +116,15 @@ describe('Instagram Unified manual reply service', () => {
   it('fails closed when the scheduled inbound fingerprint is stale', async () => {
     const client = runtime();
     const targetFingerprint = createHash('sha256')
-      .update(JSON.stringify({
-        kind: 'dm_reply', target: 'message-1', parent: 'conversation-1',
-        latest: 'message-1', latestAt: '2026-01-01T00:00:00.000Z',
-      }))
+      .update(
+        JSON.stringify({
+          kind: 'dm_reply',
+          target: 'message-1',
+          parent: 'conversation-1',
+          latest: 'message-1',
+          latestAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
       .digest('hex');
 
     await expect(

@@ -806,3 +806,7 @@ the group scheduler uses its already sampled append slot only if that slot fits
 the new provider deadline. Existing roots/tails are untouched; daily admission
 still runs on the accepted new day. If append cannot fit, the civil-day conflict
 remains fail-closed. No accepted action is replayed by this admission fallback.
+
+## Recent Page conversation candidates
+
+The canonical conversation read service, browser/machine read routes, OpenAPI and CLI accept optional updatedSince (validated ISO date-time with offset). Optional updatedSince <ISO-date-time> filters each provider page to updatedAt at/after the inclusive cutoff plus missing/invalid timestamps. Continue every nextCursor even after an empty candidate page: Meta has no supported time pagination or ordering, so all provider pages still need traversal. This reduces context, not Graph reads. A recent update may be outbound; read full directional history to prove unanswered inbound within the reply window. Defaults, Page/grant authorization and no-go/terminal filtering are unchanged. No provider since/order parameter, history store, write, cache or aggregate coverage claim is added. Each response still contains one bounded provider page projected to candidates and the original opaque nextCursor.

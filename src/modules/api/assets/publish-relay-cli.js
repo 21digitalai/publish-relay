@@ -971,7 +971,9 @@ function routePath(route, command, id, flags) {
           command === 'facebook-dms:messages' ||
           command === 'facebook-comments:posts' ||
           command === 'facebook-comments:list'
-        ? ['limit', 'after']
+        ? command === 'facebook-dms:list'
+          ? ['limit', 'after', 'updatedSince']
+          : ['limit', 'after']
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
           : command === 'fanvue:folders'

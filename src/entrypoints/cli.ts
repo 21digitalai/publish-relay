@@ -349,11 +349,7 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
     'status',
   ]),
   'instagram-unified:cancel': new Set([...ENVELOPE_OUTPUT_KEYS, 'id', 'status']),
-  'instagram-unified:stop': new Set([
-    ...ENVELOPE_OUTPUT_KEYS,
-    'stopped',
-    'cancelled',
-  ]),
+  'instagram-unified:stop': new Set([...ENVELOPE_OUTPUT_KEYS, 'stopped', 'cancelled']),
   'instagram-unified:history': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'items',
@@ -1014,7 +1010,9 @@ function routePath(
           command === 'facebook-dms:messages' ||
           command === 'facebook-comments:posts' ||
           command === 'facebook-comments:list'
-        ? ['limit', 'after']
+        ? command === 'facebook-dms:list'
+          ? ['limit', 'after', 'updatedSince']
+          : ['limit', 'after']
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
           : command === 'fanvue:folders'

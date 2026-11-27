@@ -9,6 +9,27 @@ const clientWith = (request: typeof fetch) =>
   new FacebookHttpClient({ graphVersion: 'v26.0', fetch: request });
 
 describe('Facebook Messenger read transport', () => {
+  it('projects malformed or missing summary timestamps as uncertain without provider time filters', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        data: [
+          { id: 'bad', updated_time: 'invalid' },
+          { id: 'missing' },
+          { id: 'null', updated_time: null },
+        ],
+        paging: { next: 'opaque', cursors: { after: 'next' } },
+      }),
+    );
+    const result = await clientWith(request).listPageConversations({
+      pageId: '123',
+      accessToken: 'token',
+    });
+    expect(result.conversations.map((row) => row.updatedAt)).toEqual([null, null, null]);
+    expect(result.nextCursor).toBe('next');
+    const url = request.mock.calls[0]?.[0] as URL;
+    expect(url.searchParams.has('since')).toBe(false);
+    expect(url.searchParams.has('order')).toBe(false);
+  });
   it('loads bounded participant identity without returning provider contact fields', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({

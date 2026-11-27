@@ -99,6 +99,43 @@ async function cli(
 
 describe('Publish Relay CLI', () => {
   it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'passes the recent conversation cutoff and opaque cursor through %s',
+    async (entrypoint) => {
+      const paths: string[] = [];
+      const baseUrl = await fixture(
+        200,
+        { data: { conversations: [], nextCursor: 'next' }, error: null },
+        undefined,
+        paths,
+      );
+      const accountId = '00000000-0000-4000-8000-000000000402';
+      const result = await cli(
+        [
+          'facebook-dms',
+          'list',
+          accountId,
+          '--base-url',
+          baseUrl,
+          '--updatedSince',
+          '2026-11-27T00:00:00Z',
+          '--after',
+          'opaque/next',
+          '--limit',
+          '25',
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(result.code).toBe(0);
+      expect(paths).toEqual([
+        `/api/v1/destinations/${accountId}/facebook-conversations?limit=25&after=opaque%2Fnext&updatedSince=2026-11-27T00%3A00%3A00Z`,
+      ]);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        data: { conversations: [], nextCursor: 'next' },
+      });
+    },
+  );
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
     'schedules a one-bubble Page DM group through %s',
     async (entrypoint) => {
       const accountId = '00000000-0000-4000-8000-000000000402';

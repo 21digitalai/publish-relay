@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { apiV1OpenApiDocument } from '../src/modules/api/openapi.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiRateLimiter } from '../src/modules/api/rate-limit.js';
@@ -67,6 +68,63 @@ describe('Facebook Page read machine API', () => {
       });
       expect(response.json()).toMatchObject({ data: { nextCursor: 'opaque-next' } });
       expect((await app.inject(`${path}/facebook-conversations?filter=all`)).statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('documents the same optional ISO cutoff on the existing conversation endpoint', () => {
+    const document = apiV1OpenApiDocument() as {
+      paths: Record<string, { get: { parameters: unknown[] } }>;
+    };
+    expect(
+      document.paths['/api/v1/destinations/{accountId}/facebook-conversations']?.get.parameters,
+    ).toContainEqual(
+      expect.objectContaining({
+        name: 'updatedSince',
+        in: 'query',
+        schema: { type: 'string', format: 'date-time' },
+      }),
+    );
+  });
+  it('validates cutoff and binds recent reads to the selected Page dms scope', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: 'key' });
+      mocks.conversations.mockResolvedValue({ conversations: [], nextCursor: 'next' });
+      const updatedSince = '2026-11-27T00:00:00+02:00';
+      const response = await app.inject(
+        path + '/facebook-conversations?updatedSince=' + encodeURIComponent(updatedSince),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(mocks.conversations).toHaveBeenCalledWith(expect.anything(), {
+        workspaceId,
+        accountId,
+        updatedSince,
+        filter: 'eligible',
+      });
+      expect(mocks.authorize).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        undefined,
+        expect.anything(),
+        accountId,
+        'dms:read',
+      );
+      for (const value of ['yesterday', '2026-11-27', '2026-02-30T00:00:00Z']) {
+        expect(
+          (await app.inject(path + '/facebook-conversations?updatedSince=' + value)).statusCode,
+        ).toBe(400);
+      }
+      mocks.authorize.mockResolvedValue(null);
+      expect(
+        (
+          await app.inject(
+            path + '/facebook-conversations?updatedSince=' + encodeURIComponent(updatedSince),
+          )
+        ).statusCode,
+      ).toBe(401);
+      expect(mocks.conversations).toHaveBeenCalledTimes(1);
     } finally {
       await app.close();
     }

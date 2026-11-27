@@ -34,7 +34,7 @@ const postCommentSchema = z.object({
 const conversationSchema = z.object({
   id: conversationIdSchema,
   link: z.string().max(2048).nullish(),
-  updated_time: graphTimestampSchema.optional(),
+  updated_time: graphTimestampSchema.nullish().catch(null),
   participants: z
     .object({
       data: z

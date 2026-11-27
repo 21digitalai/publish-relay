@@ -31,6 +31,7 @@ const paramsSchema = z.object({
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   after: z.string().min(1).max(2048).optional(),
+  updatedSince: z.iso.datetime({ offset: true }).optional(),
   filter: z.enum(['all', 'eligible']).optional(),
 });
 
@@ -95,6 +96,9 @@ export function registerFacebookPageBrowserReadRoutes(
           accountId: params.data.accountId,
           ...(query.data.limit === undefined ? {} : { limit: query.data.limit }),
           ...(query.data.after === undefined ? {} : { after: query.data.after }),
+          ...(endpoint.kind !== 'conversations' || query.data.updatedSince === undefined
+            ? {}
+            : { updatedSince: query.data.updatedSince }),
           ...(endpoint.kind !== 'conversations' || query.data.filter === undefined
             ? {}
             : { filter: query.data.filter }),

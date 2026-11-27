@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { z } from 'zod';
 
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import type { FacebookHttpClient } from './facebook-http-client.js';
@@ -17,6 +18,7 @@ export async function listAccountPageConversations(
     limit?: number;
     after?: string;
     filter?: 'all' | 'eligible';
+    updatedSince?: string;
   },
 ) {
   return withPageReadToken(runtime, { ...input, module: 'dms' }, async (pageId, accessToken) => {
@@ -33,7 +35,15 @@ export async function listAccountPageConversations(
     };
     const blocked = await pageNoGoConversationIds(runtime.database, selection);
     const terminal = await terminalPageConversationIds(runtime.database, selection);
-    const conversations = result.conversations.map((item) => ({
+    const cutoff = input.updatedSince === undefined ? undefined : Date.parse(input.updatedSince);
+    // Unknown provider timestamps must remain candidates; this is not inbound eligibility.
+    const candidates = result.conversations.filter((item) => {
+      const normalized = item.updatedAt?.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+      const timestamp = z.iso.datetime({ offset: true }).safeParse(normalized);
+      const updated = timestamp.success ? Date.parse(timestamp.data) : NaN;
+      return cutoff === undefined || !Number.isFinite(updated) || updated >= cutoff;
+    });
+    const conversations = candidates.map((item) => ({
       ...item,
       noGo: blocked.has(item.id),
       terminal: terminal.has(item.id),

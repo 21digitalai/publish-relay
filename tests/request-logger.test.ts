@@ -15,6 +15,41 @@ interface LogRecord {
 }
 
 describe('request logger', () => {
+  it('preserves parser size rejection with production redaction enabled', async () => {
+    const application = Fastify();
+    registerRedactedErrorHandler(application);
+    application.addContentTypeParser(
+      'image/png',
+      { parseAs: 'buffer', bodyLimit: 16 },
+      (_request, body, done) => {
+        done(null, body);
+      },
+    );
+    application.post('/api/v1/media', (_request, reply) => reply.code(401).send());
+    try {
+      const atLimit = await application.inject({
+        method: 'POST',
+        url: '/api/v1/media',
+        headers: { 'content-type': 'image/png' },
+        payload: Buffer.alloc(16),
+      });
+      expect(atLimit.statusCode).toBe(401);
+      const oversized = await application.inject({
+        method: 'POST',
+        url: '/api/v1/media',
+        headers: { 'content-type': 'image/png' },
+        payload: Buffer.alloc(17),
+      });
+      expect(oversized.statusCode).toBe(413);
+      expect(oversized.json()).toEqual({
+        statusCode: 413,
+        error: 'Payload Too Large',
+        message: 'Payload Too Large',
+      });
+    } finally {
+      await application.close();
+    }
+  });
   it('keeps request correlation and path without query credentials in request and error logs', async () => {
     const lines: string[] = [];
     const application = Fastify({

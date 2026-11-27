@@ -18,7 +18,16 @@ export function registerRedactedNotFoundHandler(application: FastifyInstance): v
 }
 
 export function registerRedactedErrorHandler(application: FastifyInstance): void {
-  application.setErrorHandler((_error, request, reply) => {
+  application.setErrorHandler((error, request, reply) => {
+    // Parser failures happen before route error handling; keep the size contract
+    // without exposing arbitrary exception messages or weakening redaction.
+    if (error instanceof Error && 'code' in error && error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      return reply.code(413).send({
+        statusCode: 413,
+        error: 'Payload Too Large',
+        message: 'Payload Too Large',
+      });
+    }
     request.log.error(
       { requestId: request.id, method: request.method, url: requestPath(request.url) },
       'request failed',

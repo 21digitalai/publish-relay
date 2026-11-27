@@ -25,7 +25,7 @@ import {
   validateMediaContentType,
 } from './media.service.js';
 
-export const AGENT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const AGENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 export const AGENT_MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const AGENT_VIDEO_LIMITS = {
   maxDurationMs: 60 * 60 * 1000,

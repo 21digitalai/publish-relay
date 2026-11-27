@@ -1900,10 +1900,10 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           requestBody: {
             required: true,
             content: {
-              'image/png': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
-              'image/jpeg': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
-              'image/gif': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
-              'image/webp': { schema: { type: 'string', format: 'binary', maxLength: 5242880 } },
+              'image/png': { schema: { type: 'string', format: 'binary', maxLength: 10485760 } },
+              'image/jpeg': { schema: { type: 'string', format: 'binary', maxLength: 10485760 } },
+              'image/gif': { schema: { type: 'string', format: 'binary', maxLength: 10485760 } },
+              'image/webp': { schema: { type: 'string', format: 'binary', maxLength: 10485760 } },
               'video/mp4': { schema: { type: 'string', format: 'binary', maxLength: 2147483648 } },
             },
           },

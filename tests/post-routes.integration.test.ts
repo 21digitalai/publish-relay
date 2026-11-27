@@ -617,7 +617,17 @@ describe('agent media upload PostgreSQL boundary', () => {
   });
 
   it('enforces the upload body limit at the HTTP boundary', async () => {
-    const oversized = Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024 - png.length + 1)]);
+    const acceptedAtLimit = Buffer.concat([png, Buffer.alloc(10 * 1024 * 1024 - png.length)]);
+    const accepted = await application.inject({
+      method: 'POST',
+      url: '/api/v1/media',
+      headers: { ...headers, 'idempotency-key': 'media-at-limit' },
+      payload: acceptedAtLimit,
+    });
+    expect(accepted.statusCode).toBe(201);
+    expect(storedMedia.size).toBe(1);
+
+    const oversized = Buffer.concat([png, Buffer.alloc(10 * 1024 * 1024 - png.length + 1)]);
     const response = await application.inject({
       method: 'POST',
       url: '/api/v1/media',
@@ -625,7 +635,7 @@ describe('agent media upload PostgreSQL boundary', () => {
       payload: oversized,
     });
     expect(response.statusCode).toBe(413);
-    expect(storedMedia.size).toBe(0);
+    expect(storedMedia.size).toBe(1);
   });
 
   it('rejects missing content:write capability before storage or idempotency', async () => {

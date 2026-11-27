@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
 import { assertAppendOnlyMigrations } from './migration-compatibility.mjs';
+import { assertKnownHistoryTransition } from './known-history-transition.mjs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 
@@ -126,6 +127,10 @@ function preflight(root, current, id, source) {
   requireCondition(!entries.includes(candidate), 'Release already exists');
   checkRelease(source);
   requireCondition(!source.startsWith(root + '/'), 'Source must be outside release root');
+  requireCondition(
+    !process.env.PUBLISH_RELAY_MIGRATION_TRANSITION || selected,
+    'Known-history transition requires an installed predecessor',
+  );
   assertAppendOnlyMigrations(null, source);
   if (selected) {
     requireCondition(
@@ -133,7 +138,15 @@ function preflight(root, current, id, source) {
       'Pinned release requires owner recovery',
     );
     assertServiceRelease(selected);
-    assertAppendOnlyMigrations(selected, source);
+    if (process.env.PUBLISH_RELAY_MIGRATION_TRANSITION) {
+      assertKnownHistoryTransition(
+        selected,
+        source,
+        process.env.PUBLISH_RELAY_MIGRATION_TRANSITION,
+      );
+    } else {
+      assertAppendOnlyMigrations(selected, source);
+    }
   }
   return selected ?? '';
 }

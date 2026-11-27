@@ -35,6 +35,9 @@ script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$script_directory/release-lifecycle.sh"
 [[ -d "$release_root" && ! -L "$release_root" ]] || { echo "Provision a real empty releases directory first" >&2; exit 66; }
 lifecycle_begin
+if [[ -n "${PUBLISH_RELAY_MIGRATION_TRANSITION:-}" ]]; then
+  export PUBLISH_RELAY_MIGRATION_SOURCE="$previous_release"
+fi
 candidate_created=true
 install -d -o "$service_user" -g "$service_user" "$release_directory"
 cp -a "${source_directory}/." "$release_directory/"
@@ -57,8 +60,12 @@ sudo -u "$service_user" test -r "${release_directory}/dist/database/migrate.js" 
 lifecycle_guard artifact "$release_root" "$current_link" "$release_id"
 (
   cd "$release_directory"
+  migration_environment=DATABASE_URL,PGPASSWORD
+  if [[ -n "${PUBLISH_RELAY_MIGRATION_TRANSITION:-}" ]]; then
+    migration_environment+=,PUBLISH_RELAY_MIGRATION_TRANSITION,PUBLISH_RELAY_MIGRATION_SOURCE
+  fi
   DATABASE_URL="$MIGRATION_DATABASE_URL" PGPASSWORD="${PGPASSWORD:-}" \
-    sudo --preserve-env=DATABASE_URL,PGPASSWORD \
+    sudo --preserve-env="$migration_environment" \
     -u "$service_user" "$node_bin" dist/database/migrate.js
   PGPASSWORD="${PGPASSWORD:-}" \
     sudo --preserve-env=PGPASSWORD \

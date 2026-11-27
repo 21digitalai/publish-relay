@@ -40,6 +40,52 @@ review the exact release migrations for old-application compatibility and prove
 prior-application recovery on a disposable database before deployment. A
 destructive/incompatible migration requires a separately reviewed recovery plan.
 
+### Known divergent November 2026 history (explicit owner recovery only)
+
+Canonical history retains the immutable 0.1.97 journal prefix, including its
+historical timestamp anomalies. New entries 0133–0136 advance above every known
+installed timestamp. They validate/preserve existing Instagram action, intent
+and no-go tables (or create missing tables), and repeat the idempotent
+reviewer/media authority catch-up. They never change historical ledger rows.
+
+The ordinary append-only gate is unchanged. A source tree carrying the exact
+divergent migration set from Core `1dd6f3e8b50c710da001b772c2ed8bd44df77294`
+(also present at `1c188e7`) cannot pass that gate. Do not reset its ledger,
+rewrite installed files, remove a guard, or use a general force flag.
+
+After independent review and installation-owner approval of the exact plan,
+the existing standalone update command may explicitly opt into the single
+`main-20261127` transition by setting
+`PUBLISH_RELAY_MIGRATION_TRANSITION=main-20261127`. This validates **all** installed
+and target migration file SHA-256 hashes against the shipped manifest. The
+serialized lifecycle supplies the actual predecessor as
+`PUBLISH_RELAY_MIGRATION_SOURCE` to the compiled canonical runner. Before any
+DDL, that runner requires the exact known fresh-main or old-to-main ledger
+sequence; unknown, partial, reordered or edited histories are refused. The
+completed sequences are accepted for an idempotent second invocation. Existing
+schema is validated against exact reference definitions within the canonical
+Drizzle transaction; incompatible structure aborts all pending migrations.
+No alternate migration runner or ledger mutation is involved.
+
+Keep the predecessor, verified backup, isolated restore and application recovery
+evidence until the owner accepts the transition. Remove the one-shot environment
+setting after success; a later target is deliberately rejected by this exact
+contract. Hosted compositions still require their own reviewed deployment
+procedure; this standalone opt-in does not authorize changing another server.
+
+Reproduce the disposable PostgreSQL matrix (local administrator URL must select
+a database ending in `_test`) after building:
+
+```sh
+MIGRATION_CONVERGENCE_TEST_URL=postgresql://localhost/convergence_test \
+  npx vitest run tests/migration-convergence.postgres.test.ts
+```
+
+It creates/removes isolated databases and proves fresh 0.1.97, fresh divergent
+main, and 0.1.97-to-divergent-main upgrades, persisted login, current/previous
+application readiness, seeded Instagram rows, authority bootstrap, forced RLS,
+unchanged old ledger rows, second-run no-op and incompatible-schema refusal.
+
 ### Preflight and backup on the installation host
 
 Confirm the release root/current symlink, service user, both units, listener,

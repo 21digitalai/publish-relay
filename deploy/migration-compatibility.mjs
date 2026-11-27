@@ -2,6 +2,8 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+export { readFiles as readMigrationTree };
+
 function requireCondition(condition) {
   if (!condition)
     throw new Error('Migration set changes: invalid or non-append-only migration history');

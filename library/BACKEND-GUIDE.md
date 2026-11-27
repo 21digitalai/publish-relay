@@ -789,6 +789,24 @@ post-media.service.ts reuses editPostInTransaction for policy, ready tenant-owne
 
 ## Standalone append-only update gate
 
+The November 2026 history-convergence contract restores the actual 0.1.97
+immutable prefix and appends migrations 0133–0136 above both installed maxima.
+Instagram forward repairs retain existing rows and compare live columns,
+defaults, constraints, indexes, policies and forced RLS against transaction-local
+reference schemas; drift aborts the canonical Drizzle transaction. Reference
+schemas contain no application data and are dropped before commit. Reviewer and
+media admission repair reuses the existing idempotent catch-up SQL unchanged.
+
+`deploy/known-history-transition.mjs` owns the separately opted-in exact
+`main-20261127` source/target hash and ledger-sequence contract. Ordinary guards
+remain fail-closed. The existing release lifecycle supplies its actual previous
+source; `src/database/migrate.ts` validates the known ledger before delegating
+to the same Drizzle runner. No ledger row is rewritten, removed or fabricated.
+The Core archive includes this module, its immutable JSON contract and the
+canonical tree reader, so the compiled migration entrypoint is portable.
+See `deploy/README.md` for owner recovery boundaries and the real PostgreSQL
+matrix. Packaging/review is not permission to execute a production transition.
+
 deploy/migration-compatibility.mjs is the sole Core migration comparison owner,
 called by the existing release filesystem preflight. It validates regular
 SQL/meta layouts, exact installed SQL and journal-entry prefix/root metadata,

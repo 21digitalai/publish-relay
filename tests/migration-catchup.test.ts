@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 const migration = new URL(
-  '../migrations/0134_catch_up_reviewer_and_media_admission.sql',
+  '../migrations/0136_catch_up_reviewer_and_media_admission.sql',
   import.meta.url,
 );
 

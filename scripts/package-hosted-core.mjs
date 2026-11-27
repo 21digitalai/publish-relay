@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE_NAME = '@21digital/publish-relay-core';
+const migrationSupportFiles = [
+  'deploy/known-history-transition.mjs',
+  'deploy/known-history-main-20261127.json',
+  'deploy/migration-compatibility.mjs',
+];
 const exportsMap = {
   './package.json': './package.json',
   './application': {
@@ -110,12 +115,14 @@ async function writePackage(staging, sourcePackage, commit) {
     private: false,
     publishRelaySourceCommit: commit,
     exports: exportsMap,
-    files: ['dist', 'migrations', 'LICENSE'],
+    files: ['dist', 'migrations', ...migrationSupportFiles, 'LICENSE'],
   };
   delete metadata.scripts;
   delete metadata.devDependencies;
   delete metadata.overrides;
+  await mkdir(join(staging, 'deploy'));
   await Promise.all([
+    ...migrationSupportFiles.map((path) => cp(join(root, path), join(staging, path))),
     cp(join(root, 'dist'), join(staging, 'dist'), { recursive: true }),
     cp(join(root, 'migrations'), join(staging, 'migrations'), { recursive: true }),
     cp(join(root, 'LICENSE'), join(staging, 'LICENSE')),
@@ -150,6 +157,20 @@ async function verifyFreshInstall(artifact, staging, commit) {
     throw new Error('Fresh install has the wrong package identity or source commit');
   }
   const count = await verifyMigrations(join(root, 'migrations'), join(installed, 'migrations'));
+  for (const path of migrationSupportFiles) {
+    if ((await hashFile(join(root, path))) !== (await hashFile(join(installed, path)))) {
+      throw new Error(`Fresh install changed migration support file: ${path}`);
+    }
+  }
+  command(
+    'node',
+    [
+      '--input-type=module',
+      '-e',
+      `await import(${JSON.stringify(join(installed, 'deploy/known-history-transition.mjs'))})`,
+    ],
+    consumer,
+  );
   for (const entry of ['application', 'runtime', 'auth', 'policy']) {
     command(
       'node',

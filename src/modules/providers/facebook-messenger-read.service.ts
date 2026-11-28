@@ -1,5 +1,8 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { z } from 'zod';
+import {
+  conversationUpdatedTimestamp,
+  summarizeConversationOrdering,
+} from './facebook-conversation-ordering.js';
 
 import type { MasterKeyProvider } from '../credentials/envelope.js';
 import type { FacebookHttpClient } from './facebook-http-client.js';
@@ -38,9 +41,7 @@ export async function listAccountPageConversations(
     const cutoff = input.updatedSince === undefined ? undefined : Date.parse(input.updatedSince);
     // Unknown provider timestamps must remain candidates; this is not inbound eligibility.
     const candidates = result.conversations.filter((item) => {
-      const normalized = item.updatedAt?.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
-      const timestamp = z.iso.datetime({ offset: true }).safeParse(normalized);
-      const updated = timestamp.success ? Date.parse(timestamp.data) : NaN;
+      const updated = conversationUpdatedTimestamp(item.updatedAt);
       return cutoff === undefined || !Number.isFinite(updated) || updated >= cutoff;
     });
     const conversations = candidates.map((item) => ({
@@ -50,6 +51,9 @@ export async function listAccountPageConversations(
     }));
     return {
       ...result,
+      ...(input.updatedSince === undefined
+        ? {}
+        : { ordering: summarizeConversationOrdering(result.conversations, input.updatedSince) }),
       conversations:
         input.filter === 'eligible'
           ? conversations.filter((item) => !item.noGo && !item.terminal)

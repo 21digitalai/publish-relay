@@ -828,3 +828,26 @@ remains fail-closed. No accepted action is replayed by this admission fallback.
 ## Recent Page conversation candidates
 
 The canonical conversation read service, browser/machine read routes, OpenAPI and CLI accept optional updatedSince (validated ISO date-time with offset). Optional updatedSince <ISO-date-time> filters each provider page to updatedAt at/after the inclusive cutoff plus missing/invalid timestamps. Continue every nextCursor even after an empty candidate page: Meta has no supported time pagination or ordering, so all provider pages still need traversal. This reduces context, not Graph reads. A recent update may be outbound; read full directional history to prove unanswered inbound within the reply window. Defaults, Page/grant authorization and no-go/terminal filtering are unchanged. No provider since/order parameter, history store, write, cache or aggregate coverage claim is added. Each response still contains one bounded provider page projected to candidates and the original opaque nextCursor.
+
+## Raw Facebook conversation ordering observations
+
+With an explicit updatedSince only, the existing browser/machine conversation read
+adds ordering (CLI passes the same data through). Legacy no-cutoff responses stay
+unchanged. facebook-conversation-ordering.ts owns timestamp normalization shared
+by filtering and measurement. Equality is recent; unknown timestamps stay candidates.
+The aggregate is calculated before cutoff/no-go/terminal filtering and contains no
+old IDs, names, text or row objects. providerPageReads counts exactly one successful
+Graph page GET, excluding failures (no retries or additional reads are introduced).
+
+Consumer instructions/fixture: keep one fixed inclusive cutoff per origin/workspace/
+account stream, oldSeen=false, lastValidTimestamp=null, seen cursors and complete=false.
+Add each page's inversions, plus one when its first valid timestamp is newer than
+the previous last valid timestamp. Add oldSeen ? recentCount : recentAfterFirstOld
+(not both), then set oldSeen if oldCount>0; update last valid only when nonnull.
+Sum raw/recent/old/unknown/page-read counts. Follow every opaque cursor, including
+empty filtered pages. Mark exhausted only on null cursor; repeated/missing response
+cursor, truncation, failed pages or unknown timestamps leave ordering evidence
+incomplete. Do not treat an exhausted monotonic sample as a provider guarantee.
+The executable recent-old / recent-unknown-old-recent two-page consumer fixture is
+tests/facebook-conversation-ordering.test.ts. No persistent server state, early-stop,
+provider scan, send-policy or authorization change is part of this contract.

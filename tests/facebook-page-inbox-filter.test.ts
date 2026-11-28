@@ -104,9 +104,23 @@ describe('selected-Page inbox filtering', () => {
       'invalid',
     ]);
     expect(first.nextCursor).toBe('opaque/next');
+    expect(first.ordering).toMatchObject({
+      rawCount: 7,
+      recentCount: 4,
+      oldCount: 1,
+      unknownCount: 2,
+      firstOldPosition: 1,
+      inversions: 1,
+      recentAfterFirstOld: 3,
+      providerPageReads: 1,
+    });
     expect(
       await listAccountPageConversations(runtime, { ...input, after: first.nextCursor ?? '' }),
-    ).toEqual({ conversations: [], nextCursor: 'after-empty' });
+    ).toMatchObject({
+      conversations: [],
+      nextCursor: 'after-empty',
+      ordering: { rawCount: 1, oldCount: 1 },
+    });
     const last = await listAccountPageConversations(runtime, { ...input, after: 'after-empty' });
     expect(last.conversations.map((item) => item.id)).toEqual(['recent']);
     expect(last.nextCursor).toBeNull();

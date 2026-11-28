@@ -977,7 +977,7 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'Page conversation summaries with nullable displayName, nullable Meta conversation link and nextCursor',
+                'Page conversation summaries with nullable displayName/link and opaque nextCursor. With updatedSince only, ordering contains cutoff, rawCount/recentCount/oldCount/unknownCount, first/lastValidTimestamp (ISO or null), firstOldPosition (zero-based or null), inversions, recentAfterFirstOld and providerPageReads=1. Counts describe the raw page before filtering, not inbound eligibility; unknowns prevent ordering proof. No early-stop.',
             },
             '401': { description: 'Authentication required' },
             '403': { description: 'Missing Page-local dms:read grant' },

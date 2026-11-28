@@ -53,6 +53,35 @@ afterEach(() => {
 });
 
 describe('Facebook Page read machine API', () => {
+  it('validates opt-in comment page bounds and routes the existing scoped operation', async () => {
+    const app = await createApp();
+    try {
+      mocks.authorize.mockResolvedValue({ workspaceId, actorId: 'key' });
+      mocks.comments.mockResolvedValue({ comments: [], nextCursor: 'opaque', complete: false });
+      const response = await app.inject(path + '/facebook-posts/123_456/comments?maxPages=2');
+      expect(response.statusCode).toBe(200);
+      expect(mocks.comments).toHaveBeenCalledWith(expect.anything(), {
+        workspaceId,
+        accountId,
+        postId: '123_456',
+        maxPages: 2,
+      });
+      expect(response.json<{ data: unknown }>().data).toMatchObject({
+        complete: false,
+        nextCursor: 'opaque',
+      });
+      for (const value of ['0', '11', '1.5', 'bad']) {
+        expect(
+          (await app.inject(path + '/facebook-posts/123_456/comments?maxPages=' + value))
+            .statusCode,
+        ).toBe(400);
+      }
+      expect((await app.inject(path + '/facebook-conversations?maxPages=2')).statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('always selects the eligible inbox for machine reads', async () => {
     const app = await createApp();
     try {

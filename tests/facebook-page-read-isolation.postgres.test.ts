@@ -4,7 +4,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { encryptCredential } from '../src/modules/credentials/envelope.js';
-import { listAccountPagePosts } from '../src/modules/providers/facebook-comments-read.service.js';
+import {
+  listAccountPagePosts,
+  listAccountPostComments,
+} from '../src/modules/providers/facebook-comments-read.service.js';
 import { listAccountPageConversations } from '../src/modules/providers/facebook-messenger-read.service.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
@@ -148,6 +151,27 @@ beforeEach(async () => {
 afterEach(async () => postgres.close());
 
 describe('Facebook Page read PostgreSQL tenant/account isolation', () => {
+  it('denies bounded comment reads for foreign workspace, mismatched Page token and revoked grant before provider reads', async () => {
+    const getPostOwner = vi.fn();
+    const listPostComments = vi.fn();
+    const runtime = { database, keys, client: { getPostOwner, listPostComments } as never };
+    const input = { workspaceId, accountId, postId: '123_456', maxPages: 2 };
+    await expect(
+      listAccountPostComments(runtime, { ...input, workspaceId: otherWorkspaceId }),
+    ).rejects.toThrow('unavailable');
+    await expect(
+      listAccountPostComments(runtime, { ...input, accountId: siblingId }),
+    ).rejects.toThrow('unavailable');
+    await postgres.exec('RESET ROLE;');
+    await postgres.query(
+      'UPDATE facebook_page_engagement_modules SET comments_enabled=false WHERE account_id=$1',
+      [accountId],
+    );
+    await postgres.exec('SET ROLE publish_relay_app;');
+    await expect(listAccountPostComments(runtime, input)).rejects.toThrow('unavailable');
+    expect(getPostOwner).not.toHaveBeenCalled();
+    expect(listPostComments).not.toHaveBeenCalled();
+  });
   it('reads only the selected origin Page with the matching encrypted Page credential', async () => {
     const runtime = { database, keys, client: client as never };
     expect(await listAccountPagePosts(runtime, { workspaceId, accountId })).toEqual({

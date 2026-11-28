@@ -14,6 +14,29 @@ const attachmentOnlyTargets: { label: string; message?: string }[] = [
 ];
 
 describe('Facebook Page comment read transport', () => {
+  it('fails closed on advertised continuation without a cursor in bounded mode only', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(() =>
+      Promise.resolve(
+        Response.json({
+          data: [],
+          paging: { next: 'https://graph.facebook.com/private?access_token=secret' },
+        }),
+      ),
+    );
+    const client = makeClient(request);
+    await expect(
+      client.listPostComments({
+        postId: '123_456',
+        accessToken: 'token',
+        requireCompleteCursor: true,
+      }),
+    ).rejects.toBeInstanceOf(FacebookRequestError);
+    expect(await client.listPostComments({ postId: '123_456', accessToken: 'token' })).toEqual({
+      comments: [],
+      nextCursor: null,
+    });
+  });
+
   it.each(attachmentOnlyTargets)(
     'accepts an attachment-only target with a $label message',
     async ({ message }) => {

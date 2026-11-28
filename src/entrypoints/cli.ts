@@ -373,6 +373,12 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
   ]),
   'facebook-comments:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
+    'complete',
+    'stopReason',
+    'reads',
+    'ownerReads',
+    'commentPageReads',
+    'responseBytes',
     'comments',
     'nextCursor',
     'text',
@@ -383,6 +389,18 @@ const SAFE_OUTPUT_KEYS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
   'facebook-dms:list': new Set([
     ...ENVELOPE_OUTPUT_KEYS,
     'conversations',
+    'ordering',
+    'cutoff',
+    'rawCount',
+    'recentCount',
+    'oldCount',
+    'unknownCount',
+    'firstValidTimestamp',
+    'lastValidTimestamp',
+    'firstOldPosition',
+    'inversions',
+    'recentAfterFirstOld',
+    'providerPageReads',
     'nextCursor',
     'updatedAt',
     'displayName',
@@ -1012,7 +1030,9 @@ function routePath(
           command === 'facebook-comments:list'
         ? command === 'facebook-dms:list'
           ? ['limit', 'after', 'updatedSince']
-          : ['limit', 'after']
+          : command === 'facebook-comments:list'
+            ? ['limit', 'after', 'maxPages']
+            : ['limit', 'after']
         : command === 'fanvue:followers' || command === 'fanvue:subscribers'
           ? ['page', 'size', 'cursor']
           : command === 'fanvue:folders'

@@ -1,6 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { MasterKeyProvider } from '../credentials/envelope.js';
+import { readBoundedCommentPages } from './facebook-comment-pages.js';
 import type { FacebookHttpClient } from './facebook-http-client.js';
 import {
   PageReadUnavailableError,
@@ -23,7 +24,14 @@ export async function listAccountPagePosts(
 
 export async function listAccountPostComments(
   runtime: { database: NodePgDatabase; keys: MasterKeyProvider; client: FacebookHttpClient },
-  input: { workspaceId: string; accountId: string; postId: string; limit?: number; after?: string },
+  input: {
+    workspaceId: string;
+    accountId: string;
+    postId: string;
+    limit?: number;
+    after?: string;
+    maxPages?: number;
+  },
 ) {
   return withPageReadToken(
     runtime,
@@ -31,6 +39,12 @@ export async function listAccountPostComments(
     async (pageId, accessToken) => {
       const ownerPageId = await runtime.client.getPostOwner(input.postId, accessToken);
       if (ownerPageId !== pageId) throw new PageReadUnavailableError();
+      if (input.maxPages !== undefined)
+        return readBoundedCommentPages(runtime.client, {
+          ...input,
+          accessToken,
+          maxPages: input.maxPages,
+        });
       return runtime.client.listPostComments({
         postId: input.postId,
         accessToken,

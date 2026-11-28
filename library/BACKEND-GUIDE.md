@@ -851,3 +851,24 @@ incomplete. Do not treat an exhausted monotonic sample as a provider guarantee.
 The executable recent-old / recent-unknown-old-recent two-page consumer fixture is
 tests/facebook-conversation-ordering.test.ts. No persistent server state, early-stop,
 provider scan, send-policy or authorization change is part of this contract.
+
+## Invocation-bounded Facebook comment reads
+
+Machine facebook-comments list accepts optional --maxPages 1..10 (API maxPages).
+Absent retains the exact one-page default/response. Opt-in traverses at most that
+many 100-comment pages (limit can lower this), under one canonical selected-Page
+grant/token and post-owner proof. No caller ownership evidence is trusted or stored.
+readBoundedCommentPages owns traversal; sender/admission/dispatch checks are untouched.
+The response adds complete, stopReason and reads (ownerReads, commentPageReads,
+responseBytes); counts cover this invocation only. C accepted pages cost C+1 Graph
+GETs rather than 2C, theoretical C-1 saving, not measured production savings.
+The comments JSON budget is 1 MiB plus bounded receipt/cursor overhead. A page that
+would exceed it is not accepted; nextCursor resumes from before that page. The
+fetched page still counts as a read. A first oversized page fails closed.
+Follow incomplete page_limit/byte_limit cursors even for old posts (new comments
+can arrive on them). Null cursor alone with complete=true means exhausted.
+Missing continuation or cursor cycles fail the whole invocation, never fake
+completion. No partial data is returned on provider/auth failure. Local grant
+authority is checked once at admission, not transactionally throughout network
+reads; provider revocation errors abort traversal, and every continuation invocation
+rechecks local authority and owner. No cache survives an invocation.

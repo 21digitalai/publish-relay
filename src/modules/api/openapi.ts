@@ -488,6 +488,13 @@ export function apiV1OpenApiDocument(): Record<string, unknown> {
             },
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
             { name: 'after', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'maxPages',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 10 },
+              description:
+                'Optional bounded traversal; absent preserves one page. Adds complete, stopReason and reads(ownerReads,commentPageReads,responseBytes). Follow incomplete nextCursor. 1 MiB comment JSON budget; missing/repeated provider cursors and revocation fail closed. Owner proof once per invocation, never reused for sends.',
+            },
           ],
           responses: {
             '200': { description: 'Selected post comments and nextCursor' },

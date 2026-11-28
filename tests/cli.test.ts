@@ -99,12 +99,60 @@ async function cli(
 
 describe('Publish Relay CLI', () => {
   it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'passes bounded comment traversal and preserves its receipt through %s',
+    async (entrypoint) => {
+      const paths: string[] = [];
+      const data = {
+        comments: [],
+        complete: false,
+        nextCursor: 'opaque',
+        stopReason: 'page_limit',
+        reads: { ownerReads: 1, commentPageReads: 2, responseBytes: 2 },
+      };
+      const baseUrl = await fixture(200, { data, error: null }, undefined, paths);
+      const account = '00000000-0000-4000-8000-000000000402';
+      const result = await cli(
+        [
+          'facebook-comments',
+          'list',
+          account,
+          '--post-id',
+          '123_456',
+          '--base-url',
+          baseUrl,
+          '--maxPages',
+          '2',
+        ],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(result.code).toBe(0);
+      expect(paths).toEqual([
+        '/' + 'api/v1/destinations/' + account + '/facebook-posts/123_456/comments?maxPages=2',
+      ]);
+      expect((JSON.parse(result.stdout) as { data: unknown }).data).toEqual(data);
+    },
+  );
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
     'passes the recent conversation cutoff and opaque cursor through %s',
     async (entrypoint) => {
       const paths: string[] = [];
       const baseUrl = await fixture(
         200,
-        { data: { conversations: [], nextCursor: 'next' }, error: null },
+        {
+          data: {
+            conversations: [],
+            nextCursor: 'next',
+            ordering: {
+              rawCount: 100,
+              oldCount: 99,
+              unknownCount: 1,
+              firstOldPosition: 0,
+              providerPageReads: 1,
+            },
+          },
+          error: null,
+        },
         undefined,
         paths,
       );
@@ -131,7 +179,17 @@ describe('Publish Relay CLI', () => {
         `/api/v1/destinations/${accountId}/facebook-conversations?limit=25&after=opaque%2Fnext&updatedSince=2026-11-27T00%3A00%3A00Z`,
       ]);
       expect(JSON.parse(result.stdout)).toMatchObject({
-        data: { conversations: [], nextCursor: 'next' },
+        data: {
+          conversations: [],
+          nextCursor: 'next',
+          ordering: {
+            rawCount: 100,
+            oldCount: 99,
+            unknownCount: 1,
+            firstOldPosition: 0,
+            providerPageReads: 1,
+          },
+        },
       });
     },
   );

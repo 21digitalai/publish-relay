@@ -35,6 +35,7 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   after: z.string().min(1).max(2048).optional(),
   updatedSince: z.iso.datetime({ offset: true }).optional(),
+  maxPages: z.coerce.number().int().min(1).max(10).optional(),
   filter: z.literal('eligible').optional(),
 });
 
@@ -68,6 +69,10 @@ export function registerFacebookPageReadRoutes(
           return reply
             .code(400)
             .send(errorEnvelope('invalid_request', 'Invalid Page read query', request.id));
+        if (query.data.maxPages !== undefined && endpoint.kind !== 'comments')
+          return reply
+            .code(400)
+            .send(errorEnvelope('invalid_request', 'maxPages requires comments', request.id));
         const postId = params.data.postId ?? '';
         if (endpoint.kind === 'comments' && !postId)
           return reply
@@ -112,7 +117,11 @@ export function registerFacebookPageReadRoutes(
             endpoint.kind === 'posts'
               ? await listAccountPagePosts(runtime, input)
               : endpoint.kind === 'comments'
-                ? await listAccountPostComments(runtime, { ...input, postId })
+                ? await listAccountPostComments(runtime, {
+                    ...input,
+                    postId,
+                    ...(query.data.maxPages === undefined ? {} : { maxPages: query.data.maxPages }),
+                  })
                 : endpoint.kind === 'conversations'
                   ? await listAccountPageConversations(runtime, { ...input, filter: 'eligible' })
                   : await listAccountConversationMessages(runtime, {

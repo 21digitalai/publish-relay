@@ -386,6 +386,7 @@ export class FacebookHttpClient {
     accessToken: string;
     limit?: number;
     after?: string;
+    requireCompleteCursor?: boolean;
   }) {
     const postId = graphIdSchema.parse(input.postId);
     const limit = z
@@ -405,6 +406,8 @@ export class FacebookHttpClient {
       input.accessToken,
     );
     const page = graphPageSchema(postCommentSchema).parse(body);
+    if (input.requireCompleteCursor && page.paging?.next && !page.paging.cursors?.after)
+      throw new FacebookRequestError({ kind: 'permanent', status: 502 });
     return {
       comments: page.data.map((comment) => ({
         id: comment.id,

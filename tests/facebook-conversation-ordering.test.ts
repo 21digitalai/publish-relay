@@ -75,3 +75,54 @@ describe('raw conversation ordering observation', () => {
     });
   });
 });
+
+// Minimal instruction-consumer fixture, not a second production pagination owner.
+function observeStream(
+  pages: {
+    ordering: ReturnType<typeof summarizeConversationOrdering>;
+    nextCursor?: string | null;
+  }[],
+) {
+  const seen = new Set<string>();
+  let unknownCount = 0;
+  let exhausted = false;
+  let incomplete = false;
+  for (const page of pages) {
+    unknownCount += page.ordering.unknownCount;
+    if (page.nextCursor === null) {
+      exhausted = true;
+      break;
+    }
+    if (!page.nextCursor || seen.has(page.nextCursor)) {
+      incomplete = true;
+      break;
+    }
+    seen.add(page.nextCursor);
+  }
+  return { exhausted, orderingEvidenceComplete: exhausted && !incomplete && unknownCount === 0 };
+}
+describe('normal consumer evidence completeness', () => {
+  const known = summarizeConversationOrdering([{ updatedAt: cutoff }], cutoff);
+  it('does not confuse missing/repeated/truncated cursors or unknown timestamps with ordering evidence', () => {
+    expect(observeStream([{ ordering: known }]).orderingEvidenceComplete).toBe(false);
+    expect(observeStream([{ ordering: known, nextCursor: 'a' }]).orderingEvidenceComplete).toBe(
+      false,
+    );
+    expect(
+      observeStream([
+        { ordering: known, nextCursor: 'a' },
+        { ordering: known, nextCursor: 'a' },
+      ]).orderingEvidenceComplete,
+    ).toBe(false);
+    expect(
+      observeStream([{ ordering: summarizeConversationOrdering([{}], cutoff), nextCursor: null }]),
+    ).toEqual({ exhausted: true, orderingEvidenceComplete: false });
+    expect(
+      observeStream([
+        { ordering: known, nextCursor: 'a' },
+        { ordering: known, nextCursor: null },
+      ]),
+    ).toEqual({ exhausted: true, orderingEvidenceComplete: true });
+    // Complete is one bounded observation, never permission to stop a future stream.
+  });
+});

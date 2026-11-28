@@ -217,7 +217,9 @@ export class InstagramUnifiedReadClient {
     accessToken: string;
   }): Promise<{ targetFingerprint: string }> {
     const body = await this.get(
-      this.url(`/${this.id(input.commentId)}`, { fields: 'id,text,timestamp,from{id},media{id,owner{id}}' }),
+      this.url(`/${this.id(input.commentId)}`, {
+        fields: 'id,text,timestamp,from{id},media{id,owner{id}}',
+      }),
       input.accessToken,
     );
     const parsed = ownedComment.safeParse(body);

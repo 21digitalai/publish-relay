@@ -571,7 +571,10 @@ export function InstagramUnifiedCapabilityControl({
                     ? 'Manual and scheduled replies are blocked.'
                     : 'Replies remain allowed for this conversation.'}
                 </small>
-                <ul className="instagram-unified-conversation-history" aria-label="Unified Instagram conversation history">
+                <ul
+                  className="instagram-unified-conversation-history"
+                  aria-label="Unified Instagram conversation history"
+                >
                   {history.length > 0 ? (
                     history.map((item) => (
                       <li
@@ -582,7 +585,9 @@ export function InstagramUnifiedCapabilityControl({
                       </li>
                     ))
                   ) : (
-                    <li className="instagram-unified-conversation-history-empty">No conversation actions yet.</li>
+                    <li className="instagram-unified-conversation-history-empty">
+                      No conversation actions yet.
+                    </li>
                   )}
                 </ul>
               </div>

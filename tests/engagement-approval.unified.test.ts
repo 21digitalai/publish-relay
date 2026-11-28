@@ -15,9 +15,7 @@ vi.mock('../src/modules/providers/engagement-proposal.repository.js', async () =
   };
 });
 
-import {
-  scheduleInstagramUnifiedProposal,
-} from '../src/modules/providers/engagement-approval.service.js';
+import { scheduleInstagramUnifiedProposal } from '../src/modules/providers/engagement-approval.service.js';
 
 const workspaceId = '00000000-0000-4000-8000-000000000101';
 const userId = '00000000-0000-4000-8000-000000000102';

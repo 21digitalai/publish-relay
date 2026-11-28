@@ -39,7 +39,10 @@ import {
 } from './engagement-approval.service.js';
 import { cancelScheduledProposalFanvueDm } from './fanvue-dm-pending.repository.js';
 import { cancelScheduledProposalFanvueComment } from './fanvue-comment-pending.repository.js';
-import { cancelInstagramUnifiedIntent, listInstagramUnifiedIntents } from './instagram-unified-pending.repository.js';
+import {
+  cancelInstagramUnifiedIntent,
+  listInstagramUnifiedIntents,
+} from './instagram-unified-pending.repository.js';
 
 const paramsSchema = z.strictObject({ proposalId: z.uuid() });
 const approvalSchema = z.strictObject({
@@ -170,28 +173,36 @@ export function registerEngagementApprovalRoutes(
               workspaceId: identity.workspaceId,
               accountId: proposal.accountId,
             });
-            const intent = intents.rows.find((row) => row.clientActionId === proposal.clientActionId);
-            return intent ? cancelInstagramUnifiedIntent(dependencies.database, { workspaceId: identity.workspaceId, accountId: proposal.accountId, id: intent.id }) : false;
+            const intent = intents.rows.find(
+              (row) => row.clientActionId === proposal.clientActionId,
+            );
+            return intent
+              ? cancelInstagramUnifiedIntent(dependencies.database, {
+                  workspaceId: identity.workspaceId,
+                  accountId: proposal.accountId,
+                  id: intent.id,
+                })
+              : false;
           })()
         : proposal?.provider === 'fanvue' && proposal.kind === 'comment'
-        ? cancelScheduledProposalFanvueComment(dependencies.database, {
-            workspaceId: identity.workspaceId,
-            proposalId: params.data.proposalId,
-          })
-        : proposal?.provider === 'fanvue' && proposal.kind === 'dm'
-          ? cancelScheduledProposalFanvueDm(dependencies.database, {
+          ? cancelScheduledProposalFanvueComment(dependencies.database, {
               workspaceId: identity.workspaceId,
               proposalId: params.data.proposalId,
             })
-          : proposal?.provider === 'facebook_page' && proposal.kind === 'comment'
-            ? cancelScheduledProposalPageComment(dependencies.database, {
+          : proposal?.provider === 'fanvue' && proposal.kind === 'dm'
+            ? cancelScheduledProposalFanvueDm(dependencies.database, {
                 workspaceId: identity.workspaceId,
                 proposalId: params.data.proposalId,
               })
-            : cancelScheduledProposalPageDm(dependencies.database, {
-                workspaceId: identity.workspaceId,
-                proposalId: params.data.proposalId,
-              }));
+            : proposal?.provider === 'facebook_page' && proposal.kind === 'comment'
+              ? cancelScheduledProposalPageComment(dependencies.database, {
+                  workspaceId: identity.workspaceId,
+                  proposalId: params.data.proposalId,
+                })
+              : cancelScheduledProposalPageDm(dependencies.database, {
+                  workspaceId: identity.workspaceId,
+                  proposalId: params.data.proposalId,
+                }));
       if (!cancelled)
         return reply
           .code(409)
@@ -309,12 +320,16 @@ export function registerEngagementApprovalRoutes(
         return await reply.code(202).send({ data: scheduled, error: null });
       }
       if (proposal?.provider === 'instagram_unified_login') {
-        const scheduled = await scheduleInstagramUnifiedProposal(dependencies.database, dependencies, {
-          workspaceId: identity.workspaceId,
-          userId: identity.userId,
-          proposalId: params.data.proposalId,
-          expectedRevision: body.data.expectedRevision,
-        });
+        const scheduled = await scheduleInstagramUnifiedProposal(
+          dependencies.database,
+          dependencies,
+          {
+            workspaceId: identity.workspaceId,
+            userId: identity.userId,
+            proposalId: params.data.proposalId,
+            expectedRevision: body.data.expectedRevision,
+          },
+        );
         return await reply.code(202).send({ data: scheduled, error: null });
       }
       const outcome = await approveEngagementProposal(dependencies.database, dependencies, {

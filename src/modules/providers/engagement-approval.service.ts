@@ -129,17 +129,37 @@ function sendableProposal(row: NonNullable<Awaited<ReturnType<typeof getEngageme
     };
   }
   if (row.provider === 'instagram_unified_login') {
-    const source = z.strictObject({
-      parentId: z.string().min(1).max(256),
-      recipientId: z.string().min(1).max(256).optional(),
-    }).safeParse(row.sourceContext);
-    if (!kind.success || !content.success || !source.success || content.data.mediaIds?.length || content.data.priceCents !== undefined || content.data.text.length > 2000)
+    const source = z
+      .strictObject({
+        parentId: z.string().min(1).max(256),
+        recipientId: z.string().min(1).max(256).optional(),
+      })
+      .safeParse(row.sourceContext);
+    if (
+      !kind.success ||
+      !content.success ||
+      !source.success ||
+      content.data.mediaIds?.length ||
+      content.data.priceCents !== undefined ||
+      content.data.text.length > 2000
+    )
       throw new EngagementProposalError('This proposal has no available send command', 409);
     if (row.kind === 'dm' && !source.data.recipientId)
       throw new EngagementProposalError('Unified Instagram recipient is required', 409);
     if (!row.plannedDueAt || row.plannedDueAt.getTime() <= Date.now())
-      throw new EngagementProposalError('Unified Instagram approval requires a future due time', 409);
-    return { provider: 'instagram_unified_login' as const, kind: kind.data, targetId: row.targetId, text: content.data.text, parentId: source.data.parentId, ...(source.data.recipientId ? { recipientId: source.data.recipientId } : {}), dueAt: row.plannedDueAt };
+      throw new EngagementProposalError(
+        'Unified Instagram approval requires a future due time',
+        409,
+      );
+    return {
+      provider: 'instagram_unified_login' as const,
+      kind: kind.data,
+      targetId: row.targetId,
+      text: content.data.text,
+      parentId: source.data.parentId,
+      ...(source.data.recipientId ? { recipientId: source.data.recipientId } : {}),
+      dueAt: row.plannedDueAt,
+    };
   }
   const target = z.uuid().safeParse(row.targetId);
   if (
@@ -268,12 +288,15 @@ export async function scheduleInstagramUnifiedProposal(
     throw new EngagementProposalError('Unified Instagram scheduling is unavailable', 409);
   try {
     return await commands.unified.schedule({
-      workspaceId: input.workspaceId, accountId: proposal.accountId,
+      workspaceId: input.workspaceId,
+      accountId: proposal.accountId,
       clientActionId: proposal.clientActionId,
       kind: sendable.kind === 'comment' ? 'comment_reply' : 'dm_reply',
-      targetId: sendable.targetId, parentId: sendable.parentId,
+      targetId: sendable.targetId,
+      parentId: sendable.parentId,
       ...(sendable.recipientId ? { recipientId: sendable.recipientId } : {}),
-      text: sendable.text, dueAt: sendable.dueAt.toISOString(),
+      text: sendable.text,
+      dueAt: sendable.dueAt.toISOString(),
       actor: { type: 'user', id: input.userId },
     });
   } catch (error) {

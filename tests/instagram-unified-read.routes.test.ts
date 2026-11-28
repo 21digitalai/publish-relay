@@ -12,7 +12,10 @@ vi.mock('../src/modules/providers/instagram-unified-read.service.js', () => ({
     conversations: vi.fn(),
     messages: vi.fn(),
   })),
-  instagramUnifiedReadStatus: vi.fn(() => ({ status: 502, error: 'Unified Instagram read failed' })),
+  instagramUnifiedReadStatus: vi.fn(() => ({
+    status: 502,
+    error: 'Unified Instagram read failed',
+  })),
 }));
 
 const applications: ReturnType<typeof createStandaloneApplication>[] = [];

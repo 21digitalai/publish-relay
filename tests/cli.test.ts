@@ -99,6 +99,20 @@ async function cli(
 
 describe('Publish Relay CLI', () => {
   it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
+    'preserves the legacy no-cutoff conversation response through %s',
+    async (entrypoint) => {
+      const data = { conversations: [], nextCursor: null };
+      const baseUrl = await fixture(200, { data, error: null });
+      const result = await cli(
+        ['facebook-dms', 'list', '00000000-0000-4000-8000-000000000402', '--base-url', baseUrl],
+        { PUBLISH_RELAY_API_KEY: 'test-key' },
+        entrypoint,
+      );
+      expect(result.code).toBe(0);
+      expect((JSON.parse(result.stdout) as { data: unknown }).data).toEqual(data);
+    },
+  );
+  it.each(['src/entrypoints/cli.ts', 'src/modules/api/assets/publish-relay-cli.js'])(
     'passes bounded comment traversal and preserves its receipt through %s',
     async (entrypoint) => {
       const paths: string[] = [];
@@ -144,11 +158,18 @@ describe('Publish Relay CLI', () => {
             conversations: [],
             nextCursor: 'next',
             ordering: {
+              cutoff: '2026-11-27T00:00:00Z',
               rawCount: 100,
-              oldCount: 99,
+              recentCount: 1,
+              oldCount: 98,
               unknownCount: 1,
-              firstOldPosition: 0,
+              firstValidTimestamp: '2026-11-28T00:00:00.000Z',
+              lastValidTimestamp: '2026-11-26T00:00:00.000Z',
+              firstOldPosition: 1,
+              inversions: 2,
+              recentAfterFirstOld: 1,
               providerPageReads: 1,
+              forbidden: 'provider-secret',
             },
           },
           error: null,
@@ -178,16 +199,24 @@ describe('Publish Relay CLI', () => {
       expect(paths).toEqual([
         `/api/v1/destinations/${accountId}/facebook-conversations?limit=25&after=opaque%2Fnext&updatedSince=2026-11-27T00%3A00%3A00Z`,
       ]);
+      expect(result.stdout).not.toContain('provider-secret');
       expect(JSON.parse(result.stdout)).toMatchObject({
         data: {
           conversations: [],
           nextCursor: 'next',
           ordering: {
+            cutoff: '2026-11-27T00:00:00Z',
             rawCount: 100,
-            oldCount: 99,
+            recentCount: 1,
+            oldCount: 98,
             unknownCount: 1,
-            firstOldPosition: 0,
+            firstValidTimestamp: '2026-11-28T00:00:00.000Z',
+            lastValidTimestamp: '2026-11-26T00:00:00.000Z',
+            firstOldPosition: 1,
+            inversions: 2,
+            recentAfterFirstOld: 1,
             providerPageReads: 1,
+            forbidden: '[REDACTED]',
           },
         },
       });
